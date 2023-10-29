@@ -1,0 +1,19 @@
+[package]
+name = "ravascript"
+version = "0.0.0"
+edition = "2021"
+authors = ["Me"]
+description = "Coming soon"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/maxwell8888/ravascript"
+homepage = "https://github.com/maxwell8888/ravascript"
+documentation = "https://docs.rs/ravascript/latest/ravascript/"
+keywords = []
+rust-version = "1.73.0"
+publish = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ravascript-macros = { path = "../ravascript-macros" }
+ravascript-core = { path = "../ravascript-core" }
