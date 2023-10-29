@@ -2,6 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
+use ravascript_core::from_file;
 use syn::{parse_macro_input, ItemFn, LitStr};
 
 #[proc_macro]
@@ -9,11 +10,16 @@ pub fn include_ravascript(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as LitStr);
     let path_str = path.value();
 
-    let file_contents =
+    let rs =
         std::fs::read_to_string(&path_str).expect(&format!("Unable to read file: {}", path_str));
+    let js = from_file(&rs)
+        .iter()
+        .map(|line| line.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let expanded = quote! {
-        #file_contents
+        #js
     };
 
     TokenStream::from(expanded)
