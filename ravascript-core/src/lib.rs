@@ -32,8 +32,18 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
         _ => false,
     };
     handle_item_use_tree(&item_use.tree, &mut exports, &mut module);
-    if module.get(0).unwrap() == "web" || module.get(1).unwrap() == "web" {
+    let second_path_is_web = if module.len() > 1 {
+        module.get(1).unwrap() == "web"
+    } else {
+        false
+    };
+    if module.get(0).unwrap() == "web" || second_path_is_web {
         JsStmt::Expr(JsExpr::Vanish, false)
+    } else if module.get(0).unwrap() == "crate" {
+        // If we import something from our crate, inline it (probably what we want for external crates too?)
+        // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
+        // Get the name of the item to be inlined
+        todo!()
     } else {
         JsStmt::Import(None, exports, module)
     }
@@ -43,6 +53,7 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => JsStmt::Expr(handle_expr(expr), closing_semi.is_some()),
         Stmt::Local(local) => JsStmt::Local(JsLocal {
+            type_: LocalType::Var,
             names: match &local.pat {
                 Pat::Ident(pat_ident) => vec![pat_ident.ident.to_string()],
                 Pat::Tuple(pat_tuple) => pat_tuple
@@ -133,7 +144,14 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
             };
             for impl_item in item_impl.items {
                 match impl_item {
-                    ImplItem::Const(_) => todo!(),
+                    ImplItem::Const(impl_item_const) => {
+                        // impl_item_const
+                        js_stmts.push(JsStmt::ClassStatic(JsLocal {
+                            type_: LocalType::Static,
+                            names: vec![impl_item_const.ident.to_string()],
+                            value: handle_expr(&impl_item_const.expr),
+                        }))
+                    }
                     ImplItem::Fn(item_impl_fn) => {
                         let static_ = match item_impl_fn.sig.inputs.first().unwrap() {
                             FnArg::Receiver(_) => true,
@@ -201,6 +219,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                         None => todo!(),
                     })
                     .collect::<Vec<_>>(),
+                static_fields: Vec::new(),
                 methods: Vec::new(),
             });
             js_stmts.push(js_stmt);
@@ -228,6 +247,13 @@ pub fn from_file(code: &str) -> Vec<JsStmt> {
     let mut my_class: Option<JsClass> = None;
     for stmt in js_stmts {
         match stmt {
+            JsStmt::ClassStatic(js_local) => {
+                if let Some(ref mut my_class) = my_class {
+                    my_class.static_fields.push(js_local);
+                } else {
+                    panic!()
+                }
+            }
             JsStmt::ClassMethod(name, private, static_, js_fn) => {
                 if let Some(ref mut my_class) = my_class {
                     if js_fn.name != "new" {
@@ -275,6 +301,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 #[derive(Debug)]
 pub enum JsOp {
     Add,
+    Sub,
     AddAssign,
     And,
     Or,
@@ -286,6 +313,7 @@ impl JsOp {
     fn js_string(&self) -> &str {
         match self {
             JsOp::Add => "+",
+            JsOp::Sub => "-",
             JsOp::AddAssign => "+=",
             JsOp::And => "&&",
             JsOp::Or => "||",
@@ -297,7 +325,7 @@ impl JsOp {
     fn from_binop(binop: BinOp) -> JsOp {
         match binop {
             BinOp::Add(_) => JsOp::Add,
-            BinOp::Sub(_) => todo!(),
+            BinOp::Sub(_) => JsOp::Sub,
             BinOp::Mul(_) => todo!(),
             BinOp::Div(_) => todo!(),
             BinOp::Rem(_) => todo!(),
@@ -426,6 +454,7 @@ impl JsExpr {
                         JsStmt::Function(_) => todo!(),
                         JsStmt::Class(_) => todo!(),
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+                        JsStmt::ClassStatic(_) => todo!(),
                     }
                 } else {
                     format!(
@@ -534,11 +563,23 @@ pub struct JsClass {
     name: String,
     /// we are assuming input names is equivalent to field names
     inputs: Vec<String>,
+    /// (class name, private, static, JsFn)  
+    // static_fields: Vec<(String, JsLocal)>,
+    static_fields: Vec<JsLocal>,
+    /// (class name, private, static, JsFn)  
     methods: Vec<(String, bool, bool, JsFn)>,
 }
 
 #[derive(Debug)]
+pub enum LocalType {
+    Var,
+    Const,
+    Let,
+    Static,
+}
+#[derive(Debug)]
 pub struct JsLocal {
+    type_: LocalType,
     names: Vec<String>,
     value: JsExpr,
 }
@@ -573,7 +614,13 @@ impl JsLocal {
                             .join(", ")
                     )
                 };
-                format!("var {} = {};", name, value_js_expr.js_string())
+                let var_type = match self.type_ {
+                    LocalType::Var => "var",
+                    LocalType::Const => "const",
+                    LocalType::Let => "let",
+                    LocalType::Static => "static",
+                };
+                format!("{var_type} {name} = {};", value_js_expr.js_string())
             }
         }
     }
@@ -622,6 +669,7 @@ impl JsFn {
                         JsStmt::Function(js_fn) => js_fn.js_string(),
                         JsStmt::Class(_) => todo!(),
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+                        JsStmt::ClassStatic(_) => todo!(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -633,13 +681,14 @@ impl JsFn {
 // pub struct JsImportPath {}
 #[derive(Debug)]
 pub enum JsStmt {
+    Class(JsClass),
     /// This means that `foo() {}` will be used in place of `function foo() {}`  
     ///
     /// Some means it is a method, the first bool is whether it is private and thus should have # prepended to the name, the second bool is whether it is static  
     ///
     /// (class name, private, static, JsFn)  
     ClassMethod(String, bool, bool, JsFn),
-    Class(JsClass),
+    ClassStatic(JsLocal),
     Local(JsLocal),
     /// (expr, closing semicolon)
     Expr(JsExpr, bool),
@@ -705,7 +754,7 @@ impl JsStmt {
             JsStmt::Function(js_fn) => js_fn.js_string(),
             JsStmt::Class(js_class) => {
                 format!(
-                    "class {} {{\nconstructor({}) {{\n{}\n}}\n{}}}",
+                    "class {} {{\nconstructor({}) {{\n{}\n}}\n{}\n{}}}",
                     js_class.name,
                     js_class.inputs.join(", "),
                     js_class
@@ -714,6 +763,12 @@ impl JsStmt {
                         .map(|input| format!("this.{input} = {input};"))
                         .collect::<Vec<_>>()
                         .join(" "),
+                    js_class
+                        .static_fields
+                        .iter()
+                        .map(|field| field.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     js_class
                         .methods
                         .iter()
@@ -728,6 +783,7 @@ impl JsStmt {
                 )
             }
             JsStmt::ClassMethod(_, _, _, _) => todo!(),
+            JsStmt::ClassStatic(_) => todo!(),
         }
     }
 }
@@ -762,6 +818,12 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 .map(|arg| handle_expr(arg))
                 .collect::<Vec<_>>();
             match &*expr_call.func {
+                Expr::Path(expr_path)
+                    if expr_path.path.segments.last().unwrap().ident.to_string() == "fetch2" =>
+                {
+                    // TODO improve this code
+                    JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args)
+                }
                 Expr::Path(expr_path)
                     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
                 {
@@ -901,6 +963,9 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             if method_name == "add_event_listener_async" {
                 method_name = "add_event_listener".to_string();
             }
+            if method_name == "length" {
+                return JsExpr::Field(Box::new(receiver), "length".to_string());
+            }
             JsExpr::MethodCall(
                 Box::new(receiver),
                 AsLowerCamelCase(method_name).to_string(),
@@ -928,7 +993,10 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     if var_name == "Console" {
                         var_name = "console".to_string();
                     }
-                    if var_name.chars().next().unwrap().is_ascii_uppercase() {
+                    if var_name.chars().all(|c| c.is_uppercase()) {
+                        AsLowerCamelCase(var_name).to_string()
+                    } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
+                        dbg!(&var_name);
                         AsPascalCase(var_name).to_string()
                     } else {
                         AsLowerCamelCase(var_name).to_string()
@@ -1086,6 +1154,17 @@ pub mod web {
     }
     impl CharAt for &str {}
 
+    pub trait Length {
+        // TODO can we type this to just be a char?
+        fn length(&self) -> i32
+        where
+            Self: Sized,
+        {
+            todo!()
+        }
+    }
+    impl Length for &str {}
+
     #[derive(Debug, Default)]
     pub struct Response {
         pub body: ResponseBody,
@@ -1138,8 +1217,18 @@ pub mod web {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Action {}
 
-    #[derive(Clone, Copy, Debug, Default)]
-    pub struct Method {}
+    #[derive(Clone, Copy, Debug)]
+    pub enum Method {
+        Delete,
+        Get,
+        Post,
+        Put,
+    }
+    impl Default for Method {
+        fn default() -> Self {
+            Method::Get
+        }
+    }
 
     pub struct FetchOptions {
         pub method: Method,
@@ -1147,7 +1236,35 @@ pub mod web {
         pub body: Json,
     }
 
-    pub async fn fetch(_form_action: Action, _options: FetchOptions) -> Response {
+    #[derive(Clone, Copy, Debug)]
+    pub struct Url {}
+    /// https://developer.mozilla.org/en-US/docs/Web/API/fetch
+    /// Default options are marked with *
+    /// const response = await fetch(url, {
+    ///     method: "POST", // *GET, POST, PUT, DELETE, etc.
+    ///     mode: "cors", // no-cors, *cors, same-origin
+    ///     cache: "no-cache", // *default, no-cache, reload, force-cache, only-if-cached
+    ///     credentials: "same-origin", // include, *same-origin, omit
+    ///     headers: {
+    ///     "Content-Type": "application/json",
+    ///     // 'Content-Type': 'application/x-www-form-urlencoded',
+    ///     },
+    ///     redirect: "follow", // manual, *follow, error
+    ///     referrerPolicy: "no-referrer", // no-referrer, *no-referrer-when-downgrade, origin, origin-when-cross-origin, same-origin, strict-origin, strict-origin-when-cross-origin, unsafe-url
+    ///     body: JSON.stringify(data), // body data type must match "Content-Type" header
+    /// });
+    ///
+    /// Could stay closer to JS and use fetch!() which can take 1 or 2 arguments, Or build an API similar to reqwest?
+    /// We are trading off easy to generate and predictable generated JS, familar to JS devs vs cleaner more idiotmatic Rust familiar to Rust devs
+    /// Go with JS API for now otherwise it could be complicated to track potentially mutations to items over time, even with an AST
+    /// Possibly best to go with JS at least at first so we don't back ourselves into a corner. And it is good to give people more direct control over the JS being output
+    /// Using fetch!() means we can check the paths at compile time and only pass strings as path (not Url("/path")). But probably don't want hard coded paths anyway, they should all be coming from the backend/axum. But again, how would that be transpiled to JS? they could be CONST's which get output as const's, that then get inlined when code is optimised? But the strings will be in the backend code, how do we make that accessible? There is a few hacks we could use for Strings, but might we want to pass more complex data? Well it won't be program data like items with types, it will always be static data like str's (String's?) or other JSON serializable structures.
+    /// We are going to want to share types like structs with methods anyway because they can represented in both JS and Rust and backend and frontend might have some logic they want to share (though might need to avoid using methods on builtin types), and so if the type complexity if already being shared, also sharing the data doesn't seem like a big stretch? eg might want something like `Paths` with `Paths::HOME` and `Path::product(id: usize)`.
+    // pub struct Fetch {}
+    pub async fn fetch(_form_action: Url) -> Response {
+        Response::default()
+    }
+    pub async fn fetch2(_form_action: Url, _options: FetchOptions) -> Response {
         Response::default()
     }
 
@@ -1166,7 +1283,8 @@ pub mod web {
 
         // TODO restrict these to Form dom nodes
         pub method: Method,
-        pub action: Action,
+        // pub action: Action,
+        pub action: Url,
         pub parent_element: &'static DomNode,
     }
     impl DomNode {
