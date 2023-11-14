@@ -39,6 +39,8 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
     };
     if module.get(0).unwrap() == "web" || second_path_is_web {
         JsStmt::Expr(JsExpr::Vanish, false)
+    } else if module.get(0).unwrap() == "serde" || module.get(0).unwrap() == "serde_json" {
+        JsStmt::Expr(JsExpr::Vanish, false)
     } else if module.get(0).unwrap() == "crate" {
         // If we import something from our crate, inline it (probably what we want for external crates too?)
         // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
@@ -993,10 +995,9 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     if var_name == "Console" {
                         var_name = "console".to_string();
                     }
-                    if var_name.chars().all(|c| c.is_uppercase()) {
+                    if var_name.chars().all(|c| c.is_uppercase() || c == '_') {
                         AsLowerCamelCase(var_name).to_string()
                     } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
-                        dbg!(&var_name);
                         AsPascalCase(var_name).to_string()
                     } else {
                         AsLowerCamelCase(var_name).to_string()
@@ -1169,6 +1170,11 @@ pub mod web {
     pub struct Response {
         pub body: ResponseBody,
     }
+    impl Response {
+        pub async fn json<T>(&self) -> T {
+            todo!()
+        }
+    }
 
     #[derive(Debug, Default)]
     pub struct ResponseBody {}
@@ -1261,10 +1267,13 @@ pub mod web {
     /// Using fetch!() means we can check the paths at compile time and only pass strings as path (not Url("/path")). But probably don't want hard coded paths anyway, they should all be coming from the backend/axum. But again, how would that be transpiled to JS? they could be CONST's which get output as const's, that then get inlined when code is optimised? But the strings will be in the backend code, how do we make that accessible? There is a few hacks we could use for Strings, but might we want to pass more complex data? Well it won't be program data like items with types, it will always be static data like str's (String's?) or other JSON serializable structures.
     /// We are going to want to share types like structs with methods anyway because they can represented in both JS and Rust and backend and frontend might have some logic they want to share (though might need to avoid using methods on builtin types), and so if the type complexity if already being shared, also sharing the data doesn't seem like a big stretch? eg might want something like `Paths` with `Paths::HOME` and `Path::product(id: usize)`.
     // pub struct Fetch {}
-    pub async fn fetch(_form_action: Url) -> Response {
+    // pub async fn fetch(_form_action: Url) -> Response {
+    /// T is response json data type
+    pub async fn fetch(_path: &str) -> Response {
         Response::default()
     }
-    pub async fn fetch2(_form_action: Url, _options: FetchOptions) -> Response {
+    // pub async fn fetch2(_form_action: Url, _options: FetchOptions) -> Response {
+    pub async fn fetch2(_path: &str, _options: FetchOptions) -> Response {
         Response::default()
     }
 
@@ -1284,7 +1293,8 @@ pub mod web {
         // TODO restrict these to Form dom nodes
         pub method: Method,
         // pub action: Action,
-        pub action: Url,
+        // pub action: Url,
+        pub action: &'static str,
         pub parent_element: &'static DomNode,
     }
     impl DomNode {
@@ -1351,7 +1361,7 @@ pub mod web {
     #[derive(Debug)]
     pub struct Console {}
     impl Console {
-        pub fn log(_to_log: impl ToString) {}
+        pub fn log<T>(_to_log: T) {}
     }
 
     #[derive(Debug)]
