@@ -1,7 +1,7 @@
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use std::fmt::Debug;
 use syn::{
-    BinOp, Expr, FnArg, ImplItem, Item, ItemFn, ItemUse, Lit, Member, Pat, Stmt, Type, UnOp,
+    BinOp, Expr, FnArg, ImplItem, Item, ItemFn, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp,
     UseTree, Visibility,
 };
 
@@ -98,38 +98,56 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
 }
 
 fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
-    JsStmt::Function(JsFn {
-        export: match item_fn.vis {
-            Visibility::Public(_) => true,
+    let ignore = if let Some(thing) = item_fn.attrs.first() {
+        match &thing.meta {
+            Meta::Path(path) => {
+                if let Some(seg) = path.segments.first() {
+                    seg.ident.to_string() == "ignore".to_string()
+                } else {
+                    false
+                }
+            }
             _ => false,
-        },
-        async_: item_fn.sig.asyncness.is_some(),
-        is_method: false,
-        name: {
-            let name = item_fn.sig.ident.to_string();
-            AsLowerCamelCase(name).to_string()
-        },
-        input_names: item_fn
-            .sig
-            .inputs
-            .iter()
-            .map(|input| match input {
-                FnArg::Receiver(_) => todo!(),
-                FnArg::Typed(pat_type) => match &*pat_type.pat {
-                    Pat::Ident(pat_ident) => {
-                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                    }
-                    _ => todo!(),
-                },
-            })
-            .collect::<Vec<_>>(),
-        body_stmts: item_fn
-            .block
-            .stmts
-            .iter()
-            .map(|stmt| handle_stmt(stmt))
-            .collect::<Vec<_>>(),
-    })
+        }
+    } else {
+        false
+    };
+    if ignore {
+        JsStmt::Expr(JsExpr::Vanish, false)
+    } else {
+        JsStmt::Function(JsFn {
+            export: match item_fn.vis {
+                Visibility::Public(_) => true,
+                _ => false,
+            },
+            async_: item_fn.sig.asyncness.is_some(),
+            is_method: false,
+            name: {
+                let name = item_fn.sig.ident.to_string();
+                AsLowerCamelCase(name).to_string()
+            },
+            input_names: item_fn
+                .sig
+                .inputs
+                .iter()
+                .map(|input| match input {
+                    FnArg::Receiver(_) => todo!(),
+                    FnArg::Typed(pat_type) => match &*pat_type.pat {
+                        Pat::Ident(pat_ident) => {
+                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
+                        }
+                        _ => todo!(),
+                    },
+                })
+                .collect::<Vec<_>>(),
+            body_stmts: item_fn
+                .block
+                .stmts
+                .iter()
+                .map(|stmt| handle_stmt(stmt))
+                .collect::<Vec<_>>(),
+        })
+    }
 }
 
 fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
@@ -308,6 +326,7 @@ pub enum JsOp {
     And,
     Or,
     Eq,
+    NotEq,
     Gt,
     Lt,
 }
@@ -320,6 +339,7 @@ impl JsOp {
             JsOp::And => "&&",
             JsOp::Or => "||",
             JsOp::Eq => "===",
+            JsOp::NotEq => "!==",
             JsOp::Gt => ">",
             JsOp::Lt => "<",
         }
@@ -361,6 +381,7 @@ impl JsOp {
 
 #[derive(Debug)]
 pub enum JsExpr {
+    Null,
     LitInt(i32),
     LitStr(String),
     LitBool(bool),
@@ -555,6 +576,7 @@ impl JsExpr {
                 .join("\n"),
             JsExpr::Minus(expr) => format!("-{}", expr.js_string()),
             JsExpr::Paren(expr) => format!("({})", expr.js_string()),
+            JsExpr::Null => "null".to_string(),
         }
     }
 }
@@ -929,7 +951,10 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             Box::new(handle_expr(&*expr_index.index)),
         ),
         Expr::Infer(_) => todo!(),
-        Expr::Let(_) => todo!(),
+        Expr::Let(expr_let) => {
+            dbg!(expr_let);
+            todo!()
+        }
         Expr::Lit(expr_lit) => match &expr_lit.lit {
             Lit::Str(lit_str) => JsExpr::LitStr(lit_str.value()),
             Lit::ByteStr(_) => todo!(),
@@ -958,6 +983,9 @@ fn handle_expr(expr: &Expr) -> JsExpr {
 
             if method_name.len() > 3 && &method_name[0..3] == "js_" {
                 method_name = method_name[3..].to_string();
+            }
+            if method_name == "is_some" {
+                return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
             }
             if method_name == "slice1" || method_name == "slice2" {
                 method_name = "slice".to_string();
@@ -1007,7 +1035,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             JsExpr::Path(segs)
         }
         Expr::Range(_) => todo!(),
-        Expr::Reference(_) => todo!(),
+        Expr::Reference(expr_reference) => handle_expr(&*expr_reference.expr),
         Expr::Repeat(_) => todo!(),
         Expr::Return(_) => todo!(),
         Expr::Struct(expr_struct) => {
