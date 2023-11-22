@@ -5,6 +5,234 @@ use syn::{
     UseTree, Visibility,
 };
 
+const SSE_RAW_FUNC: &str = r##" function Sse (url, options) {
+    if (!(this instanceof Sse)) {
+        return new Sse(url, options);
+    }
+
+    this.INITIALIZING = -1;
+    this.CONNECTING = 0;
+    this.OPEN = 1;
+    this.CLOSED = 2;
+
+    this.url = url;
+
+    options = options || {};
+    this.headers = options.headers || {};
+    this.payload = options.payload !== undefined ? options.payload : "";
+    this.method = options.method || (this.payload && "POST") || "GET";
+    this.withCredentials = !!options.withCredentials;
+    this.debug = !!options.debug;
+
+    this.FIELD_SEPARATOR = ":";
+
+    this.listeners = {};
+
+    this.xhr = null;
+    this.readyState = this.INITIALIZING;
+    this.progress = 0;
+    this.chunk = "";
+
+    this.addEventListener = function (type, listener) {
+        if (this.listeners[type] === undefined) {
+            this.listeners[type] = [];
+        }
+
+        if (this.listeners[type].indexOf(listener) === -1) {
+            this.listeners[type].push(listener);
+        }
+    };
+
+    this.removeEventListener = function (type, listener) {
+        if (this.listeners[type] === undefined) {
+            return;
+        }
+
+        var filtered = [];
+        this.listeners[type].forEach(function (element) {
+            if (element !== listener) {
+                filtered.push(element);
+            }
+        });
+        if (filtered.length === 0) {
+            delete this.listeners[type];
+        } else {
+            this.listeners[type] = filtered;
+        }
+    };
+
+    this.dispatchEvent = function (e) {
+        if (!e) {
+            return true;
+        }
+
+        if (this.debug) {
+            console.debug(e);
+        }
+
+        e.source = this;
+
+        var onHandler = "on" + e.type;
+        if (this.hasOwnProperty(onHandler)) {
+            this[onHandler].call(this, e);
+            if (e.defaultPrevented) {
+                return false;
+            }
+        }
+
+        if (this.listeners[e.type]) {
+            return this.listeners[e.type].every(function (callback) {
+                callback(e);
+                return !e.defaultPrevented;
+            });
+        }
+
+        return true;
+    };
+
+    this._setReadyState = function (state) {
+        var event = new CustomEvent("readystatechange");
+        event.readyState = state;
+        this.readyState = state;
+        this.dispatchEvent(event);
+    };
+
+    this._onStreamFailure = function (e) {
+        var event = new CustomEvent("error");
+        event.data = e.currentTarget.response;
+        this.dispatchEvent(event);
+        this.close();
+    };
+
+    this._onStreamAbort = function (e) {
+        this.dispatchEvent(new CustomEvent("abort"));
+        this.close();
+    };
+
+    this._onStreamProgress = function (e) {
+        if (!this.xhr) {
+            return;
+        }
+
+        if (this.xhr.status !== 200) {
+            this._onStreamFailure(e);
+            return;
+        }
+
+        if (this.readyState == this.CONNECTING) {
+            this.dispatchEvent(new CustomEvent("open"));
+            this._setReadyState(this.OPEN);
+        }
+
+        var data = this.xhr.responseText.substring(this.progress);
+
+        this.progress += data.length;
+        var parts = (this.chunk + data).split(/(\r\n|\r|\n){2}/g);
+
+        var lastPart = parts.pop();
+        parts.forEach(
+            function (part) {
+                if (part.trim().length > 0) {
+                    this.dispatchEvent(this._parseEventChunk(part));
+                }
+            }.bind(this)
+        );
+        this.chunk = lastPart;
+    };
+
+    this._onStreamLoaded = function (e) {
+        this._onStreamProgress(e);
+
+        this.dispatchEvent(this._parseEventChunk(this.chunk));
+        this.chunk = "";
+    };
+
+    this._parseEventChunk = function (chunk) {
+        if (!chunk || chunk.length === 0) {
+            return null;
+        }
+
+        if (this.debug) {
+            console.debug(chunk);
+        }
+
+        var e = { id: null, retry: null, data: null, event: "message" };
+        chunk.split(/\n|\r\n|\r/).forEach(
+            function (line) {
+                line = line.trimRight();
+                var index = line.indexOf(this.FIELD_SEPARATOR);
+                if (index <= 0) {
+                    return;
+                }
+
+                var field = line.substring(0, index);
+                if (!(field in e)) {
+                    return;
+                }
+
+                var skip = line[index + 1] === " " ? 2 : 1;
+                var value = line.substring(index + skip);
+
+                if (field === "data" && e[field] !== null) {
+                    e["data"] += "\n" + value;
+                } else {
+                    e[field] = value;
+                }
+            }.bind(this)
+        );
+
+        var event = new CustomEvent(e.event);
+        event.data = e.data || "";
+        event.id = e.id;
+        return event;
+    };
+
+    this._checkStreamClosed = function () {
+        if (!this.xhr) {
+            return;
+        }
+
+        if (this.xhr.readyState === XMLHttpRequest.DONE) {
+            this._setReadyState(this.CLOSED);
+        }
+    };
+
+    this.stream = function () {
+        if (this.xhr) {
+            return;
+        }
+
+        this._setReadyState(this.CONNECTING);
+
+        this.xhr = new XMLHttpRequest();
+        this.xhr.addEventListener("progress", this._onStreamProgress.bind(this));
+        this.xhr.addEventListener("load", this._onStreamLoaded.bind(this));
+        this.xhr.addEventListener("readystatechange", this._checkStreamClosed.bind(this));
+        this.xhr.addEventListener("error", this._onStreamFailure.bind(this));
+        this.xhr.addEventListener("abort", this._onStreamAbort.bind(this));
+        this.xhr.open(this.method, this.url);
+        for (var header in this.headers) {
+            this.xhr.setRequestHeader(header, this.headers[header]);
+        }
+        this.xhr.withCredentials = this.withCredentials;
+        this.xhr.send(this.payload);
+    };
+
+    this.close = function () {
+        if (this.readyState === this.CLOSED) {
+            return;
+        }
+
+        this.xhr.abort();
+        this.xhr = null;
+        this._setReadyState(this.CLOSED);
+    };
+
+    if (options.start === undefined || options.start) {
+        this.stream();
+    }
+}"##;
+
 fn handle_item_use_tree(use_tree: &UseTree, exports: &mut Vec<String>, module: &mut Vec<String>) {
     match use_tree {
         UseTree::Path(use_path) => {
@@ -303,6 +531,7 @@ pub fn from_file(code: &str) -> Vec<JsStmt> {
         JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
         true,
     ));
+    js_stmts2.push(JsStmt::Raw(SSE_RAW_FUNC.to_string()));
 
     js_stmts2
 }
@@ -387,6 +616,7 @@ pub enum JsExpr {
     LitBool(bool),
     Object(Vec<(String, Box<JsExpr>)>),
     Break,
+    Return(Box<JsExpr>),
     Vanish,
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
@@ -478,6 +708,7 @@ impl JsExpr {
                         JsStmt::Class(_) => todo!(),
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
                         JsStmt::ClassStatic(_) => todo!(),
+                        JsStmt::Raw(_) => todo!(),
                     }
                 } else {
                     format!(
@@ -577,6 +808,7 @@ impl JsExpr {
             JsExpr::Minus(expr) => format!("-{}", expr.js_string()),
             JsExpr::Paren(expr) => format!("({})", expr.js_string()),
             JsExpr::Null => "null".to_string(),
+            JsExpr::Return(expr) => format!("return {}", expr.js_string()),
         }
     }
 }
@@ -694,6 +926,7 @@ impl JsFn {
                         JsStmt::Class(_) => todo!(),
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
                         JsStmt::ClassStatic(_) => todo!(),
+                        JsStmt::Raw(_) => todo!(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -719,6 +952,7 @@ pub enum JsStmt {
     /// (default export name, names of the exports to be imported, module path)
     Import(Option<String>, Vec<String>, Vec<String>),
     Function(JsFn),
+    Raw(String),
 }
 
 impl JsStmt {
@@ -808,6 +1042,7 @@ impl JsStmt {
             }
             JsStmt::ClassMethod(_, _, _, _) => todo!(),
             JsStmt::ClassStatic(_) => todo!(),
+            JsStmt::Raw(raw_js) => raw_js.clone(),
         }
     }
 }
@@ -1037,9 +1272,16 @@ fn handle_expr(expr: &Expr) -> JsExpr {
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => handle_expr(&*expr_reference.expr),
         Expr::Repeat(_) => todo!(),
-        Expr::Return(_) => todo!(),
+        Expr::Return(expr_return) => {
+            if let Some(expr) = &expr_return.expr {
+                JsExpr::Return(Box::new(handle_expr(&*expr)))
+            } else {
+                JsExpr::Return(Box::new(JsExpr::Vanish))
+            }
+        }
         Expr::Struct(expr_struct) => {
-            if expr_struct.path.segments.first().unwrap().ident.to_string() == "FetchOptions" {
+            let struct_name = expr_struct.path.segments.first().unwrap().ident.to_string();
+            if struct_name == "FetchOptions" || struct_name == "SseOptions" {
                 JsExpr::Object(
                     expr_struct
                         .fields
@@ -1143,7 +1385,7 @@ pub mod web {
     impl Slice for &str {}
 
     pub trait Concat {
-        fn concat(&self, _arg: &str) -> &str
+        fn concat(self, _arg: &str) -> &str
         where
             Self: Sized,
         {
@@ -1240,12 +1482,19 @@ pub mod web {
     }
 
     #[derive(Debug, Default)]
+    pub struct ObjectEntries {}
+    impl Entries for ObjectEntries {}
+
+    #[derive(Debug, Default)]
     pub struct Headers {}
     impl Headers {
         pub fn new() -> Headers {
             Headers::default()
         }
         pub fn append(&self, _key: &str, _value: &str) {}
+        pub fn entries(&self) -> ObjectEntries {
+            todo!()
+        }
     }
 
     #[derive(Clone, Copy, Debug, Default)]
@@ -1308,8 +1557,8 @@ pub mod web {
     #[derive(Debug, Default)]
     pub struct Json {}
     impl Json {
-        pub fn stringify(_object: Object) -> Json {
-            Json::default()
+        pub fn stringify(_object: impl JsonStringyArg) -> &'static str {
+            todo!()
         }
     }
 
@@ -1358,6 +1607,10 @@ pub mod web {
     pub trait Entries {}
     impl Entries for FormDataEntries {}
 
+    pub trait JsonStringyArg {}
+    impl JsonStringyArg for Object {}
+    impl JsonStringyArg for &str {}
+
     #[derive(Debug, Default)]
     pub struct Object {}
     impl Object {
@@ -1390,6 +1643,28 @@ pub mod web {
     pub struct Console {}
     impl Console {
         pub fn log<T>(_to_log: T) {}
+    }
+
+    #[derive(Debug)]
+    pub struct SseEvent {
+        pub data: &'static str,
+    }
+
+    #[derive(Debug)]
+    pub struct SseOptions {
+        pub headers: Object,
+        pub payload: &'static str,
+    }
+
+    #[derive(Debug)]
+    pub struct Sse {}
+    impl Sse {
+        pub fn new(url: &str, options: SseOptions) -> Sse {
+            todo!()
+        }
+        pub fn add_event_listener(&self, event_name: &str, callback: impl FnMut(SseEvent)) {
+            todo!()
+        }
     }
 
     #[derive(Debug)]
