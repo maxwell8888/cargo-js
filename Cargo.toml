@@ -3,9 +3,11 @@ members = [
     "ravascript",
     "ravascript-core",
     "ravascript-macros",
+    "comprehensive-example",
+    "cli",
+    "so_example",
 ]
-
-workspace.resolver = "1"
+resolver = "2"
 
 # swc_ecma_codegen = "0.146.5"
 

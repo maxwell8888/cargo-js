@@ -1,9 +1,18 @@
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
-use std::fmt::Debug;
-use syn::{
-    BinOp, Expr, FnArg, ImplItem, Item, ItemFn, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp,
-    UseTree, Visibility,
+use std::{
+    fmt::Debug,
+    fs,
+    path::{Path, PathBuf},
 };
+use syn::{
+    BinOp, Expr, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat,
+    Stmt, Type, UnOp, UseTree, Visibility,
+};
+
+// TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
+// TODO preserve new lines so generated js is more readable
+// TODO consider how to get RA/cargo check to analyze rust inputs in `testing/`
+// TODO add assertions to output JS and run that JS to ensure assertions pass
 
 const SSE_RAW_FUNC: &str = r##" function Sse (url, options) {
     if (!(this instanceof Sse)) {
@@ -260,13 +269,12 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
         _ => false,
     };
     handle_item_use_tree(&item_use.tree, &mut exports, &mut module);
-    let second_path_is_web = if module.len() > 1 {
-        module.get(1).unwrap() == "web"
-    } else {
-        false
-    };
-    if module.get(0).unwrap() == "web" || second_path_is_web {
-        JsStmt::Expr(JsExpr::Vanish, false)
+    if module.iter().any(|seg| seg == "web") {
+        if module.iter().any(|seg| seg == "Sse") {
+            JsStmt::Raw(SSE_RAW_FUNC.to_string())
+        } else {
+            JsStmt::Expr(JsExpr::Vanish, false)
+        }
     } else if module.get(0).unwrap() == "serde" || module.get(0).unwrap() == "serde_json" {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else if module.get(0).unwrap() == "crate" {
@@ -282,9 +290,9 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
 fn handle_stmt(stmt: &Stmt) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => JsStmt::Expr(handle_expr(expr), closing_semi.is_some()),
-        Stmt::Local(local) => JsStmt::Local(JsLocal {
-            type_: LocalType::Var,
-            names: match &local.pat {
+        Stmt::Local(local) => {
+            //
+            let names = match &local.pat {
                 Pat::Ident(pat_ident) => vec![pat_ident.ident.to_string()],
                 Pat::Tuple(pat_tuple) => pat_tuple
                     .elems
@@ -298,9 +306,25 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
                     dbg!(other);
                     todo!()
                 }
-            },
-            value: handle_expr(&*local.init.as_ref().unwrap().expr),
-        }),
+            };
+            let value = handle_expr(&*local.init.as_ref().unwrap().expr);
+            match value {
+                JsExpr::If(_assignment, _declare_var, condition, succeed, fail) => {
+                    // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
+                    JsStmt::Expr(
+                        JsExpr::If(Some(names), true, condition, succeed, fail),
+                        true,
+                    )
+                }
+
+                value => JsStmt::Local(JsLocal {
+                    type_: LocalType::Var,
+                    destructure: LocalDestructure::None,
+                    names,
+                    value,
+                }),
+            }
+        }
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`
             Item::Const(_) => todo!(),
@@ -378,10 +402,88 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
     }
 }
 
+fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
+    let mut static_fields = Vec::new();
+    for variant in &item_enum.variants {
+        static_fields.push(JsLocal {
+            type_: LocalType::Static,
+            destructure: LocalDestructure::None,
+            names: vec![format!("{}Id", variant.ident.to_string())],
+            value: JsExpr::LitStr(variant.ident.to_string()),
+        })
+    }
+
+    let mut methods = Vec::new();
+    for variant in &item_enum.variants {
+        // dbg!(&variant);
+        let (input_names, body_stmts) = match &variant.fields {
+            syn::Fields::Named(_fields_named) => {
+                // for thing in fields_named.named {
+                //     let name = thing.ident.unwrap();
+                // }
+                let stmt = JsStmt::Raw(format!(
+                    r#"return {{ id: "{}", data }};"#,
+                    variant.ident.to_string()
+                ));
+                (vec!["data".to_string()], vec![stmt])
+            }
+            syn::Fields::Unnamed(fields_unnamed) => {
+                // const data = { id: "Baz" };
+                // data.data = [text, num];
+                // return data;
+                let mut stmts = Vec::new();
+                stmts.push(JsStmt::Raw(format!(
+                    r#"const data = {{ id: "{}" }};"#,
+                    variant.ident.to_string()
+                )));
+                let arg_names = fields_unnamed
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("arg_{i}"))
+                    .collect::<Vec<_>>();
+                stmts.push(JsStmt::Raw(format!(
+                    r#"data.data = [{}];"#,
+                    arg_names.join(", ")
+                )));
+                stmts.push(JsStmt::Raw("return data;".to_string()));
+                (arg_names, stmts)
+            }
+            syn::Fields::Unit => (Vec::new(), Vec::new()),
+        };
+        if body_stmts.len() > 0 {
+            methods.push((
+                item_enum.ident.to_string(),
+                false,
+                true,
+                JsFn {
+                    export: false,
+                    async_: false,
+                    is_method: true,
+                    name: variant.ident.to_string(),
+                    input_names,
+                    body_stmts,
+                },
+            ))
+        }
+    }
+    JsStmt::Class(JsClass {
+        name: item_enum.ident.to_string(),
+        inputs: Vec::new(),
+        static_fields,
+        methods,
+    })
+}
+
 fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
     match item {
-        Item::Const(_) => todo!(),
-        Item::Enum(_) => todo!(),
+        Item::Const(item_const) => js_stmts.push(JsStmt::Local(JsLocal {
+            type_: LocalType::Var,
+            destructure: LocalDestructure::None,
+            names: vec![item_const.ident.to_string()],
+            value: handle_expr(&*item_const.expr),
+        })),
+        Item::Enum(item_enum) => js_stmts.push(handle_item_enum(item_enum)),
         Item::ExternCrate(_) => todo!(),
         Item::Fn(item_fn) => js_stmts.push(handle_item_fn(&item_fn)),
         Item::ForeignMod(_) => todo!(),
@@ -396,15 +498,19 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                         // impl_item_const
                         js_stmts.push(JsStmt::ClassStatic(JsLocal {
                             type_: LocalType::Static,
+                            destructure: LocalDestructure::None,
                             names: vec![impl_item_const.ident.to_string()],
                             value: handle_expr(&impl_item_const.expr),
                         }))
                     }
                     ImplItem::Fn(item_impl_fn) => {
+                        // dbg!(item_impl_fn.sig.ident.to_string());
+                        // dbg!(item_impl_fn.sig.inputs.first().unwrap());
                         let static_ = match item_impl_fn.sig.inputs.first().unwrap() {
-                            FnArg::Receiver(_) => true,
-                            FnArg::Typed(_) => false,
+                            FnArg::Receiver(receiver) => false,
+                            FnArg::Typed(_) => true,
                         };
+                        // dbg!(static_);
                         let export = match item_impl_fn.vis {
                             Visibility::Public(_) => true,
                             Visibility::Restricted(_) => todo!(),
@@ -454,7 +560,13 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
             }
         }
         Item::Macro(_) => todo!(),
-        Item::Mod(_) => todo!(),
+        Item::Mod(item_mod) => {
+            let mut stmts = Vec::new();
+            for thing in item_mod.content.unwrap().1 {
+                handle_item(thing, &mut stmts);
+            }
+            js_stmts.push(JsStmt::ScopeBlock(stmts))
+        }
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = JsStmt::Class(JsClass {
@@ -472,7 +584,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
             });
             js_stmts.push(js_stmt);
         }
-        Item::Trait(_) => todo!(),
+        Item::Trait(_) => js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false)),
         Item::TraitAlias(_) => todo!(),
         Item::Type(_) => todo!(),
         Item::Union(_) => todo!(),
@@ -482,10 +594,26 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
     }
 }
 
-pub fn from_file(code: &str) -> Vec<JsStmt> {
-    let file = syn::parse_file(code).unwrap();
+pub fn from_file_with_main(code: &str) -> Vec<JsStmt> {
+    let mut js_stmts = from_file(code);
+    js_stmts.push(JsStmt::Expr(
+        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
+        true,
+    ));
+    js_stmts
+}
+
+pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
+    stmts.push(JsStmt::Expr(
+        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
+        true,
+    ));
+    stmts
+}
+
+pub fn js_stmts_from_syn_items(items: Vec<Item>) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
-    for item in file.items {
+    for item in items {
         // dbg!(&item);
         handle_item(item, &mut js_stmts);
     }
@@ -512,13 +640,14 @@ pub fn from_file(code: &str) -> Vec<JsStmt> {
                 }
             }
             JsStmt::Class(js_class) => {
+                // If we already have a class set for updating, add it to stmts and this class as the new class for updating
                 if let Some(my_class2) = my_class {
                     js_stmts2.push(JsStmt::Class(my_class2));
                 }
                 my_class = Some(js_class);
             }
             stmt => {
-                // We must have finished adding class methods to class so push it to stmts now
+                // We must have finished adding class methods to class so push it to stmts now. We could just rely on the same code after the for loop, but have it here as well to ensure the order of statements is maintained
                 if let Some(my_class2) = my_class {
                     js_stmts2.push(JsStmt::Class(my_class2));
                     my_class = None;
@@ -527,13 +656,29 @@ pub fn from_file(code: &str) -> Vec<JsStmt> {
             }
         }
     }
-    js_stmts2.push(JsStmt::Expr(
-        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
-        true,
-    ));
-    js_stmts2.push(JsStmt::Raw(SSE_RAW_FUNC.to_string()));
+    if let Some(my_class2) = my_class {
+        js_stmts2.push(JsStmt::Class(my_class2));
+    }
 
     js_stmts2
+}
+
+pub fn from_crate(file_path: PathBuf) -> Vec<JsStmt> {
+    let code = fs::read_to_string(file_path).unwrap();
+    let file = syn::parse_file(&code).unwrap();
+    js_stmts_from_syn_items(file.items)
+}
+
+pub fn from_module(code: &str) -> Vec<JsStmt> {
+    let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
+    let items = item_mod.content.unwrap().1;
+    // dbg!(&items);
+    js_stmts_from_syn_items(items)
+}
+
+pub fn from_file(code: &str) -> Vec<JsStmt> {
+    let file = syn::parse_file(code).unwrap();
+    js_stmts_from_syn_items(file.items)
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -547,7 +692,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
     js_stmts
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum JsOp {
     Add,
     Sub,
@@ -608,23 +753,37 @@ impl JsOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum JsExpr {
+    Assignment(Box<JsExpr>, Box<JsExpr>),
+    /// (inputs, body)
+    ArrowFn(Vec<String>, Vec<JsStmt>),
+    Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
+    /// Will only make itself disappear
+    Blank,
+    Block(Vec<JsStmt>),
+    Break,
+    /// (const/let/var, left, right)
+    /// use const for immutatble, let for mutable, var for shadowing
+    Declaration(bool, String, Box<JsExpr>),
     Null,
     LitInt(i32),
     LitStr(String),
     LitBool(bool),
     Object(Vec<(String, Box<JsExpr>)>),
-    Break,
     Return(Box<JsExpr>),
+    /// Will make the entire statement disappear no matter where it is nested?
     Vanish,
+    /// (base var name, field name)
+    Field(Box<JsExpr>, String),
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
-    /// (inputs, body)
-    ArrowFn(Vec<String>, Vec<JsStmt>),
-    /// (assignment, condition, succeed, fail)
+    /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
+    /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var
+    /// (assignment, declare_var, condition, succeed, fail)
     If(
-        Option<String>,
+        Option<Vec<String>>,
+        bool,
         Box<JsExpr>,
         Vec<JsStmt>,
         /// For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
@@ -635,25 +794,135 @@ pub enum JsExpr {
     Minus(Box<JsExpr>),
     Await(Box<JsExpr>),
     Index(Box<JsExpr>, Box<JsExpr>),
-    Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
-    /// (const/let/var, left, right)
-    /// use const for immutatble, let for mutable, var for shadowing
-    Declaration(bool, String, Box<JsExpr>),
-    Assignment(Box<JsExpr>, Box<JsExpr>),
     Var(String),
     /// like obj::inner::mynumber -> obj.inner.mynumber;
     Path(Vec<String>),
-    /// (base var name, field name)
-    Field(Box<JsExpr>, String),
     New(Vec<String>, Vec<JsExpr>),
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
     MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
     // Class(JsClass),
-    Block(Vec<JsStmt>),
     While(Box<JsExpr>, Vec<JsStmt>),
     /// (pat, expr, block)
     ForLoop(String, Box<JsExpr>, Vec<JsStmt>),
+}
+
+// Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
+fn if_expr_to_string(
+    assignment: &Option<Vec<String>>,
+    declare_var: &bool,
+    cond: &Box<JsExpr>,
+    succeed: &Vec<JsStmt>,
+    // For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
+    fail: &Option<Box<JsExpr>>,
+) -> String {
+    let fail = if let Some(fail) = fail {
+        match &**fail {
+            JsExpr::If(_, _, cond, succeed, fail) => format!(
+                " else {}",
+                JsExpr::If(
+                    assignment.clone(),
+                    false,
+                    cond.clone(),
+                    succeed.clone(),
+                    fail.clone()
+                )
+                .js_string()
+            ),
+            _ => {
+                let thing = match &**fail {
+                    JsExpr::Block(stmts) => stmts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, stmt)| {
+                            if i == stmts.len() - 1 {
+                                if let Some(assignment) = assignment {
+                                    format!(
+                                        "{} = {};",
+                                        assignment.first().unwrap(),
+                                        stmt.js_string()
+                                    )
+                                } else {
+                                    stmt.js_string()
+                                }
+                            } else {
+                                stmt.js_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => {
+                        if let Some(assignment) = assignment {
+                            format!("{} = {};", assignment.first().unwrap(), fail.js_string())
+                        } else {
+                            fail.js_string()
+                        }
+                    }
+                };
+                format!(" else {{\n{}\n}}", thing)
+            }
+        }
+    } else {
+        "".to_string()
+    };
+    let assignment_str = if let Some(names) = assignment {
+        if *declare_var {
+            let local = JsLocal {
+                type_: LocalType::Var,
+                destructure: LocalDestructure::None,
+                names: names.clone(),
+                value: JsExpr::Blank,
+            };
+            format!("{}\n", local.js_string())
+            // "jargallleee".to_string()
+        } else {
+            "".to_string()
+        }
+    } else {
+        "".to_string()
+    };
+
+    format!(
+        "{}if ({}) {{\n{}\n}}{}",
+        assignment_str,
+        cond.js_string(),
+        succeed
+            .iter()
+            .enumerate()
+            .map(|(i, stmt)| {
+                if i == succeed.len() - 1 {
+                    if let Some(assignment) = assignment {
+                        // TODO not sure how to handle `let (var1, var2) = if true { (1, 2) } else { (3, 4) };`. I think we would need to use:
+                        // `var temp;`
+                        // `if (true) { temp = [1, 2] } else { temp = [3, 4] }`
+                        // `var [var1, var2] = temp;`
+
+                        // _ => {
+                        //     if *semi {
+                        //         format!("{};", js_expr.js_string())
+                        //     } else if i == self.body_stmts.len() - 1 {
+                        //         format!("return {};", js_expr.js_string())
+                        //     } else {
+                        //         js_expr.js_string()
+                        //     }
+                        // }
+
+                        format!(
+                            "{} = {};",
+                            AsLowerCamelCase(assignment.first().unwrap()),
+                            stmt.js_string()
+                        )
+                    } else {
+                        stmt.js_string()
+                    }
+                } else {
+                    stmt.js_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        fail
+    )
 }
 impl JsExpr {
     fn js_string(&self) -> String {
@@ -672,6 +941,7 @@ impl JsExpr {
                 )
             }
             JsExpr::Vanish => String::new(),
+            JsExpr::Blank => String::new(),
             JsExpr::FnCall(func, args) => format!(
                 "{}({})",
                 func.js_string(),
@@ -696,7 +966,7 @@ impl JsExpr {
                                 panic!()
                             } else {
                                 match js_expr {
-                                    JsExpr::If(_, _, _, _) => {
+                                    JsExpr::If(_, _, _, _, _) => {
                                         format!("{{\n{}\n}}", js_expr.js_string())
                                     }
                                     _ => js_expr.js_string(),
@@ -709,6 +979,7 @@ impl JsExpr {
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
                         JsStmt::ClassStatic(_) => todo!(),
                         JsStmt::Raw(_) => todo!(),
+                        JsStmt::ScopeBlock(_) => todo!(),
                     }
                 } else {
                     format!(
@@ -776,26 +1047,8 @@ impl JsExpr {
                     .collect::<Vec<_>>()
                     .join("\n")
             ),
-            JsExpr::If(_, cond, succeed, fail) => {
-                let fail = if let Some(fail) = fail {
-                    match **fail {
-                        JsExpr::If(_, _, _, _) => format!(" else {}", fail.js_string()),
-                        JsExpr::Block(_) => format!(" else {{\n{}\n}}", fail.js_string()),
-                        _ => todo!(),
-                    }
-                } else {
-                    "".to_string()
-                };
-                format!(
-                    "if ({}) {{\n{}\n}}{}",
-                    cond.js_string(),
-                    succeed
-                        .iter()
-                        .map(|stmt| stmt.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    fail
-                )
+            JsExpr::If(assignment, declare_var, cond, succeed, fail) => {
+                if_expr_to_string(assignment, declare_var, cond, succeed, fail)
             }
             JsExpr::Declaration(_, name, expr) => format!("var {name} = {}", expr.js_string()),
             JsExpr::Break => "break".to_string(),
@@ -814,7 +1067,7 @@ impl JsExpr {
 }
 
 // ::new()/Constructor must assign all fields of class
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct JsClass {
     name: String,
     /// we are assuming input names is equivalent to field names
@@ -826,63 +1079,89 @@ pub struct JsClass {
     methods: Vec<(String, bool, bool, JsFn)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LocalType {
     Var,
     Const,
     Let,
     Static,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+pub enum LocalDestructure {
+    None,
+    Object,
+    Array,
+}
+#[derive(Clone, Debug)]
 pub struct JsLocal {
     type_: LocalType,
+    destructure: LocalDestructure,
     names: Vec<String>,
     value: JsExpr,
 }
 impl JsLocal {
     fn js_string(&self) -> String {
+        let original_name = self.names.get(0).unwrap().clone();
+        let underscore_prefix = original_name.starts_with("_");
+        let name = if self.names.len() == 1 {
+            if underscore_prefix {
+                format!("_{}", AsLowerCamelCase(original_name).to_string())
+            } else {
+                AsLowerCamelCase(original_name).to_string()
+            }
+        } else {
+            match self.destructure {
+                LocalDestructure::None => todo!(),
+                LocalDestructure::Object => format!(
+                    "{{ {} }}",
+                    self.names
+                        .iter()
+                        .map(|name| {
+                            let underscore_prefix = name.starts_with("_");
+                            if underscore_prefix {
+                                format!("_{}", AsLowerCamelCase(name).to_string())
+                            } else {
+                                AsLowerCamelCase(name).to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                LocalDestructure::Array => format!(
+                    "[ {} ]",
+                    self.names
+                        .iter()
+                        .map(|name| {
+                            let underscore_prefix = name.starts_with("_");
+                            if underscore_prefix {
+                                format!("_{}", AsLowerCamelCase(name).to_string())
+                            } else {
+                                AsLowerCamelCase(name).to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
+        };
+        let var_type = match self.type_ {
+            LocalType::Var => "var",
+            LocalType::Const => "const",
+            LocalType::Let => "let",
+            LocalType::Static => "static",
+        };
+
         // check if there is any shadowing in scope and use var instead
         match &self.value {
+            // TODO what if we want to declare a null var like `var myvar;` eg prior to if statement
             JsExpr::Vanish => String::new(),
-            value_js_expr => {
-                let original_name = self.names.get(0).unwrap().clone();
-                let underscore_prefix = original_name.starts_with("_");
-                let name = if self.names.len() == 1 {
-                    if underscore_prefix {
-                        format!("_{}", AsLowerCamelCase(original_name).to_string())
-                    } else {
-                        AsLowerCamelCase(original_name).to_string()
-                    }
-                } else {
-                    format!(
-                        "[{}]",
-                        self.names
-                            .iter()
-                            .map(|name| {
-                                let underscore_prefix = name.starts_with("_");
-                                if underscore_prefix {
-                                    format!("_{}", AsLowerCamelCase(name).to_string())
-                                } else {
-                                    AsLowerCamelCase(name).to_string()
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
-                let var_type = match self.type_ {
-                    LocalType::Var => "var",
-                    LocalType::Const => "const",
-                    LocalType::Let => "let",
-                    LocalType::Static => "static",
-                };
-                format!("{var_type} {name} = {};", value_js_expr.js_string())
-            }
+            JsExpr::Blank => format!("{var_type} {name};"),
+            value_js_expr => format!("{var_type} {name} = {};", value_js_expr.js_string()),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct JsFn {
     export: bool,
     async_: bool,
@@ -893,9 +1172,15 @@ pub struct JsFn {
 }
 impl JsFn {
     fn js_string(&self) -> String {
+        // dbg!(self);
+        // TODO private fields and methods should be prepended with `#` like `#private_method() {}` but this would require also prepending all callsites of the the field or method, which requires more sophisticated AST analysis than we currently want to do.
         format!(
             "{}{}{}{}({}) {{\n{}\n}}",
-            if self.export { "export default " } else { "" },
+            if self.export && !self.is_method {
+                "export default "
+            } else {
+                ""
+            },
             if self.async_ { "async " } else { "" },
             if self.is_method { "" } else { "function " },
             self.name,
@@ -907,7 +1192,7 @@ impl JsFn {
                     match stmt {
                         JsStmt::Local(js_local) => js_local.js_string(),
                         JsStmt::Expr(js_expr, semi) => match js_expr {
-                            JsExpr::If(_, _, _, _) => js_expr.js_string(),
+                            JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
                             JsExpr::Block(_) => js_expr.js_string(),
                             JsExpr::While(_, _) => js_expr.js_string(),
                             JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
@@ -926,7 +1211,12 @@ impl JsFn {
                         JsStmt::Class(_) => todo!(),
                         JsStmt::ClassMethod(_, _, _, _) => todo!(),
                         JsStmt::ClassStatic(_) => todo!(),
-                        JsStmt::Raw(_) => todo!(),
+                        JsStmt::Raw(text) => text.clone(),
+                        JsStmt::ScopeBlock(stmts) => stmts
+                            .iter()
+                            .map(|stmt| stmt.js_string())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -936,7 +1226,7 @@ impl JsFn {
 }
 
 // pub struct JsImportPath {}
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum JsStmt {
     Class(JsClass),
     /// This means that `foo() {}` will be used in place of `function foo() {}`  
@@ -952,6 +1242,7 @@ pub enum JsStmt {
     /// (default export name, names of the exports to be imported, module path)
     Import(Option<String>, Vec<String>, Vec<String>),
     Function(JsFn),
+    ScopeBlock(Vec<JsStmt>),
     Raw(String),
 }
 
@@ -1031,9 +1322,8 @@ impl JsStmt {
                         .methods
                         .iter()
                         .map(|method| format!(
-                            "{}",
-                            // "{}{}",
-                            // if method.2 { "static " } else { "" },
+                            "{}{}",
+                            if method.2 { "static " } else { "" },
                             method.3.js_string()
                         ))
                         .collect::<Vec<_>>()
@@ -1043,6 +1333,16 @@ impl JsStmt {
             JsStmt::ClassMethod(_, _, _, _) => todo!(),
             JsStmt::ClassStatic(_) => todo!(),
             JsStmt::Raw(raw_js) => raw_js.clone(),
+            JsStmt::ScopeBlock(stmts) => {
+                format!(
+                    "{{\n{}\n}}",
+                    stmts
+                        .iter()
+                        .map(|s| s.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
         }
     }
 }
@@ -1169,6 +1469,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
         Expr::Group(_) => todo!(),
         Expr::If(expr_if) => JsExpr::If(
             None,
+            false,
             Box::new(handle_expr(&*expr_if.cond)),
             expr_if
                 .then_branch
@@ -1211,7 +1512,140 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 .collect::<Vec<_>>(),
         ),
         Expr::Macro(_) => todo!(),
-        Expr::Match(_) => todo!(),
+        Expr::Match(expr_match) => {
+            // (assignment, condition, succeed, fail)
+            // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
+            let if_expr = expr_match.arms.iter().rev().fold(
+                JsExpr::LitStr("this shouldn't exist".to_string()),
+                |acc, arm| {
+                    let (mut rhs, mut body_data_destructure) = match &arm.pat {
+                        Pat::Const(_) => todo!(),
+                        Pat::Ident(_) => todo!(),
+                        Pat::Lit(_) => todo!(),
+                        Pat::Macro(_) => todo!(),
+                        Pat::Or(_) => todo!(),
+                        Pat::Paren(_) => todo!(),
+                        Pat::Path(pat_path) => {
+                            let empty_vec: Vec<JsStmt> = Vec::new();
+                            (
+                                pat_path
+                                    .path
+                                    .segments
+                                    .iter()
+                                    .map(|seg| seg.ident.to_string())
+                                    .collect::<Vec<_>>(),
+                                empty_vec,
+                            )
+                        }
+
+                        Pat::Range(_) => todo!(),
+                        Pat::Reference(_) => todo!(),
+                        Pat::Rest(_) => todo!(),
+                        Pat::Slice(_) => todo!(),
+                        Pat::Struct(pat_struct) => {
+                            let names = pat_struct
+                                .fields
+                                .iter()
+                                .map(|field| match &field.member {
+                                    Member::Named(ident) => ident.to_string(),
+                                    Member::Unnamed(_) => todo!(),
+                                })
+                                .collect::<Vec<_>>();
+                            let stmt = JsStmt::Local(JsLocal {
+                                type_: LocalType::Var,
+                                destructure: LocalDestructure::Object,
+                                names,
+                                value: JsExpr::Field(
+                                    Box::new(handle_expr(&*expr_match.expr)),
+                                    "data".to_string(),
+                                ),
+                            });
+                            let rhs = pat_struct
+                                .path
+                                .segments
+                                .iter()
+                                .map(|seg| seg.ident.to_string())
+                                .collect::<Vec<_>>();
+                            (rhs, vec![stmt])
+                        }
+                        Pat::Tuple(_) => todo!(),
+                        Pat::TupleStruct(pat_tuple_struct) => {
+                            let names = pat_tuple_struct
+                                .elems
+                                .iter()
+                                .map(|elem| match elem {
+                                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                    _ => todo!(),
+                                })
+                                .collect::<Vec<_>>();
+                            let stmt = JsStmt::Local(JsLocal {
+                                type_: LocalType::Var,
+                                destructure: LocalDestructure::Array,
+                                names,
+                                value: JsExpr::Field(
+                                    Box::new(handle_expr(&*expr_match.expr)),
+                                    "data".to_string(),
+                                ),
+                            });
+                            (
+                                pat_tuple_struct
+                                    .path
+                                    .segments
+                                    .iter()
+                                    .map(|seg| seg.ident.to_string())
+                                    .collect::<Vec<_>>(),
+                                vec![stmt],
+                            )
+                        }
+                        Pat::Type(_) => todo!(),
+                        Pat::Verbatim(_) => todo!(),
+                        Pat::Wild(_) => todo!(),
+                        _ => todo!(),
+                    };
+
+                    // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
+                    let index = rhs.len() - 1;
+                    rhs[index] = format!("{}Id", AsLowerCamelCase(rhs[index].clone()).to_string());
+
+                    let body = match &*arm.body {
+                        // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
+                        Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
+                        Expr::Block(expr_block) => expr_block
+                            .block
+                            .stmts
+                            .iter()
+                            .map(|stmt| handle_stmt(stmt))
+                            .collect::<Vec<_>>(),
+                        other_expr => {
+                            vec![JsStmt::Expr(handle_expr(other_expr), false)]
+                        }
+                    };
+                    body_data_destructure.extend(body.into_iter());
+                    let body = body_data_destructure;
+
+                    JsExpr::If(
+                        None,
+                        false,
+                        Box::new(JsExpr::Binary(
+                            Box::new(JsExpr::Field(
+                                Box::new(handle_expr(&*expr_match.expr)),
+                                "id".to_string(),
+                            )),
+                            JsOp::Eq,
+                            Box::new(JsExpr::Path(rhs)),
+                        )),
+                        body,
+                        // TODO
+                        Some(Box::new(acc)),
+                    )
+                },
+            );
+            // for arm in &expr_match.arms {
+            //     dbg!(arm);
+            // }
+            // todo!()
+            if_expr
+        }
         Expr::MethodCall(expr_method_call) => {
             let mut method_name = expr_method_call.method.to_string();
             let receiver = handle_expr(&*expr_method_call.receiver);
@@ -1485,7 +1919,7 @@ pub mod web {
     pub struct ObjectEntries {}
     impl Entries for ObjectEntries {}
 
-    #[derive(Debug, Default)]
+    #[derive(Clone, Copy, Debug, Default)]
     pub struct Headers {}
     impl Headers {
         pub fn new() -> Headers {
@@ -1513,11 +1947,68 @@ pub mod web {
         }
     }
 
-    pub struct FetchOptions {
-        pub method: Method,
-        pub headers: Headers,
-        pub body: Json,
+    // https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#body
+    pub struct FetchBodyStruct {}
+    pub trait FetchBody {}
+    impl FetchBody for &str {}
+    // impl FetchBody for FetchBodyStruct {}
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct FetchOptions<B: FetchBody + 'static> {
+        method: Option<Method>,
+        headers: Option<Headers>,
+        body: Option<B>,
     }
+    impl<B: FetchBody + 'static> FetchOptions<B> {
+        pub fn new() -> FetchOptions<B> {
+            FetchOptions {
+                method: None,
+                headers: None,
+                body: None,
+            }
+        }
+        pub fn method(mut self, method: Method) -> FetchOptions<B> {
+            self.method = Some(method);
+            self
+        }
+        pub fn headers(mut self, headers: Headers) -> FetchOptions<B> {
+            self.headers = Some(headers);
+            self
+        }
+        pub fn body(mut self, body: B) -> FetchOptions<B> {
+            self.body = Some(body);
+            self
+        }
+    }
+
+    // pub trait FetchBody {}
+    // impl FetchBody for &str {}
+    // // impl FetchBody for FetchBodyStruct {}
+
+    // pub struct FetchOptions {
+    //     pub body: &'static dyn FetchBody,
+    // }
+    // impl FetchOptions {
+    //     pub fn body(mut self, body: impl 'static + FetchBody) -> FetchOptions {
+    //         self.body = &body;
+    //         self
+    //     }
+    // }
+
+    // pub trait FetchBody {}
+    // impl FetchBody for &str {}
+    // // impl FetchBody for FetchBodyStruct {}
+
+    // pub struct FetchOptions<B: FetchBody + 'static> {
+    //     pub body: B,
+    // }
+
+    // impl<B: FetchBody + 'static> FetchOptions<B> {
+    //     pub fn body(mut self, body: B) -> FetchOptions<B> {
+    //         self.body = body;
+    //         self
+    //     }
+    // }
 
     #[derive(Clone, Copy, Debug)]
     pub struct Url {}
@@ -1549,8 +2040,17 @@ pub mod web {
     pub async fn fetch(_path: &str) -> Response {
         Response::default()
     }
+
+    // Could use macro rules to allow writing a json like object, but the fields are checked by the macro, and it gets transpiled to an actual object, but we loose the discoverability of methods. I think we can simply make the transpiler smart enough to convert a builder pattern -> setting fields on empty object -> defining object inline. It can do this automatically for built in structs, but might be easier to require anotating the struct with an attribute for user structs?
+    // macro_rules! fetch_options {
+    //     ($field_name:ident) => {};
+    // }
+
     // pub async fn fetch2(_form_action: Url, _options: FetchOptions) -> Response {
-    pub async fn fetch2(_path: &str, _options: FetchOptions) -> Response {
+    pub async fn fetch2<B: FetchBody + 'static>(
+        _path: &str,
+        _options: FetchOptions<B>,
+    ) -> Response {
         Response::default()
     }
 
@@ -1643,6 +2143,9 @@ pub mod web {
     pub struct Console {}
     impl Console {
         pub fn log<T>(_to_log: T) {}
+        pub fn assert(assertion: bool) {
+            assert!(assertion);
+        }
     }
 
     #[derive(Debug)]
