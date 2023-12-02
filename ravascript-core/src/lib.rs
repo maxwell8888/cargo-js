@@ -853,7 +853,11 @@ fn if_expr_to_string(
                         .join("\n"),
                     _ => {
                         if let Some(assignment) = assignment {
-                            format!("{} = {};", assignment.first().unwrap(), fail.js_string())
+                            format!(
+                                "{} = {};",
+                                AsLowerCamelCase(assignment.first().unwrap()),
+                                fail.js_string()
+                            )
                         } else {
                             fail.js_string()
                         }

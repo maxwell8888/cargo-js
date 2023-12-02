@@ -6,12 +6,12 @@ class MyEnum {
     static Bar(data) {
         return {
             id: "Bar",
-            data,
+            data
         };
     }
     static Baz(arg_0, arg_1) {
         const data = {
-            id: "Baz",
+            id: "Baz"
         };
         data.data = [arg_0, arg_1];
         return data;
@@ -22,7 +22,7 @@ function main() {
     var myData = MyEnum.Baz("Hi", 5);
     var matchResult;
     if (myData.id === MyEnum.fooId) {
-        match_result = 1;
+        matchResult = 1;
     } else if (myData.id === MyEnum.barId) {
         var { 
           x,
@@ -30,15 +30,15 @@ function main() {
         } = myData.data;
         console.log(x);
         console.log(y);
-        match_result = x;
+        matchResult = x;
     } else if (myData.id === MyEnum.bazId) {
         var [text,
         num] = myData.data;
         console.log(text);
         console.log(num);
-        match_result = num;
+        matchResult = num;
     } else {
-        match_result = "this shouldn't exist";
+        matchResult = "this shouldn't exist";
     }
     return matchResult === 5;
 }
