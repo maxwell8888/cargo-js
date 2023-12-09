@@ -6,14 +6,14 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use prettify_js::prettyprint;
-    use ravascript_macros::{item_as_str, module_as_str};
+    use ravascript_macros::{fn_as_str, module_as_str};
     // use crate::testing;
 
     use super::*;
 
     #[test]
     fn it_transpiles_local_variables() {
-        #[item_as_str]
+        #[fn_as_str]
         fn the_rust() {
             let myvar = 5;
         }

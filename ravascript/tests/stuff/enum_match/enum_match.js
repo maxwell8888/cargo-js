@@ -1,6 +1,9 @@
 class MyEnum {
     constructor() {}
-    static fooId = "Foo";
+    static fooBarId = "FooBar";
+    static FooBar = {
+        id: "FooBar"
+    };
     static barId = "Bar";
     static bazId = "Baz";
     static Bar(data) {
@@ -18,10 +21,10 @@ class MyEnum {
     }
 }
 function main() {
-    var myData = MyEnum.Foo;
+    var myData = MyEnum.FooBar;
     var myData = MyEnum.Baz("Hi", 5);
     var matchResult;
-    if (myData.id === MyEnum.fooId) {
+    if (myData.id === MyEnum.fooBarId) {
         matchResult = 1;
     } else if (myData.id === MyEnum.barId) {
         var { 

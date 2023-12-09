@@ -293,12 +293,16 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
         Stmt::Local(local) => {
             //
             let names = match &local.pat {
-                Pat::Ident(pat_ident) => vec![pat_ident.ident.to_string()],
+                Pat::Ident(pat_ident) => {
+                    vec![AsLowerCamelCase(pat_ident.ident.to_string()).to_string()]
+                }
                 Pat::Tuple(pat_tuple) => pat_tuple
                     .elems
                     .iter()
                     .map(|elem| match elem {
-                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                        Pat::Ident(pat_ident) => {
+                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
+                        }
                         _ => todo!(),
                     })
                     .collect::<Vec<_>>(),
@@ -328,7 +332,7 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`
             Item::Const(_) => todo!(),
-            Item::Enum(_) => todo!(),
+            Item::Enum(item_enum) => handle_item_enum(item_enum.clone()),
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => handle_item_fn(item_fn),
             Item::ForeignMod(_) => todo!(),
@@ -402,15 +406,38 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
     }
 }
 
+/// We convert enum variants like Foo::Bar to Foo.bar because otherwise when the variant has arguments, syn is not able to distinguish it from an associated method, so we cannot deduce when Pascal or Camel case should be used, so stick to Pascal for both case.
+/// We must store separate <variant name>Id fields because otherwise we end up in a situation where a variable containing an enum variant only contains the data returned the the method with that name and then we can't do myVariantVar === MyEnum::Variant because the lhs is data and the rhs is a function.
 fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
     let mut static_fields = Vec::new();
     for variant in &item_enum.variants {
         static_fields.push(JsLocal {
             type_: LocalType::Static,
             destructure: LocalDestructure::None,
-            names: vec![format!("{}Id", variant.ident.to_string())],
+            names: vec![format!(
+                "{}Id",
+                AsLowerCamelCase(variant.ident.to_string()).to_string()
+            )],
             value: JsExpr::LitStr(variant.ident.to_string()),
-        })
+        });
+        match variant.fields {
+            syn::Fields::Named(_) => {}
+            syn::Fields::Unnamed(_) => {}
+            syn::Fields::Unit => {
+                static_fields.push(JsLocal {
+                    type_: LocalType::Static,
+                    destructure: LocalDestructure::None,
+                    names: vec![format!(
+                        "{}",
+                        AsPascalCase(variant.ident.to_string()).to_string()
+                    )],
+                    value: JsExpr::Object(vec![(
+                        "id".to_string(),
+                        Box::new(JsExpr::LitStr(variant.ident.to_string())),
+                    )]),
+                });
+            }
+        };
     }
 
     let mut methods = Vec::new();
@@ -1109,9 +1136,9 @@ impl JsLocal {
         let underscore_prefix = original_name.starts_with("_");
         let name = if self.names.len() == 1 {
             if underscore_prefix {
-                format!("_{}", AsLowerCamelCase(original_name).to_string())
+                format!("_{}", original_name)
             } else {
-                AsLowerCamelCase(original_name).to_string()
+                original_name
             }
         } else {
             match self.destructure {
@@ -1123,9 +1150,9 @@ impl JsLocal {
                         .map(|name| {
                             let underscore_prefix = name.starts_with("_");
                             if underscore_prefix {
-                                format!("_{}", AsLowerCamelCase(name).to_string())
+                                format!("_{}", name)
                             } else {
-                                AsLowerCamelCase(name).to_string()
+                                name.clone()
                             }
                         })
                         .collect::<Vec<_>>()
@@ -1138,9 +1165,9 @@ impl JsLocal {
                         .map(|name| {
                             let underscore_prefix = name.starts_with("_");
                             if underscore_prefix {
-                                format!("_{}", AsLowerCamelCase(name).to_string())
+                                format!("_{}", name)
                             } else {
-                                AsLowerCamelCase(name).to_string()
+                                name.clone()
                             }
                         })
                         .collect::<Vec<_>>()

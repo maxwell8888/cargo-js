@@ -20,6 +20,7 @@ ravascript-core = { path = "../ravascript-core" }
 
 [dev-dependencies]
 # chromiumoxide = { version = "0.5.6", features = ["tokio-runtime"], default-features = false }
+anyhow = "1.0.75"
 chromiumoxide = { version = "0.5.6" }
 futures = "0.3.29"
 prettify-js = "0.1.0"

@@ -26,7 +26,7 @@ pub fn include_ravascript(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn item_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn fn_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemFn = parse_macro_input!(item as ItemFn);
     let fn_name = &ast.sig.ident;
     // let fn_body = &ast.block;
