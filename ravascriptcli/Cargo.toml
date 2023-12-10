@@ -1,11 +1,16 @@
 [package]
-name = "cli"
+name = "ravascriptcli"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ravascript = { path = "../ravascript" }
+axum = "0.7.2"
+axum-extra = "0.9.0"
 clap = { version = "4.4.10", features = ["derive"] }
+ravascript = { path = "../ravascript" }
 prettify-js = "0.1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -250,7 +250,7 @@ fn handle_item_use_tree(use_tree: &UseTree, exports: &mut Vec<String>, module: &
         }
         UseTree::Name(use_name) => exports.push(use_name.ident.to_string()),
         UseTree::Rename(_) => todo!(),
-        UseTree::Glob(_) => todo!(),
+        UseTree::Glob(_use_glob) => exports.push("*".to_string()),
         UseTree::Group(use_group) => use_group.items.iter().for_each(|item| match item {
             UseTree::Path(_) => todo!(),
             UseTree::Name(use_name) => exports.push(use_name.ident.to_string()),
@@ -340,7 +340,8 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             Item::Macro(_) => todo!(),
             Item::Mod(_) => todo!(),
             Item::Static(_) => todo!(),
-            Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
+            // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
+            Item::Struct(_) => todo!(),
             Item::Trait(_) => todo!(),
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -442,7 +443,6 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
 
     let mut methods = Vec::new();
     for variant in &item_enum.variants {
-        // dbg!(&variant);
         let (input_names, body_stmts) = match &variant.fields {
             syn::Fields::Named(_fields_named) => {
                 // for thing in fields_named.named {
@@ -531,13 +531,14 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                         }))
                     }
                     ImplItem::Fn(item_impl_fn) => {
-                        // dbg!(item_impl_fn.sig.ident.to_string());
-                        // dbg!(item_impl_fn.sig.inputs.first().unwrap());
-                        let static_ = match item_impl_fn.sig.inputs.first().unwrap() {
-                            FnArg::Receiver(receiver) => false,
-                            FnArg::Typed(_) => true,
+                        let static_ = if let Some(first_input) = item_impl_fn.sig.inputs.first() {
+                            match first_input {
+                                FnArg::Receiver(receiver) => false,
+                                FnArg::Typed(_) => true,
+                            }
+                        } else {
+                            true
                         };
-                        // dbg!(static_);
                         let export = match item_impl_fn.vis {
                             Visibility::Public(_) => true,
                             Visibility::Restricted(_) => todo!(),
@@ -602,7 +603,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                     .fields
                     .into_iter()
                     .map(|field| match field.ident {
-                        Some(ident) => ident.to_string(),
+                        Some(ident) => AsLowerCamelCase(ident.to_string()).to_string(),
                         None => todo!(),
                     })
                     .collect::<Vec<_>>(),
@@ -641,7 +642,6 @@ pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
 pub fn js_stmts_from_syn_items(items: Vec<Item>) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
     for item in items {
-        // dbg!(&item);
         handle_item(item, &mut js_stmts);
     }
 
@@ -659,9 +659,10 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>) -> Vec<JsStmt> {
             }
             JsStmt::ClassMethod(name, private, static_, js_fn) => {
                 if let Some(ref mut my_class) = my_class {
-                    if js_fn.name != "new" {
-                        my_class.methods.push((name, private, static_, js_fn));
-                    }
+                    // if js_fn.name != "new" {
+                    //     my_class.methods.push((name, private, static_, js_fn));
+                    // }
+                    my_class.methods.push((name, private, static_, js_fn));
                 } else {
                     panic!()
                 }
@@ -699,7 +700,6 @@ pub fn from_crate(file_path: PathBuf) -> Vec<JsStmt> {
 pub fn from_module(code: &str) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    // dbg!(&items);
     js_stmts_from_syn_items(items)
 }
 
@@ -1205,6 +1205,41 @@ impl JsFn {
     fn js_string(&self) -> String {
         // dbg!(self);
         // TODO private fields and methods should be prepended with `#` like `#private_method() {}` but this would require also prepending all callsites of the the field or method, which requires more sophisticated AST analysis than we currently want to do.
+        let body_stmts = self
+            .body_stmts
+            .iter()
+            .enumerate()
+            .map(|(i, stmt)| match stmt {
+                JsStmt::Local(js_local) => js_local.js_string(),
+                JsStmt::Expr(js_expr, semi) => match js_expr {
+                    JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
+                    JsExpr::Block(_) => js_expr.js_string(),
+                    JsExpr::While(_, _) => js_expr.js_string(),
+                    JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
+                    _ => {
+                        if *semi {
+                            format!("{};", js_expr.js_string())
+                        } else if i == self.body_stmts.len() - 1 {
+                            format!("return {};", js_expr.js_string())
+                        } else {
+                            js_expr.js_string()
+                        }
+                    }
+                },
+                JsStmt::Import(_, _, _) => todo!(),
+                JsStmt::Function(js_fn) => js_fn.js_string(),
+                JsStmt::Class(_) => todo!(),
+                JsStmt::ClassMethod(_, _, _, _) => todo!(),
+                JsStmt::ClassStatic(_) => todo!(),
+                JsStmt::Raw(text) => text.clone(),
+                JsStmt::ScopeBlock(stmts) => stmts
+                    .iter()
+                    .map(|stmt| stmt.js_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         format!(
             "{}{}{}{}({}) {{\n{}\n}}",
             if self.export && !self.is_method {
@@ -1216,42 +1251,7 @@ impl JsFn {
             if self.is_method { "" } else { "function " },
             self.name,
             self.input_names.join(", "),
-            self.body_stmts
-                .iter()
-                .enumerate()
-                .map(|(i, stmt)| {
-                    match stmt {
-                        JsStmt::Local(js_local) => js_local.js_string(),
-                        JsStmt::Expr(js_expr, semi) => match js_expr {
-                            JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
-                            JsExpr::Block(_) => js_expr.js_string(),
-                            JsExpr::While(_, _) => js_expr.js_string(),
-                            JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
-                            _ => {
-                                if *semi {
-                                    format!("{};", js_expr.js_string())
-                                } else if i == self.body_stmts.len() - 1 {
-                                    format!("return {};", js_expr.js_string())
-                                } else {
-                                    js_expr.js_string()
-                                }
-                            }
-                        },
-                        JsStmt::Import(_, _, _) => todo!(),
-                        JsStmt::Function(js_fn) => js_fn.js_string(),
-                        JsStmt::Class(_) => todo!(),
-                        JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                        JsStmt::ClassStatic(_) => todo!(),
-                        JsStmt::Raw(text) => text.clone(),
-                        JsStmt::ScopeBlock(stmts) => stmts
-                            .iter()
-                            .map(|stmt| stmt.js_string())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
+            body_stmts
         )
     }
 }
@@ -1414,21 +1414,21 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     // TODO improve this code
                     JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args)
                 }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
-                {
-                    // TODO improve this code
-                    JsExpr::New(
-                        expr_path
-                            .path
-                            .segments
-                            .iter()
-                            .take(expr_path.path.segments.len() - 1)
-                            .map(|seg| seg.ident.to_string())
-                            .collect::<Vec<_>>(),
-                        args,
-                    )
-                }
+                // Expr::Path(expr_path)
+                //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
+                // {
+                //     // TODO improve this code
+                //     JsExpr::New(
+                //         expr_path
+                //             .path
+                //             .segments
+                //             .iter()
+                //             .take(expr_path.path.segments.len() - 1)
+                //             .map(|seg| seg.ident.to_string())
+                //             .collect::<Vec<_>>(),
+                //         args,
+                //     )
+                // }
                 Expr::Path(expr_path)
                     if expr_path.path.segments.last().unwrap().ident.to_string() == "stringify" =>
                 {
@@ -1443,7 +1443,6 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 _ => JsExpr::FnCall(Box::new(handle_expr(&*expr_call.func)), args),
             }
         }
-
         Expr::Cast(_) => todo!(),
         Expr::Closure(expr_closure) => JsExpr::ArrowFn(
             expr_closure
@@ -1687,8 +1686,14 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             if method_name == "is_some" {
                 return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
             }
-            if method_name == "slice1" || method_name == "slice2" {
-                method_name = "slice".to_string();
+            // if method_name == "slice1" || method_name == "slice2" {
+            //     method_name = "slice".to_string();
+            // }
+            if let Some(last_char) = method_name.chars().last() {
+                if last_char.is_digit(10) {
+                    method_name.pop().unwrap();
+                    // method_name = method_name[..method_name.len() - 1].to_string();
+                }
             }
             if method_name == "add_event_listener_async" {
                 method_name = "add_event_listener".to_string();
@@ -1723,6 +1728,11 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     if var_name == "Console" {
                         var_name = "console".to_string();
                     }
+                    if let Some(last_char) = var_name.chars().last() {
+                        if last_char.is_digit(10) {
+                            var_name.pop().unwrap();
+                        }
+                    }
                     if var_name.chars().all(|c| c.is_uppercase() || c == '_') {
                         AsLowerCamelCase(var_name).to_string()
                     } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
@@ -1745,26 +1755,45 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             }
         }
         Expr::Struct(expr_struct) => {
-            let struct_name = expr_struct.path.segments.first().unwrap().ident.to_string();
-            if struct_name == "FetchOptions" || struct_name == "SseOptions" {
-                JsExpr::Object(
-                    expr_struct
+            let segs = expr_struct
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            let obj = JsExpr::Object(
+                expr_struct
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        (
+                            match &field.member {
+                                Member::Named(ident) => ident.to_string(),
+                                Member::Unnamed(_) => todo!(),
+                            },
+                            Box::new(handle_expr(&field.expr)),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            if segs.len() == 2 {
+                JsExpr::FnCall(Box::new(JsExpr::Path(segs)), vec![obj])
+            } else {
+                let struct_name = segs.first().unwrap().clone();
+                if struct_name == "FetchOptions" || struct_name == "SseOptions" {
+                    obj
+                } else {
+                    // TODO we are assuming all other struct literals are inside ::new() so can be disappeared because the JsClass will write the constructor body
+                    // JsExpr::Vanish
+                    // TODO Expr structs can be instaniating an object but also instantiating an enum Variant with struct args. For now assume all Paths with len == 2 are enum variants and everthing else is a struct instaniation. Need an improved AST.
+                    let args = expr_struct
                         .fields
                         .iter()
-                        .map(|field| {
-                            (
-                                match &field.member {
-                                    Member::Named(ident) => ident.to_string(),
-                                    Member::Unnamed(_) => todo!(),
-                                },
-                                Box::new(handle_expr(&field.expr)),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                // TODO we are assuming all other struct literals are inside ::new() so can be disappeared because the JsClass will write the constructor body
-                JsExpr::Vanish
+                        .map(|field| handle_expr(&field.expr))
+                        .collect::<Vec<_>>();
+
+                    JsExpr::New(vec![struct_name], args)
+                }
             }
         }
         Expr::Try(_) => todo!(),
@@ -2093,7 +2122,7 @@ pub mod web {
         }
     }
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, Default)]
     pub struct DomNode {
         pub text_content: &'static str,
         pub class_list: ClassList,
@@ -2103,10 +2132,11 @@ pub mod web {
         // pub action: Action,
         // pub action: Url,
         pub action: &'static str,
-        pub parent_element: &'static DomNode,
+        pub parent_element: Option<&'static DomNode>,
     }
     impl DomNode {
         pub fn append_child(&self, _child: DomNode) {}
+        pub fn append_child2<T: DomNodeTrait>(&self, _child: T) {}
         pub fn set_attribute(&self, _attr_name: &str, _attr_val: &str) {}
         pub fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
         pub fn add_event_listener_async<F>(&self, _action: &str, _callback: fn(Event) -> F)
@@ -2116,6 +2146,7 @@ pub mod web {
         }
         pub fn before(&self, _node: DomNode) {}
     }
+    impl DomNodeTrait for DomNode {}
 
     #[derive(Debug, Default)]
     pub struct FormDataEntries {}
@@ -2201,26 +2232,44 @@ pub mod web {
         }
     }
 
-    #[derive(Debug)]
+    pub trait Element {
+        fn append_child<T: DomNodeTrait>(&self, child: T);
+        // fn append_child(&self, child: DomNode);
+        fn get_self() -> Self;
+    }
+    pub trait DomNodeTrait {}
+    pub struct Body {}
+
+    impl Element for Body {
+        fn append_child<T: DomNodeTrait>(&self, child: T) {}
+        // fn append_child(&self, child: DomNode) {}
+        fn get_self() -> Self {
+            Body {}
+        }
+    }
+
+    #[derive(Debug, Default)]
     pub struct Document {
         pub body: DomNode,
     }
     impl Document {
         pub fn query_selector(_selector: &str) -> DomNode {
-            // DomNode::default()
-            todo!()
+            DomNode::default()
+        }
+        pub fn query_selector2<T: Element>(_selector: &str) -> T {
+            T::get_self()
         }
         pub fn get_element_by_id(_id: &str) -> DomNode {
-            // DomNode::default()
-            todo!()
+            DomNode::default()
         }
         pub fn create_element(_tag: &str) -> DomNode {
-            // DomNode::default()
-            todo!()
+            DomNode::default()
+        }
+        pub fn create_element2<T: Element>(_tag: &str) -> T {
+            T::get_self()
         }
         pub fn create_text_node(_text: impl ToString) -> DomNode {
-            // DomNode::default()
-            todo!()
+            DomNode::default()
         }
     }
 

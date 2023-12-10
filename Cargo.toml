@@ -4,7 +4,7 @@ members = [
     "ravascript-core",
     "ravascript-macros",
     "comprehensive-example",
-    "cli",
+    "ravascriptcli",
     "so_example",
 ]
 resolver = "2"

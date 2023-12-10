@@ -3,6 +3,9 @@ class MyStruct {
         this.age = age;
         this.name = name;
     }
+    static new(age, name) {
+        return new MyStruct(age, name);
+    }
     myMethod() {
         return this.name;
     }
@@ -20,7 +23,7 @@ class MyStruct {
     }
 }
 function main() {
-    var thing = new MyStruct(2, "Bruce");
+    var thing = MyStruct.new(2, "Bruce");
     var one = thing.myMethod() === "Bruce";
     var two = thing.myMethodWithArg(2) === 4;
     var three = MyStruct.myAssociatedMethod(2) === 12;
