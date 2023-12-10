@@ -1,3 +1,7 @@
+use biome_formatter::FormatLanguage;
+use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
+use biome_js_parser::JsParserOptions;
+use biome_js_syntax::JsFileSource;
 use chromiumoxide::{
     browser::{Browser, BrowserConfig},
     cdp::js_protocol::debugger::{
@@ -305,7 +309,7 @@ async fn it_transpiles_iter_map() {
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let (generated_js, _) = prettyprint(generated_js.as_str());
+    let generated_js = format_js(generated_js);
 
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = r#"var data = [1, 2, 3];
@@ -313,27 +317,17 @@ var data = data.map(num => {
     var sum = num + 2;
     return num;
 });"#;
-    let (expected_js, _) = prettyprint(expected_js);
+    let expected_js = format_js(expected_js);
+    println!("{expected_js}");
     assert_eq!(generated_js, expected_js);
-    // let expected_js2 = format_js(expected_js);
-
-    // let formatted_js = biome_formatter::format!(
-    //     biome_formatter::SimpleFormatContext::default(),
-    //     [biome_formatter::prelude::text("var  data = [   1,  2, 3];")]
-    // )
-    // .unwrap();
-    // let formatted_js = formatted_js.print().unwrap();
-    // let formatted_js = formatted_js.as_code();
-    // println!("{formatted_js}");
-
-    // assert_eq!(generated_js, expected_js);
 }
 
 fn format_js(js: impl ToString) -> String {
-    let js_string: &'static str = Box::leak(js.to_string().into_boxed_str());
-    let formatted_js = biome_formatter::format!(
-        biome_formatter::SimpleFormatContext::default(),
-        [biome_formatter::prelude::text(js_string)]
+    let parse = biome_js_parser::parse_script(js.to_string().as_str(), JsParserOptions::default());
+    let stmt = parse.syntax().children().nth(1).unwrap();
+    let formatted_js = biome_formatter::format_node(
+        &stmt,
+        JsFormatLanguage::new(JsFormatOptions::new(JsFileSource::default())),
     )
     .unwrap();
     formatted_js.print().unwrap().as_code().to_string()
