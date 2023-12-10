@@ -5,8 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    BinOp, Expr, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat,
-    Stmt, Type, UnOp, UseTree, Visibility,
+    parse_macro_input, BinOp, DeriveInput, Expr, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemMod,
+    ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -782,9 +782,10 @@ impl JsOp {
 
 #[derive(Clone, Debug)]
 pub enum JsExpr {
-    Assignment(Box<JsExpr>, Box<JsExpr>),
+    Array(Vec<JsExpr>),
     /// (inputs, body)
     ArrowFn(Vec<String>, Vec<JsStmt>),
+    Assignment(Box<JsExpr>, Box<JsExpr>),
     Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
     /// Will only make itself disappear
     Blank,
@@ -1016,7 +1017,8 @@ impl JsExpr {
                     format!(
                         "{{\n{}\n}}",
                         body.iter()
-                            .map(|stmt| stmt.js_string())
+                            .enumerate()
+                            .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
                             .collect::<Vec<_>>()
                             .join("\n")
                     )
@@ -1093,6 +1095,14 @@ impl JsExpr {
             JsExpr::Paren(expr) => format!("({})", expr.js_string()),
             JsExpr::Null => "null".to_string(),
             JsExpr::Return(expr) => format!("return {}", expr.js_string()),
+            JsExpr::Array(elems) => format!(
+                "[{}]",
+                elems
+                    .iter()
+                    .map(|elem| elem.js_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 }
@@ -1201,6 +1211,37 @@ pub struct JsFn {
     input_names: Vec<String>,
     body_stmts: Vec<JsStmt>,
 }
+fn handle_js_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
+    match stmt {
+        JsStmt::Local(js_local) => js_local.js_string(),
+        JsStmt::Expr(js_expr, semi) => match js_expr {
+            JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
+            JsExpr::Block(_) => js_expr.js_string(),
+            JsExpr::While(_, _) => js_expr.js_string(),
+            JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
+            _ => {
+                if *semi {
+                    format!("{};", js_expr.js_string())
+                } else if i == len - 1 {
+                    format!("return {};", js_expr.js_string())
+                } else {
+                    js_expr.js_string()
+                }
+            }
+        },
+        JsStmt::Import(_, _, _) => todo!(),
+        JsStmt::Function(js_fn) => js_fn.js_string(),
+        JsStmt::Class(_) => todo!(),
+        JsStmt::ClassMethod(_, _, _, _) => todo!(),
+        JsStmt::ClassStatic(_) => todo!(),
+        JsStmt::Raw(text) => text.clone(),
+        JsStmt::ScopeBlock(stmts) => stmts
+            .iter()
+            .map(|stmt| stmt.js_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
 impl JsFn {
     fn js_string(&self) -> String {
         // dbg!(self);
@@ -1209,35 +1250,7 @@ impl JsFn {
             .body_stmts
             .iter()
             .enumerate()
-            .map(|(i, stmt)| match stmt {
-                JsStmt::Local(js_local) => js_local.js_string(),
-                JsStmt::Expr(js_expr, semi) => match js_expr {
-                    JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
-                    JsExpr::Block(_) => js_expr.js_string(),
-                    JsExpr::While(_, _) => js_expr.js_string(),
-                    JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
-                    _ => {
-                        if *semi {
-                            format!("{};", js_expr.js_string())
-                        } else if i == self.body_stmts.len() - 1 {
-                            format!("return {};", js_expr.js_string())
-                        } else {
-                            js_expr.js_string()
-                        }
-                    }
-                },
-                JsStmt::Import(_, _, _) => todo!(),
-                JsStmt::Function(js_fn) => js_fn.js_string(),
-                JsStmt::Class(_) => todo!(),
-                JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                JsStmt::ClassStatic(_) => todo!(),
-                JsStmt::Raw(text) => text.clone(),
-                JsStmt::ScopeBlock(stmts) => stmts
-                    .iter()
-                    .map(|stmt| stmt.js_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            })
+            .map(|(i, stmt)| handle_js_body_stmts(i, stmt, self.body_stmts.len()))
             .collect::<Vec<_>>()
             .join("\n");
         format!(
@@ -1440,6 +1453,19 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                         args,
                     )
                 }
+                Expr::Path(expr_path)
+                    if expr_path.path.segments.len() == 2
+                        && expr_path.path.segments[0].ident.to_string() == "Date"
+                        && expr_path.path.segments[1].ident.to_string() == "from_iso_string" =>
+                {
+                    JsExpr::New(vec!["Date".to_string()], args)
+                }
+                Expr::Path(expr_path)
+                    if expr_path.path.segments.len() == 1
+                        && expr_path.path.segments[0].ident.to_string() == "Some" =>
+                {
+                    args.into_iter().next().unwrap()
+                }
                 _ => JsExpr::FnCall(Box::new(handle_expr(&*expr_call.func)), args),
             }
         }
@@ -1449,7 +1475,9 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 .inputs
                 .iter()
                 .map(|input| match input {
-                    Pat::Ident(_) => todo!(),
+                    Pat::Ident(pat_ident) => {
+                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
+                    }
                     Pat::Tuple(_) => todo!(),
                     Pat::Type(pat_type) => {
                         let name = match &*pat_type.pat {
@@ -1541,7 +1569,29 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 .map(|stmt| handle_stmt(stmt))
                 .collect::<Vec<_>>(),
         ),
-        Expr::Macro(_) => todo!(),
+        Expr::Macro(expr_macro) => {
+            let path_segs = expr_macro
+                .mac
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            if path_segs.len() == 1 {
+                if path_segs[0] == "vec" {
+                    let input = expr_macro.mac.tokens.clone().to_string();
+                    let expr_array =
+                        syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
+                    let expr_vec = expr_array
+                        .elems
+                        .iter()
+                        .map(|elem| handle_expr(elem))
+                        .collect::<Vec<_>>();
+                    return JsExpr::Array(expr_vec);
+                }
+            }
+            JsExpr::Vanish
+        }
         Expr::Match(expr_match) => {
             // (assignment, condition, succeed, fail)
             // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
@@ -1680,6 +1730,17 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             let mut method_name = expr_method_call.method.to_string();
             let receiver = handle_expr(&*expr_method_call.receiver);
 
+            if let JsExpr::LitStr(_) = receiver {
+                if method_name == "to_string" {
+                    return receiver;
+                }
+            }
+            if method_name == "iter" {
+                return receiver;
+            }
+            if method_name == "collect" {
+                return receiver;
+            }
             if method_name.len() > 3 && &method_name[0..3] == "js_" {
                 method_name = method_name[3..].to_string();
             }
@@ -1742,6 +1803,11 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     }
                 })
                 .collect::<Vec<_>>();
+            if segs.len() == 1 {
+                if segs[0] == "None" {
+                    return JsExpr::Null;
+                }
+            }
             JsExpr::Path(segs)
         }
         Expr::Range(_) => todo!(),
@@ -2239,12 +2305,22 @@ pub mod web {
     }
     pub trait DomNodeTrait {}
     pub struct Body {}
+    impl<T: DomNodeTrait> DomNodeTrait for Vec<T> {}
 
     impl Element for Body {
         fn append_child<T: DomNodeTrait>(&self, child: T) {}
         // fn append_child(&self, child: DomNode) {}
         fn get_self() -> Self {
             Body {}
+        }
+    }
+
+    pub struct Date {
+        pub iso_string: &'static str,
+    }
+    impl Date {
+        pub fn from_iso_string(iso_string: &'static str) -> Date {
+            Date { iso_string }
         }
     }
 

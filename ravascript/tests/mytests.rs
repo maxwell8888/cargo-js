@@ -15,6 +15,8 @@ use futures::StreamExt;
 use prettify_js::prettyprint;
 use ravascript_core::{from_fn, web::Console};
 // use std::sync::Arc;
+// use biome_formatter::format;
+// use biome_formatter::prelude::*;
 use std::{fs, path::PathBuf};
 use tokio;
 
@@ -247,4 +249,92 @@ async fn it_transpiles_simple2() -> Result<(), Box<dyn std::error::Error>> {
     // Test the generated JS code
     let _ = execute_js_with_assertions(&generated_js).await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn it_transpiles_vec_macro() {
+    #[fn_as_str]
+    fn jsfn() {
+        let data = vec![1, 2, 3];
+    }
+
+    jsfn();
+    let generated_js = from_fn(jsfn_code_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(generated_js, "var data = [1, 2, 3];");
+}
+
+#[tokio::test]
+async fn it_transpiles_vec_macro2() -> Result<(), Box<dyn std::error::Error>> {
+    #[fn_as_str]
+    fn jsfn() {
+        let data = vec![1, 2, 3];
+        Console::assert(data[1] == 2);
+    }
+
+    jsfn();
+    let generated_js = from_fn(jsfn_code_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = execute_js_with_assertions(&generated_js).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn it_transpiles_iter_map() {
+    #[fn_as_str]
+    fn jsfn() {
+        let data = vec![1, 2, 3];
+        let data = data
+            .iter()
+            .map(|num| {
+                let sum = num + 2;
+                num
+            })
+            .collect::<Vec<_>>();
+    }
+
+    jsfn();
+    let generated_js = from_fn(jsfn_code_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (generated_js, _) = prettyprint(generated_js.as_str());
+
+    // let generated_js = generated_js.print().unwrap().as_code();
+    let expected_js = r#"var data = [1, 2, 3];
+var data = data.map(num => {
+    var sum = num + 2;
+    return num;
+});"#;
+    let (expected_js, _) = prettyprint(expected_js);
+    assert_eq!(generated_js, expected_js);
+    // let expected_js2 = format_js(expected_js);
+
+    // let formatted_js = biome_formatter::format!(
+    //     biome_formatter::SimpleFormatContext::default(),
+    //     [biome_formatter::prelude::text("var  data = [   1,  2, 3];")]
+    // )
+    // .unwrap();
+    // let formatted_js = formatted_js.print().unwrap();
+    // let formatted_js = formatted_js.as_code();
+    // println!("{formatted_js}");
+
+    // assert_eq!(generated_js, expected_js);
+}
+
+fn format_js(js: impl ToString) -> String {
+    let js_string: &'static str = Box::leak(js.to_string().into_boxed_str());
+    let formatted_js = biome_formatter::format!(
+        biome_formatter::SimpleFormatContext::default(),
+        [biome_formatter::prelude::text(js_string)]
+    )
+    .unwrap();
+    formatted_js.print().unwrap().as_code().to_string()
 }
