@@ -11,28 +11,28 @@ resolver = "2"
 
 # swc_ecma_codegen = "0.146.5"
 
-# [dev-dependencies]
-# ravascript = { workspace = true }
-# ravascript-core = { workspace = true }
-# ravascript-macros = { workspace = true }
+[dev-dependencies]
+ravascript = { workspace = true }
+ravascript-core = { workspace = true }
+ravascript-macros = { workspace = true }
 
-# [workspace.dependencies]
-# ravascript = { path = "ravascript", version = "0.0.0" }
-# ravascript-core = { path = "ravascript-core", version = "0.0.0" }
-# ravascript-macros = { path = "ravascript-macros", version = "0.0.0" }
+[workspace.dependencies]
+ravascript = { path = "ravascript", version = "0.0.0" }
+ravascript-core = { path = "ravascript-core", version = "0.0.0" }
+ravascript-macros = { path = "ravascript-macros", version = "0.0.0" }
 
-# # This is a "virtual package"
-# # It is not meant to be published, but is used so "cargo run --example XYZ" works properly
-# [package]
-# name = "ravascript-examples"
-# version = "0.0.0"
-# authors = ["Max Unsted"]
-# edition = "2021"
-# description = ""
-# license = "MIT OR Apache-2.0"
-# repository = ""
-# homepage = ""
-# documentation = ""
-# keywords = ["dom", "ui"]
-# rust-version = "1.73.0"
-# publish = false
+# This is a "virtual package"
+# It is not meant to be published, but is used so "cargo run --example XYZ" works properly
+[package]
+name = "ravascript-examples"
+version = "0.0.0"
+authors = ["Max Unsted"]
+edition = "2021"
+description = ""
+license = "MIT OR Apache-2.0"
+repository = ""
+homepage = ""
+documentation = ""
+keywords = ["dom", "ui"]
+rust-version = "1.73.0"
+publish = false

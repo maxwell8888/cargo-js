@@ -60,7 +60,7 @@ async fn get_rust_module_and_expected_js(
     let js_file_path = dir_path.join(js_file_name);
     let expected_js = fs::read_to_string(js_file_path).unwrap();
 
-    let stmts = from_file(&rust_input);
+    let stmts = from_file(&rust_input, false);
     let generated_js = stmts
         .iter()
         .map(|stmt| stmt.js_string())
@@ -304,11 +304,8 @@ async fn it_transpiles_iter_map() {
     }
 
     jsfn();
-    let generated_js = from_fn(jsfn_code_str())
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+
+    let generated_js = generate_js(jsfn_code_str());
     let generated_js = format_js(generated_js);
 
     // let generated_js = generated_js.print().unwrap().as_code();
@@ -320,6 +317,14 @@ var data = data.map(num => {
     let expected_js = format_js(expected_js);
     println!("{expected_js}");
     assert_eq!(generated_js, expected_js);
+}
+
+fn generate_js(js: impl ToString) -> String {
+    from_fn(js.to_string().as_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn format_js(js: impl ToString) -> String {

@@ -12,7 +12,7 @@ pub fn include_ravascript(input: TokenStream) -> TokenStream {
 
     let rs =
         std::fs::read_to_string(&path_str).expect(&format!("Unable to read file: {}", path_str));
-    let js = from_file(&rs)
+    let js = from_file(&rs, true)
         .iter()
         .map(|line| line.js_string())
         .collect::<Vec<_>>()

@@ -61,7 +61,7 @@ mod tests {
         let js_file_path = dir_path.join(js_file_name);
         let expected_js = fs::read_to_string(js_file_path).unwrap();
         
-        let stmts = from_file(&rust_input);
+        let stmts = from_file(&rust_input, false);
         let generated_js = stmts
             .iter()
             .map(|stmt| stmt.js_string())

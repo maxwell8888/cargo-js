@@ -623,7 +623,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
 }
 
 pub fn from_file_with_main(code: &str) -> Vec<JsStmt> {
-    let mut js_stmts = from_file(code);
+    let mut js_stmts = from_file(code, true);
     js_stmts.push(JsStmt::Expr(
         JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
         true,
@@ -639,8 +639,45 @@ pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
     stmts
 }
 
-pub fn js_stmts_from_syn_items(items: Vec<Item>) -> Vec<JsStmt> {
+pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
+    // TODO this should be optional/configurable, might not always want it
+
+    if with_vec {
+        let mut methods = Vec::new();
+        methods.push((
+            "new".to_string(),
+            false,
+            true,
+            JsFn {
+                export: false,
+                async_: false,
+                is_method: true,
+                name: "new".to_string(),
+                input_names: Vec::new(),
+                body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
+            },
+        ));
+        methods.push((
+            "push".to_string(),
+            false,
+            false,
+            JsFn {
+                export: false,
+                async_: false,
+                is_method: true,
+                name: "push".to_string(),
+                input_names: vec!["elem".to_string()],
+                body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
+            },
+        ));
+        js_stmts.push(JsStmt::Class(JsClass {
+            name: "Vec".to_string(),
+            inputs: Vec::new(),
+            static_fields: Vec::new(),
+            methods,
+        }));
+    }
     for item in items {
         handle_item(item, &mut js_stmts);
     }
@@ -691,21 +728,21 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>) -> Vec<JsStmt> {
     js_stmts2
 }
 
-pub fn from_crate(file_path: PathBuf) -> Vec<JsStmt> {
+pub fn from_crate(file_path: PathBuf, with_vec: bool) -> Vec<JsStmt> {
     let code = fs::read_to_string(file_path).unwrap();
     let file = syn::parse_file(&code).unwrap();
-    js_stmts_from_syn_items(file.items)
+    js_stmts_from_syn_items(file.items, with_vec)
 }
 
-pub fn from_module(code: &str) -> Vec<JsStmt> {
+pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    js_stmts_from_syn_items(items)
+    js_stmts_from_syn_items(items, with_vec)
 }
 
-pub fn from_file(code: &str) -> Vec<JsStmt> {
+pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
-    js_stmts_from_syn_items(file.items)
+    js_stmts_from_syn_items(file.items, with_vec)
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -2188,36 +2225,10 @@ pub mod web {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Default)]
-    pub struct DomNode {
-        pub text_content: &'static str,
-        pub class_list: ClassList,
-
-        // TODO restrict these to Form dom nodes
-        pub method: Method,
-        // pub action: Action,
-        // pub action: Url,
-        pub action: &'static str,
-        pub parent_element: Option<&'static DomNode>,
-    }
-    impl DomNode {
-        pub fn append_child(&self, _child: DomNode) {}
-        pub fn append_child2<T: DomNodeTrait>(&self, _child: T) {}
-        pub fn set_attribute(&self, _attr_name: &str, _attr_val: &str) {}
-        pub fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
-        pub fn add_event_listener_async<F>(&self, _action: &str, _callback: fn(Event) -> F)
-        where
-            F: Future<Output = ()> + 'static,
-        {
-        }
-        pub fn before(&self, _node: DomNode) {}
-    }
-    impl DomNodeTrait for DomNode {}
-
     #[derive(Debug, Default)]
     pub struct FormDataEntries {}
     impl FormDataEntries {
-        pub fn new(_dom_node: DomNode) -> FormData {
+        pub fn new(_dom_node: AnyNode) -> FormData {
             FormData::default()
         }
     }
@@ -2225,7 +2236,7 @@ pub mod web {
     #[derive(Debug, Default)]
     pub struct FormData {}
     impl FormData {
-        pub fn new(_dom_node: DomNode) -> FormData {
+        pub fn new(_dom_node: AnyNode) -> FormData {
             FormData::default()
         }
         pub fn entries(&self) -> FormDataEntries {
@@ -2256,7 +2267,7 @@ pub mod web {
 
     #[derive(Debug)]
     pub struct Event {
-        pub target: DomNode,
+        pub target: AnyNode,
     }
     impl Event {
         pub fn prevent_default(&self) {}
@@ -2298,22 +2309,80 @@ pub mod web {
         }
     }
 
-    pub trait Element {
-        fn append_child<T: DomNodeTrait>(&self, child: T);
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct AnyNode {
+        pub text_content: &'static str,
+        pub class_list: ClassList,
+
+        // TODO restrict these to Form dom nodes
+        pub method: Method,
+        // pub action: Action,
+        // pub action: Url,
+        pub action: &'static str,
+        pub parent_element: Option<&'static AnyNode>,
+    }
+    pub trait Node {
+        // TODO deprecate append_child() in favour of append_child2
+        fn append_child3(&self, _child: AnyNode) {}
+        fn append_child<T: Node>(&self, _a_child: T) {}
+        fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
+        fn add_event_listener_async<F>(&self, _action: &str, _callback: fn(Event) -> F)
+        where
+            F: Future<Output = ()> + 'static,
+        {
+        }
+        fn before<T: Node>(&self, _node: T) {}
+    }
+    impl Node for AnyNode {}
+
+    pub trait Element: Node {
+        fn set_attribute(&self, _attr_name: &str, _attr_val: &str) {}
         // fn append_child(&self, child: DomNode);
         fn get_self() -> Self;
     }
-    pub trait DomNodeTrait {}
-    pub struct Body {}
-    impl<T: DomNodeTrait> DomNodeTrait for Vec<T> {}
-
-    impl Element for Body {
-        fn append_child<T: DomNodeTrait>(&self, child: T) {}
-        // fn append_child(&self, child: DomNode) {}
+    pub struct AnyElement {}
+    impl Node for AnyElement {}
+    impl Element for AnyElement {
         fn get_self() -> Self {
-            Body {}
+            AnyElement {}
         }
     }
+    pub trait HtmlElement: Element {}
+    pub struct AnyHtmlElement {}
+    impl Node for AnyHtmlElement {}
+    impl Element for AnyHtmlElement {
+        fn get_self() -> Self {
+            AnyHtmlElement {}
+        }
+    }
+    impl HtmlElement for AnyHtmlElement {}
+
+    pub struct Text {}
+    impl Node for Text {}
+
+    // pub trait DomNodeTrait {}
+    // impl<T: DomNodeTrait> DomNodeTrait for Vec<T> {}
+
+    pub struct Body {}
+    impl Node for Body {}
+
+    pub struct Div {}
+    impl Node for Div {}
+    impl Element for Div {
+        fn get_self() -> Self {
+            Div {}
+        }
+    }
+    impl HtmlElement for Div {}
+
+    pub struct Textarea {}
+    impl Node for Textarea {}
+    impl Element for Textarea {
+        fn get_self() -> Self {
+            Textarea {}
+        }
+    }
+    impl HtmlElement for Textarea {}
 
     pub struct Date {
         pub iso_string: &'static str,
@@ -2326,26 +2395,37 @@ pub mod web {
 
     #[derive(Debug, Default)]
     pub struct Document {
-        pub body: DomNode,
+        pub body: AnyNode,
     }
     impl Document {
-        pub fn query_selector(_selector: &str) -> DomNode {
-            DomNode::default()
+        /// TODO should return Option<DomNode> (except for Body) since js can null is there is no match
+        pub fn query_selector(_selector: &str) -> AnyNode {
+            AnyNode::default()
+        }
+        pub fn query_selector_body() -> Body {
+            Body {}
         }
         pub fn query_selector2<T: Element>(_selector: &str) -> T {
             T::get_self()
         }
-        pub fn get_element_by_id(_id: &str) -> DomNode {
-            DomNode::default()
+        pub fn get_element_by_id(_id: &str) -> AnyNode {
+            AnyNode::default()
         }
-        pub fn create_element(_tag: &str) -> DomNode {
-            DomNode::default()
+        /// For type safety prefer to use `create_element_<tag name>`
+        pub fn create_element(_tag: &str) -> impl HtmlElement {
+            AnyHtmlElement {}
+        }
+        pub fn create_element_div() -> Div {
+            Div {}
+        }
+        pub fn create_element_textarea() -> Textarea {
+            Textarea {}
         }
         pub fn create_element2<T: Element>(_tag: &str) -> T {
             T::get_self()
         }
-        pub fn create_text_node(_text: impl ToString) -> DomNode {
-            DomNode::default()
+        pub fn create_text_node(_text: impl ToString) -> Text {
+            Text {}
         }
     }
 

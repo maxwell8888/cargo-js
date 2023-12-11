@@ -38,13 +38,13 @@ enum Commands {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    
+
     let cli = Cli::parse();
 
     match &cli.command {
         Commands::Transpile { filepath } => {
             let code = fs::read_to_string(filepath).unwrap();
-            let js_stmts = from_file(&code);
+            let js_stmts = from_file(&code, false);
             let output = js_stmts
                 .iter()
                 .map(|stmt| stmt.js_string())
@@ -86,7 +86,7 @@ async fn root() -> impl IntoResponse {
 // basic handler that responds with a static string
 async fn index_js(State(filepath): State<String>) -> impl IntoResponse {
     let code = fs::read_to_string(filepath).unwrap();
-    let js_stmts = from_file(&code);
+    let js_stmts = from_file(&code, true);
     let mut output = js_stmts
         .iter()
         .map(|stmt| stmt.js_string())
