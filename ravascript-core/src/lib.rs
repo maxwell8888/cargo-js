@@ -1498,6 +1498,33 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     JsExpr::New(vec!["Date".to_string()], args)
                 }
                 Expr::Path(expr_path)
+                    if expr_path.path.segments.len() == 2
+                        && expr_path.path.segments[0].ident.to_string() == "Document"
+                        && expr_path.path.segments[1].ident.to_string()
+                            == "query_selector_body" =>
+                {
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec![
+                            "document".to_string(),
+                            "querySelector".to_string(),
+                        ])),
+                        vec![JsExpr::LitStr("body".to_string())],
+                    )
+                }
+                Expr::Path(expr_path)
+                    if expr_path.path.segments.len() == 2
+                        && expr_path.path.segments[0].ident.to_string() == "Document"
+                        && expr_path.path.segments[1].ident.to_string() == "create_element_div" =>
+                {
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec![
+                            "document".to_string(),
+                            "createElement".to_string(),
+                        ])),
+                        vec![JsExpr::LitStr("div".to_string())],
+                    )
+                }
+                Expr::Path(expr_path)
                     if expr_path.path.segments.len() == 1
                         && expr_path.path.segments[0].ident.to_string() == "Some" =>
                 {
@@ -1550,7 +1577,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
         ),
         Expr::ForLoop(expr_for_loop) => JsExpr::ForLoop(
             match &*expr_for_loop.pat {
-                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                Pat::Ident(pat_ident) => AsLowerCamelCase(pat_ident.ident.to_string()).to_string(),
                 _ => todo!(),
             },
             Box::new(handle_expr(&*expr_for_loop.expr)),
@@ -1925,7 +1952,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
 }
 
 pub mod web {
-    use std::{future::Future, ops::Index};
+    use std::{any::Any, future::Future, ops::Index};
 
     #[derive(Debug, Default)]
     pub struct RegExp {}
@@ -2039,6 +2066,8 @@ pub mod web {
     }
     impl Response {
         pub async fn json<T>(&self) -> T {
+            // let value_any = Box::new(()) as Box<dyn Any>;
+            // *value_any.downcast::<T>().unwrap()
             todo!()
         }
     }
@@ -2201,7 +2230,7 @@ pub mod web {
     // pub async fn fetch(_form_action: Url) -> Response {
     /// T is response json data type
     pub async fn fetch(_path: &str) -> Response {
-        Response::default()
+        Response { body: todo!() }
     }
 
     // Could use macro rules to allow writing a json like object, but the fields are checked by the macro, and it gets transpiled to an actual object, but we loose the discoverability of methods. I think we can simply make the transpiler smart enough to convert a builder pattern -> setting fields on empty object -> defining object inline. It can do this automatically for built in structs, but might be easier to require anotating the struct with an attribute for user structs?
@@ -2210,11 +2239,11 @@ pub mod web {
     // }
 
     // pub async fn fetch2(_form_action: Url, _options: FetchOptions) -> Response {
-    pub async fn fetch2<B: FetchBody + 'static>(
+    pub async fn fetch2<B: FetchBody + 'static, R>(
         _path: &str,
         _options: FetchOptions<B>,
     ) -> Response {
-        Response::default()
+        Response { body: todo!() }
     }
 
     #[derive(Debug, Default)]
