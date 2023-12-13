@@ -1,6 +1,6 @@
 use ravascript::web::*;
 
-fn expanding_textarea() -> Div {
+fn expanding_textarea() -> HTMLDivElement {
     let div = Document::create_element_div();
     let div_class = "grid after::content[content: attr(data-replicated-value) ' '] after::whitespace-pre-wrap after::invisible after::border-2 after::border-black after::p-2 after::row-start-1 after::row-end-2 after::col-start-1 after::col-end-2";
     div.set_attribute("class", div_class);
@@ -41,7 +41,7 @@ struct Post {
 async fn main() {
     let body = Document::query_selector_body();
     let div = Document::create_element_div();
-    let text = Document::create_text_node("hellopooo");
+    let text = Document::create_text_node("hello");
     div.append_child(text);
     body.append_child(div);
 
@@ -98,4 +98,18 @@ async fn main() {
         posts_div.append_child(post_div)
     }
     body.append_child(posts_div);
+
+    fn toggle_full_screen(event: Event) {
+        // TODO support is_none
+        // if Document::FULLSCREEN_ELEMENT.is_none() {
+        if !Document::FULLSCREEN_ELEMENT {
+            Document::DOCUMENT_ELEMENT.request_fullscreen();
+        } else if Document::EXIT_FULLSCREEN {
+            Document::exit_fullscreen();
+        }
+    }
+    let fullscreen_button = Document::create_element("button");
+    fullscreen_button.add_event_listener("click", toggle_full_screen);
+    fullscreen_button.append_child(Document::create_text_node("full screen"));
+    body.append_child(fullscreen_button);
 }

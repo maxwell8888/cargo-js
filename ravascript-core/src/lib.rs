@@ -2366,9 +2366,14 @@ pub mod web {
 
     pub trait Element: Node {
         fn set_attribute(&self, _attr_name: &str, _attr_val: &str) {}
+        // TODO wait for async trait fns to stabilise
+        // async fn request_fullscreen(&self) {}
+        fn request_fullscreen(&self) {}
         // fn append_child(&self, child: DomNode);
         fn get_self() -> Self;
     }
+
+    #[derive(Debug)]
     pub struct AnyElement {}
     impl Node for AnyElement {}
     impl Element for AnyElement {
@@ -2395,14 +2400,14 @@ pub mod web {
     pub struct Body {}
     impl Node for Body {}
 
-    pub struct Div {}
-    impl Node for Div {}
-    impl Element for Div {
+    pub struct HTMLDivElement {}
+    impl Node for HTMLDivElement {}
+    impl Element for HTMLDivElement {
         fn get_self() -> Self {
-            Div {}
+            HTMLDivElement {}
         }
     }
-    impl HtmlElement for Div {}
+    impl HtmlElement for HTMLDivElement {}
 
     pub struct Textarea {}
     impl Node for Textarea {}
@@ -2427,6 +2432,10 @@ pub mod web {
         pub body: AnyNode,
     }
     impl Document {
+        pub const DOCUMENT_ELEMENT: AnyElement = AnyElement {};
+        // pub const FULLSCREEN_ELEMENT: Option<AnyElement> = None;
+        pub const FULLSCREEN_ELEMENT: bool = false;
+
         /// TODO should return Option<DomNode> (except for Body) since js can null is there is no match
         pub fn query_selector(_selector: &str) -> AnyNode {
             AnyNode::default()
@@ -2444,9 +2453,9 @@ pub mod web {
         pub fn create_element(_tag: &str) -> impl HtmlElement {
             AnyHtmlElement {}
         }
-        pub fn create_element_div() -> Div {
-            Div {}
-        }
+        // pub fn create_element_div() -> HTMLDivElement {
+        //     HTMLDivElement {}
+        // }
         pub fn create_element_textarea() -> Textarea {
             Textarea {}
         }
@@ -2456,6 +2465,14 @@ pub mod web {
         pub fn create_text_node(_text: impl ToString) -> Text {
             Text {}
         }
+
+        pub fn request_fullscreen() -> AnyNode {
+            AnyNode::default()
+        }
+        pub const EXIT_FULLSCREEN: bool = false;
+        pub fn exit_fullscreen() -> AnyNode {
+            AnyNode::default()
+        }
     }
 
     pub struct Timer {}
@@ -2463,6 +2480,16 @@ pub mod web {
         Timer {}
     }
     pub fn clear_interval(_timer: Timer) {}
+}
+
+mod typed {
+    use super::web::*;
+    impl Document {
+        // TODO this doesn't seem to affect the visibility, think I need to use a feature flag or trait
+        pub fn create_element_div() -> HTMLDivElement {
+            HTMLDivElement {}
+        }
+    }
 }
 
 #[derive(Debug)]
