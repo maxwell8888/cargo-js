@@ -124,7 +124,14 @@ async fn main() {
     body.append_child(input);
     body.append_child(button);
 
-    // let text = Navigator::CLIPBOARD.read_text().await;
+    let button = Document::create_element("button");
+    button.append_child(Document::create_text_node("Paste from clipboard"));
+    let get_text = |_event: Event| async {
+        let text = NAVIGATOR.clipboard.read_text().await;
+        body.append_child(Document::create_text_node(text));
+    };
+    button.add_event_listener_async("click", get_text);
+    body.append_child(button);
 
     // Clipboard arbitrary data example
 }

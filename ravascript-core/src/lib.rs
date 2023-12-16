@@ -2493,7 +2493,7 @@ pub mod web {
         fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
         fn add_event_listener_async<F>(&self, _action: &str, _callback: impl Fn(Event) -> F)
         where
-            F: Future<Output = ()> + 'static,
+            F: Future<Output = ()>,
         {
         }
         fn before<T: Node>(&self, _node: T) {}
