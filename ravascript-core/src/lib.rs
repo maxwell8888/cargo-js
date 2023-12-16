@@ -350,7 +350,45 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Stmt::Macro(_) => todo!(),
+        Stmt::Macro(stmt_macro) => {
+            let path_segs = stmt_macro
+                .mac
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            if path_segs.len() == 1 {
+                if path_segs[0] == "try_" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
+                    let stmt_vec = try_block
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt))
+                        .collect::<Vec<_>>();
+                    return JsStmt::TryBlock(stmt_vec);
+                }
+                if path_segs[0] == "catch" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let mut parts = input.split(",");
+                    let err_var_name = parts.next().unwrap();
+                    let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
+                        .unwrap()
+                        .to_string();
+                    let _err_var_type = parts.next().unwrap();
+                    let catch_block = parts.collect::<String>();
+                    let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
+                    let stmt_vec = catch_block
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt))
+                        .collect::<Vec<_>>();
+                    return JsStmt::CatchBlock(err_var_name, stmt_vec);
+                }
+            }
+            todo!()
+        }
     }
 }
 
@@ -841,6 +879,7 @@ pub enum JsExpr {
     Vanish,
     /// (base var name, field name)
     Field(Box<JsExpr>, String),
+    Fn(JsFn),
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
     /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
@@ -1049,6 +1088,8 @@ impl JsExpr {
                         JsStmt::ClassStatic(_) => todo!(),
                         JsStmt::Raw(_) => todo!(),
                         JsStmt::ScopeBlock(_) => todo!(),
+                        JsStmt::CatchBlock(_, _) => todo!(),
+                        JsStmt::TryBlock(_) => todo!(),
                     }
                 } else {
                     format!(
@@ -1140,6 +1181,7 @@ impl JsExpr {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            JsExpr::Fn(js_fn) => js_fn.js_string(),
         }
     }
 }
@@ -1271,12 +1313,10 @@ fn handle_js_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::Class(_) => todo!(),
         JsStmt::ClassMethod(_, _, _, _) => todo!(),
         JsStmt::ClassStatic(_) => todo!(),
-        JsStmt::Raw(text) => text.clone(),
-        JsStmt::ScopeBlock(stmts) => stmts
-            .iter()
-            .map(|stmt| stmt.js_string())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        JsStmt::Raw(_) => stmt.js_string(),
+        JsStmt::ScopeBlock(_) => stmt.js_string(),
+        JsStmt::TryBlock(_) => stmt.js_string(),
+        JsStmt::CatchBlock(_, _) => stmt.js_string(),
     }
 }
 impl JsFn {
@@ -1324,6 +1364,8 @@ pub enum JsStmt {
     Import(Option<String>, Vec<String>, Vec<String>),
     Function(JsFn),
     ScopeBlock(Vec<JsStmt>),
+    TryBlock(Vec<JsStmt>),
+    CatchBlock(String, Vec<JsStmt>),
     Raw(String),
 }
 
@@ -1424,6 +1466,27 @@ impl JsStmt {
                         .join("\n")
                 )
             }
+            JsStmt::TryBlock(try_block) => {
+                format!(
+                    "try {{\n{}\n}}",
+                    try_block
+                        .iter()
+                        .map(|s| s.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            }
+            JsStmt::CatchBlock(err_var_name, catch_block) => {
+                format!(
+                    "catch ({}) {{\n{}\n}}",
+                    err_var_name,
+                    catch_block
+                        .iter()
+                        .map(|s| s.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
         }
     }
 }
@@ -1487,6 +1550,16 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                             "JSON".to_string(),
                             "stringify".to_string(),
                         ])),
+                        args,
+                    )
+                }
+                Expr::Path(expr_path)
+                    if expr_path.path.segments.len() == 2
+                        && expr_path.path.segments[0].ident.to_string() == "Json"
+                        && expr_path.path.segments[1].ident.to_string() == "parse" =>
+                {
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
                         args,
                     )
                 }
@@ -1797,6 +1870,29 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             if let JsExpr::LitStr(_) = receiver {
                 if method_name == "to_string" {
                     return receiver;
+                }
+            }
+            if let JsExpr::Path(path) = &receiver {
+                if path.len() == 2 {
+                    if path[0] == "JSON" && path[1] == "parse" {
+                        // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
+                        let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
+                        return JsExpr::FnCall(
+                            Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
+                                export: false,
+                                async_: false,
+                                is_method: false,
+                                name: "jsonParse".to_string(),
+                                input_names: vec!["text".to_string()],
+                                body_stmts: vec![JsStmt::Raw(body)],
+                            })))),
+                            (expr_method_call
+                                .args
+                                .iter()
+                                .map(|arg| handle_expr(arg))
+                                .collect::<Vec<_>>()),
+                        );
+                    }
                 }
             }
             if method_name == "iter" {
@@ -2246,12 +2342,38 @@ pub mod web {
         Response { body: todo!() }
     }
 
+    #[macro_export]
+    macro_rules! try_ {
+        ($try_block:block) => {{
+            $try_block
+        }};
+    }
+    #[macro_export]
+    macro_rules! catch {
+        ($err_ident:ident, $ErrType:ty, $catch_block:block) => {{
+            let $err_ident: $ErrType = <$ErrType>::default();
+            $catch_block
+        }};
+    }
+
+    #[derive(Default)]
+    pub struct SyntaxError {
+        pub message: &'static str,
+    }
     #[derive(Debug, Default)]
     pub struct Json {}
     impl Json {
         pub fn stringify(_object: impl JsonStringyArg) -> &'static str {
             todo!()
         }
+        pub fn parse<T>(_text: &str) -> T {
+            todo!()
+        }
+    }
+
+    pub struct JsError {}
+    pub fn try_(try_: impl Fn(), catch: impl Fn(JsError)) {
+        todo!()
     }
 
     #[derive(Debug, Default)]
@@ -2418,6 +2540,15 @@ pub mod web {
     }
     impl HtmlElement for Textarea {}
 
+    pub struct HTMLInputElement {}
+    impl Node for HTMLInputElement {}
+    impl Element for HTMLInputElement {
+        fn get_self() -> Self {
+            HTMLInputElement {}
+        }
+    }
+    impl HtmlElement for HTMLInputElement {}
+
     pub struct Date {
         pub iso_string: &'static str,
     }
@@ -2427,12 +2558,29 @@ pub mod web {
         }
     }
 
+    pub struct Clipboard {}
+    impl Clipboard {
+        pub async fn write_text(&self) {}
+        pub async fn read_text(&self) -> &'static str {
+            ""
+        }
+    }
+    pub struct Navigator {}
+    impl Navigator {
+        pub const CLIPBOARD: Clipboard = Clipboard {};
+    }
+    // TODO it might be more ideal/idiomatic to implement like below, but would require more sohphisticated camel case handling
+    // pub mod Navigator {
+    //     pub struct Clipboard {}
+    // }
+
     #[derive(Debug, Default)]
     pub struct Document {
         pub body: AnyNode,
     }
     impl Document {
         pub const DOCUMENT_ELEMENT: AnyElement = AnyElement {};
+        // TODO need to convert these to actual booleans in the output JS
         // pub const FULLSCREEN_ELEMENT: Option<AnyElement> = None;
         pub const FULLSCREEN_ELEMENT: bool = false;
 

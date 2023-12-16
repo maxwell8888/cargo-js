@@ -1,4 +1,4 @@
-use biome_formatter::FormatLanguage;
+use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
@@ -17,7 +17,10 @@ use anyhow::{anyhow, Context, Result};
 // use chromiumoxide::cdp::js_protocol::debugger::*;
 use futures::StreamExt;
 use prettify_js::prettyprint;
-use ravascript_core::{from_fn, web::Console};
+use ravascript_core::{
+    catch, from_fn, try_,
+    web::{try_, Console, JsError, Json, SyntaxError},
+};
 // use std::sync::Arc;
 // use biome_formatter::format;
 // use biome_formatter::prelude::*;
@@ -319,6 +322,42 @@ var data = data.map(num => {
     assert_eq!(generated_js, expected_js);
 }
 
+#[tokio::test]
+async fn it_transpiles_json_parse() {
+    pub struct Foo {
+        bar: usize,
+    }
+    #[fn_as_str]
+    fn jsfn() {
+        fn parse(text: &str) -> Result<Foo, SyntaxError> {
+            try_! {{
+                return Ok(Json::parse::<Foo>(text));
+            }}
+            catch! {err, SyntaxError,{
+                return Err(err);
+            }}
+        }
+    }
+
+    // jsfn();
+
+    let generated_js = generate_js(jsfn_code_str());
+    let generated_js = format_js(generated_js);
+
+    // let generated_js = generated_js.print().unwrap().as_code();
+    let expected_js = r#"function parse(text) {
+  try {
+    return Ok(JSON.parse(text));
+  } catch (err) {
+    return Err(err);
+  }
+}"#;
+    let expected_js = format_js(expected_js);
+    // println!("{expected_js}");
+    // println!("{generated_js}");
+    assert_eq!(generated_js, expected_js);
+}
+
 fn generate_js(js: impl ToString) -> String {
     from_fn(js.to_string().as_str())
         .iter()
@@ -330,10 +369,9 @@ fn generate_js(js: impl ToString) -> String {
 fn format_js(js: impl ToString) -> String {
     let parse = biome_js_parser::parse_script(js.to_string().as_str(), JsParserOptions::default());
     let stmt = parse.syntax().children().nth(1).unwrap();
-    let formatted_js = biome_formatter::format_node(
-        &stmt,
-        JsFormatLanguage::new(JsFormatOptions::new(JsFileSource::default())),
-    )
-    .unwrap();
+    let opts = JsFormatOptions::new(JsFileSource::default())
+        // .with_indent_width(IndentWidth::from(1))
+        .with_indent_style(IndentStyle::Space);
+    let formatted_js = biome_formatter::format_node(&stmt, JsFormatLanguage::new(opts)).unwrap();
     formatted_js.print().unwrap().as_code().to_string()
 }
