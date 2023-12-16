@@ -99,6 +99,7 @@ async fn main() {
     }
     body.append_child(posts_div);
 
+    // Fullscreen example
     fn toggle_full_screen(event: Event) {
         // TODO support is_none
         // if Document::FULLSCREEN_ELEMENT.is_none() {
@@ -112,4 +113,16 @@ async fn main() {
     fullscreen_button.add_event_listener("click", toggle_full_screen);
     fullscreen_button.append_child(Document::create_text_node("full screen"));
     body.append_child(fullscreen_button);
+
+    // Clipboard text example
+    let input = Document::create_element2::<HTMLInputElement>("input");
+    let button = Document::create_element("button");
+    // button.add_event_listener_async("click", get_text);
+    // let get_text = |event: Event| {
+    //     input.value
+    // };
+
+    let text = Navigator::CLIPBOARD.read_text().await;
+
+    // Clipboard arbitrary data example
 }
