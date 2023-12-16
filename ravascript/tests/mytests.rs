@@ -19,7 +19,10 @@ use futures::StreamExt;
 use prettify_js::prettyprint;
 use ravascript_core::{
     catch, from_fn, try_,
-    web::{try_, Console, JsError, Json, SyntaxError},
+    web::{
+        try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
+        NAVIGATOR,
+    },
 };
 // use std::sync::Arc;
 // use biome_formatter::format;
@@ -72,25 +75,25 @@ async fn get_rust_module_and_expected_js(
     let (generated_js, _) = prettyprint(generated_js.as_str());
     let (target_js, _) = prettyprint(&expected_js);
 
-    Ok((generated_js, target_js))
+    Ok((target_js, generated_js))
 }
 
 #[tokio::test]
 async fn it_transpiles_struct_no_new() {
-    let (generated_js, target_js) =
+    let (target_js, generated_js) =
         get_rust_module_and_expected_js("tests/stuff/struct_no_new".into())
             .await
             .unwrap();
-    assert_eq!(generated_js, target_js);
+    assert_eq!(target_js, generated_js);
 }
 
 #[tokio::test]
 async fn it_transpiles_structs_and_impl_methods() -> Result<(), Box<dyn std::error::Error>> {
-    let (generated_js, target_js) =
+    let (target_js, generated_js) =
         get_rust_module_and_expected_js("tests/stuff/structs_and_impl_methods".into())
             .await
             .unwrap();
-    assert_eq!(generated_js, target_js);
+    assert_eq!(target_js, generated_js);
 
     let outcome = exexute_js(&generated_js).await?;
     assert!(outcome);
@@ -100,14 +103,13 @@ async fn it_transpiles_structs_and_impl_methods() -> Result<(), Box<dyn std::err
 
 #[tokio::test]
 async fn it_transpiles_enum_match() -> Result<(), Box<dyn std::error::Error>> {
-    let (generated_js, target_js) =
+    let (target_js, generated_js) =
         get_rust_module_and_expected_js("tests/stuff/enum_match".into())
             .await
             .unwrap();
-    assert_eq!(generated_js, target_js);
+    assert_eq!(target_js, generated_js);
 
     let outcome = exexute_js(&generated_js).await?;
-    dbg!(outcome);
     assert!(outcome);
     Ok(())
 }
@@ -136,13 +138,11 @@ async fn it_transpiles_simple() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    dbg!(jsfn_code_str());
 
     let page = browser.new_page("about:blank").await?;
 
     let expression = format!("{}\njsfn();", jsfn_code_str());
     let outcome: bool = page.evaluate_expression(generated_js).await?.into_value()?;
-    println!("1 + 2 = {outcome}");
     assert!(outcome);
 
     browser.close().await?;
@@ -318,8 +318,7 @@ var data = data.map(num => {
     return num;
 });"#;
     let expected_js = format_js(expected_js);
-    println!("{expected_js}");
-    assert_eq!(generated_js, expected_js);
+    assert_eq!(expected_js, generated_js);
 }
 
 #[tokio::test]
@@ -355,7 +354,31 @@ async fn it_transpiles_json_parse() {
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
     // println!("{generated_js}");
-    assert_eq!(generated_js, expected_js);
+    assert_eq!(expected_js, generated_js);
+}
+
+#[tokio::test]
+async fn it_writes_to_clipboard() {
+    #[fn_as_str]
+    fn jsfn() {
+        let input = Document::create_element2::<HTMLInputElement>("input");
+        let button = Document::create_element("button");
+        let get_text = |_event: Event| async { NAVIGATOR.clipboard.write_text(input.value).await };
+        button.add_event_listener_async("click", get_text);
+    }
+
+    let generated_js = generate_js(jsfn_code_str());
+    let generated_js = format_js(generated_js);
+
+    // let generated_js = generated_js.print().unwrap().as_code();
+    let expected_js = r#"var input = document.createElement("input");
+var button = document.createElement("button");
+var getText = async event => await navigator.clipboard.writeText(input.value);
+button.addEventListener("click", getText);"#;
+    let expected_js = format_js(expected_js);
+    // println!("{expected_js}");
+    // println!("{generated_js}");
+    assert_eq!(expected_js, generated_js);
 }
 
 fn generate_js(js: impl ToString) -> String {

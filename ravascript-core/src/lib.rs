@@ -858,8 +858,8 @@ impl JsOp {
 #[derive(Clone, Debug)]
 pub enum JsExpr {
     Array(Vec<JsExpr>),
-    /// (inputs, body)
-    ArrowFn(Vec<String>, Vec<JsStmt>),
+    /// (async, inputs, body)
+    ArrowFn(bool, Vec<String>, Vec<JsStmt>),
     Assignment(Box<JsExpr>, Box<JsExpr>),
     Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
     /// Will only make itself disappear
@@ -1058,7 +1058,7 @@ impl JsExpr {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            JsExpr::ArrowFn(inputs, body) => {
+            JsExpr::ArrowFn(async_, inputs, body) => {
                 let sig = if inputs.len() == 1 {
                     inputs.get(0).unwrap().clone()
                 } else {
@@ -1101,7 +1101,7 @@ impl JsExpr {
                             .join("\n")
                     )
                 };
-                format!("{} => {}", sig, body)
+                format!("{}{} => {}", if *async_ { "async " } else { "" }, sig, body)
             }
             JsExpr::Binary(left, op, right) => format!(
                 "{} {} {}",
@@ -1607,38 +1607,51 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             }
         }
         Expr::Cast(_) => todo!(),
-        Expr::Closure(expr_closure) => JsExpr::ArrowFn(
-            expr_closure
-                .inputs
-                .iter()
-                .map(|input| match input {
-                    Pat::Ident(pat_ident) => {
-                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                    }
-                    Pat::Tuple(_) => todo!(),
-                    Pat::Type(pat_type) => {
-                        let name = match &*pat_type.pat {
-                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                            _ => todo!(),
-                        };
-                        AsLowerCamelCase(name).to_string()
-                    }
-                    other => {
-                        dbg!(other);
-                        todo!()
-                    }
-                })
-                .collect::<Vec<_>>(),
-            match &*expr_closure.body {
-                Expr::Block(expr_block) => expr_block
-                    .block
-                    .stmts
+        Expr::Closure(expr_closure) => {
+            let async_ = match &*expr_closure.body {
+                Expr::Async(_) => true,
+                _ => false,
+            };
+            JsExpr::ArrowFn(
+                async_,
+                expr_closure
+                    .inputs
                     .iter()
-                    .map(|stmt| handle_stmt(stmt))
+                    .map(|input| match input {
+                        Pat::Ident(pat_ident) => {
+                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
+                        }
+                        Pat::Tuple(_) => todo!(),
+                        Pat::Type(pat_type) => {
+                            let name = match &*pat_type.pat {
+                                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                _ => todo!(),
+                            };
+                            AsLowerCamelCase(name).to_string()
+                        }
+                        other => {
+                            dbg!(other);
+                            todo!()
+                        }
+                    })
                     .collect::<Vec<_>>(),
-                other => vec![JsStmt::Expr(handle_expr(other), false)],
-            },
-        ),
+                match &*expr_closure.body {
+                    Expr::Block(expr_block) => expr_block
+                        .block
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt))
+                        .collect::<Vec<_>>(),
+                    Expr::Async(expr_async) => expr_async
+                        .block
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt))
+                        .collect::<Vec<_>>(),
+                    other => vec![JsStmt::Expr(handle_expr(other), false)],
+                },
+            )
+        }
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
         Expr::Field(expr_field) => JsExpr::Field(
@@ -2472,12 +2485,13 @@ pub mod web {
         pub action: &'static str,
         pub parent_element: Option<&'static AnyNode>,
     }
+
     pub trait Node {
         // TODO deprecate append_child() in favour of append_child2
         fn append_child3(&self, _child: AnyNode) {}
         fn append_child<T: Node>(&self, _a_child: T) {}
         fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
-        fn add_event_listener_async<F>(&self, _action: &str, _callback: fn(Event) -> F)
+        fn add_event_listener_async<F>(&self, _action: &str, _callback: impl Fn(Event) -> F)
         where
             F: Future<Output = ()> + 'static,
         {
@@ -2540,11 +2554,13 @@ pub mod web {
     }
     impl HtmlElement for Textarea {}
 
-    pub struct HTMLInputElement {}
+    pub struct HTMLInputElement {
+        pub value: &'static str,
+    }
     impl Node for HTMLInputElement {}
     impl Element for HTMLInputElement {
         fn get_self() -> Self {
-            HTMLInputElement {}
+            HTMLInputElement { value: "" }
         }
     }
     impl HtmlElement for HTMLInputElement {}
@@ -2560,12 +2576,18 @@ pub mod web {
 
     pub struct Clipboard {}
     impl Clipboard {
-        pub async fn write_text(&self) {}
+        pub async fn write_text(&self, _new_clip_text: &str) {}
         pub async fn read_text(&self) -> &'static str {
             ""
         }
     }
-    pub struct Navigator {}
+    pub const NAVIGATOR: Navigator = Navigator {
+        clipboard: Clipboard {},
+    };
+    // TODO how to force using NAVIGATOR not Navigator? could make clipboard private but then would need to convert clipboard() to clipboard
+    pub struct Navigator {
+        pub clipboard: Clipboard,
+    }
     impl Navigator {
         pub const CLIPBOARD: Clipboard = Clipboard {};
     }

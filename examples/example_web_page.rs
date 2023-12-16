@@ -115,14 +115,16 @@ async fn main() {
     body.append_child(fullscreen_button);
 
     // Clipboard text example
+    // TODO We want to capture `input` in the event handler so want to use a closure rather than a fn, however Rust doesn't currently support async closures so we are not able to await `Navigator::CLIPBOARD.write_text()` which means we can't take any subsequent actions which rely on the text being written to the clipboard having finished. We continue to use the async `add_event_listener` so that we can return the clipboard future from the event handler and avoid warnings about unawaited futures.
     let input = Document::create_element2::<HTMLInputElement>("input");
     let button = Document::create_element("button");
-    // button.add_event_listener_async("click", get_text);
-    // let get_text = |event: Event| {
-    //     input.value
-    // };
+    button.append_child(Document::create_text_node("Copy to clipboard"));
+    let get_text = |_event: Event| async { NAVIGATOR.clipboard.write_text(input.value).await };
+    button.add_event_listener_async("click", get_text);
+    body.append_child(input);
+    body.append_child(button);
 
-    let text = Navigator::CLIPBOARD.read_text().await;
+    // let text = Navigator::CLIPBOARD.read_text().await;
 
     // Clipboard arbitrary data example
 }
