@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use ravascript_core::from_file;
-use syn::{parse_macro_input, ItemFn, ItemMod, LitStr};
+use syn::{parse_macro_input, Block, ExprBlock, ItemFn, ItemMod, LitStr};
 
 #[proc_macro]
 pub fn include_ravascript(input: TokenStream) -> TokenStream {
@@ -38,6 +38,25 @@ pub fn fn_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #ast
 
         pub fn #fn_name_code_ident() -> &'static str {
+            #code_string
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+#[proc_macro_attribute]
+pub fn fn_stmts_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_fn: ItemFn = parse_macro_input!(item as ItemFn);
+    let block = &*item_fn.block;
+    let code_string = format!("{}", quote! { #block });
+
+    let expanded = quote! {
+        pub fn fn_code_str() {
+            #block
+        }
+
+        pub fn block_code_str() -> &'static str {
             #code_string
         }
     };

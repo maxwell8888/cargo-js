@@ -22,7 +22,7 @@ use ravascript_core::{
     web::{
         try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
         NAVIGATOR,
-    },
+    }, from_block,
 };
 // use std::sync::Arc;
 // use biome_formatter::format;
@@ -32,7 +32,7 @@ use std::{fs, path::PathBuf};
 use tokio;
 
 use ravascript::from_file;
-use ravascript_macros::fn_as_str;
+use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 
 mod stuff;
 
@@ -373,20 +373,27 @@ async fn it_writes_to_clipboard() {
 
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = r#"var input = document.createElement("input");
-var button = document.createElement("button");
-var getText = async event => await navigator.clipboard.writeText(input.value);
-button.addEventListener("click", getText);"#;
+    var button = document.createElement("button");
+    var getText = async event => await navigator.clipboard.writeText(input.value);
+    button.addEventListener("click", getText);"#;
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
     // println!("{generated_js}");
     assert_eq!(expected_js, generated_js);
 }
 
+macro_rules! stmts_to_code_str {
+    ($block:block) => {
+        #[fn_stmts_as_str]
+        fn fn_wrapper() $block
+        
+    };
+}
+
 #[tokio::test]
 async fn function_body_returns_and_async() {
     // TODO return large if else expression that must be converted to js using temp var which is then returned
-    #[fn_as_str]
-    fn jsfn() {
+    stmts_to_code_str! {{
         let _closure1 = |arg: i32| arg;
         let _closure2 = || {
             5;
@@ -420,10 +427,10 @@ async fn function_body_returns_and_async() {
                 "negative"
             }
         };
-    }
-
-    let generated_js = generate_js(jsfn_code_str());
-    // println!("{generated_js}");
+    }}
+    // check code actually runs??
+    fn_code_str();
+    let generated_js = generate_js_from_block(block_code_str());
     let generated_js = format_js(generated_js);
 
     // let generated_js = generated_js.print().unwrap().as_code();
@@ -472,6 +479,13 @@ var _closure8 = (arg) => {
 
 fn generate_js(js: impl ToString) -> String {
     from_fn(js.to_string().as_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn generate_js_from_block(js: impl ToString) -> String {
+    from_block(js.to_string().as_str())
         .iter()
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()

@@ -6,7 +6,7 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemMod,
-    ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility,
+    ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility, ExprBlock,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -799,6 +799,17 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 
     let mut js_stmts = Vec::new();
     for stmt in &item_fn.block.stmts {
+        let js_stmt = handle_stmt(stmt);
+        js_stmts.push(js_stmt);
+    }
+    js_stmts
+}
+
+pub fn from_block(code: &str) -> Vec<JsStmt> {
+    let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
+
+    let mut js_stmts = Vec::new();
+    for stmt in &expr_block.block.stmts {
         let js_stmt = handle_stmt(stmt);
         js_stmts.push(js_stmt);
     }
