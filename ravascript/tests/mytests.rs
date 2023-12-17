@@ -27,6 +27,7 @@ use ravascript_core::{
 // use std::sync::Arc;
 // use biome_formatter::format;
 // use biome_formatter::prelude::*;
+use pretty_assertions::assert_eq;
 use std::{fs, path::PathBuf};
 use tokio;
 
@@ -375,6 +376,73 @@ async fn it_writes_to_clipboard() {
 var button = document.createElement("button");
 var getText = async event => await navigator.clipboard.writeText(input.value);
 button.addEventListener("click", getText);"#;
+    let expected_js = format_js(expected_js);
+    // println!("{expected_js}");
+    // println!("{generated_js}");
+    assert_eq!(expected_js, generated_js);
+}
+
+#[tokio::test]
+async fn function_body_returns_and_async() {
+    // TODO return large if else expression that must be converted to js using temp var which is then returned
+    #[fn_as_str]
+    fn jsfn() {
+        let _closure1 = |arg: i32| arg;
+        let _closure2 = || {
+            5;
+        };
+        let _closure3 = |arg: i32| {
+            let _x = arg;
+        };
+        let _closure4 = |arg: i32| async move { arg };
+        let _closure5 = |arg: i32| async move {
+            let _x = arg;
+        };
+        let _closure6 = |arg: i32| async move {
+            let _x = "hello";
+            arg
+        };
+        // let _closure7 = |arg: i32| {
+        //     if arg >= 0 {
+        //         "positive"
+        //     } else {
+        //         let _thing = 5;
+        //         "negative"
+        //     }
+        // };
+    }
+
+    let generated_js = generate_js(jsfn_code_str());
+    // println!("{generated_js}");
+    let generated_js = format_js(generated_js);
+
+    // var _closure7 = (arg) {
+    //     var temp;
+    //     if (arg >= 0) {
+    //       temp = "positive";
+    //     } else {
+    //       let _thing = 5;
+    //       temp = "negative";
+    //     }
+    //     return temp;
+    // };
+
+    // let generated_js = generated_js.print().unwrap().as_code();
+    let expected_js = r#"var _closure1 = (arg) => arg;
+var _closure2 = () => {
+  5;
+};
+var _closure3 = (arg) => {
+  var _x = arg;
+};
+var _closure4 = async (arg) => arg;
+var _closure5 = async (arg) => {
+  var _x = arg;
+};
+var _closure6 = async (arg) => {
+  var _x = "hello";
+  return arg;
+}"#;
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
     // println!("{generated_js}");

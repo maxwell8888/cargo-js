@@ -287,6 +287,17 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
     }
 }
 
+fn camel(text: impl ToString) -> String {
+    let text = text.to_string();
+    let underscore_prefix = text.starts_with("_");
+    let camel = AsLowerCamelCase(text).to_string();
+    if underscore_prefix {
+        format!("_{camel}")
+    } else {
+        camel
+    }
+}
+
 fn handle_stmt(stmt: &Stmt) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => JsStmt::Expr(handle_expr(expr), closing_semi.is_some()),
@@ -294,7 +305,7 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             //
             let names = match &local.pat {
                 Pat::Ident(pat_ident) => {
-                    vec![AsLowerCamelCase(pat_ident.ident.to_string()).to_string()]
+                    vec![camel(&pat_ident.ident)]
                 }
                 Pat::Tuple(pat_tuple) => pat_tuple
                     .elems
@@ -804,6 +815,7 @@ pub enum JsOp {
     Eq,
     NotEq,
     Gt,
+    GtEq,
     Lt,
 }
 impl JsOp {
@@ -817,6 +829,7 @@ impl JsOp {
             JsOp::Eq => "===",
             JsOp::NotEq => "!==",
             JsOp::Gt => ">",
+            JsOp::GtEq => ">=",
             JsOp::Lt => "<",
         }
     }
@@ -838,7 +851,7 @@ impl JsOp {
             BinOp::Lt(_) => JsOp::Lt,
             BinOp::Le(_) => todo!(),
             BinOp::Ne(_) => todo!(),
-            BinOp::Ge(_) => todo!(),
+            BinOp::Ge(_) => JsOp::GtEq,
             BinOp::Gt(_) => JsOp::Gt,
             BinOp::AddAssign(_) => JsOp::AddAssign,
             BinOp::SubAssign(_) => todo!(),
@@ -858,8 +871,8 @@ impl JsOp {
 #[derive(Clone, Debug)]
 pub enum JsExpr {
     Array(Vec<JsExpr>),
-    /// (async, inputs, body)
-    ArrowFn(bool, Vec<String>, Vec<JsStmt>),
+    /// (async, block, inputs, body)
+    ArrowFn(bool, bool, Vec<String>, Vec<JsStmt>),
     Assignment(Box<JsExpr>, Box<JsExpr>),
     Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
     /// Will only make itself disappear
@@ -1058,50 +1071,72 @@ impl JsExpr {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            JsExpr::ArrowFn(async_, inputs, body) => {
+            JsExpr::ArrowFn(async_, block, inputs, body) => {
                 let sig = if inputs.len() == 1 {
                     inputs.get(0).unwrap().clone()
                 } else {
                     format!("({})", inputs.join(", "))
                 };
-                let body = if body.len() == 1 {
-                    // concise body
-                    match body.get(0).unwrap() {
-                        JsStmt::Local(_) => todo!(),
-                        // TODO single objects returned by concise body must be wrapped in parenthesis
-                        JsStmt::Expr(js_expr, closing_semi) => {
-                            if *closing_semi {
-                                panic!()
-                            } else {
-                                match js_expr {
-                                    JsExpr::If(_, _, _, _, _) => {
-                                        format!("{{\n{}\n}}", js_expr.js_string())
-                                    }
-                                    _ => js_expr.js_string(),
-                                }
-                            }
-                        }
-                        JsStmt::Import(_, _, _) => todo!(),
-                        JsStmt::Function(_) => todo!(),
-                        JsStmt::Class(_) => todo!(),
-                        JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                        JsStmt::ClassStatic(_) => todo!(),
-                        JsStmt::Raw(_) => todo!(),
-                        JsStmt::ScopeBlock(_) => todo!(),
-                        JsStmt::CatchBlock(_, _) => todo!(),
-                        JsStmt::TryBlock(_) => todo!(),
-                    }
+                // let body = if body.len() == 1 {
+                //     // concise body
+                //     match body.get(0).unwrap() {
+                //         JsStmt::Local(js_local) => js_local.js_string(),
+                //         // TODO single objects returned by concise body must be wrapped in parenthesis
+                //         JsStmt::Expr(js_expr, closing_semi) => {
+                //             if *closing_semi {
+                //                 match js_expr {
+                //                     JsExpr::If(_, _, _, _, _) => panic!(),
+                //                     _ => js_expr.js_string(),
+                //                 }
+                //             } else {
+                //                 match js_expr {
+                //                     JsExpr::If(_, _, _, _, _) => {
+                //                         format!("{{\n{}\n}}", js_expr.js_string())
+                //                     }
+                //                     _ => js_expr.js_string(),
+                //                 }
+                //             }
+                //         }
+                //         JsStmt::Import(_, _, _) => todo!(),
+                //         JsStmt::Function(_) => todo!(),
+                //         JsStmt::Class(_) => todo!(),
+                //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+                //         JsStmt::ClassStatic(_) => todo!(),
+                //         JsStmt::Raw(_) => todo!(),
+                //         JsStmt::ScopeBlock(_) => todo!(),
+                //         JsStmt::CatchBlock(_, _) => todo!(),
+                //         JsStmt::TryBlock(_) => todo!(),
+                //     }
+                // } else {
+                //     body.iter()
+                //         .enumerate()
+                //         .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
+                //         .collect::<Vec<_>>()
+                //         .join("\n")
+                // };
+                let body = if *block {
+                    body.iter()
+                        .enumerate()
+                        .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 } else {
-                    format!(
-                        "{{\n{}\n}}",
-                        body.iter()
-                            .enumerate()
-                            .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
+                    if body.len() > 1 {
+                        panic!("closures with no block should only have 1 statement")
+                    } else {
+                        body.first().unwrap().js_string()
+                    }
                 };
-                format!("{}{} => {}", if *async_ { "async " } else { "" }, sig, body)
+                format!(
+                    "{}{} => {}",
+                    if *async_ { "async " } else { "" },
+                    sig,
+                    if *block {
+                        format!("{{\n{}\n}}", body)
+                    } else {
+                        body
+                    }
+                )
             }
             JsExpr::Binary(left, op, right) => format!(
                 "{} {} {}",
@@ -1221,14 +1256,10 @@ pub struct JsLocal {
 }
 impl JsLocal {
     fn js_string(&self) -> String {
+        // TODO Removed underscore replacement, can't remember why I though this would be a good idea, better to just not use underscore prefixes where we don't want them prefixed in JS
         let original_name = self.names.get(0).unwrap().clone();
-        let underscore_prefix = original_name.starts_with("_");
         let name = if self.names.len() == 1 {
-            if underscore_prefix {
-                format!("_{}", original_name)
-            } else {
-                original_name
-            }
+            original_name
         } else {
             match self.destructure {
                 LocalDestructure::None => todo!(),
@@ -1236,14 +1267,7 @@ impl JsLocal {
                     "{{ {} }}",
                     self.names
                         .iter()
-                        .map(|name| {
-                            let underscore_prefix = name.starts_with("_");
-                            if underscore_prefix {
-                                format!("_{}", name)
-                            } else {
-                                name.clone()
-                            }
-                        })
+                        .map(|name| name.clone())
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
@@ -1251,14 +1275,7 @@ impl JsLocal {
                     "[ {} ]",
                     self.names
                         .iter()
-                        .map(|name| {
-                            let underscore_prefix = name.starts_with("_");
-                            if underscore_prefix {
-                                format!("_{}", name)
-                            } else {
-                                name.clone()
-                            }
-                        })
+                        .map(|name| name.clone())
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
@@ -1612,45 +1629,59 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 Expr::Async(_) => true,
                 _ => false,
             };
-            JsExpr::ArrowFn(
-                async_,
-                expr_closure
-                    .inputs
+
+            let block = match &*expr_closure.body {
+                Expr::Async(expr_async) => {
+                    let last_is_return_expr = match expr_async.block.stmts.last().unwrap() {
+                        Stmt::Expr(_, semi) => semi.is_none(),
+                        Stmt::Macro(_) => todo!(),
+                        _ => false,
+                    };
+                    expr_async.block.stmts.len() > 1 || !last_is_return_expr
+                }
+                Expr::Block(_) => true,
+                _ => false,
+            };
+
+            let inputs = expr_closure
+                .inputs
+                .iter()
+                .map(|input| match input {
+                    Pat::Ident(pat_ident) => {
+                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
+                    }
+                    Pat::Tuple(_) => todo!(),
+                    Pat::Type(pat_type) => {
+                        let name = match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                            _ => todo!(),
+                        };
+                        AsLowerCamelCase(name).to_string()
+                    }
+                    other => {
+                        dbg!(other);
+                        todo!()
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let body = match &*expr_closure.body {
+                Expr::Block(expr_block) => expr_block
+                    .block
+                    .stmts
                     .iter()
-                    .map(|input| match input {
-                        Pat::Ident(pat_ident) => {
-                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                        }
-                        Pat::Tuple(_) => todo!(),
-                        Pat::Type(pat_type) => {
-                            let name = match &*pat_type.pat {
-                                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                                _ => todo!(),
-                            };
-                            AsLowerCamelCase(name).to_string()
-                        }
-                        other => {
-                            dbg!(other);
-                            todo!()
-                        }
-                    })
+                    .map(|stmt| handle_stmt(stmt))
                     .collect::<Vec<_>>(),
-                match &*expr_closure.body {
-                    Expr::Block(expr_block) => expr_block
-                        .block
-                        .stmts
-                        .iter()
-                        .map(|stmt| handle_stmt(stmt))
-                        .collect::<Vec<_>>(),
-                    Expr::Async(expr_async) => expr_async
-                        .block
-                        .stmts
-                        .iter()
-                        .map(|stmt| handle_stmt(stmt))
-                        .collect::<Vec<_>>(),
-                    other => vec![JsStmt::Expr(handle_expr(other), false)],
-                },
-            )
+                Expr::Async(expr_async) => expr_async
+                    .block
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(stmt))
+                    .collect::<Vec<_>>(),
+                other => vec![JsStmt::Expr(handle_expr(other), false)],
+            };
+
+            JsExpr::ArrowFn(async_, block, inputs, body)
         }
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
@@ -1967,7 +1998,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                             var_name.pop().unwrap();
                         }
                     }
-                    if var_name.chars().all(|c| c.is_uppercase() || c == '_') {
+                    if var_name.chars().all(|c| c.is_uppercase()) {
                         AsLowerCamelCase(var_name).to_string()
                     } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
                         AsPascalCase(var_name).to_string()
