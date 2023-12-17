@@ -410,13 +410,21 @@ async fn function_body_returns_and_async() {
                 "negative"
             }
         };
+        let _closure8 = |arg: i32| {
+            if arg >= 0 {
+                let _thing = 5;
+                "positive"
+            } else if arg == 0 {
+                "zero"
+            } else {
+                "negative"
+            }
+        };
     }
 
     let generated_js = generate_js(jsfn_code_str());
     // println!("{generated_js}");
     let generated_js = format_js(generated_js);
-
-
 
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = r#"var _closure1 = (arg) => arg;
@@ -440,6 +448,18 @@ var _closure7 = (arg) => {
     ifTempAssignment = "positive";
   } else {
     var _thing = 5;
+    ifTempAssignment = "negative";
+  }
+  return ifTempAssignment;
+};
+var _closure8 = (arg) => {
+  var ifTempAssignment;
+  if (arg >= 0) {
+    var _thing = 5;
+    ifTempAssignment = "positive";
+} else if (arg === 0) {
+    ifTempAssignment = "zero";
+  } else {
     ifTempAssignment = "negative";
   }
   return ifTempAssignment;
