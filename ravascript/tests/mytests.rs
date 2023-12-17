@@ -18,11 +18,11 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use prettify_js::prettyprint;
 use ravascript_core::{
-    catch, from_fn, try_,
+    catch, from_block, from_fn, try_,
     web::{
         try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
         NAVIGATOR,
-    }, from_block,
+    },
 };
 // use std::sync::Arc;
 // use biome_formatter::format;
@@ -382,24 +382,43 @@ async fn it_writes_to_clipboard() {
     assert_eq!(expected_js, generated_js);
 }
 
-macro_rules! stmts_to_code_str {
-    ($($stmts:tt)*) => {
+// macro_rules! stmts_to_code_str {
+//     ($($stmts:tt)*) => {
+//         #[fn_stmts_as_str]
+//         fn fn_wrapper() {
+//             $($stmts)*
+//         }
+
+//     };
+// }
+
+/// Input code should be in a block as this allow rustfmt to work on the code, however the block (braces) are removed from the the output code and instead just the lines of code inside the block are used to generate the Javascript
+macro_rules! r2j {
+    ($block:block) => {{
         #[fn_stmts_as_str]
-        fn fn_wrapper() {
-            $($stmts)*
-        }
-        
+        fn fn_wrapper() $block
+        let generated_js = generate_js_from_block(block_code_str());
+        let generated_js = format_js(generated_js);
+        generated_js
+    }};
+}
+
+macro_rules! r2j_assert_eq {
+    ($block:block, $expected:literal) => {
+        assert_eq!($expected, {
+            #[fn_stmts_as_str]
+            fn fn_wrapper() $block
+            let generated_js = generate_js_from_block(block_code_str());
+            let generated_js = format_js(generated_js);
+            generated_js
+        });
     };
 }
 
 #[tokio::test]
 async fn function_body_returns_and_async() {
     // TODO return large if else expression that must be converted to js using temp var which is then returned
-    stmts_to_code_str! {
-        let _closure1 = |arg: i32| arg;
-        let _closure2 = || {
-            5;
-        };
+    let generated_js = r2j!({
         let _closure3 = |arg: i32| {
             let _x = arg;
         };
@@ -429,18 +448,16 @@ async fn function_body_returns_and_async() {
                 "negative"
             }
         };
-    }
+    });
     // check code actually runs??
-    fn_code_str();
-    let generated_js = generate_js_from_block(block_code_str());
-    let generated_js = format_js(generated_js);
+    // fn_code_str();
+
+    // let generated_js = generate_js_from_block(block_code_str());
+    // let generated_js = format_js(generated_js);
+    // let generated_js = block_code_str();
 
     // let generated_js = generated_js.print().unwrap().as_code();
-    let expected_js = r#"var _closure1 = (arg) => arg;
-var _closure2 = () => {
-  5;
-};
-var _closure3 = (arg) => {
+    let expected_js = r#"var _closure3 = (arg) => {
   var _x = arg;
 };
 var _closure4 = async (arg) => arg;
@@ -477,6 +494,21 @@ var _closure8 = (arg) => {
     // println!("{expected_js}");
     // println!("{generated_js}");
     assert_eq!(expected_js, generated_js);
+
+    let actual = r2j!({
+        let _closure = |arg: i32| arg;
+    });
+    assert_eq!(actual, "var _closure = (arg) => arg;");
+
+    let actual = r2j!({
+        let _closure = || {
+            5;
+        };
+    });
+    let expected = "var _closure = () => {
+  5;
+};";
+    assert_eq!(actual, expected);
 }
 
 fn generate_js(js: impl ToString) -> String {
