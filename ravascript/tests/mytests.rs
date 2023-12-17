@@ -402,30 +402,21 @@ async fn function_body_returns_and_async() {
             let _x = "hello";
             arg
         };
-        // let _closure7 = |arg: i32| {
-        //     if arg >= 0 {
-        //         "positive"
-        //     } else {
-        //         let _thing = 5;
-        //         "negative"
-        //     }
-        // };
+        let _closure7 = |arg: i32| {
+            if arg >= 0 {
+                "positive"
+            } else {
+                let _thing = 5;
+                "negative"
+            }
+        };
     }
 
     let generated_js = generate_js(jsfn_code_str());
     // println!("{generated_js}");
     let generated_js = format_js(generated_js);
 
-    // var _closure7 = (arg) {
-    //     var temp;
-    //     if (arg >= 0) {
-    //       temp = "positive";
-    //     } else {
-    //       let _thing = 5;
-    //       temp = "negative";
-    //     }
-    //     return temp;
-    // };
+
 
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = r#"var _closure1 = (arg) => arg;
@@ -442,7 +433,17 @@ var _closure5 = async (arg) => {
 var _closure6 = async (arg) => {
   var _x = "hello";
   return arg;
-}"#;
+}
+var _closure7 = (arg) => {
+  var ifTempAssignment;
+  if (arg >= 0) {
+    ifTempAssignment = "positive";
+  } else {
+    var _thing = 5;
+    ifTempAssignment = "negative";
+  }
+  return ifTempAssignment;
+};"#;
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
     // println!("{generated_js}");

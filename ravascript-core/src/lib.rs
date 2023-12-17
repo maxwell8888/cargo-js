@@ -897,6 +897,7 @@ pub enum JsExpr {
     FnCall(Box<JsExpr>, Vec<JsExpr>),
     /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
     /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var
+    ///
     /// (assignment, declare_var, condition, succeed, fail)
     If(
         Option<Vec<String>>,
@@ -1117,7 +1118,7 @@ impl JsExpr {
                 let body = if *block {
                     body.iter()
                         .enumerate()
-                        .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
+                        .map(|(i, stmt)| handle_fn_body_stmts(i, stmt, body.len()))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
@@ -1307,11 +1308,26 @@ pub struct JsFn {
     input_names: Vec<String>,
     body_stmts: Vec<JsStmt>,
 }
-fn handle_js_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
+fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
     match stmt {
         JsStmt::Local(js_local) => js_local.js_string(),
         JsStmt::Expr(js_expr, semi) => match js_expr {
-            JsExpr::If(_, _, _, _, _) => js_expr.js_string(),
+            JsExpr::If(assignment, _, _, _, _) => {
+                if i == len - 1 {
+                    if let Some(assignment) = assignment {
+                        let assignment = if assignment.len() == 1 {
+                            assignment.first().unwrap().clone()
+                        } else {
+                            format!("({})", assignment.join(", "))
+                        };
+                        format!("{}\nreturn {};", js_expr.js_string(), assignment)
+                    } else {
+                        todo!()
+                    }
+                } else {
+                    js_expr.js_string()
+                }
+            }
             JsExpr::Block(_) => js_expr.js_string(),
             JsExpr::While(_, _) => js_expr.js_string(),
             JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
@@ -1344,7 +1360,7 @@ impl JsFn {
             .body_stmts
             .iter()
             .enumerate()
-            .map(|(i, stmt)| handle_js_body_stmts(i, stmt, self.body_stmts.len()))
+            .map(|(i, stmt)| handle_fn_body_stmts(i, stmt, self.body_stmts.len()))
             .collect::<Vec<_>>()
             .join("\n");
         format!(
@@ -1665,19 +1681,52 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 })
                 .collect::<Vec<_>>();
 
+            fn parse_fn_body_stmts(stmts: &Vec<Stmt>) -> Vec<JsStmt> {
+                stmts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, stmt)| {
+                        // Manually set assignment var name for if expressions that are a return stmt
+                        if i == stmts.len() - 1 {
+                            match stmt {
+                                Stmt::Expr(expr, semi) => match expr {
+                                    Expr::If(expr_if) => {
+                                        if semi.is_some() {
+                                            handle_stmt(stmt)
+                                        } else {
+                                            JsStmt::Expr(
+                                                JsExpr::If(
+                                                    Some(vec!["ifTempAssignment".to_string()]),
+                                                    true,
+                                                    Box::new(handle_expr(&*expr_if.cond)),
+                                                    expr_if
+                                                        .then_branch
+                                                        .stmts
+                                                        .iter()
+                                                        .map(|stmt| handle_stmt(stmt))
+                                                        .collect::<Vec<_>>(),
+                                                    expr_if.else_branch.as_ref().map(
+                                                        |(_, expr)| Box::new(handle_expr(&*expr)),
+                                                    ),
+                                                ),
+                                                false,
+                                            )
+                                        }
+                                    }
+                                    Expr::Match(_) => todo!(),
+                                    _ => handle_stmt(stmt),
+                                },
+                                _ => handle_stmt(stmt),
+                            }
+                        } else {
+                            handle_stmt(stmt)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
             let body = match &*expr_closure.body {
-                Expr::Block(expr_block) => expr_block
-                    .block
-                    .stmts
-                    .iter()
-                    .map(|stmt| handle_stmt(stmt))
-                    .collect::<Vec<_>>(),
-                Expr::Async(expr_async) => expr_async
-                    .block
-                    .stmts
-                    .iter()
-                    .map(|stmt| handle_stmt(stmt))
-                    .collect::<Vec<_>>(),
+                Expr::Block(expr_block) => parse_fn_body_stmts(&expr_block.block.stmts),
+                Expr::Async(expr_async) => parse_fn_body_stmts(&expr_async.block.stmts),
                 other => vec![JsStmt::Expr(handle_expr(other), false)],
             };
 
