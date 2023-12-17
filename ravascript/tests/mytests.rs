@@ -383,9 +383,11 @@ async fn it_writes_to_clipboard() {
 }
 
 macro_rules! stmts_to_code_str {
-    ($block:block) => {
+    ($($stmts:tt)*) => {
         #[fn_stmts_as_str]
-        fn fn_wrapper() $block
+        fn fn_wrapper() {
+            $($stmts)*
+        }
         
     };
 }
@@ -393,7 +395,7 @@ macro_rules! stmts_to_code_str {
 #[tokio::test]
 async fn function_body_returns_and_async() {
     // TODO return large if else expression that must be converted to js using temp var which is then returned
-    stmts_to_code_str! {{
+    stmts_to_code_str! {
         let _closure1 = |arg: i32| arg;
         let _closure2 = || {
             5;
@@ -427,7 +429,7 @@ async fn function_body_returns_and_async() {
                 "negative"
             }
         };
-    }}
+    }
     // check code actually runs??
     fn_code_str();
     let generated_js = generate_js_from_block(block_code_str());
