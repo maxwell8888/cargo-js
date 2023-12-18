@@ -5,8 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemMod,
-    ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility, ExprBlock,
+    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, FnArg, ImplItem, Item, ItemEnum,
+    ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -311,9 +311,7 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
                     .elems
                     .iter()
                     .map(|elem| match elem {
-                        Pat::Ident(pat_ident) => {
-                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                        }
+                        Pat::Ident(pat_ident) => camel(&pat_ident.ident),
                         _ => todo!(),
                     })
                     .collect::<Vec<_>>(),
@@ -390,11 +388,8 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
                     let _err_var_type = parts.next().unwrap();
                     let catch_block = parts.collect::<String>();
                     let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
-                    let stmt_vec = catch_block
-                        .stmts
-                        .iter()
-                        .map(|stmt| handle_stmt(stmt))
-                        .collect::<Vec<_>>();
+                    let stmt_vec = catch_block.stmts.into_iter().map(|stmt| handle_stmt(&stmt));
+                    let stmt_vec = stmt_vec.collect::<Vec<_>>();
                     return JsStmt::CatchBlock(err_var_name, stmt_vec);
                 }
             }
@@ -428,10 +423,7 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
             },
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
-            name: {
-                let name = item_fn.sig.ident.to_string();
-                AsLowerCamelCase(name).to_string()
-            },
+            name: camel(&item_fn.sig.ident),
             input_names: item_fn
                 .sig
                 .inputs
@@ -439,9 +431,7 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
                 .map(|input| match input {
                     FnArg::Receiver(_) => todo!(),
                     FnArg::Typed(pat_type) => match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => {
-                            AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                        }
+                        Pat::Ident(pat_ident) => camel(&pat_ident.ident),
                         _ => todo!(),
                     },
                 })
@@ -464,10 +454,7 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
         static_fields.push(JsLocal {
             type_: LocalType::Static,
             destructure: LocalDestructure::None,
-            names: vec![format!(
-                "{}Id",
-                AsLowerCamelCase(variant.ident.to_string()).to_string()
-            )],
+            names: vec![format!("{}Id", camel(&variant.ident))],
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
         match variant.fields {
@@ -601,9 +588,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                             .filter_map(|input| match input {
                                 FnArg::Receiver(_) => None,
                                 FnArg::Typed(pat_type) => match *pat_type.pat {
-                                    Pat::Ident(pat_ident) => Some(
-                                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string(),
-                                    ),
+                                    Pat::Ident(pat_ident) => Some(camel(pat_ident.ident)),
                                     _ => todo!(),
                                 },
                             })
@@ -622,8 +607,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                                 is_method: true,
                                 async_: item_impl_fn.sig.asyncness.is_some(),
                                 export,
-                                name: AsLowerCamelCase(item_impl_fn.sig.ident.to_string())
-                                    .to_string(),
+                                name: camel(item_impl_fn.sig.ident),
                                 input_names,
                                 body_stmts,
                             },
@@ -652,7 +636,7 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                     .fields
                     .into_iter()
                     .map(|field| match field.ident {
-                        Some(ident) => AsLowerCamelCase(ident.to_string()).to_string(),
+                        Some(ident) => camel(ident),
                         None => todo!(),
                     })
                     .collect::<Vec<_>>(),
@@ -984,7 +968,7 @@ fn if_expr_to_string(
                         if let Some(assignment) = assignment {
                             format!(
                                 "{} = {};",
-                                AsLowerCamelCase(assignment.first().unwrap()),
+                                camel(assignment.first().unwrap()),
                                 fail.js_string()
                             )
                         } else {
@@ -1042,7 +1026,7 @@ fn if_expr_to_string(
 
                         format!(
                             "{} = {};",
-                            AsLowerCamelCase(assignment.first().unwrap()),
+                            camel(assignment.first().unwrap()),
                             stmt.js_string()
                         )
                     } else {
@@ -1457,7 +1441,7 @@ impl JsStmt {
                     if exports.len() > 0 {
                         let exports = exports
                             .iter()
-                            .map(|export| AsLowerCamelCase(export).to_string())
+                            .map(|export| camel(export))
                             .collect::<Vec<_>>()
                             .join(", ");
                         format!(" {{ {} }}", exports)
@@ -1674,16 +1658,14 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 .inputs
                 .iter()
                 .map(|input| match input {
-                    Pat::Ident(pat_ident) => {
-                        AsLowerCamelCase(pat_ident.ident.to_string()).to_string()
-                    }
+                    Pat::Ident(pat_ident) => camel(&pat_ident.ident),
                     Pat::Tuple(_) => todo!(),
                     Pat::Type(pat_type) => {
                         let name = match &*pat_type.pat {
                             Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
                             _ => todo!(),
                         };
-                        AsLowerCamelCase(name).to_string()
+                        camel(name)
                     }
                     other => {
                         dbg!(other);
@@ -1748,13 +1730,13 @@ fn handle_expr(expr: &Expr) -> JsExpr {
         Expr::Field(expr_field) => JsExpr::Field(
             Box::new(handle_expr(&*expr_field.base)),
             match &expr_field.member {
-                Member::Named(ident) => AsLowerCamelCase(ident.to_string()).to_string(),
+                Member::Named(ident) => camel(ident),
                 Member::Unnamed(_) => todo!(),
             },
         ),
         Expr::ForLoop(expr_for_loop) => JsExpr::ForLoop(
             match &*expr_for_loop.pat {
-                Pat::Ident(pat_ident) => AsLowerCamelCase(pat_ident.ident.to_string()).to_string(),
+                Pat::Ident(pat_ident) => camel(&pat_ident.ident),
                 _ => todo!(),
             },
             Box::new(handle_expr(&*expr_for_loop.expr)),
@@ -1926,7 +1908,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
 
                     // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
                     let index = rhs.len() - 1;
-                    rhs[index] = format!("{}Id", AsLowerCamelCase(rhs[index].clone()).to_string());
+                    rhs[index] = format!("{}Id", camel(rhs[index].clone()));
 
                     let body = match &*arm.body {
                         // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -2028,7 +2010,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             }
             JsExpr::MethodCall(
                 Box::new(receiver),
-                AsLowerCamelCase(method_name).to_string(),
+                camel(method_name),
                 expr_method_call
                     .args
                     .iter()
@@ -2059,11 +2041,11 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                         }
                     }
                     if var_name.chars().all(|c| c.is_uppercase()) {
-                        AsLowerCamelCase(var_name).to_string()
+                        camel(var_name)
                     } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
                         AsPascalCase(var_name).to_string()
                     } else {
-                        AsLowerCamelCase(var_name).to_string()
+                        camel(var_name)
                     }
                 })
                 .collect::<Vec<_>>();
