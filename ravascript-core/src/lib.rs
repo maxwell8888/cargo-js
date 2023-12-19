@@ -5,8 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, FnArg, ImplItem, Item, ItemEnum,
-    ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree, Visibility,
+    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, FnArg, ImplItem, Item,
+    ItemEnum, ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree,
+    Visibility,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -1254,28 +1255,24 @@ impl JsLocal {
     fn js_string(&self) -> String {
         // TODO Removed underscore replacement, can't remember why I though this would be a good idea, better to just not use underscore prefixes where we don't want them prefixed in JS
         let original_name = self.names.get(0).unwrap().clone();
-        let name = if self.names.len() == 1 {
-            original_name
-        } else {
-            match self.destructure {
-                LocalDestructure::None => todo!(),
-                LocalDestructure::Object => format!(
-                    "{{ {} }}",
-                    self.names
-                        .iter()
-                        .map(|name| name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                LocalDestructure::Array => format!(
-                    "[ {} ]",
-                    self.names
-                        .iter()
-                        .map(|name| name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            }
+        let name = match self.destructure {
+            LocalDestructure::None => original_name,
+            LocalDestructure::Object => format!(
+                "{{ {} }}",
+                self.names
+                    .iter()
+                    .map(|name| name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            LocalDestructure::Array => format!(
+                "[ {} ]",
+                self.names
+                    .iter()
+                    .map(|name| name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         };
         let var_type = match self.type_ {
             LocalType::Var => "var",
@@ -1303,11 +1300,14 @@ pub struct JsFn {
     input_names: Vec<String>,
     body_stmts: Vec<JsStmt>,
 }
+
+/// Adds return and semi to expr being returned. For an if expression this means we also need to get the name of the assignment var that needs returning  
 fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
     match stmt {
         JsStmt::Local(js_local) => js_local.js_string(),
         JsStmt::Expr(js_expr, semi) => match js_expr {
             JsExpr::If(assignment, _, _, _, _) => {
+                // TODO wrongly assuming that all single if expr bodys should be returned
                 if i == len - 1 {
                     if let Some(assignment) = assignment {
                         let assignment = if assignment.len() == 1 {
@@ -1519,6 +1519,51 @@ impl JsStmt {
     }
 }
 
+fn parse_fn_body_stmts(stmts: &Vec<Stmt>) -> Vec<JsStmt> {
+    stmts
+        .iter()
+        .enumerate()
+        .map(|(i, stmt)| {
+            // Manually set assignment var name for if expressions that are a return stmt
+            if i == stmts.len() - 1 {
+                match stmt {
+                    Stmt::Expr(expr, semi) => match expr {
+                        Expr::If(expr_if) => {
+                            if semi.is_some() {
+                                handle_stmt(stmt)
+                            } else {
+                                JsStmt::Expr(
+                                    JsExpr::If(
+                                        Some(vec!["ifTempAssignment".to_string()]),
+                                        true,
+                                        Box::new(handle_expr(&*expr_if.cond)),
+                                        expr_if
+                                            .then_branch
+                                            .stmts
+                                            .iter()
+                                            .map(|stmt| handle_stmt(stmt))
+                                            .collect::<Vec<_>>(),
+                                        expr_if
+                                            .else_branch
+                                            .as_ref()
+                                            .map(|(_, expr)| Box::new(handle_expr(&*expr))),
+                                    ),
+                                    false,
+                                )
+                            }
+                        }
+                        Expr::Match(_) => todo!(),
+                        _ => handle_stmt(stmt),
+                    },
+                    _ => handle_stmt(stmt),
+                }
+            } else {
+                handle_stmt(stmt)
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
 fn handle_expr(expr: &Expr) -> JsExpr {
     match expr {
         Expr::Array(_) => todo!(),
@@ -1643,14 +1688,27 @@ fn handle_expr(expr: &Expr) -> JsExpr {
 
             let block = match &*expr_closure.body {
                 Expr::Async(expr_async) => {
-                    let last_is_return_expr = match expr_async.block.stmts.last().unwrap() {
-                        Stmt::Expr(_, semi) => semi.is_none(),
-                        Stmt::Macro(_) => todo!(),
-                        _ => false,
-                    };
-                    expr_async.block.stmts.len() > 1 || !last_is_return_expr
+                    // If we have a single statement which is an expression that has no semi so is being returned then in Rust async we have to put it in a block but in Javascript we don't need to
+
+                    // multi lines should be in blocks
+                    let stmts = &expr_async.block.stmts;
+                    if stmts.len() > 1 {
+                        true
+                    } else {
+                        let is_expr_with_no_semi = match stmts.last().unwrap() {
+                            Stmt::Expr(_, semi) => semi.is_none(),
+                            Stmt::Macro(_) => todo!(),
+                            _ => false,
+                        };
+                        if is_expr_with_no_semi {
+                            false
+                        } else {
+                            true
+                        }
+                    }
                 }
                 Expr::Block(_) => true,
+                Expr::Match(_) => true,
                 _ => false,
             };
 
@@ -1674,52 +1732,12 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                 })
                 .collect::<Vec<_>>();
 
-            fn parse_fn_body_stmts(stmts: &Vec<Stmt>) -> Vec<JsStmt> {
-                stmts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, stmt)| {
-                        // Manually set assignment var name for if expressions that are a return stmt
-                        if i == stmts.len() - 1 {
-                            match stmt {
-                                Stmt::Expr(expr, semi) => match expr {
-                                    Expr::If(expr_if) => {
-                                        if semi.is_some() {
-                                            handle_stmt(stmt)
-                                        } else {
-                                            JsStmt::Expr(
-                                                JsExpr::If(
-                                                    Some(vec!["ifTempAssignment".to_string()]),
-                                                    true,
-                                                    Box::new(handle_expr(&*expr_if.cond)),
-                                                    expr_if
-                                                        .then_branch
-                                                        .stmts
-                                                        .iter()
-                                                        .map(|stmt| handle_stmt(stmt))
-                                                        .collect::<Vec<_>>(),
-                                                    expr_if.else_branch.as_ref().map(
-                                                        |(_, expr)| Box::new(handle_expr(&*expr)),
-                                                    ),
-                                                ),
-                                                false,
-                                            )
-                                        }
-                                    }
-                                    Expr::Match(_) => todo!(),
-                                    _ => handle_stmt(stmt),
-                                },
-                                _ => handle_stmt(stmt),
-                            }
-                        } else {
-                            handle_stmt(stmt)
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }
             let body = match &*expr_closure.body {
                 Expr::Block(expr_block) => parse_fn_body_stmts(&expr_block.block.stmts),
                 Expr::Async(expr_async) => parse_fn_body_stmts(&expr_async.block.stmts),
+                Expr::Match(expr_match) => {
+                    vec![JsStmt::Expr(handle_expr_match(expr_match, true), false)]
+                }
                 other => vec![JsStmt::Expr(handle_expr(other), false)],
             };
 
@@ -1815,140 +1833,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
             }
             JsExpr::Vanish
         }
-        Expr::Match(expr_match) => {
-            // (assignment, condition, succeed, fail)
-            // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
-            let if_expr = expr_match.arms.iter().rev().fold(
-                JsExpr::LitStr("this shouldn't exist".to_string()),
-                |acc, arm| {
-                    let (mut rhs, mut body_data_destructure) = match &arm.pat {
-                        Pat::Const(_) => todo!(),
-                        Pat::Ident(_) => todo!(),
-                        Pat::Lit(_) => todo!(),
-                        Pat::Macro(_) => todo!(),
-                        Pat::Or(_) => todo!(),
-                        Pat::Paren(_) => todo!(),
-                        Pat::Path(pat_path) => {
-                            let empty_vec: Vec<JsStmt> = Vec::new();
-                            (
-                                pat_path
-                                    .path
-                                    .segments
-                                    .iter()
-                                    .map(|seg| seg.ident.to_string())
-                                    .collect::<Vec<_>>(),
-                                empty_vec,
-                            )
-                        }
-
-                        Pat::Range(_) => todo!(),
-                        Pat::Reference(_) => todo!(),
-                        Pat::Rest(_) => todo!(),
-                        Pat::Slice(_) => todo!(),
-                        Pat::Struct(pat_struct) => {
-                            let names = pat_struct
-                                .fields
-                                .iter()
-                                .map(|field| match &field.member {
-                                    Member::Named(ident) => ident.to_string(),
-                                    Member::Unnamed(_) => todo!(),
-                                })
-                                .collect::<Vec<_>>();
-                            let stmt = JsStmt::Local(JsLocal {
-                                type_: LocalType::Var,
-                                destructure: LocalDestructure::Object,
-                                names,
-                                value: JsExpr::Field(
-                                    Box::new(handle_expr(&*expr_match.expr)),
-                                    "data".to_string(),
-                                ),
-                            });
-                            let rhs = pat_struct
-                                .path
-                                .segments
-                                .iter()
-                                .map(|seg| seg.ident.to_string())
-                                .collect::<Vec<_>>();
-                            (rhs, vec![stmt])
-                        }
-                        Pat::Tuple(_) => todo!(),
-                        Pat::TupleStruct(pat_tuple_struct) => {
-                            let names = pat_tuple_struct
-                                .elems
-                                .iter()
-                                .map(|elem| match elem {
-                                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                                    _ => todo!(),
-                                })
-                                .collect::<Vec<_>>();
-                            let stmt = JsStmt::Local(JsLocal {
-                                type_: LocalType::Var,
-                                destructure: LocalDestructure::Array,
-                                names,
-                                value: JsExpr::Field(
-                                    Box::new(handle_expr(&*expr_match.expr)),
-                                    "data".to_string(),
-                                ),
-                            });
-                            (
-                                pat_tuple_struct
-                                    .path
-                                    .segments
-                                    .iter()
-                                    .map(|seg| seg.ident.to_string())
-                                    .collect::<Vec<_>>(),
-                                vec![stmt],
-                            )
-                        }
-                        Pat::Type(_) => todo!(),
-                        Pat::Verbatim(_) => todo!(),
-                        Pat::Wild(_) => todo!(),
-                        _ => todo!(),
-                    };
-
-                    // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
-                    let index = rhs.len() - 1;
-                    rhs[index] = format!("{}Id", camel(rhs[index].clone()));
-
-                    let body = match &*arm.body {
-                        // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
-                        Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
-                        Expr::Block(expr_block) => expr_block
-                            .block
-                            .stmts
-                            .iter()
-                            .map(|stmt| handle_stmt(stmt))
-                            .collect::<Vec<_>>(),
-                        other_expr => {
-                            vec![JsStmt::Expr(handle_expr(other_expr), false)]
-                        }
-                    };
-                    body_data_destructure.extend(body.into_iter());
-                    let body = body_data_destructure;
-
-                    JsExpr::If(
-                        None,
-                        false,
-                        Box::new(JsExpr::Binary(
-                            Box::new(JsExpr::Field(
-                                Box::new(handle_expr(&*expr_match.expr)),
-                                "id".to_string(),
-                            )),
-                            JsOp::Eq,
-                            Box::new(JsExpr::Path(rhs)),
-                        )),
-                        body,
-                        // TODO
-                        Some(Box::new(acc)),
-                    )
-                },
-            );
-            // for arm in &expr_match.arms {
-            //     dbg!(arm);
-            // }
-            // todo!()
-            if_expr
-        }
+        Expr::Match(expr_match) => handle_expr_match(expr_match, false),
         Expr::MethodCall(expr_method_call) => {
             let mut method_name = expr_method_call.method.to_string();
             let receiver = handle_expr(&*expr_method_call.receiver);
@@ -2131,6 +2016,153 @@ fn handle_expr(expr: &Expr) -> JsExpr {
         Expr::Yield(_) => todo!(),
         _ => todo!(),
     }
+}
+
+/// Get match pattern ident to be used as rhs of if conditions like `myData.id === MyEnum.fooId`, and start a body stmts Vec to with any pattern arg destructuring that might be necessary
+///
+/// (rhs, start of body Vec)
+fn handle_match_pat(arm_pat: &Pat, expr_match: &ExprMatch) -> (Vec<String>, Vec<JsStmt>) {
+    match arm_pat {
+        Pat::Const(_) => todo!(),
+        Pat::Ident(pat_ident) => {
+            let empty_vec: Vec<JsStmt> = Vec::new();
+            let ident = pat_ident.ident.to_string();
+            (vec![ident], empty_vec)
+        }
+        Pat::Lit(_) => todo!(),
+        Pat::Macro(_) => todo!(),
+        Pat::Or(_) => todo!(),
+        Pat::Paren(_) => todo!(),
+        Pat::Path(pat_path) => {
+            let empty_vec: Vec<JsStmt> = Vec::new();
+            (
+                pat_path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.to_string())
+                    .collect::<Vec<_>>(),
+                empty_vec,
+            )
+        }
+
+        Pat::Range(_) => todo!(),
+        Pat::Reference(_) => todo!(),
+        Pat::Rest(_) => todo!(),
+        Pat::Slice(_) => todo!(),
+        Pat::Struct(pat_struct) => {
+            let names = pat_struct
+                .fields
+                .iter()
+                .map(|field| match &field.member {
+                    Member::Named(ident) => ident.to_string(),
+                    Member::Unnamed(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+            let stmt = JsStmt::Local(JsLocal {
+                type_: LocalType::Var,
+                destructure: LocalDestructure::Object,
+                names,
+                value: JsExpr::Field(Box::new(handle_expr(&*expr_match.expr)), "data".to_string()),
+            });
+            let rhs = pat_struct
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            (rhs, vec![stmt])
+        }
+        Pat::Tuple(_) => todo!(),
+        Pat::TupleStruct(pat_tuple_struct) => {
+            let names = pat_tuple_struct
+                .elems
+                .iter()
+                .map(|elem| match elem {
+                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                    _ => todo!(),
+                })
+                .collect::<Vec<_>>();
+            let stmt = JsStmt::Local(JsLocal {
+                type_: LocalType::Var,
+                destructure: LocalDestructure::Array,
+                names,
+                value: JsExpr::Field(Box::new(handle_expr(&*expr_match.expr)), "data".to_string()),
+            });
+            (
+                pat_tuple_struct
+                    .path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.to_string())
+                    .collect::<Vec<_>>(),
+                vec![stmt],
+            )
+        }
+        Pat::Type(_) => todo!(),
+        Pat::Verbatim(_) => todo!(),
+        Pat::Wild(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
+fn handle_expr_match(expr_match: &ExprMatch, is_returned: bool) -> JsExpr {
+    // (assignment, condition, succeed, fail)
+    // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
+
+    // Fold match arms into if else statements
+    let if_expr = expr_match.arms.iter().rev().fold(
+        JsExpr::LitStr("this shouldn't exist".to_string()),
+        |acc, arm| {
+            let (mut rhs, mut body_data_destructure) = handle_match_pat(&arm.pat, expr_match);
+
+            // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
+            let index = rhs.len() - 1;
+            // dbg!(rhs);
+            // todo!();
+            // if rhs[0] == "Option" {
+            //     rhs = rhs[1..].to_vec();
+            // }
+            rhs[index] = format!("{}Id", camel(rhs[index].clone()));
+
+            let body = match &*arm.body {
+                // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
+                Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
+                Expr::Block(expr_block) => expr_block
+                    .block
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(stmt))
+                    .collect::<Vec<_>>(),
+                other_expr => {
+                    vec![JsStmt::Expr(handle_expr(other_expr), false)]
+                }
+            };
+            body_data_destructure.extend(body.into_iter());
+            let body = body_data_destructure;
+
+            JsExpr::If(
+                is_returned.then_some(vec!["ifTempAssignment".to_string()]),
+                is_returned,
+                Box::new(JsExpr::Binary(
+                    Box::new(JsExpr::Field(
+                        Box::new(handle_expr(&*expr_match.expr)),
+                        "id".to_string(),
+                    )),
+                    JsOp::Eq,
+                    Box::new(JsExpr::Path(rhs)),
+                )),
+                body,
+                // TODO
+                Some(Box::new(acc)),
+            )
+        },
+    );
+    // for arm in &expr_match.arms {
+    //     dbg!(arm);
+    // }
+    // todo!()
+    if_expr
 }
 
 pub mod web {

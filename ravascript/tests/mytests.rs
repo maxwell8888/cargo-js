@@ -374,7 +374,7 @@ async fn it_writes_to_clipboard() {
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = r#"var input = document.createElement("input");
     var button = document.createElement("button");
-    var getText = async event => await navigator.clipboard.writeText(input.value);
+    var getText = async (_event) => await navigator.clipboard.writeText(input.value);
     button.addEventListener("click", getText);"#;
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
@@ -508,7 +508,34 @@ var _closure8 = (arg) => {
     let expected = "var _closure = () => {
   5;
 };";
-    assert_eq!(actual, expected);
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn closure_return_match() {
+    let actual = r2j!({
+        let _closure = |arg: Option<i32>| match arg {
+            Some(num) => {
+                let sum = num + 5;
+                sum
+            }
+            None => 0,
+        };
+    });
+    let expected = r#"var _closure = (arg) => {
+  var ifTempAssignment;
+  if (arg.id === someId) {
+    var [num] = arg.data;
+    var sum = num + 5;
+    ifTempAssignment = sum;
+  } else if (arg.id === noneId) {
+    ifTempAssignment = 0;
+  } else {
+    ifTempAssignment = "this shouldn't exist";
+  }
+  return ifTempAssignment;
+};"#;
+    assert_eq!(expected, actual);
 }
 
 fn generate_js(js: impl ToString) -> String {
