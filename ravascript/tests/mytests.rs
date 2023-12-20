@@ -18,7 +18,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use prettify_js::prettyprint;
 use ravascript_core::{
-    catch, from_block, from_fn, from_module, try_,
+    catch, from_block, from_crate, from_fn, from_module, try_,
     web::{
         try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
         NAVIGATOR,
@@ -393,16 +393,6 @@ async fn function_body_returns_and_async() {
                 "negative"
             }
         };
-        let _closure8 = |arg: i32| {
-            if arg >= 0 {
-                let _thing = 5;
-                "positive"
-            } else if arg == 0 {
-                "zero"
-            } else {
-                "negative"
-            }
-        };
     });
     // check code actually runs??
     // fn_code_str();
@@ -432,18 +422,6 @@ var _closure7 = (arg) => {
     ifTempAssignment = "negative";
   }
   return ifTempAssignment;
-};
-var _closure8 = (arg) => {
-  var ifTempAssignment;
-  if (arg >= 0) {
-    var _thing = 5;
-    ifTempAssignment = "positive";
-} else if (arg === 0) {
-    ifTempAssignment = "zero";
-  } else {
-    ifTempAssignment = "negative";
-  }
-  return ifTempAssignment;
 };"#;
     let expected_js = format_js(expected_js);
     // println!("{expected_js}");
@@ -463,6 +441,36 @@ var _closure8 = (arg) => {
     let expected = "var _closure = () => {
   5;
 };";
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn function_returns_if_else_if_else() {
+    // TODO return large if else expression that must be converted to js using temp var which is then returned
+    let actual = r2j_block!({
+        let _closure = |arg: i32| {
+            if arg >= 0 {
+                let _thing = 5;
+                "positive"
+            } else if arg == 0 {
+                "zero"
+            } else {
+                "negative"
+            }
+        };
+    });
+    let expected = r#"var _closure = (arg) => {
+  var ifTempAssignment;
+  if (arg >= 0) {
+    var _thing = 5;
+    ifTempAssignment = "positive";
+  } else if (arg === 0) {
+    ifTempAssignment = "zero";
+  } else {
+    ifTempAssignment = "negative";
+  }
+  return ifTempAssignment;
+};"#;
     assert_eq!(expected, actual);
 }
 
@@ -490,5 +498,42 @@ async fn closure_return_match() {
   }
   return ifTempAssignment;
 };"#;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn it_transpiles_crate_directory() {
+    let actual = from_crate("../for-testing".into(), false);
+    let actual = actual
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let expected = r#"
+    var fooBar = {
+        Internal: class Internal {
+            constructor(age) {
+                this.age = age;
+            }
+            addTen() {
+                this.age + 10
+            }
+        }
+        
+        External: class External {
+            constructor(sub, count) {
+                this.sub = sub;
+                this.count = count;
+            }
+            new() {
+                return new External(new Internal(0), 9);
+            }
+        }
+    }
+    var { External } = fooBar;
+    (() => {
+        var thing = External.new();
+    })();
+    "#;
     assert_eq!(expected, actual);
 }
