@@ -67,17 +67,20 @@ pub fn fn_stmts_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn module_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemMod = parse_macro_input!(item as ItemMod);
-    let mod_name = &ast.ident;
+    // let mod_name = &ast.ident;
     // let fn_body = &ast.block;
-    let mod_name_code = format!("{}_code_str", mod_name);
-    let mod_name_code_ident = syn::Ident::new(&mod_name_code, mod_name.span());
+    // let mod_name_code = format!("{}_code_str", mod_name);
+    // let mod_name_code_ident = syn::Ident::new(&mod_name_code, mod_name.span());
     let code_string = format!("{}", quote! { #ast });
 
     let expanded = quote! {
         #ast
 
-        pub fn #mod_name_code_ident() -> &'static str {
-            #code_string
+        pub fn generated_js() -> String {
+            let generated_js = generate_js_from_module(#code_string);
+        let generated_js = format_js(generated_js);
+        generated_js
+            
         }
     };
 
