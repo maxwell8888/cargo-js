@@ -262,7 +262,7 @@ fn handle_item_use_tree(use_tree: &UseTree, exports: &mut Vec<String>, module: &
     }
 }
 
-fn handle_item_use(item_use: &ItemUse) -> JsStmt {
+fn handle_item_use_old_into_import(item_use: &ItemUse) -> JsStmt {
     let mut exports = Vec::new();
     let mut module = Vec::new();
     let _is_pub = match item_use.vis {
@@ -285,6 +285,52 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
         todo!()
     } else {
         JsStmt::Import(None, exports, module)
+    }
+}
+fn handle_item_use(item_use: &ItemUse) -> JsStmt {
+    let mut exports = Vec::new();
+    let mut module = Vec::new();
+    let _is_pub = match item_use.vis {
+        Visibility::Public(_) => true,
+        _ => false,
+    };
+    handle_item_use_tree(&item_use.tree, &mut exports, &mut module);
+    if module.iter().any(|seg| seg == "web") {
+        if module.iter().any(|seg| seg == "Sse") {
+            JsStmt::Raw(SSE_RAW_FUNC.to_string())
+        } else {
+            JsStmt::Expr(JsExpr::Vanish, false)
+        }
+    } else if module.get(0).unwrap() == "serde" || module.get(0).unwrap() == "serde_json" {
+        JsStmt::Expr(JsExpr::Vanish, false)
+    } else if module.get(0).unwrap() == "crate" {
+        // If we import something from our crate, inline it (probably what we want for external crates too?)
+        // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
+        // Get the name of the item to be inlined
+        todo!()
+    } else {
+        JsStmt::Local(JsLocal {
+            type_: LocalType::Var,
+            destructure: LocalDestructure::Object,
+            names: exports
+                .iter()
+                .map(|export| {
+                    if export.chars().all(|c| c.is_uppercase()) {
+                        camel(export)
+                    } else if export.chars().next().unwrap().is_ascii_uppercase() {
+                        AsPascalCase(export).to_string()
+                    } else {
+                        camel(export)
+                    }
+                })
+                .collect::<Vec<_>>(),
+            value: JsExpr::Path(
+                module
+                    .iter()
+                    .map(|module| camel(module))
+                    .collect::<Vec<_>>(),
+            ),
+        })
     }
 }
 
@@ -417,7 +463,9 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
     if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
-        JsStmt::Function(JsFn {
+        let iife = item_fn.sig.ident == "main";
+        let js_fn = JsFn {
+            iife,
             export: match item_fn.vis {
                 Visibility::Public(_) => true,
                 _ => false,
@@ -443,7 +491,12 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
                 .iter()
                 .map(|stmt| handle_stmt(stmt))
                 .collect::<Vec<_>>(),
-        })
+        };
+        if iife {
+            JsStmt::Expr(JsExpr::Fn(js_fn), true)
+        } else {
+            JsStmt::Function(js_fn)
+        }
     }
 }
 
@@ -521,6 +574,7 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
                 false,
                 true,
                 JsFn {
+                    iife: false,
                     export: false,
                     async_: false,
                     is_method: true,
@@ -532,6 +586,11 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
         }
     }
     JsStmt::Class(JsClass {
+        export: match item_enum.vis {
+            Visibility::Public(_) => true,
+            Visibility::Restricted(_) => todo!(),
+            Visibility::Inherited => false,
+        },
         name: item_enum.ident.to_string(),
         inputs: Vec::new(),
         static_fields,
@@ -539,7 +598,12 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
     })
 }
 
-fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
+fn handle_item(
+    item: Item,
+    js_stmts: &mut Vec<JsStmt>,
+    crate_path: Option<PathBuf>,
+    current_file_path: &mut Vec<String>,
+) {
     match item {
         Item::Const(item_const) => js_stmts.push(JsStmt::Local(JsLocal {
             type_: LocalType::Var,
@@ -605,9 +669,10 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
                             private,
                             static_,
                             JsFn {
+                                iife: false,
+                                export,
                                 is_method: true,
                                 async_: item_impl_fn.sig.asyncness.is_some(),
-                                export,
                                 name: camel(item_impl_fn.sig.ident),
                                 input_names,
                                 body_stmts,
@@ -623,15 +688,89 @@ fn handle_item(item: Item, js_stmts: &mut Vec<JsStmt>) {
         }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
-            let mut stmts = Vec::new();
-            for thing in item_mod.content.unwrap().1 {
-                handle_item(thing, &mut stmts);
+            // dbg!(&item_mod);
+            let mut main_path = crate_path.as_ref().unwrap().join("src");
+            // dbg!(&current_file_path);
+            for path_seg in current_file_path.iter() {
+                main_path = main_path.join(path_seg);
             }
-            js_stmts.push(JsStmt::ScopeBlock(stmts))
+            // TODO handle longer mod statements like mod foo::bar::baz;
+            // for path_seg in item_mod.content {
+            //     main_path = main_path.join(path_seg);
+            // }
+
+            // remove current file from path
+            let rel_path_to_nav = format!("{}.rs", item_mod.ident.to_string());
+            main_path.pop();
+            main_path = main_path.join(&rel_path_to_nav);
+            current_file_path.pop();
+            current_file_path.push(rel_path_to_nav);
+            // dbg!(&main_path);
+            let code = fs::read_to_string(main_path).unwrap();
+            let file = syn::parse_file(&code).unwrap();
+            let mut stmts =
+                js_stmts_from_syn_items(file.items, false, crate_path, current_file_path);
+
+            // Get names of pub/exported JsStmts
+            let mut names = Vec::new();
+            for stmt in &stmts {
+                match stmt {
+                    JsStmt::Class(js_class) => {
+                        if js_class.export {
+                            names.push(js_class.name.clone());
+                        }
+                    }
+                    JsStmt::ClassMethod(_, _, _, _) => {}
+                    JsStmt::ClassStatic(_) => {}
+                    JsStmt::Local(_) => {}
+                    JsStmt::Expr(_, _) => {}
+                    JsStmt::Import(_, _, _) => {}
+                    JsStmt::Function(_) => {}
+                    JsStmt::ScopeBlock(_) => {}
+                    JsStmt::TryBlock(_) => {}
+                    JsStmt::CatchBlock(_, _) => {}
+                    JsStmt::Raw(_) => {}
+                }
+            }
+            stmts.push(JsStmt::Expr(
+                JsExpr::Return(Box::new(JsExpr::Object(
+                    names
+                        .iter()
+                        .map(|name| (name.clone(), Box::new(JsExpr::Path(vec![name.clone()]))))
+                        .collect::<Vec<_>>(),
+                ))),
+                true,
+            ));
+
+            js_stmts.push(JsStmt::Local(JsLocal {
+                type_: LocalType::Var,
+                destructure: LocalDestructure::None,
+                names: vec![camel(&item_mod.ident)],
+                value: JsExpr::Fn(JsFn {
+                    iife: true,
+                    export: false,
+                    async_: false,
+                    is_method: false,
+                    name: camel(item_mod.ident),
+                    input_names: Vec::new(),
+                    body_stmts: stmts,
+                }),
+            }))
+
+            // let mut stmts = Vec::new();
+            // for thing in item_mod.content.unwrap().1 {
+            //     handle_item(thing, &mut stmts);
+            // }
+            // js_stmts.push(JsStmt::ScopeBlock(stmts))
         }
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = JsStmt::Class(JsClass {
+                export: match item_struct.vis {
+                    Visibility::Public(_) => true,
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => false,
+                },
                 name: item_struct.ident.to_string(),
                 inputs: item_struct
                     .fields
@@ -673,17 +812,24 @@ pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
     stmts
 }
 
-pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> {
+/// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
+pub fn js_stmts_from_syn_items(
+    items: Vec<Item>,
+    with_rust_types: bool,
+    crate_path: Option<PathBuf>,
+    current_file_path: &mut Vec<String>,
+) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
     // TODO this should be optional/configurable, might not always want it
 
-    if with_vec {
+    if with_rust_types {
         let mut methods = Vec::new();
         methods.push((
             "new".to_string(),
             false,
             true,
             JsFn {
+                iife: false,
                 export: false,
                 async_: false,
                 is_method: true,
@@ -697,6 +843,7 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> 
             false,
             false,
             JsFn {
+                iife: false,
                 export: false,
                 async_: false,
                 is_method: true,
@@ -706,6 +853,7 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> 
             },
         ));
         js_stmts.push(JsStmt::Class(JsClass {
+            export: false,
             name: "Vec".to_string(),
             inputs: Vec::new(),
             static_fields: Vec::new(),
@@ -713,7 +861,7 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> 
         }));
     }
     for item in items {
-        handle_item(item, &mut js_stmts);
+        handle_item(item, &mut js_stmts, crate_path.clone(), current_file_path);
     }
 
     // Add methods from impl blocks to classes. This assumes impl blocks are at the top level
@@ -762,21 +910,30 @@ pub fn js_stmts_from_syn_items(items: Vec<Item>, with_vec: bool) -> Vec<JsStmt> 
     js_stmts2
 }
 
-pub fn from_crate(file_path: PathBuf, with_vec: bool) -> Vec<JsStmt> {
-    let code = fs::read_to_string(file_path).unwrap();
+pub fn from_crate(crate_path: PathBuf, with_vec: bool) -> Vec<JsStmt> {
+    let main_path = crate_path.join("src").join("main.rs");
+    let code = fs::read_to_string(main_path).unwrap();
     let file = syn::parse_file(&code).unwrap();
-    js_stmts_from_syn_items(file.items, with_vec)
+    let mut current_file_path = vec!["main.rs".to_string()];
+    js_stmts_from_syn_items(
+        file.items,
+        with_vec,
+        Some(crate_path),
+        &mut current_file_path,
+    )
 }
 
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    js_stmts_from_syn_items(items, with_vec)
+    let mut current_file_path = Vec::new();
+    js_stmts_from_syn_items(items, with_vec, None, &mut current_file_path)
 }
 
 pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
-    js_stmts_from_syn_items(file.items, with_vec)
+    let mut current_file_path = Vec::new();
+    js_stmts_from_syn_items(file.items, with_vec, None, &mut current_file_path)
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -1221,6 +1378,7 @@ impl JsExpr {
 // ::new()/Constructor must assign all fields of class
 #[derive(Clone, Debug)]
 pub struct JsClass {
+    export: bool,
     name: String,
     /// we are assuming input names is equivalent to field names
     inputs: Vec<String>,
@@ -1293,6 +1451,7 @@ impl JsLocal {
 
 #[derive(Clone, Debug)]
 pub struct JsFn {
+    iife: bool,
     export: bool,
     async_: bool,
     is_method: bool,
@@ -1337,10 +1496,10 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
             }
         },
         JsStmt::Import(_, _, _) => todo!(),
-        JsStmt::Function(js_fn) => js_fn.js_string(),
-        JsStmt::Class(_) => todo!(),
-        JsStmt::ClassMethod(_, _, _, _) => todo!(),
-        JsStmt::ClassStatic(_) => todo!(),
+        JsStmt::Function(_) => stmt.js_string(),
+        JsStmt::Class(_) => stmt.js_string(),
+        JsStmt::ClassMethod(_, _, _, _) => stmt.js_string(),
+        JsStmt::ClassStatic(_) => stmt.js_string(),
         JsStmt::Raw(_) => stmt.js_string(),
         JsStmt::ScopeBlock(_) => stmt.js_string(),
         JsStmt::TryBlock(_) => stmt.js_string(),
@@ -1358,7 +1517,7 @@ impl JsFn {
             .map(|(i, stmt)| handle_fn_body_stmts(i, stmt, self.body_stmts.len()))
             .collect::<Vec<_>>()
             .join("\n");
-        format!(
+        let fn_string = format!(
             "{}{}{}{}({}) {{\n{}\n}}",
             if self.export && !self.is_method {
                 "export default "
@@ -1370,7 +1529,12 @@ impl JsFn {
             self.name,
             self.input_names.join(", "),
             body_stmts
-        )
+        );
+        if self.iife {
+            format!("({})()", fn_string)
+        } else {
+            fn_string
+        }
     }
 }
 
@@ -1441,7 +1605,15 @@ impl JsStmt {
                     if exports.len() > 0 {
                         let exports = exports
                             .iter()
-                            .map(|export| camel(export))
+                            .map(|export| {
+                                if export.chars().all(|c| c.is_uppercase()) {
+                                    camel(export)
+                                } else if export.chars().next().unwrap().is_ascii_uppercase() {
+                                    AsPascalCase(export).to_string()
+                                } else {
+                                    camel(export)
+                                }
+                            })
                             .collect::<Vec<_>>()
                             .join(", ");
                         format!(" {{ {} }}", exports)
@@ -1850,6 +2022,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                         let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
                         return JsExpr::FnCall(
                             Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
+                                iife: false,
                                 export: false,
                                 async_: false,
                                 is_method: false,
@@ -1857,11 +2030,11 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                                 input_names: vec!["text".to_string()],
                                 body_stmts: vec![JsStmt::Raw(body)],
                             })))),
-                            (expr_method_call
+                            expr_method_call
                                 .args
                                 .iter()
                                 .map(|arg| handle_expr(arg))
-                                .collect::<Vec<_>>()),
+                                .collect::<Vec<_>>(),
                         );
                     }
                 }

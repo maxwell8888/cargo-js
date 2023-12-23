@@ -20,7 +20,7 @@ class MyEnum {
         return data;
     }
 }
-function main() {
+(function main() {
     var myData = MyEnum.FooBar;
     var myData = MyEnum.Bar({ x: 4, y: "Hello" });
     var myData = MyEnum.Baz("Hi", 5);
@@ -41,4 +41,4 @@ function main() {
         matchResult = "this shouldn't exist";
     }
     return matchResult === 5;
-}
+})();

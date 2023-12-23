@@ -22,7 +22,7 @@ class MyStruct {
         return this.age;
     }
 }
-function main() {
+(function main() {
     var thing = MyStruct.new(2, "Bruce");
     var one = thing.myMethod() === "Bruce";
     var two = thing.myMethodWithArg(2) === 4;
@@ -30,4 +30,4 @@ function main() {
     var four = thing.withGeneric(99) === 2;
     var five = thing.getAge() === 2;
     return one && two && three && four && five;
-}
+})();

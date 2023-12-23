@@ -80,7 +80,7 @@ async fn exexute_js(js: &str) -> Result<bool, Box<dyn std::error::Error>> {
             }
         }
     });
-    let expression = format!("{js}\nmain();");
+    let expression = format!("{js}");
     let page = browser.new_page("about:blank").await?;
     let outcome: bool = page.evaluate_expression(expression).await?.into_value()?;
     browser.close().await?;
@@ -509,31 +509,37 @@ async fn it_transpiles_crate_directory() {
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
+    let actual = format_js(actual);
+    // println!("{actual}");
     let expected = r#"
-    var fooBar = {
-        Internal: class Internal {
+    var fooBar = (function fooBar() {
+        class Internal {
             constructor(age) {
                 this.age = age;
             }
+
             addTen() {
-                this.age + 10
+                return this.age + 10
             }
         }
-        
-        External: class External {
+        class External {
             constructor(sub, count) {
                 this.sub = sub;
                 this.count = count;
             }
-            new() {
+
+            static new() {
                 return new External(new Internal(0), 9);
             }
         }
-    }
+        return { 
+            External: External,
+        };
+    })();
     var { External } = fooBar;
-    (() => {
+    (function main() {
         var thing = External.new();
     })();
     "#;
-    assert_eq!(expected, actual);
+    assert_eq!(format_js(expected), actual);
 }
