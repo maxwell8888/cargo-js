@@ -243,93 +243,122 @@ const SSE_RAW_FUNC: &str = r##" function Sse (url, options) {
     }
 }"##;
 
-fn handle_item_use_tree(use_tree: &UseTree, exports: &mut Vec<String>, module: &mut Vec<String>) {
+// fn handle_item_use_tree(use_tree: &UseTree, sub_modules: &mut Vec<DestructureValue>) {
+//     dbg!(use_tree);
+//     match use_tree {
+//         UseTree::Path(use_path) => {
+//             let key = use_path.ident.to_string();
+//             let value = handle_item_use_tree(&*use_path.tree, sub_modules, root_module_or_crate);
+//             sub_modules.push(Des)
+//         }
+//         UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
+//         UseTree::Rename(_) => todo!(),
+//         UseTree::Glob(_use_glob) => sub_modules.push("*".to_string()),
+//         UseTree::Group(use_group) => use_group.items.iter().for_each(|item| match item {
+//             UseTree::Path(_) => todo!(),
+//             UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
+//             UseTree::Rename(_) => todo!(),
+//             UseTree::Glob(_) => todo!(),
+//             UseTree::Group(_) => todo!(),
+//         }),
+//     }
+// }
+
+fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
     match use_tree {
-        UseTree::Path(use_path) => {
-            module.push(use_path.ident.to_string());
-            handle_item_use_tree(&*use_path.tree, exports, module)
-        }
-        UseTree::Name(use_name) => exports.push(use_name.ident.to_string()),
+        UseTree::Path(use_path) => DestructureObject(vec![DestructureValue::Nesting(
+            case_convert(&use_path.ident),
+            tree_to_destructure_object(&*use_path.tree),
+        )]),
+        UseTree::Name(use_name) => DestructureObject(vec![DestructureValue::KeyName(
+            case_convert(&use_name.ident),
+        )]),
         UseTree::Rename(_) => todo!(),
-        UseTree::Glob(_use_glob) => exports.push("*".to_string()),
-        UseTree::Group(use_group) => use_group.items.iter().for_each(|item| match item {
-            UseTree::Path(_) => todo!(),
-            UseTree::Name(use_name) => exports.push(use_name.ident.to_string()),
-            UseTree::Rename(_) => todo!(),
-            UseTree::Glob(_) => todo!(),
-            UseTree::Group(_) => todo!(),
-        }),
+        UseTree::Glob(_) => todo!(),
+        UseTree::Group(use_group) => DestructureObject(
+            use_group
+                .items
+                .iter()
+                .map(|item| match item {
+                    UseTree::Path(use_path) => DestructureValue::Nesting(
+                        case_convert(&use_path.ident),
+                        tree_to_destructure_object(&*use_path.tree),
+                    ),
+                    UseTree::Name(use_name) => {
+                        DestructureValue::KeyName(case_convert(&use_name.ident))
+                    }
+                    UseTree::Rename(_) => todo!(),
+                    UseTree::Glob(_) => todo!(),
+                    UseTree::Group(_) => todo!(),
+                })
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
-fn handle_item_use_old_into_import(item_use: &ItemUse) -> JsStmt {
-    let mut exports = Vec::new();
-    let mut module = Vec::new();
-    let _is_pub = match item_use.vis {
-        Visibility::Public(_) => true,
-        _ => false,
-    };
-    handle_item_use_tree(&item_use.tree, &mut exports, &mut module);
-    if module.iter().any(|seg| seg == "web") {
-        if module.iter().any(|seg| seg == "Sse") {
-            JsStmt::Raw(SSE_RAW_FUNC.to_string())
-        } else {
-            JsStmt::Expr(JsExpr::Vanish, false)
-        }
-    } else if module.get(0).unwrap() == "serde" || module.get(0).unwrap() == "serde_json" {
-        JsStmt::Expr(JsExpr::Vanish, false)
-    } else if module.get(0).unwrap() == "crate" {
-        // If we import something from our crate, inline it (probably what we want for external crates too?)
-        // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
-        // Get the name of the item to be inlined
-        todo!()
+/// CONST_NAMES -> constNames
+/// PascalCase -> PascalCase
+/// snake_case -> snakeCase
+fn case_convert(name: impl ToString) -> String {
+    let name = name.to_string();
+    if name.chars().all(|c| c.is_uppercase()) {
+        camel(name)
+    } else if name.chars().next().unwrap().is_ascii_uppercase() {
+        // TODO this is redundant?
+        AsPascalCase(name).to_string()
     } else {
-        JsStmt::Import(None, exports, module)
+        camel(name)
     }
 }
+
 fn handle_item_use(item_use: &ItemUse) -> JsStmt {
-    let mut exports = Vec::new();
-    let mut module = Vec::new();
-    let _is_pub = match item_use.vis {
+    let public = match item_use.vis {
         Visibility::Public(_) => true,
         _ => false,
     };
-    handle_item_use_tree(&item_use.tree, &mut exports, &mut module);
-    if module.iter().any(|seg| seg == "web") {
-        if module.iter().any(|seg| seg == "Sse") {
+
+    let (root_module_or_crate, sub_modules) = match &item_use.tree {
+        UseTree::Path(use_path) => {
+            // let mut sub_modules: Vec<DestructureValue> = Vec::new();
+            let root_module_or_crate = use_path.ident.to_string();
+
+            let sub_modules = tree_to_destructure_object(&*use_path.tree);
+            // let sub_modules = DestructureObject (sub_modules);
+            // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
+            (root_module_or_crate, sub_modules)
+        }
+        // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
+        // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+        UseTree::Name(use_name) => todo!(),
+        _ => panic!("root of use trees are always a path or name"),
+    };
+
+    // TODO fix this mess
+    if match sub_modules.0.first().unwrap() {
+        DestructureValue::KeyName(_) => "",
+        DestructureValue::Rename(_, _) => "",
+        DestructureValue::Nesting(name, _) => name,
+    } == "web"
+    {
+        if root_module_or_crate == "Sse" {
             JsStmt::Raw(SSE_RAW_FUNC.to_string())
         } else {
             JsStmt::Expr(JsExpr::Vanish, false)
         }
-    } else if module.get(0).unwrap() == "serde" || module.get(0).unwrap() == "serde_json" {
+    } else if root_module_or_crate == "serde" || root_module_or_crate == "serde_json" {
         JsStmt::Expr(JsExpr::Vanish, false)
-    } else if module.get(0).unwrap() == "crate" {
+    } else if root_module_or_crate == "crate" {
         // If we import something from our crate, inline it (probably what we want for external crates too?)
         // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
         // Get the name of the item to be inlined
         todo!()
     } else {
         JsStmt::Local(JsLocal {
+            public,
+            export: false,
             type_: LocalType::Var,
-            destructure: LocalDestructure::Object,
-            names: exports
-                .iter()
-                .map(|export| {
-                    if export.chars().all(|c| c.is_uppercase()) {
-                        camel(export)
-                    } else if export.chars().next().unwrap().is_ascii_uppercase() {
-                        AsPascalCase(export).to_string()
-                    } else {
-                        camel(export)
-                    }
-                })
-                .collect::<Vec<_>>(),
-            value: JsExpr::Path(
-                module
-                    .iter()
-                    .map(|module| camel(module))
-                    .collect::<Vec<_>>(),
-            ),
+            lhs: LocalName::DestructureObject(sub_modules),
+            value: JsExpr::Path(vec![camel(root_module_or_crate)]),
         })
     }
 }
@@ -350,18 +379,18 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
         Stmt::Expr(expr, closing_semi) => JsStmt::Expr(handle_expr(expr), closing_semi.is_some()),
         Stmt::Local(local) => {
             //
-            let names = match &local.pat {
-                Pat::Ident(pat_ident) => {
-                    vec![camel(&pat_ident.ident)]
-                }
-                Pat::Tuple(pat_tuple) => pat_tuple
-                    .elems
-                    .iter()
-                    .map(|elem| match elem {
-                        Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                        _ => todo!(),
-                    })
-                    .collect::<Vec<_>>(),
+            let lhs = match &local.pat {
+                Pat::Ident(pat_ident) => LocalName::Single(camel(&pat_ident.ident)),
+                Pat::Tuple(pat_tuple) => LocalName::DestructureArray(
+                    pat_tuple
+                        .elems
+                        .iter()
+                        .map(|elem| match elem {
+                            Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+                            _ => todo!(),
+                        })
+                        .collect::<Vec<_>>(),
+                ),
                 other => {
                     dbg!(other);
                     todo!()
@@ -371,16 +400,14 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             match value {
                 JsExpr::If(_assignment, _declare_var, condition, succeed, fail) => {
                     // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
-                    JsStmt::Expr(
-                        JsExpr::If(Some(names), true, condition, succeed, fail),
-                        true,
-                    )
+                    JsStmt::Expr(JsExpr::If(Some(lhs), true, condition, succeed, fail), true)
                 }
 
                 value => JsStmt::Local(JsLocal {
+                    public: false,
+                    export: false,
                     type_: LocalType::Var,
-                    destructure: LocalDestructure::None,
-                    names,
+                    lhs,
                     value,
                 }),
             }
@@ -466,10 +493,12 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
         let iife = item_fn.sig.ident == "main";
         let js_fn = JsFn {
             iife,
-            export: match item_fn.vis {
+            public: match item_fn.vis {
                 Visibility::Public(_) => true,
-                _ => false,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
             },
+            export: false,
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
             name: camel(&item_fn.sig.ident),
@@ -506,9 +535,10 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
     let mut static_fields = Vec::new();
     for variant in &item_enum.variants {
         static_fields.push(JsLocal {
+            public: false,
+            export: false,
             type_: LocalType::Static,
-            destructure: LocalDestructure::None,
-            names: vec![format!("{}Id", camel(&variant.ident))],
+            lhs: LocalName::Single(format!("{}Id", camel(&variant.ident))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
         match variant.fields {
@@ -516,12 +546,13 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
             syn::Fields::Unnamed(_) => {}
             syn::Fields::Unit => {
                 static_fields.push(JsLocal {
+                    public: false,
+                    export: false,
                     type_: LocalType::Static,
-                    destructure: LocalDestructure::None,
-                    names: vec![format!(
+                    lhs: LocalName::Single(format!(
                         "{}",
                         AsPascalCase(variant.ident.to_string()).to_string()
-                    )],
+                    )),
                     value: JsExpr::Object(vec![(
                         "id".to_string(),
                         Box::new(JsExpr::LitStr(variant.ident.to_string())),
@@ -575,6 +606,7 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
                 true,
                 JsFn {
                     iife: false,
+                    public: false,
                     export: false,
                     async_: false,
                     is_method: true,
@@ -586,11 +618,12 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
         }
     }
     JsStmt::Class(JsClass {
-        export: match item_enum.vis {
+        public: match item_enum.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
+        export: false,
         name: item_enum.ident.to_string(),
         inputs: Vec::new(),
         static_fields,
@@ -601,14 +634,19 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
 fn handle_item(
     item: Item,
     js_stmts: &mut Vec<JsStmt>,
-    crate_path: Option<PathBuf>,
-    current_file_path: &mut Vec<String>,
+    // crate_path: Option<PathBuf>,
+    current_file_path: &mut Option<PathBuf>,
 ) {
     match item {
         Item::Const(item_const) => js_stmts.push(JsStmt::Local(JsLocal {
+            export: false,
+            public: match item_const.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            },
             type_: LocalType::Var,
-            destructure: LocalDestructure::None,
-            names: vec![item_const.ident.to_string()],
+            lhs: LocalName::Single(item_const.ident.to_string()),
             value: handle_expr(&*item_const.expr),
         })),
         Item::Enum(item_enum) => js_stmts.push(handle_item_enum(item_enum)),
@@ -625,9 +663,10 @@ fn handle_item(
                     ImplItem::Const(impl_item_const) => {
                         // impl_item_const
                         js_stmts.push(JsStmt::ClassStatic(JsLocal {
+                            public: false,
+                            export: false,
                             type_: LocalType::Static,
-                            destructure: LocalDestructure::None,
-                            names: vec![impl_item_const.ident.to_string()],
+                            lhs: LocalName::Single(impl_item_const.ident.to_string()),
                             value: handle_expr(&impl_item_const.expr),
                         }))
                     }
@@ -640,12 +679,7 @@ fn handle_item(
                         } else {
                             true
                         };
-                        let export = match item_impl_fn.vis {
-                            Visibility::Public(_) => true,
-                            Visibility::Restricted(_) => todo!(),
-                            Visibility::Inherited => false,
-                        };
-                        let private = !export;
+                        // let private = !export;
                         let input_names = item_impl_fn
                             .sig
                             .inputs
@@ -666,11 +700,12 @@ fn handle_item(
                             .collect::<Vec<_>>();
                         js_stmts.push(JsStmt::ClassMethod(
                             class_name.clone(),
-                            private,
+                            false,
                             static_,
                             JsFn {
                                 iife: false,
-                                export,
+                                public: false,
+                                export: false,
                                 is_method: true,
                                 async_: item_impl_fn.sig.asyncness.is_some(),
                                 name: camel(item_impl_fn.sig.ident),
@@ -688,50 +723,103 @@ fn handle_item(
         }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
-            // dbg!(&item_mod);
-            let mut main_path = crate_path.as_ref().unwrap().join("src");
-            // dbg!(&current_file_path);
-            for path_seg in current_file_path.iter() {
-                main_path = main_path.join(path_seg);
-            }
             // TODO handle longer mod statements like mod foo::bar::baz;
             // for path_seg in item_mod.content {
             //     main_path = main_path.join(path_seg);
             // }
+            let (at_root, current_file_name, file) = match current_file_path {
+                Some(current_file_path) => {
+                    let current_module_name = current_file_path.file_stem().unwrap().to_os_string();
+                    let current_module_name = current_module_name.to_string_lossy().to_string();
+                    let current_file_name =
+                        current_file_path.file_name().unwrap().to_string_lossy();
+                    let current_file_name = current_file_name.to_string();
 
-            // remove current file from path
-            let rel_path_to_nav = format!("{}.rs", item_mod.ident.to_string());
-            main_path.pop();
-            main_path = main_path.join(&rel_path_to_nav);
-            current_file_path.pop();
-            current_file_path.push(rel_path_to_nav);
-            // dbg!(&main_path);
-            let code = fs::read_to_string(main_path).unwrap();
-            let file = syn::parse_file(&code).unwrap();
-            let mut stmts =
-                js_stmts_from_syn_items(file.items, false, crate_path, current_file_path);
+                    let lib_or_main = current_file_path.ends_with("main.rs")
+                        || current_file_path.ends_with("lib.rs");
 
-            // Get names of pub/exported JsStmts
+                    // Say the current file path is `some_crate/src/main.rs`. Then we pop the file leaving us with `some_crate/src/`.
+                    // Or current path is `some_crate/src/stuff/dog.rs`. Then we pop the file leaving us with `some_crate/src/stuff`.
+                    current_file_path.pop();
+
+                    let at_root = current_file_path.file_name().unwrap() == "src";
+                    let at_root = lib_or_main;
+
+                    // Then we get the path of the new module relative to the current file, which for a simple `mod foo` is just the file name `foo.rs` - no if it is non-root submodule like dog we have `stuff.rs` -> `stuff/dog.rs`
+                    // main.rs mod stuff: /main.rs -> /stuff.rs
+                    // stuff.rs mod dog: /stuff.rs -> /stuff/dog.rs
+                    // /stuff/dog.rs mod deeper: /stuff/dog.rs -> /stuff/dog/deeper.rs
+                    let rel_path_to_nav = if at_root {
+                        format!("{}.rs", item_mod.ident)
+                    } else {
+                        // current_file_path.pop();
+                        format!("{}/{}.rs", current_module_name, item_mod.ident.to_string())
+                    };
+
+                    // Then we add it to the updated current path and use this to read the code from the file and parse to syn
+                    current_file_path.push(&rel_path_to_nav);
+                    let code = fs::read_to_string(&current_file_path).unwrap();
+                    (at_root, current_file_name, syn::parse_file(&code).unwrap())
+                }
+                // None => panic!("use of `mod` keyword is only allowed in crates, not adhoc files/scripts and snippets"),
+                None => panic!("use of `mod` keyword is only allowed in crates"),
+            };
+
+            // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
+            let mut stmts = js_stmts_from_syn_items(file.items, false, current_file_path);
+
+            // once we have the module's `JsStmt`s we want to revert back to the previous file path
+            // to do this we just need to pop and add `current_module_name` if we are at the root
+            // if we are not at root we need to pop twice then add `current_module_name`
+            if let Some(current_file_path) = current_file_path {
+                if at_root {
+                    current_file_path.pop();
+                    current_file_path.push(current_file_name);
+                } else {
+                    current_file_path.pop();
+                    current_file_path.pop();
+                    current_file_path.push(current_file_name);
+                }
+            }
+
+            // Get names of pub JsStmts
+            // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
             let mut names = Vec::new();
             for stmt in &stmts {
                 match stmt {
                     JsStmt::Class(js_class) => {
-                        if js_class.export {
+                        if js_class.public {
                             names.push(js_class.name.clone());
                         }
                     }
                     JsStmt::ClassMethod(_, _, _, _) => {}
                     JsStmt::ClassStatic(_) => {}
-                    JsStmt::Local(_) => {}
+                    JsStmt::Local(js_local) => {
+                        if js_local.public {
+                            if let LocalName::Single(name) = &js_local.lhs {
+                                names.push(name.clone())
+                            } else {
+                                // https://github.com/rust-lang/rfcs/issues/3290
+                                panic!("consts do not support destructuring");
+                            }
+                        }
+                    }
                     JsStmt::Expr(_, _) => {}
                     JsStmt::Import(_, _, _) => {}
-                    JsStmt::Function(_) => {}
+                    JsStmt::Function(js_fn) => {
+                        if js_fn.public {
+                            names.push(js_fn.name.clone());
+                        }
+                    }
                     JsStmt::ScopeBlock(_) => {}
                     JsStmt::TryBlock(_) => {}
                     JsStmt::CatchBlock(_, _) => {}
                     JsStmt::Raw(_) => {}
                 }
             }
+
+            // add return Object containing public items
+            // TODO object key and value have same name so don't need to specify value
             stmts.push(JsStmt::Expr(
                 JsExpr::Return(Box::new(JsExpr::Object(
                     names
@@ -742,12 +830,23 @@ fn handle_item(
                 true,
             ));
 
+            // Wrap mod up in an iffe assigned to the mod name eg
+            // var myModule = (function myModule() {
+            //     ...
+            //     return { publicModuleItem1: publicModuleItem1, publicModuleItem2: publicModuleItem2 };
+            // })();
             js_stmts.push(JsStmt::Local(JsLocal {
+                public: match item_mod.vis {
+                    Visibility::Public(_) => true,
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => false,
+                },
+                export: false,
                 type_: LocalType::Var,
-                destructure: LocalDestructure::None,
-                names: vec![camel(&item_mod.ident)],
+                lhs: LocalName::Single(camel(&item_mod.ident)),
                 value: JsExpr::Fn(JsFn {
                     iife: true,
+                    public: false,
                     export: false,
                     async_: false,
                     is_method: false,
@@ -766,7 +865,8 @@ fn handle_item(
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = JsStmt::Class(JsClass {
-                export: match item_struct.vis {
+                export: false,
+                public: match item_struct.vis {
                     Visibility::Public(_) => true,
                     Visibility::Restricted(_) => todo!(),
                     Visibility::Inherited => false,
@@ -816,8 +916,8 @@ pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
 pub fn js_stmts_from_syn_items(
     items: Vec<Item>,
     with_rust_types: bool,
-    crate_path: Option<PathBuf>,
-    current_file_path: &mut Vec<String>,
+    // crate_path: Option<PathBuf>,
+    current_file_path: &mut Option<PathBuf>,
 ) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
     // TODO this should be optional/configurable, might not always want it
@@ -831,6 +931,7 @@ pub fn js_stmts_from_syn_items(
             JsFn {
                 iife: false,
                 export: false,
+                public: false,
                 async_: false,
                 is_method: true,
                 name: "new".to_string(),
@@ -845,6 +946,7 @@ pub fn js_stmts_from_syn_items(
             JsFn {
                 iife: false,
                 export: false,
+                public: false,
                 async_: false,
                 is_method: true,
                 name: "push".to_string(),
@@ -854,6 +956,7 @@ pub fn js_stmts_from_syn_items(
         ));
         js_stmts.push(JsStmt::Class(JsClass {
             export: false,
+            public: false,
             name: "Vec".to_string(),
             inputs: Vec::new(),
             static_fields: Vec::new(),
@@ -861,7 +964,7 @@ pub fn js_stmts_from_syn_items(
         }));
     }
     for item in items {
-        handle_item(item, &mut js_stmts, crate_path.clone(), current_file_path);
+        handle_item(item, &mut js_stmts, current_file_path);
     }
 
     // Add methods from impl blocks to classes. This assumes impl blocks are at the top level
@@ -914,26 +1017,24 @@ pub fn from_crate(crate_path: PathBuf, with_vec: bool) -> Vec<JsStmt> {
     let main_path = crate_path.join("src").join("main.rs");
     let code = fs::read_to_string(main_path).unwrap();
     let file = syn::parse_file(&code).unwrap();
-    let mut current_file_path = vec!["main.rs".to_string()];
+    // let mut current_file_path = vec!["main.rs".to_string()];
     js_stmts_from_syn_items(
         file.items,
         with_vec,
-        Some(crate_path),
-        &mut current_file_path,
+        &mut Some(crate_path.join("src").join("main.rs")),
     )
 }
 
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    let mut current_file_path = Vec::new();
-    js_stmts_from_syn_items(items, with_vec, None, &mut current_file_path)
+    js_stmts_from_syn_items(items, with_vec, &mut None)
 }
 
 pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
-    let mut current_file_path = Vec::new();
-    js_stmts_from_syn_items(file.items, with_vec, None, &mut current_file_path)
+    // let mut current_file_path = Vec::new();
+    js_stmts_from_syn_items(file.items, with_vec, &mut None)
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -1053,7 +1154,7 @@ pub enum JsExpr {
     ///
     /// (assignment, declare_var, condition, succeed, fail)
     If(
-        Option<Vec<String>>,
+        Option<LocalName>,
         bool,
         Box<JsExpr>,
         Vec<JsStmt>,
@@ -1080,15 +1181,15 @@ pub enum JsExpr {
 
 // Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
 fn if_expr_to_string(
-    assignment: &Option<Vec<String>>,
+    assignment: &Option<LocalName>,
     declare_var: &bool,
     cond: &Box<JsExpr>,
     succeed: &Vec<JsStmt>,
     // For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
-    fail: &Option<Box<JsExpr>>,
+    else_: &Option<Box<JsExpr>>,
 ) -> String {
-    let fail = if let Some(fail) = fail {
-        match &**fail {
+    let else_ = if let Some(else_) = else_ {
+        match &**else_ {
             JsExpr::If(_, _, cond, succeed, fail) => format!(
                 " else {}",
                 JsExpr::If(
@@ -1101,18 +1202,14 @@ fn if_expr_to_string(
                 .js_string()
             ),
             _ => {
-                let thing = match &**fail {
+                let thing = match &**else_ {
                     JsExpr::Block(stmts) => stmts
                         .iter()
                         .enumerate()
                         .map(|(i, stmt)| {
                             if i == stmts.len() - 1 {
                                 if let Some(assignment) = assignment {
-                                    format!(
-                                        "{} = {};",
-                                        assignment.first().unwrap(),
-                                        stmt.js_string()
-                                    )
+                                    format!("{} = {};", assignment.js_string(), stmt.js_string())
                                 } else {
                                     stmt.js_string()
                                 }
@@ -1124,13 +1221,9 @@ fn if_expr_to_string(
                         .join("\n"),
                     _ => {
                         if let Some(assignment) = assignment {
-                            format!(
-                                "{} = {};",
-                                camel(assignment.first().unwrap()),
-                                fail.js_string()
-                            )
+                            format!("{} = {};", assignment.js_string(), else_.js_string())
                         } else {
-                            fail.js_string()
+                            else_.js_string()
                         }
                     }
                 };
@@ -1140,12 +1233,13 @@ fn if_expr_to_string(
     } else {
         "".to_string()
     };
-    let assignment_str = if let Some(names) = assignment {
+    let assignment_str = if let Some(lhs) = assignment {
         if *declare_var {
             let local = JsLocal {
+                public: false,
+                export: false,
                 type_: LocalType::Var,
-                destructure: LocalDestructure::None,
-                names: names.clone(),
+                lhs: lhs.clone(),
                 value: JsExpr::Blank,
             };
             format!("{}\n", local.js_string())
@@ -1182,11 +1276,7 @@ fn if_expr_to_string(
                         //     }
                         // }
 
-                        format!(
-                            "{} = {};",
-                            camel(assignment.first().unwrap()),
-                            stmt.js_string()
-                        )
+                        format!("{} = {};", assignment.js_string(), stmt.js_string())
                     } else {
                         stmt.js_string()
                     }
@@ -1196,7 +1286,7 @@ fn if_expr_to_string(
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        fail
+        else_
     )
 }
 impl JsExpr {
@@ -1378,6 +1468,7 @@ impl JsExpr {
 // ::new()/Constructor must assign all fields of class
 #[derive(Clone, Debug)]
 pub struct JsClass {
+    public: bool,
     export: bool,
     name: String,
     /// we are assuming input names is equivalent to field names
@@ -1396,42 +1487,72 @@ pub enum LocalType {
     Let,
     Static,
 }
+
 #[derive(Clone, Debug)]
-pub enum LocalDestructure {
-    None,
-    Object,
-    Array,
+enum DestructureValue {
+    /// A simple destructure like `var { a } = obj;`
+    KeyName(String),
+    /// A rename destructure like `var { a: b } = obj;`
+    Rename(String, String),
+    /// A nested destructure like `var { a: { b } } = obj;`
+    Nesting(String, DestructureObject),
 }
+
+#[derive(Clone, Debug)]
+struct DestructureObject(Vec<DestructureValue>);
+impl DestructureObject {
+    fn js_string(&self) -> String {
+        format!(
+            "{{ {} }}",
+            self.0
+                .iter()
+                .map(|name| match name {
+                    DestructureValue::KeyName(key) => key.clone(),
+                    DestructureValue::Rename(key, new_name) => format!("{key}: {new_name}"),
+                    DestructureValue::Nesting(key, destructure_object) =>
+                        format!("{key}: {}", destructure_object.js_string()),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum LocalName {
+    Single(String),
+    DestructureObject(DestructureObject),
+    DestructureArray(Vec<String>),
+}
+impl LocalName {
+    fn js_string(&self) -> String {
+        match self {
+            LocalName::Single(name) => name.clone(),
+            LocalName::DestructureObject(destructure_object) => destructure_object.js_string(),
+            LocalName::DestructureArray(destructure_array) => format!(
+                "[ {} ]",
+                destructure_array
+                    .iter()
+                    .map(|name| name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct JsLocal {
+    public: bool,
+    export: bool,
     type_: LocalType,
-    destructure: LocalDestructure,
-    names: Vec<String>,
+    lhs: LocalName,
+    // names: Vec<String>,
     value: JsExpr,
 }
 impl JsLocal {
     fn js_string(&self) -> String {
-        // TODO Removed underscore replacement, can't remember why I though this would be a good idea, better to just not use underscore prefixes where we don't want them prefixed in JS
-        let original_name = self.names.get(0).unwrap().clone();
-        let name = match self.destructure {
-            LocalDestructure::None => original_name,
-            LocalDestructure::Object => format!(
-                "{{ {} }}",
-                self.names
-                    .iter()
-                    .map(|name| name.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            LocalDestructure::Array => format!(
-                "[ {} ]",
-                self.names
-                    .iter()
-                    .map(|name| name.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        };
+        let lhs = self.lhs.js_string();
         let var_type = match self.type_ {
             LocalType::Var => "var",
             LocalType::Const => "const",
@@ -1443,8 +1564,8 @@ impl JsLocal {
         match &self.value {
             // TODO what if we want to declare a null var like `var myvar;` eg prior to if statement
             JsExpr::Vanish => String::new(),
-            JsExpr::Blank => format!("{var_type} {name};"),
-            value_js_expr => format!("{var_type} {name} = {};", value_js_expr.js_string()),
+            JsExpr::Blank => format!("{var_type} {lhs};"),
+            value_js_expr => format!("{var_type} {lhs} = {};", value_js_expr.js_string()),
         }
     }
 }
@@ -1452,6 +1573,7 @@ impl JsLocal {
 #[derive(Clone, Debug)]
 pub struct JsFn {
     iife: bool,
+    public: bool,
     export: bool,
     async_: bool,
     is_method: bool,
@@ -1469,12 +1591,11 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
                 // TODO wrongly assuming that all single if expr bodys should be returned
                 if i == len - 1 {
                     if let Some(assignment) = assignment {
-                        let assignment = if assignment.len() == 1 {
-                            assignment.first().unwrap().clone()
-                        } else {
-                            format!("({})", assignment.join(", "))
-                        };
-                        format!("{}\nreturn {};", js_expr.js_string(), assignment)
+                        format!(
+                            "{}\nreturn {};",
+                            js_expr.js_string(),
+                            assignment.js_string()
+                        )
                     } else {
                         todo!()
                     }
@@ -1562,6 +1683,21 @@ pub enum JsStmt {
 }
 
 impl JsStmt {
+    pub fn is_pub(&self) -> bool {
+        match self {
+            JsStmt::Class(js_class) => js_class.public,
+            JsStmt::ClassMethod(_, _, _, _) => todo!(),
+            JsStmt::ClassStatic(_) => todo!(),
+            JsStmt::Local(js_local) => js_local.public,
+            JsStmt::Expr(_, _) => todo!(),
+            JsStmt::Import(_, _, _) => todo!(),
+            JsStmt::Function(js_fn) => js_fn.public,
+            JsStmt::ScopeBlock(_) => todo!(),
+            JsStmt::TryBlock(_) => todo!(),
+            JsStmt::CatchBlock(_, _) => todo!(),
+            JsStmt::Raw(_) => todo!(),
+        }
+    }
     pub fn js_string(&self) -> String {
         match self {
             JsStmt::Local(local) => local.js_string(),
@@ -1706,7 +1842,7 @@ fn parse_fn_body_stmts(stmts: &Vec<Stmt>) -> Vec<JsStmt> {
                             } else {
                                 JsStmt::Expr(
                                     JsExpr::If(
-                                        Some(vec!["ifTempAssignment".to_string()]),
+                                        Some(LocalName::Single("ifTempAssignment".to_string())),
                                         true,
                                         Box::new(handle_expr(&*expr_if.cond)),
                                         expr_if
@@ -2023,6 +2159,7 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                         return JsExpr::FnCall(
                             Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
                                 iife: false,
+                                public: false,
                                 export: false,
                                 async_: false,
                                 is_method: false,
@@ -2228,14 +2365,15 @@ fn handle_match_pat(arm_pat: &Pat, expr_match: &ExprMatch) -> (Vec<String>, Vec<
                 .fields
                 .iter()
                 .map(|field| match &field.member {
-                    Member::Named(ident) => ident.to_string(),
+                    Member::Named(ident) => DestructureValue::KeyName(ident.to_string()),
                     Member::Unnamed(_) => todo!(),
                 })
                 .collect::<Vec<_>>();
             let stmt = JsStmt::Local(JsLocal {
+                public: false,
+                export: false,
                 type_: LocalType::Var,
-                destructure: LocalDestructure::Object,
-                names,
+                lhs: LocalName::DestructureObject(DestructureObject(names)),
                 value: JsExpr::Field(Box::new(handle_expr(&*expr_match.expr)), "data".to_string()),
             });
             let rhs = pat_struct
@@ -2257,9 +2395,10 @@ fn handle_match_pat(arm_pat: &Pat, expr_match: &ExprMatch) -> (Vec<String>, Vec<
                 })
                 .collect::<Vec<_>>();
             let stmt = JsStmt::Local(JsLocal {
+                public: false,
+                export: false,
                 type_: LocalType::Var,
-                destructure: LocalDestructure::Array,
-                names,
+                lhs: LocalName::DestructureArray(names),
                 value: JsExpr::Field(Box::new(handle_expr(&*expr_match.expr)), "data".to_string()),
             });
             (
@@ -2315,7 +2454,7 @@ fn handle_expr_match(expr_match: &ExprMatch, is_returned: bool) -> JsExpr {
             let body = body_data_destructure;
 
             JsExpr::If(
-                is_returned.then_some(vec!["ifTempAssignment".to_string()]),
+                is_returned.then_some(LocalName::Single("ifTempAssignment".to_string())),
                 is_returned,
                 Box::new(JsExpr::Binary(
                     Box::new(JsExpr::Field(

@@ -537,8 +537,26 @@ async fn it_transpiles_crate_directory() {
         };
     })();
     var { External } = fooBar;
+    var stuff = (function stuff() {
+        var dog = (function dog() {
+            class Dog {
+                constructor(fluffy, age) {
+                    this.fluffy = fluffy;
+                    this.age = age;
+                }
+            }
+            return { 
+                Dog: Dog,
+            };
+        })();
+        return { 
+            dog: dog,
+        };
+    })();
+    var { dog: { Dog } } = stuff;
     (function main() {
         var thing = External.new();
+        var fido = new Dog(true, 2);
     })();
     "#;
     assert_eq!(format_js(expected), actual);
