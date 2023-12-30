@@ -532,31 +532,48 @@ async fn it_transpiles_crate_directory() {
                 return new External(new Internal(0), 9);
             }
         }
-        return { 
-            External: External,
-        };
+        return { External };
     })();
     var { External } = fooBar;
     var stuff = (function stuff() {
+        function whatever() {}
         var dog = (function dog() {
+            function localFunction() {
+                return 10;
+            }
             class Dog {
                 constructor(fluffy, age) {
                     this.fluffy = fluffy;
                     this.age = age;
                 }
+                woof() {
+                    function localFunction() {
+                        return 9999;
+                    }
+                    this.age
+                        + self::local_function()
+                        + super.DogActivity
+                        + crate::utils::say_something::say_hello()
+                }
             }
-            return { 
-                Dog: Dog,
-            };
+            return { Dog };
         })();
-        return { 
-            dog: dog,
-        };
+        return { dog };
     })();
     var { dog: { Dog } } = stuff;
+    var utils = (function utils() {
+        var saySomething = (function saySomething() {
+            function sayHello() {
+                return 10;
+            }
+            return { sayHello };
+        })();
+        return { saySomething };
+    })();
     (function main() {
         var thing = External.new();
         var fido = new Dog(true, 2);
+        assert.strictEqual(fido.woof(), 32);
     })();
     "#;
     assert_eq!(format_js(expected), actual);

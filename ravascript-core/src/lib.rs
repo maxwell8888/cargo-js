@@ -434,6 +434,7 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             _ => todo!(),
         },
         Stmt::Macro(stmt_macro) => {
+            dbg!(stmt_macro);
             let path_segs = stmt_macro
                 .mac
                 .path
@@ -465,6 +466,27 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
                     let stmt_vec = catch_block.stmts.into_iter().map(|stmt| handle_stmt(&stmt));
                     let stmt_vec = stmt_vec.collect::<Vec<_>>();
                     return JsStmt::CatchBlock(err_var_name, stmt_vec);
+                }
+                if path_segs[0] == "assert_eq" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let mut parts = input.split(",");
+
+                    let lhs = parts.next().unwrap();
+                    let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
+                    let lhs = handle_expr(&lhs);
+
+                    let rhs = parts.next().unwrap();
+                    let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
+                    let rhs = handle_expr(&rhs);
+
+                    return JsStmt::Expr(
+                        JsExpr::MethodCall(
+                            Box::new(JsExpr::Path(vec!["assert".to_string()])),
+                            "strictEqual".to_string(),
+                            vec![lhs, rhs],
+                        ),
+                        stmt_macro.semi_token.is_some(),
+                    );
                 }
             }
             todo!()
@@ -723,6 +745,16 @@ fn handle_item(
         }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
+            // Notes
+            // The `self` keyword is only allowed as the first segment of a path
+            // The `crate` keyword is only allowed as the first segment of a path
+            // The `super` keyword is only allowed as *one* of the first segments of a path, before any named modules
+            // The `super` keyword can be used in multiple segments of a path
+            // self might not be that important but crate is and has similar requirements
+            // modules *cannot* access anything in their parent scope without explicitly using crate or super, therefore nesting the modules in JS is of no benefit
+            // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
+            // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
+
             // TODO handle longer mod statements like mod foo::bar::baz;
             // for path_seg in item_mod.content {
             //     main_path = main_path.join(path_seg);
@@ -820,15 +852,7 @@ fn handle_item(
 
             // add return Object containing public items
             // TODO object key and value have same name so don't need to specify value
-            stmts.push(JsStmt::Expr(
-                JsExpr::Return(Box::new(JsExpr::Object(
-                    names
-                        .iter()
-                        .map(|name| (name.clone(), Box::new(JsExpr::Path(vec![name.clone()]))))
-                        .collect::<Vec<_>>(),
-                ))),
-                true,
-            ));
+            stmts.push(JsStmt::Raw(format!("return {{ {} }};", names.join(", "))));
 
             // Wrap mod up in an iffe assigned to the mod name eg
             // var myModule = (function myModule() {
