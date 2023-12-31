@@ -653,29 +653,115 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
     })
 }
 
+struct Boilerplate {
+    crate_: Vec<JsStmt>,
+    super_: Vec<JsStmt>,
+    use_: Vec<JsStmt>,
+}
+impl Boilerplate {
+    fn new() -> Boilerplate {
+        Boilerplate {
+            crate_: Vec::new(),
+            super_: Vec::new(),
+            use_: Vec::new(),
+        }
+    }
+}
 fn handle_item(
     item: Item,
+    is_module: bool,
+    global_data: &mut GlobalData,
+    current_module: Vec<String>,
+    // module_object: &mut Vec<(String, Box<JsExpr>)>,
     js_stmts: &mut Vec<JsStmt>,
     // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
 ) {
     match item {
-        Item::Const(item_const) => js_stmts.push(JsStmt::Local(JsLocal {
-            export: false,
-            public: match item_const.vis {
-                Visibility::Public(_) => true,
-                Visibility::Restricted(_) => todo!(),
-                Visibility::Inherited => false,
-            },
-            type_: LocalType::Var,
-            lhs: LocalName::Single(item_const.ident.to_string()),
-            value: handle_expr(&*item_const.expr),
-        })),
-        Item::Enum(item_enum) => js_stmts.push(handle_item_enum(item_enum)),
+        Item::Const(item_const) => {
+            let local_stmt = JsStmt::Local(JsLocal {
+                export: false,
+                public: match item_const.vis {
+                    Visibility::Public(_) => true,
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => false,
+                },
+                type_: LocalType::Var,
+                lhs: LocalName::Single(camel(item_const.ident)),
+                value: handle_expr(&*item_const.expr),
+            });
+            js_stmts.push(local_stmt);
+        }
+        Item::Enum(item_enum) => {
+            js_stmts.push(handle_item_enum(item_enum));
+        }
         Item::ExternCrate(_) => todo!(),
-        Item::Fn(item_fn) => js_stmts.push(handle_item_fn(&item_fn)),
+        Item::Fn(item_fn) => {
+            js_stmts.push(handle_item_fn(&item_fn));
+        }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
+            // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
+            // fn main() {
+            //     struct Cool {}
+            //     if false {
+            //         fn inner() {
+            //             impl Cool {
+            //                 fn whatever(&self) {
+            //                     dbg!("hi");
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     let cool = Cool {};
+            //     cool.whatever();
+            // }
+            // [src/main.rs:8] "hi" = "hi"
+
+            // Where different impls with the same name in different branches is considered "duplicate definitions". similarly different impls in different modules also causes a duplication error eg:
+            // fn main() {
+            //     struct Cool {}
+            //     if false {
+            //         fn inner() {
+            //             impl Cool {
+            //                 fn whatever(&self) {
+            //                     dbg!("hi");
+            //                 }
+            //             }
+            //         }
+            //     } else {
+            //         fn inner() {
+            //             impl Cool {
+            //                 fn whatever(&self) {
+            //                     dbg!("bye");
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     let cool = Cool {};
+            //     cool.whatever();
+            // }
+            // error[E0592]: duplicate definitions with name `whatever`
+
+            // Likewise we don't want to add methods to classes in JS in ways that depend on code being run, we want all impls to be automatically added to the class at compile time and thus accessible from anywhere.
+
+            // Rules/algorithm for finding class
+            // (in both cases a struct being `use`'d means it must be at the top level of a different module)
+            // * Top level impls *
+            // The struct for an impl defined at the top level, could be defined at the top level, or `use`'d at the top level
+            // 1. look for a struct/enum/class with the same name in the current module.
+            // 2. lool for uses with the same name, somehow get access to that list of JsStmts, find the struct and update it. Maybe by the list of (unmatched) impls, with the module module path, so wrapping callers can check for a return -> check if module path matches it's own, else return the impls again. Likewise to get lower ones, pass them as an argument??? The other mod could be in a completely different branch that has already been parsed... I think we need to just add them, with the struct name and module path, to a global vec, then do a second pass where we go through each module and update any classes we have impls for.
+            //
+            // * Impls in functions *
+            // The struct for an impl defined in a function, could be in any parent function, `use`'d in any parent function, defined at the top level, or `use`'d at the top level
+            // 1. look for struct in current block/function scope stmts
+            // 2. look for use in the current scope
+            // 4. look in current module for struct or use (doing this before parent scopes because it is probably quicker and more likely to be there)
+            // 3. recursively look in the parent scope for the struct or use
+            // Maybe get access to scopes in higher levels by returning any unmatched impls?
+
+            // for the current block/list of stmts, store impl items in a Vec along with the class name
+            // After
             let class_name = match *item_impl.self_ty {
                 Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
                 _ => todo!(),
@@ -759,6 +845,11 @@ fn handle_item(
             // for path_seg in item_mod.content {
             //     main_path = main_path.join(path_seg);
             // }
+
+            let mut module_path = current_module.clone();
+            module_path.push(item_mod.ident.to_string());
+
+            // read new module file and return whether we are at crate root, name of the file containing this mod statement, and the parsed file
             let (at_root, current_file_name, file) = match current_file_path {
                 Some(current_file_path) => {
                     let current_module_name = current_file_path.file_stem().unwrap().to_os_string();
@@ -798,7 +889,13 @@ fn handle_item(
             };
 
             // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
-            let mut stmts = js_stmts_from_syn_items(file.items, false, current_file_path);
+            let mut stmts = js_stmts_from_syn_items(
+                file.items,
+                true,
+                current_module,
+                global_data,
+                current_file_path,
+            );
 
             // once we have the module's `JsStmt`s we want to revert back to the previous file path
             // to do this we just need to pop and add `current_module_name` if we are at the root
@@ -816,68 +913,58 @@ fn handle_item(
 
             // Get names of pub JsStmts
             // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
-            let mut names = Vec::new();
-            for stmt in &stmts {
-                match stmt {
-                    JsStmt::Class(js_class) => {
-                        if js_class.public {
-                            names.push(js_class.name.clone());
-                        }
-                    }
-                    JsStmt::ClassMethod(_, _, _, _) => {}
-                    JsStmt::ClassStatic(_) => {}
-                    JsStmt::Local(js_local) => {
-                        if js_local.public {
-                            if let LocalName::Single(name) = &js_local.lhs {
-                                names.push(name.clone())
-                            } else {
-                                // https://github.com/rust-lang/rfcs/issues/3290
-                                panic!("consts do not support destructuring");
-                            }
-                        }
-                    }
-                    JsStmt::Expr(_, _) => {}
-                    JsStmt::Import(_, _, _) => {}
-                    JsStmt::Function(js_fn) => {
-                        if js_fn.public {
-                            names.push(js_fn.name.clone());
-                        }
-                    }
-                    JsStmt::ScopeBlock(_) => {}
-                    JsStmt::TryBlock(_) => {}
-                    JsStmt::CatchBlock(_, _) => {}
-                    JsStmt::Raw(_) => {}
-                }
-            }
+            // let mut names = Vec::new();
+            // for stmt in &stmts {
+            //     match stmt {
+            //         JsStmt::Class(js_class) => {
+            //             if js_class.public {
+            //                 names.push(js_class.name.clone());
+            //             }
+            //         }
+            //         JsStmt::ClassMethod(_, _, _, _) => {}
+            //         JsStmt::ClassStatic(_) => {}
+            //         JsStmt::Local(js_local) => {
+            //             if js_local.public {
+            //                 if let LocalName::Single(name) = &js_local.lhs {
+            //                     names.push(name.clone())
+            //                 } else {
+            //                     // https://github.com/rust-lang/rfcs/issues/3290
+            //                     panic!("consts do not support destructuring");
+            //                 }
+            //             }
+            //         }
+            //         JsStmt::Expr(_, _) => {}
+            //         JsStmt::Import(_, _, _) => {}
+            //         JsStmt::Function(js_fn) => {
+            //             if js_fn.public {
+            //                 names.push(js_fn.name.clone());
+            //             }
+            //         }
+            //         JsStmt::ScopeBlock(_) => {}
+            //         JsStmt::TryBlock(_) => {}
+            //         JsStmt::CatchBlock(_, _) => {}
+            //         JsStmt::Raw(_) => {}
+            //     }
+            // }
 
             // add return Object containing public items
             // TODO object key and value have same name so don't need to specify value
-            stmts.push(JsStmt::Raw(format!("return {{ {} }};", names.join(", "))));
+            // stmts.push(JsStmt::Raw(format!("return {{ {} }};", names.join(", "))));
 
             // Wrap mod up in an iffe assigned to the mod name eg
             // var myModule = (function myModule() {
             //     ...
             //     return { publicModuleItem1: publicModuleItem1, publicModuleItem2: publicModuleItem2 };
             // })();
-            js_stmts.push(JsStmt::Local(JsLocal {
+            js_stmts.push(JsStmt::Module(JsStmtModule {
                 public: match item_mod.vis {
                     Visibility::Public(_) => true,
                     Visibility::Restricted(_) => todo!(),
                     Visibility::Inherited => false,
                 },
-                export: false,
-                type_: LocalType::Var,
-                lhs: LocalName::Single(camel(&item_mod.ident)),
-                value: JsExpr::Fn(JsFn {
-                    iife: true,
-                    public: false,
-                    export: false,
-                    async_: false,
-                    is_method: false,
-                    name: camel(item_mod.ident),
-                    input_names: Vec::new(),
-                    body_stmts: stmts,
-                }),
+                name: camel(item_mod.ident),
+                module_path,
+                stmts,
             }))
 
             // let mut stmts = Vec::new();
@@ -937,14 +1024,173 @@ pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
 }
 
 /// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
+///
+/// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
 pub fn js_stmts_from_syn_items(
     items: Vec<Item>,
-    with_rust_types: bool,
+    // Need to know whether to return a module Object or just a vec of stmts
+    is_module: bool,
+    // Need to keep of which module we are currently in, for constructing the boilerplate
+    current_module: Vec<String>,
+    global_data: &mut GlobalData,
     // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
 ) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
     // TODO this should be optional/configurable, might not always want it
+
+    // We need to know what the syn type is to know whether it is eg a use which needs adding to the boiler plate
+    // but we also need to put the struct impls into the class
+    // solution:
+    // push use to boilerplate in handle_item() and don't push the item to js_stmts
+    // push other items as normal
+    // after loop, group together classes
+    // now that classes are grouped, we can add them to the module object - we either do the conversion to module objects right at the end after parsing all branches, otherwise we are always going to have to be able to amend the classes because impls might be in other modules.
+
+    // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
+    // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
+
+    // Also, impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
+    // fn main() {
+    //     struct Cool {}
+    //     fn inner() {
+    //         impl Cool {
+    //             fn whatever(&self) {
+    //                 dbg!("hi");
+    //             }
+    //         }
+    //     }
+    //     let cool = Cool {};
+    //     cool.whatever();
+    // }
+    // let mut module_object = Vec::new();
+    for item in items {
+        handle_item(
+            item,
+            is_module,
+            global_data,
+            current_module.clone(),
+            // &mut module_object,
+            &mut js_stmts,
+            current_file_path,
+        );
+    }
+
+    js_stmts
+}
+
+#[derive(Default)]
+struct RustPreludeTypes {
+    vec: bool,
+    hash_map: bool,
+    option: bool,
+    some: bool,
+    // TODO Is this just null?
+    none: bool,
+    result: bool,
+    ok: bool,
+    err: bool,
+    assert_eq: bool,
+    assert_ne: bool,
+    dbg: bool,
+    // println: bool,
+    // print: bool,
+}
+
+struct GlobalData {
+    // TODO make boilerplate optional so we don't collect data for eg just functions? Leaving here for now as it isn't very important?
+    boilerplate: Boilerplate,
+    rust_prelude_types: RustPreludeTypes,
+    // Vec<(class name (snake), module path (snake), impl item)>
+    impl_items: Vec<(String, Vec<String>, JsStmt)>,
+}
+impl GlobalData {
+    fn new() -> GlobalData {
+        GlobalData {
+            boilerplate: Boilerplate::new(),
+            rust_prelude_types: RustPreludeTypes::default(),
+            impl_items: Vec::new(),
+        }
+    }
+}
+
+struct Module {
+    module_path: Vec<String>,
+    stmts: Vec<JsStmt>,
+}
+
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
+    let main_path = crate_path.join("src").join("main.rs");
+    dbg!(&main_path);
+    let code = fs::read_to_string(main_path).unwrap();
+    let file = syn::parse_file(&code).unwrap();
+    // let mut current_file_path = vec!["main.rs".to_string()];
+
+    let mut js_stmts = Vec::new();
+
+    // let mut module_names = Vec::new();
+
+    let boilerplate = Boilerplate::new();
+    let rust_prelude_types = RustPreludeTypes::default();
+    let mut global_data = GlobalData {
+        boilerplate,
+        rust_prelude_types,
+        impl_items: Vec::new(),
+    };
+
+    let crate_stmts = js_stmts_from_syn_items(
+        file.items,
+        true,
+        Vec::new(),
+        &mut global_data,
+        &mut Some(crate_path.join("src").join("main.rs")),
+    );
+    // let crate_module = Module {
+    //     module_path: vec!["crate".to_string()],
+    //     stmts: crate_stmts,
+    // };
+    let mut crate_module = JsStmtModule {
+        public: true,
+        name: "crate".to_string(),
+        module_path: vec!["crate".to_string()],
+        stmts: crate_stmts,
+    };
+    // js_stmts.extend();
+
+    /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
+    fn update_classes(
+        js_stmt_module: &mut JsStmtModule,
+        impl_items: Vec<(String, Vec<String>, JsStmt)>,
+    ) {
+        for stmt in js_stmt_module.stmts.iter_mut() {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    for impl_item in impl_items.clone() {
+                        if impl_item.1 == js_stmt_module.module_path && js_class.name == impl_item.0
+                        {
+                            match impl_item.2 {
+                                JsStmt::ClassStatic(js_local) => {
+                                    js_class.static_fields.push(js_local);
+                                }
+                                JsStmt::ClassMethod(name, private, static_, js_fn) => {
+                                    js_class.methods.push((name, private, static_, js_fn));
+                                }
+                                stmt => {
+                                    dbg!(stmt);
+                                    panic!("this JsStmt cannot be an impl item")
+                                }
+                            }
+                        }
+                    }
+                }
+                JsStmt::Module(js_stmt_module) => {
+                    update_classes(js_stmt_module, impl_items.clone())
+                }
+                _ => {}
+            }
+        }
+    }
+    update_classes(&mut crate_module, global_data.impl_items);
 
     if with_rust_types {
         let mut methods = Vec::new();
@@ -987,78 +1233,47 @@ pub fn js_stmts_from_syn_items(
             methods,
         }));
     }
-    for item in items {
-        handle_item(item, &mut js_stmts, current_file_path);
-    }
 
-    // Add methods from impl blocks to classes. This assumes impl blocks are at the top level
-    let mut js_stmts2 = Vec::new();
-    let mut my_class: Option<JsClass> = None;
-    for stmt in js_stmts {
-        match stmt {
-            JsStmt::ClassStatic(js_local) => {
-                if let Some(ref mut my_class) = my_class {
-                    my_class.static_fields.push(js_local);
-                } else {
-                    panic!()
-                }
-            }
-            JsStmt::ClassMethod(name, private, static_, js_fn) => {
-                if let Some(ref mut my_class) = my_class {
-                    // if js_fn.name != "new" {
-                    //     my_class.methods.push((name, private, static_, js_fn));
-                    // }
-                    my_class.methods.push((name, private, static_, js_fn));
-                } else {
-                    panic!()
-                }
-            }
-            JsStmt::Class(js_class) => {
-                // If we already have a class set for updating, add it to stmts and this class as the new class for updating
-                if let Some(my_class2) = my_class {
-                    js_stmts2.push(JsStmt::Class(my_class2));
-                }
-                my_class = Some(js_class);
-            }
-            stmt => {
-                // We must have finished adding class methods to class so push it to stmts now. We could just rely on the same code after the for loop, but have it here as well to ensure the order of statements is maintained
-                if let Some(my_class2) = my_class {
-                    js_stmts2.push(JsStmt::Class(my_class2));
-                    my_class = None;
-                }
-                js_stmts2.push(stmt)
-            }
-        }
-    }
-    if let Some(my_class2) = my_class {
-        js_stmts2.push(JsStmt::Class(my_class2));
-    }
+    let crate_obj = JsStmt::Local(JsLocal {
+        public: false,
+        export: false,
+        type_: LocalType::Var,
+        lhs: LocalName::Single("crate".to_string()),
+        value: JsExpr::MethodCall(
+            Box::new(JsExpr::ObjectForModule(crate_module.stmts)),
+            "init".to_string(),
+            Vec::new(),
+        ),
+    });
 
-    js_stmts2
-}
+    let main_call = JsStmt::Expr(
+        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
+        true,
+    );
 
-pub fn from_crate(crate_path: PathBuf, with_vec: bool) -> Vec<JsStmt> {
-    let main_path = crate_path.join("src").join("main.rs");
-    let code = fs::read_to_string(main_path).unwrap();
-    let file = syn::parse_file(&code).unwrap();
-    // let mut current_file_path = vec!["main.rs".to_string()];
-    js_stmts_from_syn_items(
-        file.items,
-        with_vec,
-        &mut Some(crate_path.join("src").join("main.rs")),
-    )
+    vec![crate_obj, main_call]
 }
 
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    js_stmts_from_syn_items(items, with_vec, &mut None)
+    let mut current_module = Vec::new();
+    let mut global_data = GlobalData::new();
+    js_stmts_from_syn_items(items, true, current_module, &mut global_data, &mut None)
 }
 
 pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
     // let mut current_file_path = Vec::new();
-    js_stmts_from_syn_items(file.items, with_vec, &mut None)
+    let mut current_module = Vec::new();
+    let mut global_data = GlobalData::new();
+    js_stmts_from_syn_items(
+        file.items,
+        true,
+        current_module,
+        &mut global_data,
+        &mut None,
+    )
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -1165,6 +1380,7 @@ pub enum JsExpr {
     LitStr(String),
     LitBool(bool),
     Object(Vec<(String, Box<JsExpr>)>),
+    ObjectForModule(Vec<JsStmt>),
     Return(Box<JsExpr>),
     /// Will make the entire statement disappear no matter where it is nested?
     Vanish,
@@ -1485,6 +1701,16 @@ impl JsExpr {
                     .join(", ")
             ),
             JsExpr::Fn(js_fn) => js_fn.js_string(),
+            JsExpr::ObjectForModule(js_stmts) => {
+                let js_stmt_module = JsStmtModule {
+                    public: false,
+                    name: "whatever".to_string(),
+                    module_path: vec![],
+                    stmts: js_stmts.clone(),
+                };
+                dbg!(&js_stmt_module);
+                js_stmt_module.js_string()
+            }
         }
     }
 }
@@ -1649,6 +1875,7 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::ScopeBlock(_) => stmt.js_string(),
         JsStmt::TryBlock(_) => stmt.js_string(),
         JsStmt::CatchBlock(_, _) => stmt.js_string(),
+        JsStmt::Module(_) => stmt.js_string(),
     }
 }
 impl JsFn {
@@ -1683,6 +1910,52 @@ impl JsFn {
     }
 }
 
+#[derive(Clone, Debug)]
+struct JsStmtModule {
+    public: bool,
+    /// camelCase JS name
+    name: String,
+    /// snake_case Rust path
+    module_path: Vec<String>,
+    stmts: Vec<JsStmt>,
+}
+impl JsStmtModule {
+    fn js_string(&self) -> String {
+        let key_values = self
+            .stmts
+            .iter()
+            .map(|stmt| {
+                let name = match stmt {
+                    JsStmt::Class(js_class) => js_class.name.clone(),
+                    JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
+                    JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
+                    JsStmt::Local(js_local) => {
+                        if let LocalName::Single(name) = &js_local.lhs {
+                            name.clone()
+                        } else {
+                            // https://github.com/rust-lang/rfcs/issues/3290
+                            panic!("consts do not support destructuring");
+                        }
+                    }
+                    JsStmt::Expr(_, _) => todo!("cannot be js module item"),
+                    JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
+                    JsStmt::Function(js_fn) => js_fn.name.clone(),
+                    JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
+                    JsStmt::TryBlock(_) => todo!("cannot be js module item"),
+                    JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
+                    JsStmt::Raw(_) => todo!("cannot be js module item"),
+                    JsStmt::Module(js_stmt_module) => js_stmt_module.name.clone(),
+                };
+                let value = stmt.js_string();
+                format!("{name}: {value}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!("{{ {key_values} }}")
+    }
+}
+
 // pub struct JsImportPath {}
 #[derive(Clone, Debug)]
 pub enum JsStmt {
@@ -1704,9 +1977,13 @@ pub enum JsStmt {
     TryBlock(Vec<JsStmt>),
     CatchBlock(String, Vec<JsStmt>),
     Raw(String),
+    /// Unlike the other variants this has meaning for the parsing/transpiling, and isn't just a representation of what to write like the other variants
+    ///
+    Module(JsStmtModule),
 }
 
 impl JsStmt {
+    /// Need to keep track of which item is public so we know what is item are made available when a * glob is used
     pub fn is_pub(&self) -> bool {
         match self {
             JsStmt::Class(js_class) => js_class.public,
@@ -1720,6 +1997,7 @@ impl JsStmt {
             JsStmt::TryBlock(_) => todo!(),
             JsStmt::CatchBlock(_, _) => todo!(),
             JsStmt::Raw(_) => todo!(),
+            JsStmt::Module(js_stmt_module) => js_stmt_module.public,
         }
     }
     pub fn js_string(&self) -> String {
@@ -1847,6 +2125,7 @@ impl JsStmt {
                         .join("\n")
                 )
             }
+            JsStmt::Module(js_stmt_module) => js_stmt_module.js_string(),
         }
     }
 }

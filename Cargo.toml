@@ -5,7 +5,8 @@ members = [
     "ravascript-macros",
     "comprehensive-example",
     "ravascriptcli",
-    "so_example", "for-testing",
+    "so_example",
+    "for-testing",
 ]
 resolver = "2"
 
