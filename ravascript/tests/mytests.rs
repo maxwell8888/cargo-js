@@ -509,72 +509,104 @@ async fn it_transpiles_crate_directory() {
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let actual = format_js(actual);
-    // println!("{actual}");
+
     let expected = r#"
-    var fooBar = (function fooBar() {
-        class Internal {
-            constructor(age) {
-                this.age = age;
-            }
-
-            addTen() {
-                return this.age + 10
-            }
-        }
-        class External {
-            constructor(sub, count) {
-                this.sub = sub;
-                this.count = count;
-            }
-
-            static new() {
-                return new External(new Internal(0), 9);
-            }
-        }
-        return { External };
-    })();
-    var { External } = fooBar;
-    var stuff = (function stuff() {
-        function whatever() {}
-        var dog = (function dog() {
-            function localFunction() {
-                return 10;
-            }
-            class Dog {
-                constructor(fluffy, age) {
-                    this.fluffy = fluffy;
+    var crate = {
+        fooBar: {
+            Internal: class Internal {
+                constructor(age) {
                     this.age = age;
                 }
-                woof() {
-                    function localFunction() {
-                        return 9999;
-                    }
-                    this.age
-                        + self::local_function()
-                        + super.DogActivity
-                        + crate::utils::say_something::say_hello()
+    
+                addTen() {
+                    return this.age + 10
+                }
+            },
+            External: class External {
+                constructor(sub, count) {
+                    this.sub = sub;
+                    this.count = count;
+                }
+    
+                static new() {
+                    return new External(new Internal(0), 9);
                 }
             }
-            return { Dog };
-        })();
-        return { dog };
-    })();
-    var { dog: { Dog } } = stuff;
-    var utils = (function utils() {
-        var saySomething = (function saySomething() {
-            function sayHello() {
-                return 10;
+        },
+        stuff: {
+            dogActivity: 10,
+            dog: {
+                localFunction: function localFunction() {
+                    return 10;
+                },
+                Dog: class Dog {
+                    constructor(fluffy, age) {
+                        this.fluffy = fluffy;
+                        this.age = age;
+                    }
+                    
+                    woof() {
+                        function localFunction() {
+                            return 9999;
+                        }
+                        return (
+                            this.age +
+                            this.localFunction() +
+                            this.super.super.utils.saySomething.sayHello() +
+                            crate.utils.saySomething.sayHello() +
+                            crate.stuff.dog.localFunction() +
+                            super.dogActivity +
+                            super.stuffFunction()
+                        )
+                    }
+                }
+            },
+            stuffFunction: function stuffFunction() {
+              return 10;
+            },
+        },
+        utils: {
+            saySomething: {
+                sayHello: function sayHello() {
+                    return 10;
+                }    
             }
-            return { sayHello };
-        })();
-        return { saySomething };
-    })();
-    (function main() {
-        var thing = External.new();
-        var fido = new Dog(true, 2);
-        assert.strictEqual(fido.woof(), 32);
-    })();
+        },
+        main: function main() {
+            var thing = External.new();
+            var fido = new Dog(true, 2);
+            assert.strictEqual(fido.woof(), 32);
+        },
+        init: function init() {
+            // crate
+            this.fooBar.crate = this;
+            this.stuff.crate = this;
+            this.stuff.dog.crate = this;
+            this.utils.crate = this;
+            this.utils.saySomething.crate = this;
+            
+            // super
+            this.fooBar.super = this;
+            this.stuff.super = this;
+            this.stuff.dog.super = this.stuff;
+            this.utils.super = this;
+            this.utils.saySomething.super = this.utils;
+            
+            // use
+            this.External = this.fooBar.External;
+            this.Dog = this.stuff.dog.Dog;
+            
+            delete this.init;
+            return this;
+          },
+    }.init();
+    main();
     "#;
-    assert_eq!(format_js(expected), actual);
+
+    // println!("{}", expected);
+    // println!("{}", format_js(expected));
+    // println!("{}", &actual);
+    // println!("{}", format_js(&actual));
+
+    assert_eq!(format_js(expected), format_js(actual));
 }

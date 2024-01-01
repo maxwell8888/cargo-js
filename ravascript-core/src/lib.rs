@@ -296,12 +296,54 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
     }
 }
 
+/// We want each of used items eg `use mod::sub_mod::{item1, item2, another_mod::item3}` to return the name of the item, and the path relative to the root module
+///
+/// relative_path is camel,  items: (item name (camel), relative path (camel))
+fn tree_parsing_for_boilerplate(
+    use_tree: &UseTree,
+    relative_path: &mut Vec<String>,
+    items: &mut Vec<(String, Vec<String>)>,
+) {
+    match use_tree {
+        UseTree::Path(use_path) => {
+            relative_path.push(camel(&use_path.ident));
+            tree_parsing_for_boilerplate(&*use_path.tree, relative_path, items);
+        }
+        UseTree::Name(use_name) => {
+            items.push((case_convert(&use_name.ident), relative_path.clone()))
+        }
+        UseTree::Rename(_) => todo!(),
+        UseTree::Glob(_) => todo!(),
+        UseTree::Group(use_group) => {
+            for item in &use_group.items {
+                match item {
+                    UseTree::Path(use_path) => {
+                        let mut new_relative_path = relative_path.clone();
+                        new_relative_path.push(camel(&use_path.ident));
+                        tree_parsing_for_boilerplate(
+                            &*use_path.tree,
+                            &mut new_relative_path,
+                            items,
+                        );
+                    }
+                    UseTree::Name(use_name) => {
+                        items.push((case_convert(&use_name.ident), relative_path.clone()));
+                    }
+                    UseTree::Rename(_) => todo!(),
+                    UseTree::Glob(_) => todo!(),
+                    UseTree::Group(_) => todo!(),
+                }
+            }
+        }
+    };
+}
+
 /// CONST_NAMES -> constNames
 /// PascalCase -> PascalCase
 /// snake_case -> snakeCase
 fn case_convert(name: impl ToString) -> String {
     let name = name.to_string();
-    if name.chars().all(|c| c.is_uppercase()) {
+    if name.chars().all(|c| c.is_uppercase() || c == '_') {
         camel(name)
     } else if name.chars().next().unwrap().is_ascii_uppercase() {
         // TODO this is redundant?
@@ -311,7 +353,12 @@ fn case_convert(name: impl ToString) -> String {
     }
 }
 
-fn handle_item_use(item_use: &ItemUse) -> JsStmt {
+fn handle_item_use(
+    item_use: &ItemUse,
+    current_module: Vec<String>,
+    is_module: bool,
+    global_data: &mut GlobalData,
+) {
     let public = match item_use.vis {
         Visibility::Public(_) => true,
         _ => false,
@@ -341,25 +388,77 @@ fn handle_item_use(item_use: &ItemUse) -> JsStmt {
     } == "web"
     {
         if root_module_or_crate == "Sse" {
-            JsStmt::Raw(SSE_RAW_FUNC.to_string())
+            // JsStmt::Raw(SSE_RAW_FUNC.to_string())
         } else {
-            JsStmt::Expr(JsExpr::Vanish, false)
+            // JsStmt::Expr(JsExpr::Vanish, false)
         }
     } else if root_module_or_crate == "serde" || root_module_or_crate == "serde_json" {
-        JsStmt::Expr(JsExpr::Vanish, false)
+        // JsStmt::Expr(JsExpr::Vanish, false)
     } else if root_module_or_crate == "crate" {
         // If we import something from our crate, inline it (probably what we want for external crates too?)
         // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
         // Get the name of the item to be inlined
         todo!()
     } else {
-        JsStmt::Local(JsLocal {
-            public,
-            export: false,
-            type_: LocalType::Var,
-            lhs: LocalName::DestructureObject(sub_modules),
-            value: JsExpr::Path(vec![camel(root_module_or_crate)]),
-        })
+        // JsStmt::Local(JsLocal {
+        //     public,
+        //     export: false,
+        //     type_: LocalType::Var,
+        //     lhs: LocalName::DestructureObject(sub_modules),
+        //     value: JsExpr::Path(vec![camel(root_module_or_crate)]),
+        // })
+
+        // TODO we do want to do the JsLocal destructure thing if the use is not a top level item?
+        // TODO this is probably also the correct place to determine if std stuff like HashMap needs flagging
+        if is_module {
+            // eg this.colorModule.spinachMessage = this.colorModule.greenModule.spinachModule.spinachMessage;
+
+            let (_root_module_or_crate, item_paths) = match &item_use.tree {
+                UseTree::Path(use_path) => {
+                    // let mut sub_modules: Vec<DestructureValue> = Vec::new();
+                    let root_module_or_crate = use_path.ident.to_string();
+
+                    let mut item_paths = Vec::new();
+                    let mut relative_path = vec![camel(&use_path.ident)];
+                    tree_parsing_for_boilerplate(
+                        &*use_path.tree,
+                        &mut relative_path,
+                        &mut item_paths,
+                    );
+                    // let sub_modules = DestructureObject (sub_modules);
+                    // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
+                    (root_module_or_crate, item_paths)
+                }
+                // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
+                // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+                UseTree::Name(_use_name) => todo!(),
+                _ => panic!("root of use trees are always a path or name"),
+            };
+
+            let mut current_module_this = vec!["this".to_string()];
+            current_module_this.extend(
+                current_module
+                    .iter()
+                    .map(|seg| camel(seg))
+                    .collect::<Vec<_>>(),
+            );
+            for (name, item_path) in item_paths {
+                // TODO check if current_module is already camelCase
+                let mut current_module_this_name = current_module_this.clone();
+                current_module_this_name.push(name.clone());
+
+                let mut current_module_this_item_path_name = current_module_this.clone();
+                current_module_this_item_path_name.extend(item_path);
+                current_module_this_item_path_name.push(name);
+
+                let raw_str = format!(
+                    "{} = {};",
+                    current_module_this_name.join("."),
+                    current_module_this_item_path_name.join(".")
+                );
+                global_data.boilerplate.use_.push(JsStmt::Raw(raw_str));
+            }
+        }
     }
 }
 
@@ -429,12 +528,13 @@ fn handle_stmt(stmt: &Stmt) -> JsStmt {
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
-            Item::Use(item_use) => handle_item_use(item_use),
+            // Item::Use(item_use) => handle_item_use(item_use),
+            Item::Use(item_use) => todo!(),
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
         Stmt::Macro(stmt_macro) => {
-            dbg!(stmt_macro);
+            // dbg!(stmt_macro);
             let path_segs = stmt_macro
                 .mac
                 .path
@@ -512,9 +612,10 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
     if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
-        let iife = item_fn.sig.ident == "main";
+        // let iife = item_fn.sig.ident == "main";
         let js_fn = JsFn {
-            iife,
+            // iife,
+            iife: false,
             public: match item_fn.vis {
                 Visibility::Public(_) => true,
                 Visibility::Restricted(_) => todo!(),
@@ -543,11 +644,12 @@ fn handle_item_fn(item_fn: &ItemFn) -> JsStmt {
                 .map(|stmt| handle_stmt(stmt))
                 .collect::<Vec<_>>(),
         };
-        if iife {
-            JsStmt::Expr(JsExpr::Fn(js_fn), true)
-        } else {
-            JsStmt::Function(js_fn)
-        }
+        // if iife {
+        //     JsStmt::Expr(JsExpr::Fn(js_fn), true)
+        // } else {
+        //     JsStmt::Function(js_fn)
+        // }
+        JsStmt::Function(js_fn)
     }
 }
 
@@ -766,17 +868,24 @@ fn handle_item(
                 Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
                 _ => todo!(),
             };
+
+            let mut impl_stmts = Vec::new();
             for impl_item in item_impl.items {
                 match impl_item {
                     ImplItem::Const(impl_item_const) => {
                         // impl_item_const
-                        js_stmts.push(JsStmt::ClassStatic(JsLocal {
-                            public: false,
-                            export: false,
-                            type_: LocalType::Static,
-                            lhs: LocalName::Single(impl_item_const.ident.to_string()),
-                            value: handle_expr(&impl_item_const.expr),
-                        }))
+                        impl_stmts.push(ImplItemTemp {
+                            // class_name: impl_item_const.ident.to_string(),
+                            class_name: class_name.clone(),
+                            module_path: current_module.clone(),
+                            item_stmt: JsStmt::ClassStatic(JsLocal {
+                                public: false,
+                                export: false,
+                                type_: LocalType::Static,
+                                lhs: LocalName::Single(impl_item_const.ident.to_string()),
+                                value: handle_expr(&impl_item_const.expr),
+                            }),
+                        })
                     }
                     ImplItem::Fn(item_impl_fn) => {
                         let static_ = if let Some(first_input) = item_impl_fn.sig.inputs.first() {
@@ -806,27 +915,44 @@ fn handle_item(
                             .into_iter()
                             .map(|stmt| handle_stmt(&stmt))
                             .collect::<Vec<_>>();
-                        js_stmts.push(JsStmt::ClassMethod(
-                            class_name.clone(),
-                            false,
-                            static_,
-                            JsFn {
-                                iife: false,
-                                public: false,
-                                export: false,
-                                is_method: true,
-                                async_: item_impl_fn.sig.asyncness.is_some(),
-                                name: camel(item_impl_fn.sig.ident),
-                                input_names,
-                                body_stmts,
+                        impl_stmts.push(
+                            // item_impl_fn.sig.ident.to_string(),
+                            ImplItemTemp {
+                                class_name: class_name.clone(),
+                                module_path: current_module.clone(),
+                                item_stmt: JsStmt::ClassMethod(
+                                    class_name.clone(),
+                                    false,
+                                    static_,
+                                    JsFn {
+                                        iife: false,
+                                        public: false,
+                                        export: false,
+                                        is_method: true,
+                                        async_: item_impl_fn.sig.asyncness.is_some(),
+                                        name: camel(item_impl_fn.sig.ident),
+                                        input_names,
+                                        body_stmts,
+                                    },
+                                ),
                             },
-                        ))
+                        )
                     }
                     ImplItem::Type(_) => todo!(),
                     ImplItem::Macro(_) => todo!(),
                     ImplItem::Verbatim(_) => todo!(),
                     _ => todo!(),
                 }
+            }
+            if is_module {
+                global_data.impl_items.extend(impl_stmts);
+            } else {
+                js_stmts.extend(
+                    impl_stmts
+                        .into_iter()
+                        .map(|ImplItemTemp { item_stmt, .. }| item_stmt)
+                        .collect::<Vec<_>>(),
+                );
             }
         }
         Item::Macro(_) => todo!(),
@@ -846,8 +972,31 @@ fn handle_item(
             //     main_path = main_path.join(path_seg);
             // }
 
+            // TODO sub modules need to be nested the the parent module according to where they appear in the directory structure, not just every module that `mod foo`'s them
+
             let mut module_path = current_module.clone();
             module_path.push(item_mod.ident.to_string());
+
+            // TODO could use https://github.com/peterjoel/velcro here
+            let mut this_module_path = vec!["this".to_string()];
+            this_module_path.extend(module_path.iter().map(|seg| camel(seg)).collect::<Vec<_>>());
+
+            let mut crate_module_path = this_module_path.clone();
+            crate_module_path.push("crate".to_string());
+            global_data.boilerplate.crate_.push(JsStmt::Raw(format!(
+                "{} = this;",
+                crate_module_path.join(".")
+            )));
+
+            let mut super_module_path = this_module_path.clone();
+            super_module_path.push("super".to_string());
+            let mut parent_module_path = this_module_path.clone();
+            parent_module_path.pop();
+            global_data.boilerplate.super_.push(JsStmt::Raw(format!(
+                "{} = {};",
+                super_module_path.join("."),
+                parent_module_path.join(".")
+            )));
 
             // read new module file and return whether we are at crate root, name of the file containing this mod statement, and the parsed file
             let (at_root, current_file_name, file) = match current_file_path {
@@ -892,7 +1041,7 @@ fn handle_item(
             let mut stmts = js_stmts_from_syn_items(
                 file.items,
                 true,
-                current_module,
+                module_path.clone(),
                 global_data,
                 current_file_path,
             );
@@ -1000,7 +1149,10 @@ fn handle_item(
         Item::TraitAlias(_) => todo!(),
         Item::Type(_) => todo!(),
         Item::Union(_) => todo!(),
-        Item::Use(item_use) => js_stmts.push(handle_item_use(&item_use)),
+        Item::Use(item_use) => {
+            // js_stmts.push()
+            handle_item_use(&item_use, current_module, is_module, global_data)
+        }
         Item::Verbatim(_) => todo!(),
         _ => todo!(),
     }
@@ -1097,12 +1249,19 @@ struct RustPreludeTypes {
     // print: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ImplItemTemp {
+    /// snake case
+    class_name: String,
+    /// snake case
+    module_path: Vec<String>,
+    item_stmt: JsStmt,
+}
 struct GlobalData {
     // TODO make boilerplate optional so we don't collect data for eg just functions? Leaving here for now as it isn't very important?
     boilerplate: Boilerplate,
     rust_prelude_types: RustPreludeTypes,
-    // Vec<(class name (snake), module path (snake), impl item)>
-    impl_items: Vec<(String, Vec<String>, JsStmt)>,
+    impl_items: Vec<ImplItemTemp>,
 }
 impl GlobalData {
     fn new() -> GlobalData {
@@ -1121,7 +1280,7 @@ struct Module {
 
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     let main_path = crate_path.join("src").join("main.rs");
-    dbg!(&main_path);
+    // dbg!(&main_path);
     let code = fs::read_to_string(main_path).unwrap();
     let file = syn::parse_file(&code).unwrap();
     // let mut current_file_path = vec!["main.rs".to_string()];
@@ -1138,13 +1297,38 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         impl_items: Vec::new(),
     };
 
-    let crate_stmts = js_stmts_from_syn_items(
+    let mut crate_stmts = js_stmts_from_syn_items(
         file.items,
         true,
         Vec::new(),
         &mut global_data,
         &mut Some(crate_path.join("src").join("main.rs")),
     );
+
+    let mut init_body_stmts = Vec::new();
+    init_body_stmts.push(JsStmt::Comment("crate".to_string()));
+    init_body_stmts.extend(global_data.boilerplate.crate_);
+    init_body_stmts.push(JsStmt::Raw("".to_string()));
+    init_body_stmts.push(JsStmt::Comment("super".to_string()));
+    init_body_stmts.extend(global_data.boilerplate.super_);
+    init_body_stmts.push(JsStmt::Raw("".to_string()));
+    init_body_stmts.push(JsStmt::Comment("use".to_string()));
+    init_body_stmts.extend(global_data.boilerplate.use_);
+    init_body_stmts.push(JsStmt::Raw("".to_string()));
+    init_body_stmts.push(JsStmt::Raw("delete this.init;".to_string()));
+    init_body_stmts.push(JsStmt::Raw("return this;".to_string()));
+
+    crate_stmts.push(JsStmt::Function(JsFn {
+        iife: false,
+        public: false,
+        export: false,
+        async_: false,
+        is_method: false,
+        name: "init".to_string(),
+        input_names: Vec::new(),
+        body_stmts: init_body_stmts,
+    }));
+
     // let crate_module = Module {
     //     module_path: vec!["crate".to_string()],
     //     stmts: crate_stmts,
@@ -1158,17 +1342,15 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // js_stmts.extend();
 
     /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-    fn update_classes(
-        js_stmt_module: &mut JsStmtModule,
-        impl_items: Vec<(String, Vec<String>, JsStmt)>,
-    ) {
+    fn update_classes(js_stmt_module: &mut JsStmtModule, impl_items: Vec<ImplItemTemp>) {
         for stmt in js_stmt_module.stmts.iter_mut() {
             match stmt {
                 JsStmt::Class(js_class) => {
                     for impl_item in impl_items.clone() {
-                        if impl_item.1 == js_stmt_module.module_path && js_class.name == impl_item.0
+                        if impl_item.module_path == js_stmt_module.module_path
+                            && js_class.name == impl_item.class_name
                         {
-                            match impl_item.2 {
+                            match impl_item.item_stmt {
                                 JsStmt::ClassStatic(js_local) => {
                                     js_class.static_fields.push(js_local);
                                 }
@@ -1708,7 +1890,7 @@ impl JsExpr {
                     module_path: vec![],
                     stmts: js_stmts.clone(),
                 };
-                dbg!(&js_stmt_module);
+                // dbg!(&js_stmt_module);
                 js_stmt_module.js_string()
             }
         }
@@ -1876,6 +2058,7 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::TryBlock(_) => stmt.js_string(),
         JsStmt::CatchBlock(_, _) => stmt.js_string(),
         JsStmt::Module(_) => stmt.js_string(),
+        JsStmt::Comment(_) => stmt.js_string(),
     }
 }
 impl JsFn {
@@ -1931,13 +2114,17 @@ impl JsStmtModule {
                     JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
                     JsStmt::Local(js_local) => {
                         if let LocalName::Single(name) = &js_local.lhs {
-                            name.clone()
+                            // only want the `js_local`'s value, not the whole `var name = value;`
+                            return format!("{name}: {}", js_local.value.js_string());
                         } else {
                             // https://github.com/rust-lang/rfcs/issues/3290
                             panic!("consts do not support destructuring");
                         }
                     }
-                    JsStmt::Expr(_, _) => todo!("cannot be js module item"),
+                    JsStmt::Expr(js_expr, _) => {
+                        dbg!(js_expr);
+                        todo!("cannot be js module item")
+                    }
                     JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
                     JsStmt::Function(js_fn) => js_fn.name.clone(),
                     JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
@@ -1945,6 +2132,8 @@ impl JsStmtModule {
                     JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
                     JsStmt::Raw(_) => todo!("cannot be js module item"),
                     JsStmt::Module(js_stmt_module) => js_stmt_module.name.clone(),
+                    // TODO support allowing comments as module items so they can appear before the item in the object
+                    JsStmt::Comment(_) => todo!("cannot be js module item"),
                 };
                 let value = stmt.js_string();
                 format!("{name}: {value}")
@@ -1980,6 +2169,7 @@ pub enum JsStmt {
     /// Unlike the other variants this has meaning for the parsing/transpiling, and isn't just a representation of what to write like the other variants
     ///
     Module(JsStmtModule),
+    Comment(String),
 }
 
 impl JsStmt {
@@ -1998,6 +2188,7 @@ impl JsStmt {
             JsStmt::CatchBlock(_, _) => todo!(),
             JsStmt::Raw(_) => todo!(),
             JsStmt::Module(js_stmt_module) => js_stmt_module.public,
+            JsStmt::Comment(_) => todo!(),
         }
     }
     pub fn js_string(&self) -> String {
@@ -2126,6 +2317,7 @@ impl JsStmt {
                 )
             }
             JsStmt::Module(js_stmt_module) => js_stmt_module.js_string(),
+            JsStmt::Comment(text) => format!("// {text}"),
         }
     }
 }
@@ -2533,18 +2725,13 @@ fn handle_expr(expr: &Expr) -> JsExpr {
                     if var_name == "Console" {
                         var_name = "console".to_string();
                     }
+                    // TODO be more targetted with this
                     if let Some(last_char) = var_name.chars().last() {
                         if last_char.is_digit(10) {
                             var_name.pop().unwrap();
                         }
                     }
-                    if var_name.chars().all(|c| c.is_uppercase()) {
-                        camel(var_name)
-                    } else if var_name.chars().next().unwrap().is_ascii_uppercase() {
-                        AsPascalCase(var_name).to_string()
-                    } else {
-                        camel(var_name)
-                    }
+                    case_convert(var_name)
                 })
                 .collect::<Vec<_>>();
             if segs.len() == 1 {
