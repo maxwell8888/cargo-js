@@ -972,7 +972,8 @@ fn handle_item(
             //     main_path = main_path.join(path_seg);
             // }
 
-            // TODO sub modules need to be nested the the parent module according to where they appear in the directory structure, not just every module that `mod foo`'s them
+            // TODO sub modules need to be nested the the parent module according to where they appear in the directory structure, not just every module that `mod foo`'s them - no only modules that *are* the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
+            // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
             let mut module_path = current_module.clone();
             module_path.push(item_mod.ident.to_string());
@@ -1373,6 +1374,14 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }
     }
     update_classes(&mut crate_module, global_data.impl_items);
+
+    // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
+    // What about where we are inside a class method so this refers to the class, not the module?
+    // Solutions:
+    // add a unique name like `this.moduleThis = this;` - not possible because it still exists on the `this` which class methods don't have access to.
+    // add `this.moduleThis` to class objects in init function??
+    // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
+    // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
 
     if with_rust_types {
         let mut methods = Vec::new();
