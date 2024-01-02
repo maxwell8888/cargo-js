@@ -456,7 +456,6 @@ fn handle_item_use(
                     current_module_this_name.join("."),
                     current_module_this_item_path_name.join(".")
                 );
-                global_data.boilerplate.use_.push(JsStmt::Raw(raw_str));
             }
         }
     }
@@ -755,20 +754,6 @@ fn handle_item_enum(item_enum: ItemEnum) -> JsStmt {
     })
 }
 
-struct Boilerplate {
-    crate_: Vec<JsStmt>,
-    super_: Vec<JsStmt>,
-    use_: Vec<JsStmt>,
-}
-impl Boilerplate {
-    fn new() -> Boilerplate {
-        Boilerplate {
-            crate_: Vec::new(),
-            super_: Vec::new(),
-            use_: Vec::new(),
-        }
-    }
-}
 fn handle_item(
     item: Item,
     is_module: bool,
@@ -977,27 +962,6 @@ fn handle_item(
 
             let mut module_path = current_module.clone();
             module_path.push(item_mod.ident.to_string());
-
-            // TODO could use https://github.com/peterjoel/velcro here
-            let mut this_module_path = vec!["this".to_string()];
-            this_module_path.extend(module_path.iter().map(|seg| camel(seg)).collect::<Vec<_>>());
-
-            let mut crate_module_path = this_module_path.clone();
-            crate_module_path.push("crate".to_string());
-            global_data.boilerplate.crate_.push(JsStmt::Raw(format!(
-                "{} = this;",
-                crate_module_path.join(".")
-            )));
-
-            let mut super_module_path = this_module_path.clone();
-            super_module_path.push("super".to_string());
-            let mut parent_module_path = this_module_path.clone();
-            parent_module_path.pop();
-            global_data.boilerplate.super_.push(JsStmt::Raw(format!(
-                "{} = {};",
-                super_module_path.join("."),
-                parent_module_path.join(".")
-            )));
 
             // read new module file and return whether we are at crate root, name of the file containing this mod statement, and the parsed file
             let (at_root, current_file_name, file) = match current_file_path {
@@ -1259,15 +1223,12 @@ struct ImplItemTemp {
     item_stmt: JsStmt,
 }
 struct GlobalData {
-    // TODO make boilerplate optional so we don't collect data for eg just functions? Leaving here for now as it isn't very important?
-    boilerplate: Boilerplate,
     rust_prelude_types: RustPreludeTypes,
     impl_items: Vec<ImplItemTemp>,
 }
 impl GlobalData {
     fn new() -> GlobalData {
         GlobalData {
-            boilerplate: Boilerplate::new(),
             rust_prelude_types: RustPreludeTypes::default(),
             impl_items: Vec::new(),
         }
@@ -1290,10 +1251,8 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
 
     // let mut module_names = Vec::new();
 
-    let boilerplate = Boilerplate::new();
     let rust_prelude_types = RustPreludeTypes::default();
     let mut global_data = GlobalData {
-        boilerplate,
         rust_prelude_types,
         impl_items: Vec::new(),
     };
@@ -1301,39 +1260,11 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     let mut crate_stmts = js_stmts_from_syn_items(
         file.items,
         true,
-        Vec::new(),
+        vec!["crate".to_string()],
         &mut global_data,
         &mut Some(crate_path.join("src").join("main.rs")),
     );
 
-    let mut init_body_stmts = Vec::new();
-    init_body_stmts.push(JsStmt::Comment("crate".to_string()));
-    init_body_stmts.extend(global_data.boilerplate.crate_);
-    init_body_stmts.push(JsStmt::Raw("".to_string()));
-    init_body_stmts.push(JsStmt::Comment("super".to_string()));
-    init_body_stmts.extend(global_data.boilerplate.super_);
-    init_body_stmts.push(JsStmt::Raw("".to_string()));
-    init_body_stmts.push(JsStmt::Comment("use".to_string()));
-    init_body_stmts.extend(global_data.boilerplate.use_);
-    init_body_stmts.push(JsStmt::Raw("".to_string()));
-    init_body_stmts.push(JsStmt::Raw("delete this.init;".to_string()));
-    init_body_stmts.push(JsStmt::Raw("return this;".to_string()));
-
-    crate_stmts.push(JsStmt::Function(JsFn {
-        iife: false,
-        public: false,
-        export: false,
-        async_: false,
-        is_method: false,
-        name: "init".to_string(),
-        input_names: Vec::new(),
-        body_stmts: init_body_stmts,
-    }));
-
-    // let crate_module = Module {
-    //     module_path: vec!["crate".to_string()],
-    //     stmts: crate_stmts,
-    // };
     let mut crate_module = JsStmtModule {
         public: true,
         name: "crate".to_string(),
@@ -1383,6 +1314,151 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
     // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
 
+    // Update names
+    // Determine which names are not globally unique and need namespacing
+    let mut names = Vec::new();
+    /// (module path, name)
+    fn get_names(module: &JsStmtModule, names: &mut Vec<(Vec<String>, String)>) {
+        for stmt in &module.stmts {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    names.push((module.module_path.clone(), js_class.name.clone()))
+                }
+                JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
+                JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
+                JsStmt::Local(js_local) => {
+                    if let LocalName::Single(name) = &js_local.lhs {
+                        // only want the `js_local`'s value, not the whole `var name = value;`
+                        names.push((module.module_path.clone(), name.clone()))
+                    } else {
+                        // https://github.com/rust-lang/rfcs/issues/3290
+                        panic!("consts do not support destructuring");
+                    }
+                }
+                JsStmt::Expr(js_expr, _) => {
+                    dbg!(js_expr);
+                    todo!("cannot be js module item")
+                }
+                JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
+                JsStmt::Function(js_fn) => {
+                    names.push((module.module_path.clone(), js_fn.name.clone()))
+                }
+                JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
+                JsStmt::TryBlock(_) => todo!("cannot be js module item"),
+                JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
+                JsStmt::Raw(_) => todo!("cannot be js module item"),
+                JsStmt::Module(js_stmt_module) => get_names(&js_stmt_module, names),
+                // TODO support allowing comments as module items so they can appear before the item in the object
+                JsStmt::Comment(_) => todo!("cannot be js module item"),
+            }
+        }
+    }
+    get_names(&crate_module, &mut names);
+
+    // find duplicates
+    // TODO account for local functions which shadow these names
+    // (name space, module path, name)
+    let mut duplicates = Vec::new();
+    for name in &names {
+        if names
+            .iter()
+            .filter(|(module_path, name2)| &name.1 == name2)
+            .collect::<Vec<_>>()
+            .len()
+            > 1
+        {
+            duplicates.push((
+                Vec::<String>::new(),
+                name.0.clone(),
+                name.1.clone(),
+                name.0.clone(),
+            ));
+        }
+    }
+    fn update_dup_names(duplicates: &mut Vec<(Vec<String>, Vec<String>, String, Vec<String>)>) {
+        let dups_copy = duplicates.clone();
+        for dup in duplicates.iter_mut() {
+            if dups_copy
+                .iter()
+                .filter(|(name_space, module_path, name2, orig_module_path)| {
+                    &dup.2 == name2 && &dup.0 == name_space
+                })
+                .collect::<Vec<_>>()
+                .len()
+                > 1
+            {
+                if dup.1 != vec!["crate"] {
+                    dup.0.push(dup.1.pop().unwrap())
+                }
+            }
+        }
+    }
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+
+    for dup in duplicates.iter_mut() {
+        dup.0.push(dup.2.clone());
+    }
+
+    // update to namespaced names
+    fn update_to_namespaced_names(
+        module: &mut JsStmtModule,
+        duplicates: &mut Vec<(Vec<String>, Vec<String>, String, Vec<String>)>,
+    ) {
+        for stmt in module.stmts.iter_mut() {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    if let Some(dup) = duplicates
+                        .iter()
+                        .find(|dup| dup.2 == js_class.name && dup.3 == module.module_path)
+                    {
+                        js_class.name = dup.0.join("__");
+                    }
+                }
+                JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
+                JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
+                JsStmt::Local(js_local) => {
+                    if let LocalName::Single(name) = &mut js_local.lhs {
+                        // only want the `js_local`'s value, not the whole `var name = value;`
+                        if let Some(dup) = duplicates
+                            .iter()
+                            .find(|dup| dup.2 == *name && dup.3 == module.module_path)
+                        {
+                            name.clear();
+                            name.push_str(&dup.0.join("__"));
+                        }
+                    } else {
+                        // https://github.com/rust-lang/rfcs/issues/3290
+                        panic!("consts do not support destructuring");
+                    }
+                }
+                JsStmt::Expr(js_expr, _) => {
+                    dbg!(js_expr);
+                    todo!("cannot be js module item")
+                }
+                JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
+                JsStmt::Function(js_fn) => {
+                    if let Some(dup) = duplicates
+                        .iter()
+                        .find(|dup| dup.2 == js_fn.name && dup.3 == module.module_path)
+                    {
+                        js_fn.name = dup.0.join("__");
+                    }
+                },
+                JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
+                JsStmt::TryBlock(_) => todo!("cannot be js module item"),
+                JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
+                JsStmt::Raw(_) => todo!("cannot be js module item"),
+                JsStmt::Module(js_stmt_module) => update_to_namespaced_names(js_stmt_module, duplicates),
+                // TODO support allowing comments as module items so they can appear before the item in the object
+                JsStmt::Comment(_) => todo!("cannot be js module item"),
+            };
+        }
+    }
+    update_to_namespaced_names(&mut crate_module, &mut duplicates);
+
     if with_rust_types {
         let mut methods = Vec::new();
         methods.push((
@@ -1425,24 +1501,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }));
     }
 
-    let crate_obj = JsStmt::Local(JsLocal {
-        public: false,
-        export: false,
-        type_: LocalType::Var,
-        lhs: LocalName::Single("crate".to_string()),
-        value: JsExpr::MethodCall(
-            Box::new(JsExpr::ObjectForModule(crate_module.stmts)),
-            "init".to_string(),
-            Vec::new(),
-        ),
-    });
-
-    let main_call = JsStmt::Expr(
-        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
-        true,
-    );
-
-    vec![crate_obj, main_call]
+    vec![JsStmt::Module(crate_module)]
 }
 
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
@@ -1909,6 +1968,8 @@ impl JsExpr {
 // ::new()/Constructor must assign all fields of class
 #[derive(Clone, Debug)]
 pub struct JsClass {
+    /// None if class is not defined at module level
+    // module_path: Option<Vec<String>>,
     public: bool,
     export: bool,
     name: String,
@@ -1984,6 +2045,8 @@ impl LocalName {
 
 #[derive(Clone, Debug)]
 pub struct JsLocal {
+    /// None if not a const is not defined at module level
+    // module_path: Option<Vec<String>>,
     public: bool,
     export: bool,
     type_: LocalType,
@@ -2013,6 +2076,8 @@ impl JsLocal {
 
 #[derive(Clone, Debug)]
 pub struct JsFn {
+    /// None if not a fn defined at module level
+    // module_path: Option<Vec<String>>,
     iife: bool,
     public: bool,
     export: bool,
@@ -2113,44 +2178,42 @@ struct JsStmtModule {
 }
 impl JsStmtModule {
     fn js_string(&self) -> String {
-        let key_values = self
-            .stmts
+        self.stmts
             .iter()
             .map(|stmt| {
-                let name = match stmt {
-                    JsStmt::Class(js_class) => js_class.name.clone(),
-                    JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
-                    JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
-                    JsStmt::Local(js_local) => {
-                        if let LocalName::Single(name) = &js_local.lhs {
-                            // only want the `js_local`'s value, not the whole `var name = value;`
-                            return format!("{name}: {}", js_local.value.js_string());
-                        } else {
-                            // https://github.com/rust-lang/rfcs/issues/3290
-                            panic!("consts do not support destructuring");
-                        }
-                    }
-                    JsStmt::Expr(js_expr, _) => {
-                        dbg!(js_expr);
-                        todo!("cannot be js module item")
-                    }
-                    JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
-                    JsStmt::Function(js_fn) => js_fn.name.clone(),
-                    JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
-                    JsStmt::TryBlock(_) => todo!("cannot be js module item"),
-                    JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
-                    JsStmt::Raw(_) => todo!("cannot be js module item"),
-                    JsStmt::Module(js_stmt_module) => js_stmt_module.name.clone(),
-                    // TODO support allowing comments as module items so they can appear before the item in the object
-                    JsStmt::Comment(_) => todo!("cannot be js module item"),
-                };
-                let value = stmt.js_string();
-                format!("{name}: {value}")
+                // let name = match stmt {
+                //     JsStmt::Class(js_class) => js_class.name.clone(),
+                //     JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
+                //     JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
+                //     JsStmt::Local(js_local) => {
+                //         if let LocalName::Single(name) = &js_local.lhs {
+                //             // only want the `js_local`'s value, not the whole `var name = value;`
+                //             return format!("{name}: {}", js_local.value.js_string());
+                //         } else {
+                //             // https://github.com/rust-lang/rfcs/issues/3290
+                //             panic!("consts do not support destructuring");
+                //         }
+                //     }
+                //     JsStmt::Expr(js_expr, _) => {
+                //         dbg!(js_expr);
+                //         todo!("cannot be js module item")
+                //     }
+                //     JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
+                //     JsStmt::Function(js_fn) => js_fn.name.clone(),
+                //     JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
+                //     JsStmt::TryBlock(_) => todo!("cannot be js module item"),
+                //     JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
+                //     JsStmt::Raw(_) => todo!("cannot be js module item"),
+                //     JsStmt::Module(js_stmt_module) => js_stmt_module.name.clone(),
+                //     // TODO support allowing comments as module items so they can appear before the item in the object
+                //     JsStmt::Comment(_) => todo!("cannot be js module item"),
+                // };
+                // let value = stmt.js_string();
+                // format!("{name}: {value}")
+                stmt.js_string()
             })
             .collect::<Vec<_>>()
-            .join(", ");
-
-        format!("{{ {key_values} }}")
+            .join("\n\n")
     }
 }
 
