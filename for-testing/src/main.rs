@@ -2,7 +2,7 @@ mod foo_bar;
 use foo_bar::External;
 
 mod colors;
-use colors::green::Dog;
+use colors::green::Green;
 
 mod utils;
 
@@ -14,7 +14,7 @@ fn main() {
     duplicate_name();
     utils::duplicate_name();
     let thing = External::new();
-    let fido = Dog {
+    let fido = Green {
         fluffy: true,
         age: 2,
     };

@@ -1,18 +1,19 @@
 fn duplicate_name() -> i32 {
-    10
+    3
 }
 
-pub struct Dog {
+pub struct Green {
     pub fluffy: bool,
     pub age: i32,
 }
-impl Dog {
+impl Green {
     pub fn woof(&self) -> i32 {
         fn duplicate_name() -> i32 {
             9999
         }
         self.age
             + self::duplicate_name()
+            + duplicate_name()
             + self::super::super::utils::say_something::say_hello()
             + crate::utils::say_something::say_hello()
             + crate::colors::green::duplicate_name()
