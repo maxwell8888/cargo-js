@@ -1010,50 +1010,35 @@ fn handle_item(
             //     main_path = main_path.join(path_seg);
             // }
 
-            // TODO sub modules need to be nested the the parent module according to where they appear in the directory structure, not just every module that `mod foo`'s them - no only modules that *are* the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
-            // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
-
             let mut module_path = current_module.clone();
             module_path.push(item_mod.ident.to_string());
-
-            // read new module file and return whether we are at crate root, name of the file containing this mod statement, and the parsed file
-            let (at_root, current_file_name, file) = match current_file_path {
-                Some(current_file_path) => {
-                    let current_module_name = current_file_path.file_stem().unwrap().to_os_string();
-                    let current_module_name = current_module_name.to_string_lossy().to_string();
-                    let current_file_name =
-                        current_file_path.file_name().unwrap().to_string_lossy();
-                    let current_file_name = current_file_name.to_string();
-
-                    let lib_or_main = current_file_path.ends_with("main.rs")
-                        || current_file_path.ends_with("lib.rs");
-
-                    // Say the current file path is `some_crate/src/main.rs`. Then we pop the file leaving us with `some_crate/src/`.
-                    // Or current path is `some_crate/src/stuff/dog.rs`. Then we pop the file leaving us with `some_crate/src/stuff`.
-                    current_file_path.pop();
-
-                    let at_root = current_file_path.file_name().unwrap() == "src";
-                    let at_root = lib_or_main;
-
-                    // Then we get the path of the new module relative to the current file, which for a simple `mod foo` is just the file name `foo.rs` - no if it is non-root submodule like dog we have `stuff.rs` -> `stuff/dog.rs`
-                    // main.rs mod stuff: /main.rs -> /stuff.rs
-                    // stuff.rs mod dog: /stuff.rs -> /stuff/dog.rs
-                    // /stuff/dog.rs mod deeper: /stuff/dog.rs -> /stuff/dog/deeper.rs
-                    let rel_path_to_nav = if at_root {
-                        format!("{}.rs", item_mod.ident)
-                    } else {
-                        // current_file_path.pop();
-                        format!("{}/{}.rs", current_module_name, item_mod.ident.to_string())
-                    };
-
-                    // Then we add it to the updated current path and use this to read the code from the file and parse to syn
-                    current_file_path.push(&rel_path_to_nav);
-                    let code = fs::read_to_string(&current_file_path).unwrap();
-                    (at_root, current_file_name, syn::parse_file(&code).unwrap())
+            let mut module_path2 = module_path.clone();
+            // TODO get rid of this
+            if let Some(first) = module_path2.first() {
+                if first == "crate" {
+                    module_path2.remove(0);
                 }
-                // None => panic!("use of `mod` keyword is only allowed in crates, not adhoc files/scripts and snippets"),
-                None => panic!("use of `mod` keyword is only allowed in crates"),
+            }
+            let mut file_path = global_data.crate_path.clone();
+            file_path.push("src");
+            if module_path2.is_empty() {
+                file_path.push("main.rs");
+            } else {
+                let last = module_path2.last_mut().unwrap();
+                last.push_str(".rs");
+                file_path.extend(module_path2);
+            }
+            let file = if let Some(_content) = &item_mod.content {
+                // TODO how does `mod bar { mod foo; }` work?
+                todo!()
+            } else {
+                dbg!(&file_path);
+                let code = fs::read_to_string(&file_path).unwrap();
+                syn::parse_file(&code).unwrap()
             };
+
+            // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
+            // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
             global_data.modules.push(ModuleData {
                 path: module_path.clone(),
@@ -1069,20 +1054,6 @@ fn handle_item(
                 global_data,
                 current_file_path,
             );
-
-            // once we have the module's `JsStmt`s we want to revert back to the previous file path
-            // to do this we just need to pop and add `current_module_name` if we are at the root
-            // if we are not at root we need to pop twice then add `current_module_name`
-            if let Some(current_file_path) = current_file_path {
-                if at_root {
-                    current_file_path.pop();
-                    current_file_path.push(current_file_name);
-                } else {
-                    current_file_path.pop();
-                    current_file_path.pop();
-                    current_file_path.push(current_file_name);
-                }
-            }
 
             // Get names of pub JsStmts
             // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
@@ -1317,14 +1288,16 @@ struct Duplicate {
 
 #[derive(Debug, Clone)]
 struct GlobalData {
+    crate_path: PathBuf,
     modules: Vec<ModuleData>,
     rust_prelude_types: RustPreludeTypes,
     impl_items: Vec<ImplItemTemp>,
     duplicates: Vec<Duplicate>,
 }
 impl GlobalData {
-    fn new(duplicates: Vec<Duplicate>) -> GlobalData {
+    fn new(crate_path: PathBuf, duplicates: Vec<Duplicate>) -> GlobalData {
         GlobalData {
+            crate_path,
             modules: Vec::new(),
             rust_prelude_types: RustPreludeTypes::default(),
             impl_items: Vec::new(),
@@ -1405,7 +1378,6 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
                         last.push_str(".rs");
                         file_path.extend(module_path);
                     }
-                    dbg!(&file_path);
                     if let Some(_content) = &item_mod.content {
                         // TODO how does `mod bar { mod foo; }` work?
                         todo!()
@@ -1483,6 +1455,8 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     update_dup_names(&mut duplicates);
     update_dup_names(&mut duplicates);
     update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
 
     for dup in duplicates.iter_mut() {
         dup.namespace.push(dup.name.clone());
@@ -1492,7 +1466,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
 
     // let mut module_names = Vec::new();
 
-    let mut global_data = GlobalData::new(duplicates.clone());
+    let mut global_data = GlobalData::new(crate_path.clone(), duplicates.clone());
     global_data.modules.push(ModuleData {
         path: vec!["crate".to_string()],
         defined_names: Vec::new(),
@@ -1547,65 +1521,6 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }
     }
     update_classes(&mut crate_module, global_data.impl_items);
-
-    // update to namespaced names
-    // syn vs js?
-    // this can be done as part of the parsing stage if `duplicates` already exists
-    // dbg!(&duplicates);
-    // fn update_to_namespaced_names(module: &mut JsStmtModule, duplicates: &mut Vec<Duplicate>) {
-    //     for stmt in module.stmts.iter_mut() {
-    //         match stmt {
-    //             JsStmt::Class(js_class) => {
-    //                 if let Some(dup) = duplicates.iter().find(|dup| {
-    //                     dup.name == js_class.name && dup.original_module_path == module.module_path
-    //                 }) {
-    //                     js_class.name = dup.namespace.join("__");
-    //                 }
-    //             }
-    //             JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
-    //             JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
-    //             JsStmt::Local(js_local) => {
-    //                 if let LocalName::Single(name) = &mut js_local.lhs {
-    //                     // only want the `js_local`'s value, not the whole `var name = value;`
-    //                     if let Some(dup) = duplicates.iter().find(|dup| {
-    //                         dup.name == *name && dup.original_module_path == module.module_path
-    //                     }) {
-    //                         name.clear();
-    //                         name.push_str(&dup.namespace.join("__"));
-    //                     }
-    //                 } else {
-    //                     // https://github.com/rust-lang/rfcs/issues/3290
-    //                     panic!("consts do not support destructuring");
-    //                 }
-    //             }
-    //             JsStmt::Expr(js_expr, _) => {
-    //                 dbg!(js_expr);
-    //                 todo!("cannot be js module item")
-    //             }
-    //             JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
-    //             JsStmt::Function(js_fn) => {
-    //                 if let Some(dup) = duplicates.iter().find(|dup| {
-    //                     dup.name == js_fn.name && dup.original_module_path == module.module_path
-    //                 }) {
-    //                     js_fn.name = dup.namespace.join("__");
-    //                 }
-    //             }
-    //             JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
-    //             JsStmt::TryBlock(_) => todo!("cannot be js module item"),
-    //             JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
-    //             JsStmt::Raw(_) => todo!("cannot be js module item"),
-    //             JsStmt::Module(js_stmt_module) => {
-    //                 update_to_namespaced_names(js_stmt_module, duplicates)
-    //             }
-    //             // TODO support allowing comments as module items so they can appear before the item in the object
-    //             JsStmt::Comment(_) => todo!("cannot be js module item"),
-    //             JsStmt::Use(_) => {}
-    //         };
-    //     }
-    // }
-    // update_to_namespaced_names(&mut crate_module, &mut duplicates);
-
-    // dbg!(duplicates);
 
     // resolve paths to get canonical path to item
     // Update paths to use namespaced names and account for `use` statements
@@ -1755,7 +1670,7 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
     let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(Vec::new());
+    let mut global_data = GlobalData::new(PathBuf::new(), Vec::new());
     js_stmts_from_syn_items(items, true, current_module, &mut global_data, &mut None)
 }
 
@@ -1763,7 +1678,7 @@ pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
     // let mut current_file_path = Vec::new();
     let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(Vec::new());
+    let mut global_data = GlobalData::new(PathBuf::new(), Vec::new());
     js_stmts_from_syn_items(
         file.items,
         true,
@@ -1778,7 +1693,11 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 
     let mut js_stmts = Vec::new();
     for stmt in &item_fn.block.stmts {
-        let js_stmt = handle_stmt(stmt, &mut GlobalData::new(Vec::new()), &Vec::new());
+        let js_stmt = handle_stmt(
+            stmt,
+            &mut GlobalData::new(PathBuf::new(), Vec::new()),
+            &Vec::new(),
+        );
         js_stmts.push(js_stmt);
     }
     js_stmts
@@ -1789,7 +1708,11 @@ pub fn from_block(code: &str) -> Vec<JsStmt> {
 
     let mut js_stmts = Vec::new();
     for stmt in &expr_block.block.stmts {
-        let js_stmt = handle_stmt(stmt, &mut GlobalData::new(Vec::new()), &Vec::new());
+        let js_stmt = handle_stmt(
+            stmt,
+            &mut GlobalData::new(PathBuf::new(), Vec::new()),
+            &Vec::new(),
+        );
         js_stmts.push(js_stmt);
     }
     js_stmts
