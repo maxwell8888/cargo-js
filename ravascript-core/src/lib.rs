@@ -298,7 +298,9 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
 
 /// We want each of used items eg `use mod::sub_mod::{item1, item2, another_mod::item3}` to return the name of the item, and the path relative to the root module
 ///
-/// relative_path is camel,  items: (item name (camel), relative path (camel))
+/// relative_path (snake) is a temporary var for building the relative path
+///
+/// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
 fn tree_parsing_for_boilerplate(
     use_tree: &UseTree,
     relative_path: &mut Vec<String>,
@@ -306,12 +308,10 @@ fn tree_parsing_for_boilerplate(
 ) {
     match use_tree {
         UseTree::Path(use_path) => {
-            relative_path.push(camel(&use_path.ident));
+            relative_path.push(use_path.ident.to_string());
             tree_parsing_for_boilerplate(&*use_path.tree, relative_path, items);
         }
-        UseTree::Name(use_name) => {
-            items.push((case_convert(&use_name.ident), relative_path.clone()))
-        }
+        UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
         UseTree::Rename(_) => todo!(),
         UseTree::Glob(_) => todo!(),
         UseTree::Group(use_group) => {
@@ -319,7 +319,7 @@ fn tree_parsing_for_boilerplate(
                 match item {
                     UseTree::Path(use_path) => {
                         let mut new_relative_path = relative_path.clone();
-                        new_relative_path.push(camel(&use_path.ident));
+                        new_relative_path.push(use_path.ident.to_string());
                         tree_parsing_for_boilerplate(
                             &*use_path.tree,
                             &mut new_relative_path,
@@ -327,7 +327,7 @@ fn tree_parsing_for_boilerplate(
                         );
                     }
                     UseTree::Name(use_name) => {
-                        items.push((case_convert(&use_name.ident), relative_path.clone()));
+                        items.push((use_name.ident.to_string(), relative_path.clone()));
                     }
                     UseTree::Rename(_) => todo!(),
                     UseTree::Glob(_) => todo!(),
@@ -357,7 +357,8 @@ fn handle_item_use(
     item_use: &ItemUse,
     current_module: Vec<String>,
     is_module: bool,
-    global_data: &mut GlobalData,
+    // global_data: &mut GlobalData,
+    modules: &mut Vec<ModuleData>,
 ) {
     let public = match item_use.vis {
         Visibility::Public(_) => true,
@@ -418,8 +419,9 @@ fn handle_item_use(
                     // let mut sub_modules: Vec<DestructureValue> = Vec::new();
                     let root_module_or_crate = use_path.ident.to_string();
 
+                    // Vec<(item name (snake), relative path (snake))>
                     let mut item_paths = Vec::new();
-                    let mut relative_path = vec![camel(&use_path.ident)];
+                    let mut relative_path = vec![use_path.ident.to_string()];
                     tree_parsing_for_boilerplate(
                         &*use_path.tree,
                         &mut relative_path,
@@ -437,8 +439,7 @@ fn handle_item_use(
 
             // dbg!(&global_data.modules);
             // dbg!(&current_module);
-            let module = global_data
-                .modules
+            let module = modules
                 .iter_mut()
                 .find(|module| module.path == current_module)
                 .unwrap();
@@ -1005,11 +1006,6 @@ fn handle_item(
             // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
             // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
 
-            // TODO handle longer mod statements like mod foo::bar::baz;
-            // for path_seg in item_mod.content {
-            //     main_path = main_path.join(path_seg);
-            // }
-
             let mut module_path = current_module.clone();
             module_path.push(item_mod.ident.to_string());
             let mut module_path2 = module_path.clone();
@@ -1162,9 +1158,7 @@ fn handle_item(
         Item::TraitAlias(_) => todo!(),
         Item::Type(_) => todo!(),
         Item::Union(_) => todo!(),
-        Item::Use(item_use) => {
-            handle_item_use(&item_use, current_module, is_module, global_data);
-        }
+        Item::Use(_) => {}
         Item::Verbatim(_) => todo!(),
         _ => todo!(),
     }
@@ -1329,12 +1323,14 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // Update names
     // Determine which names are not globally unique and need namespacing
     // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
-    fn get_names(
+    /// gets names of module level items, and `use` data
+    fn extract_data(
         items: &Vec<Item>,
         crate_path: &PathBuf,
         module_path: &mut Vec<String>,
         // (module path, name)
         names: &mut Vec<(Vec<String>, String)>,
+        modules: &mut Vec<ModuleData>,
     ) {
         let mut module_path_with_crate = vec!["crate".to_string()];
         module_path_with_crate.extend(module_path.clone());
@@ -1384,7 +1380,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
                     } else {
                         let code = fs::read_to_string(&file_path).unwrap();
                         let file = syn::parse_file(&code).unwrap();
-                        get_names(&file.items, crate_path, module_path, names);
+                        extract_data(&file.items, crate_path, module_path, names, modules);
                     }
                     module_path.pop();
                 }
@@ -1397,21 +1393,25 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
                 Item::TraitAlias(_) => todo!(),
                 Item::Type(_) => todo!(),
                 Item::Union(_) => todo!(),
-                Item::Use(_) => {}
+                Item::Use(item_use) => {
+                    handle_item_use(&item_use, module_path.clone(), true, modules);
+                }
                 Item::Verbatim(_) => todo!(),
                 _ => todo!(),
             }
         }
     }
     let mut names = Vec::new();
+    let mut modules = Vec::new();
     let mut get_names_module_path = Vec::new();
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
     let mut get_names_crate_path = crate_path.clone();
-    get_names(
+    extract_data(
         &file.items,
         &get_names_crate_path,
         &mut get_names_module_path,
         &mut names,
+        &mut modules,
     );
 
     // find duplicates
