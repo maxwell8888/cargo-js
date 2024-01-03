@@ -1257,6 +1257,182 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(&code).unwrap();
     // let mut current_file_path = vec!["main.rs".to_string()];
 
+    // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
+    // What about where we are inside a class method so this refers to the class, not the module?
+    // Solutions:
+    // add a unique name like `this.moduleThis = this;` - not possible because it still exists on the `this` which class methods don't have access to.
+    // add `this.moduleThis` to class objects in init function??
+    // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
+    // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
+
+    // Update names
+    // Determine which names are not globally unique and need namespacing
+    // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
+    fn get_names(
+        items: &Vec<Item>,
+        crate_path: &PathBuf,
+        module_path: &mut Vec<String>,
+        // (module path, name)
+        names: &mut Vec<(Vec<String>, String)>,
+    ) {
+        let mut module_path_with_crate = vec!["crate".to_string()];
+        module_path_with_crate.extend(module_path.clone());
+        for item in items {
+            match item {
+                Item::Const(item_const) => {
+                    names.push((module_path_with_crate.clone(), item_const.ident.to_string()))
+                }
+                Item::Enum(item_enum) => {
+                    names.push((module_path_with_crate.clone(), item_enum.ident.to_string()))
+                }
+                Item::ExternCrate(_) => todo!(),
+                Item::Fn(item_fn) => names.push((
+                    module_path_with_crate.clone(),
+                    item_fn.sig.ident.to_string(),
+                )),
+                Item::ForeignMod(_) => todo!(),
+                Item::Impl(_) => {}
+                Item::Macro(_) => {}
+                Item::Mod(item_mod) => {
+                    // let current_module_name = current_file_path.file_stem().unwrap().to_os_string();
+                    // let current_module_name = current_module_name.to_string_lossy().to_string();
+                    // let current_file_name =
+                    //     current_file_path.file_name().unwrap().to_string_lossy();
+                    // let current_file_name = current_file_name.to_string();
+
+                    // let lib_or_main = current_file_path.ends_with("main.rs")
+                    //     || current_file_path.ends_with("lib.rs");
+
+                    // // Say the current file path is `some_crate/src/main.rs`. Then we pop the file leaving us with `some_crate/src/`.
+                    // // Or current path is `some_crate/src/stuff/dog.rs`. Then we pop the file leaving us with `some_crate/src/stuff`.
+                    // current_file_path.pop();
+
+                    // let at_root = current_file_path.file_name().unwrap() == "src";
+                    // let at_root = lib_or_main;
+
+                    // // Then we get the path of the new module relative to the current file, which for a simple `mod foo` is just the file name `foo.rs` - no if it is non-root submodule like dog we have `stuff.rs` -> `stuff/dog.rs`
+                    // // main.rs mod stuff: /main.rs -> /stuff.rs
+                    // // stuff.rs mod dog: /stuff.rs -> /stuff/dog.rs
+                    // // /stuff/dog.rs mod deeper: /stuff/dog.rs -> /stuff/dog/deeper.rs
+                    // let rel_path_to_nav = if at_root {
+                    //     format!("{}.rs", item_mod.ident)
+                    // } else {
+                    //     // current_file_path.pop();
+                    //     format!("{}/{}.rs", current_module_name, item_mod.ident.to_string())
+                    // };
+
+                    // // Then we add it to the updated current path and use this to read the code from the file and parse to syn
+                    // current_file_path.push(&rel_path_to_nav);
+                    // let code = fs::read_to_string(&current_file_path).unwrap();
+                    // (at_root, current_file_name, syn::parse_file(&code).unwrap())
+
+                    module_path.push(item_mod.ident.to_string());
+
+                    // popping here let's us know if we are calling `mod` from a src-level module
+                    // main.rs mod stuff: src/main.rs -> src/ -> src/stuff.rs
+                    // stuff.rs mod dog: src/stuff.rs -> src/ -> /stuff/dog.rs
+                    // /stuff/dog.rs mod deeper: /stuff/dog.rs -> /stuff/dog/deeper.rs
+                    // crate_path.pop();
+                    // if crate_path.ends_with("src") {
+                    //     crate_path.push(item_mod.ident.to_string());
+                    //     crate_path.push(".rs");
+                    // } else {
+                    // }
+
+                    let mut file_path = crate_path.clone();
+                    file_path.push("src");
+                    if module_path.is_empty() {
+                        file_path.push("main.rs");
+                    } else {
+                        let mut module_path = module_path.clone();
+                        let last = module_path.last_mut().unwrap();
+                        last.push_str(".rs");
+                        file_path.extend(module_path);
+                    }
+                    dbg!(&file_path);
+                    if let Some(_content) = &item_mod.content {
+                        // TODO how does `mod bar { mod foo; }` work?
+                        todo!()
+                    } else {
+                        let code = fs::read_to_string(&file_path).unwrap();
+                        let file = syn::parse_file(&code).unwrap();
+                        get_names(&file.items, crate_path, module_path, names);
+                    }
+                    module_path.pop();
+                }
+                Item::Static(_) => todo!(),
+                Item::Struct(item_struct) => names.push((
+                    module_path_with_crate.clone(),
+                    item_struct.ident.to_string(),
+                )),
+                Item::Trait(_) => {}
+                Item::TraitAlias(_) => todo!(),
+                Item::Type(_) => todo!(),
+                Item::Union(_) => todo!(),
+                Item::Use(_) => {}
+                Item::Verbatim(_) => todo!(),
+                _ => todo!(),
+            }
+        }
+    }
+    let mut names = Vec::new();
+    let mut get_names_module_path = Vec::new();
+    // let mut get_names_crate_path = crate_path.join("src/main.rs");
+    let mut get_names_crate_path = crate_path.clone();
+    get_names(
+        &file.items,
+        &get_names_crate_path,
+        &mut get_names_module_path,
+        &mut names,
+    );
+
+    // find duplicates
+    // TODO account for local functions which shadow these names
+    // (name space, module path, name)
+    let mut duplicates = Vec::new();
+    for name in &names {
+        if names
+            .iter()
+            .filter(|(module_path, name2)| &name.1 == name2)
+            .collect::<Vec<_>>()
+            .len()
+            > 1
+        {
+            duplicates.push((
+                Vec::<String>::new(),
+                name.0.clone(),
+                name.1.clone(),
+                name.0.clone(),
+            ));
+        }
+    }
+    fn update_dup_names(duplicates: &mut Vec<(Vec<String>, Vec<String>, String, Vec<String>)>) {
+        let dups_copy = duplicates.clone();
+        for dup in duplicates.iter_mut() {
+            if dups_copy
+                .iter()
+                .filter(|(name_space, module_path, name2, orig_module_path)| {
+                    &dup.2 == name2 && &dup.0 == name_space
+                })
+                .collect::<Vec<_>>()
+                .len()
+                > 1
+            {
+                if dup.1 != vec!["crate"] {
+                    dup.0.push(dup.1.pop().unwrap())
+                }
+            }
+        }
+    }
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+
+    for dup in duplicates.iter_mut() {
+        dup.0.push(dup.2.clone());
+    }
+
     let mut js_stmts = Vec::new();
 
     // let mut module_names = Vec::new();
@@ -1316,106 +1492,6 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }
     }
     update_classes(&mut crate_module, global_data.impl_items);
-
-    // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
-    // What about where we are inside a class method so this refers to the class, not the module?
-    // Solutions:
-    // add a unique name like `this.moduleThis = this;` - not possible because it still exists on the `this` which class methods don't have access to.
-    // add `this.moduleThis` to class objects in init function??
-    // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
-    // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
-
-    // Update names
-    // Determine which names are not globally unique and need namespacing
-    // TODO should do this before parsing to JS?
-    let mut names = Vec::new();
-    /// (module path, name)
-    fn get_names(module: &JsStmtModule, names: &mut Vec<(Vec<String>, String)>) {
-        for stmt in &module.stmts {
-            match stmt {
-                JsStmt::Class(js_class) => {
-                    names.push((module.module_path.clone(), js_class.name.clone()))
-                }
-                JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
-                JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
-                JsStmt::Local(js_local) => {
-                    if let LocalName::Single(name) = &js_local.lhs {
-                        // only want the `js_local`'s value, not the whole `var name = value;`
-                        names.push((module.module_path.clone(), name.clone()))
-                    } else {
-                        // https://github.com/rust-lang/rfcs/issues/3290
-                        panic!("consts do not support destructuring");
-                    }
-                }
-                JsStmt::Expr(js_expr, _) => {
-                    dbg!(js_expr);
-                    todo!("cannot be js module item")
-                }
-                JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
-                JsStmt::Function(js_fn) => {
-                    names.push((module.module_path.clone(), js_fn.name.clone()))
-                }
-                JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
-                JsStmt::TryBlock(_) => todo!("cannot be js module item"),
-                JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
-                JsStmt::Raw(_) => todo!("cannot be js module item"),
-                JsStmt::Module(js_stmt_module) => get_names(&js_stmt_module, names),
-                // TODO support allowing comments as module items so they can appear before the item in the object
-                JsStmt::Comment(_) => todo!("cannot be js module item"),
-                JsStmt::Use(_) => {
-                    // Only want names of items actually defined in the module, not simply `use`'d
-                }
-            }
-        }
-    }
-    get_names(&crate_module, &mut names);
-
-    // find duplicates
-    // TODO account for local functions which shadow these names
-    // (name space, module path, name)
-    let mut duplicates = Vec::new();
-    for name in &names {
-        if names
-            .iter()
-            .filter(|(module_path, name2)| &name.1 == name2)
-            .collect::<Vec<_>>()
-            .len()
-            > 1
-        {
-            duplicates.push((
-                Vec::<String>::new(),
-                name.0.clone(),
-                name.1.clone(),
-                name.0.clone(),
-            ));
-        }
-    }
-    fn update_dup_names(duplicates: &mut Vec<(Vec<String>, Vec<String>, String, Vec<String>)>) {
-        let dups_copy = duplicates.clone();
-        for dup in duplicates.iter_mut() {
-            if dups_copy
-                .iter()
-                .filter(|(name_space, module_path, name2, orig_module_path)| {
-                    &dup.2 == name2 && &dup.0 == name_space
-                })
-                .collect::<Vec<_>>()
-                .len()
-                > 1
-            {
-                if dup.1 != vec!["crate"] {
-                    dup.0.push(dup.1.pop().unwrap())
-                }
-            }
-        }
-    }
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-
-    for dup in duplicates.iter_mut() {
-        dup.0.push(dup.2.clone());
-    }
 
     // update to namespaced names
     // syn vs js?
@@ -1489,47 +1565,51 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // Then for each module, add maps of the names of the items that are mod/use'd to the use path
     // go through each module and reconcile each item with the use mapping, and that with the module path where the item is actually defined
 
-    // Maybe do a minimal pass before the main parsing, where we only look at ::Mod and ::Use to build up module data. Then, we can resolve path names directly in the parsing pass, rather than having to iterate through everything in this second pass? Remeber `use` can be anywhere so trading iterating through everything JsStmts for syn is an improvement. Plus it just makes a lot more sense to get that data from the syn types, rather than 
+    // Maybe do a minimal pass before the main parsing, where we only look at ::Mod and ::Use to build up module data. Then, we can resolve path names directly in the parsing pass, rather than having to iterate through everything in this second pass? Remeber `use` can be anywhere so trading iterating through everything JsStmts for syn is an improvement. Plus it just makes a lot more sense to get that data from the syn types, rather than
 
     fn resolve_names_jsexpr(js_expr: &mut JsExpr) {
         match js_expr {
             JsExpr::Array(_) => todo!(),
-                            JsExpr::ArrowFn(_, _, _, _) => todo!(),
-                            JsExpr::Assignment(_, _) => todo!(),
-                            JsExpr::Binary(lhs, _, rhs) => {}
-                            JsExpr::Blank => todo!(),
-                            JsExpr::Block(_) => todo!(),
-                            JsExpr::Break => todo!(),
-                            JsExpr::Declaration(_, _, _) => todo!(),
-                            JsExpr::Null => todo!(),
-                            JsExpr::LitInt(_) => todo!(),
-                            JsExpr::LitStr(_) => todo!(),
-                            JsExpr::LitBool(_) => todo!(),
-                            JsExpr::Object(_) => todo!(),
-                            JsExpr::ObjectForModule(_) => todo!(),
-                            JsExpr::Return(_) => todo!(),
-                            JsExpr::Vanish => todo!(),
-                            JsExpr::Field(_, _) => todo!(),
-                            JsExpr::Fn(_) => todo!(),
-                            JsExpr::FnCall(_, _) => todo!(),
-                            JsExpr::If(_, _, _, _, _) => todo!(),
-                            JsExpr::Paren(_) => todo!(),
-                            JsExpr::Not(_) => todo!(),
-                            JsExpr::Minus(_) => todo!(),
-                            JsExpr::Await(_) => todo!(),
-                            JsExpr::Index(_, _) => todo!(),
-                            JsExpr::Var(_) => todo!(),
-                            JsExpr::Path(path) => {
-                                path.clear();
-                                path.push("cool".to_string());
-                            },
-                            JsExpr::New(_, _) => todo!(),
-                            JsExpr::MethodCall(_, _, _) => todo!(),
-                            JsExpr::While(_, _) => todo!(),
-                            JsExpr::ForLoop(_, _, _) => todo!(),
+            JsExpr::ArrowFn(_, _, _, _) => todo!(),
+            JsExpr::Assignment(_, _) => todo!(),
+            JsExpr::Binary(lhs, _, rhs) => {}
+            JsExpr::Blank => todo!(),
+            JsExpr::Block(_) => todo!(),
+            JsExpr::Break => todo!(),
+            JsExpr::Declaration(_, _, _) => todo!(),
+            JsExpr::Null => todo!(),
+            JsExpr::LitInt(_) => todo!(),
+            JsExpr::LitStr(_) => todo!(),
+            JsExpr::LitBool(_) => todo!(),
+            JsExpr::Object(_) => todo!(),
+            JsExpr::ObjectForModule(_) => todo!(),
+            JsExpr::Return(_) => todo!(),
+            JsExpr::Vanish => todo!(),
+            JsExpr::Field(_, _) => todo!(),
+            JsExpr::Fn(_) => todo!(),
+            JsExpr::FnCall(_, _) => todo!(),
+            JsExpr::If(_, _, _, _, _) => todo!(),
+            JsExpr::Paren(_) => todo!(),
+            JsExpr::Not(_) => todo!(),
+            JsExpr::Minus(_) => todo!(),
+            JsExpr::Await(_) => todo!(),
+            JsExpr::Index(_, _) => todo!(),
+            JsExpr::Var(_) => todo!(),
+            JsExpr::Path(path) => {
+                path.clear();
+                path.push("cool".to_string());
+            }
+            JsExpr::New(_, _) => todo!(),
+            JsExpr::MethodCall(_, _, _) => todo!(),
+            JsExpr::While(_, _) => todo!(),
+            JsExpr::ForLoop(_, _, _) => todo!(),
         }
     }
-    fn resolve_names(this_module:&mut Vec<String>, stmts: &mut Vec<JsStmt>, modules: &Vec<ModuleData>) {
+    fn resolve_names(
+        this_module: &mut Vec<String>,
+        stmts: &mut Vec<JsStmt>,
+        modules: &Vec<ModuleData>,
+    ) {
         for stmt in stmts {
             match stmt {
                 JsStmt::Class(js_class) => {
@@ -1539,33 +1619,39 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
                     for method in &mut js_class.methods {
                         resolve_names(this_module, &mut method.3.body_stmts, modules);
                     }
-                },
+                }
                 JsStmt::ClassMethod(_, _, _, _) => todo!(),
                 JsStmt::ClassStatic(_) => todo!(),
                 JsStmt::Local(js_local) => {
                     resolve_names_jsexpr(&mut js_local.value);
-                },
+                }
                 JsStmt::Expr(js_expr, _) => resolve_names_jsexpr(js_expr),
                 JsStmt::Import(_, _, _) => todo!(),
                 JsStmt::Function(js_fn) => {
                     resolve_names(this_module, &mut js_fn.body_stmts, modules);
-                },
+                }
                 JsStmt::ScopeBlock(block_stmts) => resolve_names(this_module, block_stmts, modules),
                 JsStmt::TryBlock(block_stmts) => resolve_names(this_module, block_stmts, modules),
-                JsStmt::CatchBlock(_, block_stmts) => resolve_names(this_module, block_stmts, modules),
+                JsStmt::CatchBlock(_, block_stmts) => {
+                    resolve_names(this_module, block_stmts, modules)
+                }
                 JsStmt::Raw(_) => todo!(),
                 JsStmt::Module(js_stmt_module) => {
                     this_module.push(js_stmt_module.name.clone());
                     resolve_names(this_module, &mut js_stmt_module.stmts, modules);
                     this_module.pop();
-                },
+                }
                 JsStmt::Use(_) => todo!(),
                 JsStmt::Comment(_) => todo!(),
             }
         }
     }
-    let mut current_module = vec!["crate".to_string()]; 
-    resolve_names(&mut current_module, &mut crate_module.stmts, &global_data.modules);
+    let mut current_module = vec!["crate".to_string()];
+    // resolve_names(
+    //     &mut current_module,
+    //     &mut crate_module.stmts,
+    //     &global_data.modules,
+    // );
 
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
