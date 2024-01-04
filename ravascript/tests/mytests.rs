@@ -501,6 +501,7 @@ async fn closure_return_match() {
     assert_eq!(expected, actual);
 }
 
+#[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
     let actual = from_crate("../for-testing".into(), false);

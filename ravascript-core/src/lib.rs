@@ -632,10 +632,10 @@ fn handle_item_fn(
     if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
-        // let iife = item_fn.sig.ident == "main";
+        let iife = item_fn.sig.ident == "main";
         let js_fn = JsFn {
-            // iife,
-            iife: false,
+            iife,
+            // iife: false,
             public: match item_fn.vis {
                 Visibility::Public(_) => true,
                 Visibility::Restricted(_) => todo!(),
@@ -664,12 +664,12 @@ fn handle_item_fn(
                 .map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .collect::<Vec<_>>(),
         };
-        // if iife {
-        //     JsStmt::Expr(JsExpr::Fn(js_fn), true)
-        // } else {
-        //     JsStmt::Function(js_fn)
-        // }
-        JsStmt::Function(js_fn)
+        if iife {
+            JsStmt::Expr(JsExpr::Fn(js_fn), true)
+        } else {
+            JsStmt::Function(js_fn)
+        }
+        // JsStmt::Function(js_fn)
     }
 }
 
@@ -1310,6 +1310,36 @@ struct Module {
     stmts: Vec<JsStmt>,
 }
 
+/// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
+fn update_classes(js_stmt_module: &mut JsStmtModule, impl_items: Vec<ImplItemTemp>) {
+    for stmt in js_stmt_module.stmts.iter_mut() {
+        match stmt {
+            JsStmt::Class(js_class) => {
+                for impl_item in impl_items.clone() {
+                    if impl_item.module_path == js_stmt_module.module_path
+                        && js_class.name == impl_item.class_name
+                    {
+                        match impl_item.item_stmt {
+                            JsStmt::ClassStatic(js_local) => {
+                                js_class.static_fields.push(js_local);
+                            }
+                            JsStmt::ClassMethod(name, private, static_, js_fn) => {
+                                js_class.methods.push((name, private, static_, js_fn));
+                            }
+                            stmt => {
+                                dbg!(stmt);
+                                panic!("this JsStmt cannot be an impl item")
+                            }
+                        }
+                    }
+                }
+            }
+            JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
+            _ => {}
+        }
+    }
+}
+
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // dbg!(&main_path);
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
@@ -1511,8 +1541,6 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         &mut modules,
     );
 
-    
-
     // find duplicates
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
@@ -1678,37 +1706,6 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     };
     // js_stmts.extend();
 
-    /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-    fn update_classes(js_stmt_module: &mut JsStmtModule, impl_items: Vec<ImplItemTemp>) {
-        for stmt in js_stmt_module.stmts.iter_mut() {
-            match stmt {
-                JsStmt::Class(js_class) => {
-                    for impl_item in impl_items.clone() {
-                        if impl_item.module_path == js_stmt_module.module_path
-                            && js_class.name == impl_item.class_name
-                        {
-                            match impl_item.item_stmt {
-                                JsStmt::ClassStatic(js_local) => {
-                                    js_class.static_fields.push(js_local);
-                                }
-                                JsStmt::ClassMethod(name, private, static_, js_fn) => {
-                                    js_class.methods.push((name, private, static_, js_fn));
-                                }
-                                stmt => {
-                                    dbg!(stmt);
-                                    panic!("this JsStmt cannot be an impl item")
-                                }
-                            }
-                        }
-                    }
-                }
-                JsStmt::Module(js_stmt_module) => {
-                    update_classes(js_stmt_module, impl_items.clone())
-                }
-                _ => {}
-            }
-        }
-    }
     update_classes(&mut crate_module, global_data.impl_items);
 
     // resolve paths to get canonical path to item
@@ -1868,13 +1865,22 @@ pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     // let mut current_file_path = Vec::new();
     let mut current_module = Vec::new();
     let mut global_data = GlobalData::new(PathBuf::new(), Vec::new());
-    js_stmts_from_syn_items(
+    let stmts = js_stmts_from_syn_items(
         file.items,
         true,
         current_module,
         &mut global_data,
         &mut None,
-    )
+    );
+    let mut crate_module = JsStmtModule {
+        public: false,
+        name: "crate".to_string(),
+        module_path: Vec::new(),
+        stmts,
+    };
+
+    update_classes(&mut crate_module, global_data.impl_items);
+    crate_module.stmts
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
