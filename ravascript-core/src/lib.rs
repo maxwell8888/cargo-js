@@ -437,15 +437,17 @@ fn handle_item_use(
                 _ => panic!("root of use trees are always a path or name"),
             };
 
-            // dbg!(&global_data.modules);
-            // dbg!(&current_module);
             let module = modules
                 .iter_mut()
                 .find(|module| module.path == current_module)
                 .unwrap();
             for item_path in item_paths {
                 // Get current module since it must already exist if we are in it
-                module.use_mappings.push(item_path);
+                match item_use.vis {
+                    Visibility::Public(_) => module.pub_use_mappings.push(item_path),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => module.private_use_mappings.push(item_path),
+                }
             }
         }
     }
@@ -1007,6 +1009,7 @@ fn handle_item(
             // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
 
             let mut module_path = current_module.clone();
+            let current_module_name = module_path.last().unwrap().clone();
             module_path.push(item_mod.ident.to_string());
             let mut module_path2 = module_path.clone();
             // TODO get rid of this
@@ -1028,19 +1031,12 @@ fn handle_item(
                 // TODO how does `mod bar { mod foo; }` work?
                 todo!()
             } else {
-                dbg!(&file_path);
                 let code = fs::read_to_string(&file_path).unwrap();
                 syn::parse_file(&code).unwrap()
             };
 
             // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
             // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
-
-            global_data.modules.push(ModuleData {
-                path: module_path.clone(),
-                defined_names: Vec::new(),
-                use_mappings: Vec::new(),
-            });
 
             // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
             let mut stmts = js_stmts_from_syn_items(
@@ -1051,45 +1047,45 @@ fn handle_item(
                 current_file_path,
             );
 
-            // Get names of pub JsStmts
-            // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
-            let defined_names = &mut global_data
-                .modules
-                .iter_mut()
-                .find(|module| module.path == module_path)
-                .unwrap()
-                .defined_names;
-            for stmt in &stmts {
-                match stmt {
-                    JsStmt::Class(js_class) => {
-                        defined_names.push(js_class.name.clone());
-                    }
-                    JsStmt::ClassMethod(_, _, _, _) => {}
-                    JsStmt::ClassStatic(_) => {}
-                    JsStmt::Local(js_local) => {
-                        if js_local.public {
-                            if let LocalName::Single(name) = &js_local.lhs {
-                                defined_names.push(name.clone())
-                            } else {
-                                // https://github.com/rust-lang/rfcs/issues/3290
-                                panic!("consts do not support destructuring");
-                            }
-                        }
-                    }
-                    JsStmt::Expr(_, _) => {}
-                    JsStmt::Import(_, _, _) => {}
-                    JsStmt::Function(js_fn) => {
-                        defined_names.push(js_fn.name.clone());
-                    }
-                    JsStmt::ScopeBlock(_) => {}
-                    JsStmt::TryBlock(_) => {}
-                    JsStmt::CatchBlock(_, _) => {}
-                    JsStmt::Raw(_) => {}
-                    JsStmt::Module(_) => {}
-                    JsStmt::Use(_) => {}
-                    JsStmt::Comment(_) => {}
-                }
-            }
+            // // Get names of pub JsStmts
+            // // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
+            // let defined_names = &mut global_data
+            //     .modules
+            //     .iter_mut()
+            //     .find(|module| module.path == module_path)
+            //     .unwrap()
+            //     .defined_names;
+            // for stmt in &stmts {
+            //     match stmt {
+            //         JsStmt::Class(js_class) => {
+            //             defined_names.push(js_class.name.clone());
+            //         }
+            //         JsStmt::ClassMethod(_, _, _, _) => {}
+            //         JsStmt::ClassStatic(_) => {}
+            //         JsStmt::Local(js_local) => {
+            //             if js_local.public {
+            //                 if let LocalName::Single(name) = &js_local.lhs {
+            //                     defined_names.push(name.clone())
+            //                 } else {
+            //                     // https://github.com/rust-lang/rfcs/issues/3290
+            //                     panic!("consts do not support destructuring");
+            //                 }
+            //             }
+            //         }
+            //         JsStmt::Expr(_, _) => {}
+            //         JsStmt::Import(_, _, _) => {}
+            //         JsStmt::Function(js_fn) => {
+            //             defined_names.push(js_fn.name.clone());
+            //         }
+            //         JsStmt::ScopeBlock(_) => {}
+            //         JsStmt::TryBlock(_) => {}
+            //         JsStmt::CatchBlock(_, _) => {}
+            //         JsStmt::Raw(_) => {}
+            //         JsStmt::Module(_) => {}
+            //         JsStmt::Use(_) => {}
+            //         JsStmt::Comment(_) => {}
+            //     }
+            // }
 
             // add return Object containing public items
             // TODO object key and value have same name so don't need to specify value
@@ -1266,10 +1262,19 @@ struct ImplItemTemp {
 
 #[derive(Debug, Clone)]
 struct ModuleData {
+    name: String,
+    parent_name: Option<String>,
     path: Vec<String>,
-    defined_names: Vec<String>,
+    pub_definitions: Vec<String>,
+    private_definitions: Vec<String>,
+    pub_submodules: Vec<String>,
+    private_submodules: Vec<String>,
     /// (snake case item name, snake case use path)
-    use_mappings: Vec<(String, Vec<String>)>,
+    pub_use_mappings: Vec<(String, Vec<String>)>,
+    private_use_mappings: Vec<(String, Vec<String>)>,
+    /// Same format as use mapping but has absolute module path
+    /// (snake case item name, snake case absolute module path)
+    resolved_mappings: Vec<(String, Vec<String>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1306,9 +1311,8 @@ struct Module {
 }
 
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
-    let main_path = crate_path.join("src").join("main.rs");
     // dbg!(&main_path);
-    let code = fs::read_to_string(main_path).unwrap();
+    let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let file = syn::parse_file(&code).unwrap();
     // let mut current_file_path = vec!["main.rs".to_string()];
 
@@ -1320,10 +1324,13 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
     // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
 
+    // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
+
+    // TODO `names` is probably redundant as we have the same data in `modules`
     // Update names
     // Determine which names are not globally unique and need namespacing
     // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
-    /// gets names of module level items, and `use` data
+    /// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
     fn extract_data(
         items: &Vec<Item>,
         crate_path: &PathBuf,
@@ -1332,47 +1339,112 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         names: &mut Vec<(Vec<String>, String)>,
         modules: &mut Vec<ModuleData>,
     ) {
-        let mut module_path_with_crate = vec!["crate".to_string()];
-        module_path_with_crate.extend(module_path.clone());
+        // let mut module_path_with_crate = vec!["crate".to_string()];
+        // module_path_with_crate.extend(module_path.clone());
+        // let current_module_data = modules
+        //     .iter_mut()
+        //     .find(|module| module.path == *module_path)
+        //     .unwrap();
+        // let defined_names = &mut current_module_data.defined_names;
         for item in items {
             match item {
                 Item::Const(item_const) => {
-                    names.push((module_path_with_crate.clone(), item_const.ident.to_string()))
+                    names.push((module_path.clone(), item_const.ident.to_string()));
+
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_const.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_const.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_const.ident.to_string()),
+                    }
                 }
                 Item::Enum(item_enum) => {
-                    names.push((module_path_with_crate.clone(), item_enum.ident.to_string()))
+                    names.push((module_path.clone(), item_enum.ident.to_string()));
+
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_enum.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_enum.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_enum.ident.to_string()),
+                    }
                 }
                 Item::ExternCrate(_) => todo!(),
-                Item::Fn(item_fn) => names.push((
-                    module_path_with_crate.clone(),
-                    item_fn.sig.ident.to_string(),
-                )),
+                Item::Fn(item_fn) => {
+                    names.push((module_path.clone(), item_fn.sig.ident.to_string()));
+
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_fn.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_fn.sig.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_fn.sig.ident.to_string()),
+                    }
+                }
                 Item::ForeignMod(_) => todo!(),
                 Item::Impl(_) => {}
                 Item::Macro(_) => {}
                 Item::Mod(item_mod) => {
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_mod.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_submodules
+                            .push(item_mod.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_submodules
+                            .push(item_mod.ident.to_string()),
+                    }
+
+                    let parent_name = module_path.last().map(|x| x.clone());
                     module_path.push(item_mod.ident.to_string());
 
-                    // popping here let's us know if we are calling `mod` from a src-level module
-                    // main.rs mod stuff: src/main.rs -> src/ -> src/stuff.rs
-                    // stuff.rs mod dog: src/stuff.rs -> src/ -> /stuff/dog.rs
-                    // /stuff/dog.rs mod deeper: /stuff/dog.rs -> /stuff/dog/deeper.rs
-                    // crate_path.pop();
-                    // if crate_path.ends_with("src") {
-                    //     crate_path.push(item_mod.ident.to_string());
-                    //     crate_path.push(".rs");
-                    // } else {
-                    // }
+                    modules.push(ModuleData {
+                        name: item_mod.ident.to_string(),
+                        parent_name,
+                        path: module_path.clone(),
+                        pub_definitions: Vec::new(),
+                        private_definitions: Vec::new(),
+                        pub_submodules: Vec::new(),
+                        private_submodules: Vec::new(),
+                        pub_use_mappings: Vec::new(),
+                        private_use_mappings: Vec::new(),
+                        resolved_mappings: Vec::new(),
+                    });
 
                     let mut file_path = crate_path.clone();
                     file_path.push("src");
-                    if module_path.is_empty() {
+                    if *module_path == ["crate"] {
                         file_path.push("main.rs");
                     } else {
-                        let mut module_path = module_path.clone();
-                        let last = module_path.last_mut().unwrap();
+                        let mut module_path_copy = module_path.clone();
+                        // remove "crate"
+                        module_path_copy.remove(0);
+                        let last = module_path_copy.last_mut().unwrap();
                         last.push_str(".rs");
-                        file_path.extend(module_path);
+                        file_path.extend(module_path_copy);
                     }
                     if let Some(_content) = &item_mod.content {
                         // TODO how does `mod bar { mod foo; }` work?
@@ -1385,10 +1457,23 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
                     module_path.pop();
                 }
                 Item::Static(_) => todo!(),
-                Item::Struct(item_struct) => names.push((
-                    module_path_with_crate.clone(),
-                    item_struct.ident.to_string(),
-                )),
+                Item::Struct(item_struct) => {
+                    names.push((module_path.clone(), item_struct.ident.to_string()));
+
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_struct.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_struct.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_struct.ident.to_string()),
+                    }
+                }
                 Item::Trait(_) => {}
                 Item::TraitAlias(_) => todo!(),
                 Item::Type(_) => todo!(),
@@ -1403,7 +1488,19 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     }
     let mut names = Vec::new();
     let mut modules = Vec::new();
-    let mut get_names_module_path = Vec::new();
+    modules.push(ModuleData {
+        name: "crate".to_string(),
+        parent_name: None,
+        path: vec!["crate".to_string()],
+        pub_definitions: Vec::new(),
+        private_definitions: Vec::new(),
+        pub_submodules: Vec::new(),
+        private_submodules: Vec::new(),
+        pub_use_mappings: Vec::new(),
+        private_use_mappings: Vec::new(),
+        resolved_mappings: Vec::new(),
+    });
+    let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
     let mut get_names_crate_path = crate_path.clone();
     extract_data(
@@ -1413,6 +1510,8 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         &mut names,
         &mut modules,
     );
+
+    
 
     // find duplicates
     // TODO account for local functions which shadow these names
@@ -1462,16 +1561,106 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         dup.namespace.push(dup.name.clone());
     }
 
+    // Resolve use stmts
+    // clone modules so we can use it to lookup up data while mutating the actual modules
+    let immutable_modules = modules.clone();
+    for module in &mut modules {
+        // Firstly We want to resolve all items that are available at the top level of the module, but not acutally defined in the module ie all use statements. Whether they are `pub` or not is irrelevant since that is only relevant to other modules `use`ing from this module
+        // We are only focussing on resolving `use` statements. Something like `mod foo; foo::bar::baz();` will get resolved during the translate stage as there is nothing we can precalculate at this point (from this module, in `foo` we can resolve the `use` stmts (ie what we are doing here) since `bar` might come from `pub use bar::baz;`)
+        for (item_name, item_path) in module
+            .pub_use_mappings
+            .iter()
+            .chain(module.private_use_mappings.iter())
+        {
+            // get submodule we are `use`ing from (need to compare on full path because module names are not unique)
+            if let Some(submodule) = immutable_modules.iter().find(|submodule| {
+                let mut submodule_path = module.path.clone();
+                submodule_path.push(item_path.first().unwrap().clone());
+                submodule.path == submodule_path
+            }) {
+                // Now we are looking in the sub module
+                // we need to account for the fact that the item might be `pub use ...`'d from the sub module OR `pub mod ...`'d
+
+                // check if we are `use`ing an item *defined* in that module
+                if submodule
+                    .pub_definitions
+                    .iter()
+                    .any(|pub_name| pub_name == item_name)
+                {
+                    // We found the origin of the item being used, so we can record the full path of the item
+                    module
+                        .resolved_mappings
+                        .push((item_name.clone(), submodule.path.clone()))
+                    // item is not defined in this sub module, so lets check if there is a `pub use ...` to a second submodule
+                } else if let Some(use_mapping) = submodule
+                    .pub_use_mappings
+                    .iter()
+                    .find(|(sub_item_name, _)| sub_item_name == item_path.first().unwrap())
+                {
+                    // again/recursive: check if we are `use`ing from a `mod`/sub module
+                    if let Some(sub_module2) = immutable_modules
+                        .iter()
+                        .find(|sub_module2| &sub_module2.name == use_mapping.1.first().unwrap())
+                    {
+                        // again/recursive: check if we are `use`ing an item defined in that module
+                        if sub_module2
+                            .pub_definitions
+                            .iter()
+                            .any(|pub_defined_name2| pub_defined_name2 == item_name)
+                        {
+                            // again/recursive: We found the origin of the item being used, so we can record the full path of the item
+                            module
+                                .resolved_mappings
+                                .push((item_name.clone(), submodule.path.clone()))
+                        } else {
+                            // again/recursive: item is not defined in this sub module, so there must be a `pub use ...` to another module
+                            // TODO refactor to make it properly recursive
+                            todo!()
+                        }
+                    } else {
+                        // if we are not `use`ing from a module, we must be using from a module that has already been used, or from another crate, neither of which are supported currently
+                        todo!()
+                    }
+                    // There is no `pub use` which exports our path name, so check for pub mod instead
+                } else if let Some(submodule2_name) = submodule
+                    .pub_submodules
+                    .iter()
+                    // First first item in item_path was the name the current submodule, now we are looking for a module `pub mod ...` from the current module which would be the second item in the path
+                    .find(|sub_module_name| sub_module_name == &item_path.get(1).unwrap())
+                {
+                    // We matched a sub module name, now lets get the acutal second sub module
+                    let sub_module2 = immutable_modules
+                        .iter()
+                        .find(|sub_module2| &sub_module2.name == submodule2_name)
+                        .unwrap();
+
+                    // Now we again need to check if the item we are looking for is defined in this module, or there is another `pub use ...` or `pub mod ...`
+                    if sub_module2.pub_definitions.contains(item_name) {
+                        module
+                            .resolved_mappings
+                            .push((item_name.clone(), sub_module2.path.clone()))
+                    } else {
+                        todo!("deeper pub use/mod nesting")
+                    }
+                } else {
+                    panic!("no pub use or pub mod found");
+                }
+            } else {
+                // if we are not `use`ing from a module, we must be using from a module that has already been used, or from another crate, neither of which are supported currently
+                todo!()
+            }
+        }
+    }
+
+    dbg!(&modules);
+
     let mut js_stmts = Vec::new();
 
     // let mut module_names = Vec::new();
 
+    // dbg!(&modules);
     let mut global_data = GlobalData::new(crate_path.clone(), duplicates.clone());
-    global_data.modules.push(ModuleData {
-        path: vec!["crate".to_string()],
-        defined_names: Vec::new(),
-        use_mappings: Vec::new(),
-    });
+    global_data.modules = modules;
 
     let crate_stmts = js_stmts_from_syn_items(
         file.items,
