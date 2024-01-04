@@ -344,7 +344,7 @@ fn tree_parsing_for_boilerplate(
 fn case_convert(name: impl ToString) -> String {
     let name = name.to_string();
     if name.chars().all(|c| c.is_uppercase() || c == '_') {
-        camel(name)
+        name
     } else if name.chars().next().unwrap().is_ascii_uppercase() {
         // TODO this is redundant?
         AsPascalCase(name).to_string()
