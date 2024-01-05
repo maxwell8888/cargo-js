@@ -508,9 +508,9 @@ async fn it_transpiles_crate_directory() {
     let actual = from_crate("../for-testing".into(), false);
     let actual = actual
         .iter()
-        .map(|stmt| stmt.js_string())
+        .map(|module| module.js_string())
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n\n");
 
     let expected = r#"
     var crate = {

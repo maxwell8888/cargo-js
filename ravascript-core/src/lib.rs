@@ -800,8 +800,10 @@ fn handle_item(
     current_module_path: &mut Vec<String>,
     // module_object: &mut Vec<(String, Box<JsExpr>)>,
     js_stmts: &mut Vec<JsStmt>,
+    // modules: &mut Vec<JsStmtModule>,
     // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
+    // js_stmt_module: &mut JsStmtModule,
 ) {
     match item {
         Item::Const(item_const) => {
@@ -1041,14 +1043,33 @@ fn handle_item(
             // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
             // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
+            let current_module_path_copy = current_module_path.clone();
+            let mut js_stmt_submodule = JsStmtModule {
+                public: match item_mod.vis {
+                    Visibility::Public(_) => true,
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => false,
+                },
+                name: camel(item_mod.ident),
+                module_path: current_module_path_copy.clone(),
+                stmts: Vec::new(),
+            };
             // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
-            let mut stmts = js_stmts_from_syn_items(
+
+            global_data.transpiled_modules.push(js_stmt_submodule);
+            let stmts = js_stmts_from_syn_items(
                 file.items,
                 true,
                 current_module_path,
                 global_data,
                 current_file_path,
             );
+            let js_stmt_module = global_data
+                .transpiled_modules
+                .iter_mut()
+                .find(|tm| tm.module_path == current_module_path_copy)
+                .unwrap();
+            js_stmt_module.stmts = stmts;
             current_module_path.pop();
 
             // // Get names of pub JsStmts
@@ -1101,16 +1122,7 @@ fn handle_item(
             //     return { publicModuleItem1: publicModuleItem1, publicModuleItem2: publicModuleItem2 };
             // })();
 
-            js_stmts.push(JsStmt::Module(JsStmtModule {
-                public: match item_mod.vis {
-                    Visibility::Public(_) => true,
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => false,
-                },
-                name: camel(item_mod.ident),
-                module_path: current_module_path.clone(),
-                stmts,
-            }))
+            // js_stmts.push(JsStmt::Module())
 
             // let mut stmts = Vec::new();
             // for thing in item_mod.content.unwrap().1 {
@@ -1193,8 +1205,11 @@ pub fn js_stmts_from_syn_items(
     global_data: &mut GlobalData,
     // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
+    // js_stmt_module: &mut JsStmtModule,
+    // transpiled_modules: &mut Vec<JsStmtModule>,
 ) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
+    // let mut modules = Vec::new();
     // TODO this should be optional/configurable, might not always want it
 
     // We need to know what the syn type is to know whether it is eg a use which needs adding to the boiler plate
@@ -1222,6 +1237,7 @@ pub fn js_stmts_from_syn_items(
     //     cool.whatever();
     // }
     // let mut module_object = Vec::new();
+
     for item in items {
         handle_item(
             item,
@@ -1230,7 +1246,9 @@ pub fn js_stmts_from_syn_items(
             current_module,
             // &mut module_object,
             &mut js_stmts,
+            // &mut modules,
             current_file_path,
+            // js_stmt_module,
         );
     }
 
@@ -1297,6 +1315,7 @@ struct GlobalData {
     rust_prelude_types: RustPreludeTypes,
     impl_items: Vec<ImplItemTemp>,
     duplicates: Vec<Duplicate>,
+    transpiled_modules: Vec<JsStmtModule>,
 }
 impl GlobalData {
     fn new(snippet: bool, crate_path: PathBuf, duplicates: Vec<Duplicate>) -> GlobalData {
@@ -1307,6 +1326,7 @@ impl GlobalData {
             rust_prelude_types: RustPreludeTypes::default(),
             impl_items: Vec::new(),
             duplicates,
+            transpiled_modules: Vec::new(),
         }
     }
 }
@@ -1317,31 +1337,33 @@ struct Module {
 }
 
 /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-fn update_classes(js_stmt_module: &mut JsStmtModule, impl_items: Vec<ImplItemTemp>) {
-    for stmt in js_stmt_module.stmts.iter_mut() {
-        match stmt {
-            JsStmt::Class(js_class) => {
-                for impl_item in impl_items.clone() {
-                    if impl_item.module_path == js_stmt_module.module_path
-                        && js_class.name == impl_item.class_name
-                    {
-                        match impl_item.item_stmt {
-                            JsStmt::ClassStatic(js_local) => {
-                                js_class.static_fields.push(js_local);
-                            }
-                            JsStmt::ClassMethod(name, private, static_, js_fn) => {
-                                js_class.methods.push((name, private, static_, js_fn));
-                            }
-                            stmt => {
-                                dbg!(stmt);
-                                panic!("this JsStmt cannot be an impl item")
+fn update_classes(js_stmt_modules: &mut Vec<JsStmtModule>, impl_items: Vec<ImplItemTemp>) {
+    for js_stmt_module in js_stmt_modules {
+        for stmt in js_stmt_module.stmts.iter_mut() {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    for impl_item in impl_items.clone() {
+                        if impl_item.module_path == js_stmt_module.module_path
+                            && js_class.name == impl_item.class_name
+                        {
+                            match impl_item.item_stmt {
+                                JsStmt::ClassStatic(js_local) => {
+                                    js_class.static_fields.push(js_local);
+                                }
+                                JsStmt::ClassMethod(name, private, static_, js_fn) => {
+                                    js_class.methods.push((name, private, static_, js_fn));
+                                }
+                                stmt => {
+                                    dbg!(stmt);
+                                    panic!("this JsStmt cannot be an impl item")
+                                }
                             }
                         }
                     }
                 }
+                // JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
+                _ => {}
             }
-            JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
-            _ => {}
         }
     }
 }
@@ -1517,7 +1539,7 @@ fn extract_data(
     }
 }
 
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModule> {
     // dbg!(&main_path);
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let file = syn::parse_file(&code).unwrap();
@@ -1694,23 +1716,73 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     let mut global_data = GlobalData::new(false, crate_path.clone(), duplicates.clone());
     global_data.modules = modules;
 
-    let crate_stmts = js_stmts_from_syn_items(
+    // let mut transpiled_modules = Vec::new();
+    global_data.transpiled_modules.push(JsStmtModule {
+        public: true,
+        name: "crate".to_string(),
+        module_path: vec!["crate".to_string()],
+        stmts: Vec::new(),
+    });
+    // transpiled_modules.push(crate_module);
+    let stmts = js_stmts_from_syn_items(
         file.items,
         true,
         &mut vec!["crate".to_string()],
         &mut global_data,
         &mut Some(crate_path.join("src").join("main.rs")),
+        // &mut transpiled_modules,
     );
+    let crate_module = global_data
+        .transpiled_modules
+        .iter_mut()
+        .find(|tm| tm.module_path == vec!["crate".to_string()])
+        .unwrap();
+    crate_module.stmts = stmts;
 
-    let mut crate_module = JsStmtModule {
-        public: true,
-        name: "crate".to_string(),
-        module_path: vec!["crate".to_string()],
-        stmts: crate_stmts,
-    };
     // js_stmts.extend();
 
-    update_classes(&mut crate_module, global_data.impl_items);
+    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
+    dbg!(&global_data.transpiled_modules);
+
+    // Flatten modules so they can be written sequentially rather than nested
+    // let flat_stmts = Vec::new();
+    // for stmt in crate_module.stmts {
+    //     match stmt {
+    //         JsStmt::Class(_) => todo!(),
+    //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+    //         JsStmt::ClassStatic(_) => todo!(),
+    //         JsStmt::Local(_) => todo!(),
+    //         JsStmt::Expr(_, _) => todo!(),
+    //         JsStmt::Import(_, _, _) => todo!(),
+    //         JsStmt::Function(_) => todo!(),
+    //         JsStmt::ScopeBlock(_) => todo!(),
+    //         JsStmt::TryBlock(_) => todo!(),
+    //         JsStmt::CatchBlock(_, _) => todo!(),
+    //         JsStmt::Raw(_) => todo!(),
+    //         JsStmt::Module(js_stmt_module) => {
+    //             for stmt2 in js_stmt_module.stmts {
+    //                 match stmt2 {
+    //                     JsStmt::Class(_) => todo!(),
+    //                     JsStmt::ClassMethod(_, _, _, _) => todo!(),
+    //                     JsStmt::ClassStatic(_) => todo!(),
+    //                     JsStmt::Local(_) => todo!(),
+    //                     JsStmt::Expr(_, _) => todo!(),
+    //                     JsStmt::Import(_, _, _) => todo!(),
+    //                     JsStmt::Function(_) => todo!(),
+    //                     JsStmt::ScopeBlock(_) => todo!(),
+    //                     JsStmt::TryBlock(_) => todo!(),
+    //                     JsStmt::CatchBlock(_, _) => todo!(),
+    //                     JsStmt::Raw(_) => todo!(),
+    //                     JsStmt::Module(_) => todo!(),
+    //                     JsStmt::Use(_) => todo!(),
+    //                     JsStmt::Comment(_) => todo!(),
+    //                 }
+    //             }
+    //         },
+    //         JsStmt::Use(_) => todo!(),
+    //         JsStmt::Comment(_) => todo!(),
+    //     }
+    // }
 
     // resolve paths to get canonical path to item
     // Update paths to use namespaced names and account for `use` statements
@@ -1722,91 +1794,13 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
 
     // Maybe do a minimal pass before the main parsing, where we only look at ::Mod and ::Use to build up module data. Then, we can resolve path names directly in the parsing pass, rather than having to iterate through everything in this second pass? Remeber `use` can be anywhere so trading iterating through everything JsStmts for syn is an improvement. Plus it just makes a lot more sense to get that data from the syn types, rather than
 
-    fn resolve_names_jsexpr(js_expr: &mut JsExpr) {
-        match js_expr {
-            JsExpr::Array(_) => todo!(),
-            JsExpr::ArrowFn(_, _, _, _) => todo!(),
-            JsExpr::Assignment(_, _) => todo!(),
-            JsExpr::Binary(lhs, _, rhs) => {}
-            JsExpr::Blank => todo!(),
-            JsExpr::Block(_) => todo!(),
-            JsExpr::Break => todo!(),
-            JsExpr::Declaration(_, _, _) => todo!(),
-            JsExpr::Null => todo!(),
-            JsExpr::LitInt(_) => todo!(),
-            JsExpr::LitStr(_) => todo!(),
-            JsExpr::LitBool(_) => todo!(),
-            JsExpr::Object(_) => todo!(),
-            JsExpr::ObjectForModule(_) => todo!(),
-            JsExpr::Return(_) => todo!(),
-            JsExpr::Vanish => todo!(),
-            JsExpr::Field(_, _) => todo!(),
-            JsExpr::Fn(_) => todo!(),
-            JsExpr::FnCall(_, _) => todo!(),
-            JsExpr::If(_, _, _, _, _) => todo!(),
-            JsExpr::Paren(_) => todo!(),
-            JsExpr::Not(_) => todo!(),
-            JsExpr::Minus(_) => todo!(),
-            JsExpr::Await(_) => todo!(),
-            JsExpr::Index(_, _) => todo!(),
-            JsExpr::Var(_) => todo!(),
-            JsExpr::Path(path) => {
-                path.clear();
-                path.push("cool".to_string());
-            }
-            JsExpr::New(_, _) => todo!(),
-            JsExpr::MethodCall(_, _, _) => todo!(),
-            JsExpr::While(_, _) => todo!(),
-            JsExpr::ForLoop(_, _, _) => todo!(),
-        }
-    }
+    fn resolve_names_jsexpr(js_expr: &mut JsExpr) {}
     fn resolve_names(
         this_module: &mut Vec<String>,
         stmts: &mut Vec<JsStmt>,
         modules: &Vec<ModuleData>,
     ) {
-        for stmt in stmts {
-            match stmt {
-                JsStmt::Class(js_class) => {
-                    for static_field in &mut js_class.static_fields {
-                        resolve_names_jsexpr(&mut static_field.value);
-                    }
-                    for method in &mut js_class.methods {
-                        resolve_names(this_module, &mut method.3.body_stmts, modules);
-                    }
-                }
-                JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                JsStmt::ClassStatic(_) => todo!(),
-                JsStmt::Local(js_local) => {
-                    resolve_names_jsexpr(&mut js_local.value);
-                }
-                JsStmt::Expr(js_expr, _) => resolve_names_jsexpr(js_expr),
-                JsStmt::Import(_, _, _) => todo!(),
-                JsStmt::Function(js_fn) => {
-                    resolve_names(this_module, &mut js_fn.body_stmts, modules);
-                }
-                JsStmt::ScopeBlock(block_stmts) => resolve_names(this_module, block_stmts, modules),
-                JsStmt::TryBlock(block_stmts) => resolve_names(this_module, block_stmts, modules),
-                JsStmt::CatchBlock(_, block_stmts) => {
-                    resolve_names(this_module, block_stmts, modules)
-                }
-                JsStmt::Raw(_) => todo!(),
-                JsStmt::Module(js_stmt_module) => {
-                    this_module.push(js_stmt_module.name.clone());
-                    resolve_names(this_module, &mut js_stmt_module.stmts, modules);
-                    this_module.pop();
-                }
-                JsStmt::Use(_) => todo!(),
-                JsStmt::Comment(_) => todo!(),
-            }
-        }
     }
-    let mut current_module = vec!["crate".to_string()];
-    // resolve_names(
-    //     &mut current_module,
-    //     &mut crate_module.stmts,
-    //     &global_data.modules,
-    // );
 
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
@@ -1853,7 +1847,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }));
     }
 
-    vec![JsStmt::Module(crate_module)]
+    global_data.transpiled_modules.clone()
 }
 
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
@@ -1916,10 +1910,11 @@ pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
         module_path: vec!["crate".to_string()],
         stmts,
     };
+    let mut transpiled_modules = vec![crate_module];
 
-    update_classes(&mut crate_module, global_data.impl_items);
+    update_classes(&mut transpiled_modules, global_data.impl_items);
 
-    crate_module.stmts
+    transpiled_modules[0].stmts.clone()
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -2573,7 +2568,7 @@ impl JsFn {
 }
 
 #[derive(Clone, Debug)]
-struct JsStmtModule {
+pub struct JsStmtModule {
     public: bool,
     /// camelCase JS name
     name: String,
@@ -2582,7 +2577,7 @@ struct JsStmtModule {
     stmts: Vec<JsStmt>,
 }
 impl JsStmtModule {
-    fn js_string(&self) -> String {
+    pub fn js_string(&self) -> String {
         let items = self
             .stmts
             .iter()
@@ -2621,9 +2616,17 @@ impl JsStmtModule {
             .collect::<Vec<_>>()
             .join("\n\n");
         format!(
-            "// {}::{}\n{}",
-            self.module_path.join("::"),
-            self.name,
+            "// {}\n{}",
+            if self.module_path.len() == 1 {
+                "main".to_string()
+            } else {
+                self.module_path
+                    .iter()
+                    .cloned()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join("::")
+            },
             items
         )
     }
