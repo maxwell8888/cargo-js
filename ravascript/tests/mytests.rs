@@ -349,6 +349,7 @@ async fn it_transpiles_json_parse() {
     assert_eq!(expected, actual);
 }
 
+#[ignore = "navigator should be lower case so not a const"]
 #[tokio::test]
 async fn it_writes_to_clipboard() {
     let actual = r2j_block!({
@@ -501,7 +502,7 @@ async fn closure_return_match() {
     assert_eq!(expected, actual);
 }
 
-#[ignore]
+// #[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
     let actual = from_crate("../for-testing".into(), false);

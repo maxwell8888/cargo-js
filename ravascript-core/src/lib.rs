@@ -797,7 +797,7 @@ fn handle_item(
     item: Item,
     is_module: bool,
     global_data: &mut GlobalData,
-    current_module: Vec<String>,
+    current_module_path: &mut Vec<String>,
     // module_object: &mut Vec<(String, Box<JsExpr>)>,
     js_stmts: &mut Vec<JsStmt>,
     // crate_path: Option<PathBuf>,
@@ -809,7 +809,7 @@ fn handle_item(
             if let Some(dup) = global_data
                 .duplicates
                 .iter()
-                .find(|dup| dup.name == name && dup.original_module_path == current_module)
+                .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
             {
                 name = dup
                     .namespace
@@ -827,16 +827,20 @@ fn handle_item(
                 },
                 type_: LocalType::Var,
                 lhs: LocalName::Single(name),
-                value: handle_expr(&*item_const.expr, global_data, &current_module),
+                value: handle_expr(&*item_const.expr, global_data, current_module_path),
             });
             js_stmts.push(local_stmt);
         }
         Item::Enum(item_enum) => {
-            js_stmts.push(handle_item_enum(item_enum, global_data, &current_module));
+            js_stmts.push(handle_item_enum(
+                item_enum,
+                global_data,
+                current_module_path,
+            ));
         }
         Item::ExternCrate(_) => todo!(),
         Item::Fn(item_fn) => {
-            js_stmts.push(handle_item_fn(&item_fn, global_data, &current_module));
+            js_stmts.push(handle_item_fn(&item_fn, global_data, current_module_path));
         }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
@@ -914,7 +918,7 @@ fn handle_item(
                         impl_stmts.push(ImplItemTemp {
                             // class_name: impl_item_const.ident.to_string(),
                             class_name: class_name.clone(),
-                            module_path: current_module.clone(),
+                            module_path: current_module_path.clone(),
                             item_stmt: JsStmt::ClassStatic(JsLocal {
                                 public: false,
                                 export: false,
@@ -923,7 +927,7 @@ fn handle_item(
                                 value: handle_expr(
                                     &impl_item_const.expr,
                                     global_data,
-                                    &current_module,
+                                    &current_module_path,
                                 ),
                             }),
                         })
@@ -954,13 +958,13 @@ fn handle_item(
                             .block
                             .stmts
                             .into_iter()
-                            .map(|stmt| handle_stmt(&stmt, global_data, &current_module))
+                            .map(|stmt| handle_stmt(&stmt, global_data, &current_module_path))
                             .collect::<Vec<_>>();
                         impl_stmts.push(
                             // item_impl_fn.sig.ident.to_string(),
                             ImplItemTemp {
                                 class_name: class_name.clone(),
-                                module_path: current_module.clone(),
+                                module_path: current_module_path.clone(),
                                 item_stmt: JsStmt::ClassMethod(
                                     class_name.clone(),
                                     false,
@@ -1008,24 +1012,23 @@ fn handle_item(
             // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
             // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
 
-            let mut module_path = current_module.clone();
-            let current_module_name = module_path.last().unwrap().clone();
-            module_path.push(item_mod.ident.to_string());
-            let mut module_path2 = module_path.clone();
+            let current_module_name = current_module_path.last().unwrap().clone();
+            current_module_path.push(item_mod.ident.to_string());
+            let mut module_path_copy = current_module_path.clone();
             // TODO get rid of this
-            if let Some(first) = module_path2.first() {
+            if let Some(first) = module_path_copy.first() {
                 if first == "crate" {
-                    module_path2.remove(0);
+                    module_path_copy.remove(0);
                 }
             }
             let mut file_path = global_data.crate_path.clone();
             file_path.push("src");
-            if module_path2.is_empty() {
+            if module_path_copy.is_empty() {
                 file_path.push("main.rs");
             } else {
-                let last = module_path2.last_mut().unwrap();
+                let last = module_path_copy.last_mut().unwrap();
                 last.push_str(".rs");
-                file_path.extend(module_path2);
+                file_path.extend(module_path_copy);
             }
             let file = if let Some(_content) = &item_mod.content {
                 // TODO how does `mod bar { mod foo; }` work?
@@ -1042,10 +1045,11 @@ fn handle_item(
             let mut stmts = js_stmts_from_syn_items(
                 file.items,
                 true,
-                module_path.clone(),
+                current_module_path,
                 global_data,
                 current_file_path,
             );
+            current_module_path.pop();
 
             // // Get names of pub JsStmts
             // // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
@@ -1104,7 +1108,7 @@ fn handle_item(
                     Visibility::Inherited => false,
                 },
                 name: camel(item_mod.ident),
-                module_path,
+                module_path: current_module_path.clone(),
                 stmts,
             }))
 
@@ -1120,7 +1124,7 @@ fn handle_item(
             if let Some(dup) = global_data
                 .duplicates
                 .iter()
-                .find(|dup| dup.name == name && dup.original_module_path == current_module)
+                .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
             {
                 name = dup
                     .namespace
@@ -1185,7 +1189,7 @@ pub fn js_stmts_from_syn_items(
     // Need to know whether to return a module Object or just a vec of stmts
     is_module: bool,
     // Need to keep of which module we are currently in, for constructing the boilerplate
-    current_module: Vec<String>,
+    current_module: &mut Vec<String>,
     global_data: &mut GlobalData,
     // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
@@ -1223,7 +1227,7 @@ pub fn js_stmts_from_syn_items(
             item,
             is_module,
             global_data,
-            current_module.clone(),
+            current_module,
             // &mut module_object,
             &mut js_stmts,
             current_file_path,
@@ -1287,6 +1291,7 @@ struct Duplicate {
 
 #[derive(Debug, Clone)]
 struct GlobalData {
+    snippet: bool,
     crate_path: PathBuf,
     modules: Vec<ModuleData>,
     rust_prelude_types: RustPreludeTypes,
@@ -1294,8 +1299,9 @@ struct GlobalData {
     duplicates: Vec<Duplicate>,
 }
 impl GlobalData {
-    fn new(crate_path: PathBuf, duplicates: Vec<Duplicate>) -> GlobalData {
+    fn new(snippet: bool, crate_path: PathBuf, duplicates: Vec<Duplicate>) -> GlobalData {
         GlobalData {
+            snippet,
             crate_path,
             modules: Vec::new(),
             rust_prelude_types: RustPreludeTypes::default(),
@@ -1340,182 +1346,183 @@ fn update_classes(js_stmt_module: &mut JsStmtModule, impl_items: Vec<ImplItemTem
     }
 }
 
+// Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
+// What about where we are inside a class method so this refers to the class, not the module?
+// Solutions:
+// add a unique name like `this.moduleThis = this;` - not possible because it still exists on the `this` which class methods don't have access to.
+// add `this.moduleThis` to class objects in init function??
+// replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
+// this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
+
+// Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
+
+// TODO `names` is probably redundant as we have the same data in `modules`
+// Update names
+// Determine which names are not globally unique and need namespacing
+// TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
+/// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
+fn extract_data(
+    items: &Vec<Item>,
+    crate_path: &PathBuf,
+    module_path: &mut Vec<String>,
+    // (module path, name)
+    names: &mut Vec<(Vec<String>, String)>,
+    modules: &mut Vec<ModuleData>,
+) {
+    // let mut module_path_with_crate = vec!["crate".to_string()];
+    // module_path_with_crate.extend(module_path.clone());
+    // let current_module_data = modules
+    //     .iter_mut()
+    //     .find(|module| module.path == *module_path)
+    //     .unwrap();
+    // let defined_names = &mut current_module_data.defined_names;
+    for item in items {
+        match item {
+            Item::Const(item_const) => {
+                names.push((module_path.clone(), item_const.ident.to_string()));
+
+                let current_module_data = modules
+                    .iter_mut()
+                    .find(|module| module.path == *module_path)
+                    .unwrap();
+                match item_const.vis {
+                    Visibility::Public(_) => current_module_data
+                        .pub_definitions
+                        .push(item_const.ident.to_string()),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => current_module_data
+                        .private_definitions
+                        .push(item_const.ident.to_string()),
+                }
+            }
+            Item::Enum(item_enum) => {
+                names.push((module_path.clone(), item_enum.ident.to_string()));
+
+                let current_module_data = modules
+                    .iter_mut()
+                    .find(|module| module.path == *module_path)
+                    .unwrap();
+                match item_enum.vis {
+                    Visibility::Public(_) => current_module_data
+                        .pub_definitions
+                        .push(item_enum.ident.to_string()),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => current_module_data
+                        .private_definitions
+                        .push(item_enum.ident.to_string()),
+                }
+            }
+            Item::ExternCrate(_) => todo!(),
+            Item::Fn(item_fn) => {
+                names.push((module_path.clone(), item_fn.sig.ident.to_string()));
+
+                let current_module_data = modules
+                    .iter_mut()
+                    .find(|module| module.path == *module_path)
+                    .unwrap();
+                match item_fn.vis {
+                    Visibility::Public(_) => current_module_data
+                        .pub_definitions
+                        .push(item_fn.sig.ident.to_string()),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => current_module_data
+                        .private_definitions
+                        .push(item_fn.sig.ident.to_string()),
+                }
+            }
+            Item::ForeignMod(_) => todo!(),
+            Item::Impl(_) => {}
+            Item::Macro(_) => {}
+            Item::Mod(item_mod) => {
+                let current_module_data = modules
+                    .iter_mut()
+                    .find(|module| module.path == *module_path)
+                    .unwrap();
+                match item_mod.vis {
+                    Visibility::Public(_) => current_module_data
+                        .pub_submodules
+                        .push(item_mod.ident.to_string()),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => current_module_data
+                        .private_submodules
+                        .push(item_mod.ident.to_string()),
+                }
+
+                let parent_name = module_path.last().map(|x| x.clone());
+                module_path.push(item_mod.ident.to_string());
+
+                modules.push(ModuleData {
+                    name: item_mod.ident.to_string(),
+                    parent_name,
+                    path: module_path.clone(),
+                    pub_definitions: Vec::new(),
+                    private_definitions: Vec::new(),
+                    pub_submodules: Vec::new(),
+                    private_submodules: Vec::new(),
+                    pub_use_mappings: Vec::new(),
+                    private_use_mappings: Vec::new(),
+                    resolved_mappings: Vec::new(),
+                });
+
+                let mut file_path = crate_path.clone();
+                file_path.push("src");
+                if *module_path == ["crate"] {
+                    file_path.push("main.rs");
+                } else {
+                    let mut module_path_copy = module_path.clone();
+                    // remove "crate"
+                    module_path_copy.remove(0);
+                    let last = module_path_copy.last_mut().unwrap();
+                    last.push_str(".rs");
+                    file_path.extend(module_path_copy);
+                }
+                if let Some(_content) = &item_mod.content {
+                    // TODO how does `mod bar { mod foo; }` work?
+                    todo!()
+                } else {
+                    let code = fs::read_to_string(&file_path).unwrap();
+                    let file = syn::parse_file(&code).unwrap();
+                    extract_data(&file.items, crate_path, module_path, names, modules);
+                }
+                module_path.pop();
+            }
+            Item::Static(_) => todo!(),
+            Item::Struct(item_struct) => {
+                names.push((module_path.clone(), item_struct.ident.to_string()));
+
+                let current_module_data = modules
+                    .iter_mut()
+                    .find(|module| module.path == *module_path)
+                    .unwrap();
+                match item_struct.vis {
+                    Visibility::Public(_) => current_module_data
+                        .pub_definitions
+                        .push(item_struct.ident.to_string()),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => current_module_data
+                        .private_definitions
+                        .push(item_struct.ident.to_string()),
+                }
+            }
+            Item::Trait(_) => {}
+            Item::TraitAlias(_) => todo!(),
+            Item::Type(_) => todo!(),
+            Item::Union(_) => todo!(),
+            Item::Use(item_use) => {
+                handle_item_use(&item_use, module_path.clone(), true, modules);
+            }
+            Item::Verbatim(_) => todo!(),
+            _ => todo!(),
+        }
+    }
+}
+
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
     // dbg!(&main_path);
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let file = syn::parse_file(&code).unwrap();
     // let mut current_file_path = vec!["main.rs".to_string()];
 
-    // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
-    // What about where we are inside a class method so this refers to the class, not the module?
-    // Solutions:
-    // add a unique name like `this.moduleThis = this;` - not possible because it still exists on the `this` which class methods don't have access to.
-    // add `this.moduleThis` to class objects in init function??
-    // replace `myFunc()` with `this.thisModule.myFunc();` and add below to init script:
-    // this.colorModule.greenModule.greenClass.prototype.thisModule = this.colorModule.greenModule;`
-
-    // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
-
-    // TODO `names` is probably redundant as we have the same data in `modules`
-    // Update names
-    // Determine which names are not globally unique and need namespacing
-    // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
-    /// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
-    fn extract_data(
-        items: &Vec<Item>,
-        crate_path: &PathBuf,
-        module_path: &mut Vec<String>,
-        // (module path, name)
-        names: &mut Vec<(Vec<String>, String)>,
-        modules: &mut Vec<ModuleData>,
-    ) {
-        // let mut module_path_with_crate = vec!["crate".to_string()];
-        // module_path_with_crate.extend(module_path.clone());
-        // let current_module_data = modules
-        //     .iter_mut()
-        //     .find(|module| module.path == *module_path)
-        //     .unwrap();
-        // let defined_names = &mut current_module_data.defined_names;
-        for item in items {
-            match item {
-                Item::Const(item_const) => {
-                    names.push((module_path.clone(), item_const.ident.to_string()));
-
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
-                    match item_const.vis {
-                        Visibility::Public(_) => current_module_data
-                            .pub_definitions
-                            .push(item_const.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
-                            .private_definitions
-                            .push(item_const.ident.to_string()),
-                    }
-                }
-                Item::Enum(item_enum) => {
-                    names.push((module_path.clone(), item_enum.ident.to_string()));
-
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
-                    match item_enum.vis {
-                        Visibility::Public(_) => current_module_data
-                            .pub_definitions
-                            .push(item_enum.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
-                            .private_definitions
-                            .push(item_enum.ident.to_string()),
-                    }
-                }
-                Item::ExternCrate(_) => todo!(),
-                Item::Fn(item_fn) => {
-                    names.push((module_path.clone(), item_fn.sig.ident.to_string()));
-
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
-                    match item_fn.vis {
-                        Visibility::Public(_) => current_module_data
-                            .pub_definitions
-                            .push(item_fn.sig.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
-                            .private_definitions
-                            .push(item_fn.sig.ident.to_string()),
-                    }
-                }
-                Item::ForeignMod(_) => todo!(),
-                Item::Impl(_) => {}
-                Item::Macro(_) => {}
-                Item::Mod(item_mod) => {
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
-                    match item_mod.vis {
-                        Visibility::Public(_) => current_module_data
-                            .pub_submodules
-                            .push(item_mod.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
-                            .private_submodules
-                            .push(item_mod.ident.to_string()),
-                    }
-
-                    let parent_name = module_path.last().map(|x| x.clone());
-                    module_path.push(item_mod.ident.to_string());
-
-                    modules.push(ModuleData {
-                        name: item_mod.ident.to_string(),
-                        parent_name,
-                        path: module_path.clone(),
-                        pub_definitions: Vec::new(),
-                        private_definitions: Vec::new(),
-                        pub_submodules: Vec::new(),
-                        private_submodules: Vec::new(),
-                        pub_use_mappings: Vec::new(),
-                        private_use_mappings: Vec::new(),
-                        resolved_mappings: Vec::new(),
-                    });
-
-                    let mut file_path = crate_path.clone();
-                    file_path.push("src");
-                    if *module_path == ["crate"] {
-                        file_path.push("main.rs");
-                    } else {
-                        let mut module_path_copy = module_path.clone();
-                        // remove "crate"
-                        module_path_copy.remove(0);
-                        let last = module_path_copy.last_mut().unwrap();
-                        last.push_str(".rs");
-                        file_path.extend(module_path_copy);
-                    }
-                    if let Some(_content) = &item_mod.content {
-                        // TODO how does `mod bar { mod foo; }` work?
-                        todo!()
-                    } else {
-                        let code = fs::read_to_string(&file_path).unwrap();
-                        let file = syn::parse_file(&code).unwrap();
-                        extract_data(&file.items, crate_path, module_path, names, modules);
-                    }
-                    module_path.pop();
-                }
-                Item::Static(_) => todo!(),
-                Item::Struct(item_struct) => {
-                    names.push((module_path.clone(), item_struct.ident.to_string()));
-
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
-                    match item_struct.vis {
-                        Visibility::Public(_) => current_module_data
-                            .pub_definitions
-                            .push(item_struct.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
-                            .private_definitions
-                            .push(item_struct.ident.to_string()),
-                    }
-                }
-                Item::Trait(_) => {}
-                Item::TraitAlias(_) => todo!(),
-                Item::Type(_) => todo!(),
-                Item::Union(_) => todo!(),
-                Item::Use(item_use) => {
-                    handle_item_use(&item_use, module_path.clone(), true, modules);
-                }
-                Item::Verbatim(_) => todo!(),
-                _ => todo!(),
-            }
-        }
-    }
     let mut names = Vec::new();
     let mut modules = Vec::new();
     modules.push(ModuleData {
@@ -1680,20 +1687,17 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmt> {
         }
     }
 
-    dbg!(&modules);
-
     let mut js_stmts = Vec::new();
 
     // let mut module_names = Vec::new();
 
-    // dbg!(&modules);
-    let mut global_data = GlobalData::new(crate_path.clone(), duplicates.clone());
+    let mut global_data = GlobalData::new(false, crate_path.clone(), duplicates.clone());
     global_data.modules = modules;
 
     let crate_stmts = js_stmts_from_syn_items(
         file.items,
         true,
-        vec!["crate".to_string()],
+        &mut vec!["crate".to_string()],
         &mut global_data,
         &mut Some(crate_path.join("src").join("main.rs")),
     );
@@ -1856,30 +1860,65 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
     let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(PathBuf::new(), Vec::new());
-    js_stmts_from_syn_items(items, true, current_module, &mut global_data, &mut None)
+    let mut global_data = GlobalData::new(false, PathBuf::new(), Vec::new());
+    js_stmts_from_syn_items(
+        items,
+        true,
+        &mut current_module,
+        &mut global_data,
+        &mut None,
+    )
 }
 
 pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let file = syn::parse_file(code).unwrap();
     // let mut current_file_path = Vec::new();
-    let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(PathBuf::new(), Vec::new());
+    // let mut current_module = Vec::new();
+
+    let mut modules = Vec::new();
+    modules.push(ModuleData {
+        name: "crate".to_string(),
+        parent_name: None,
+        path: vec!["crate".to_string()],
+        pub_definitions: Vec::new(),
+        private_definitions: Vec::new(),
+        pub_submodules: Vec::new(),
+        private_submodules: Vec::new(),
+        pub_use_mappings: Vec::new(),
+        private_use_mappings: Vec::new(),
+        resolved_mappings: Vec::new(),
+    });
+    let mut get_names_module_path = vec!["crate".to_string()];
+    // let mut get_names_crate_path = crate_path.join("src/main.rs");
+    // let mut get_names_crate_path = crate_path.clone();
+    // extract_data(
+    //     &file.items,
+    //     &get_names_crate_path,
+    //     &mut get_names_module_path,
+    //     &mut names,
+    //     &mut modules,
+    // );
+
+    let mut current_module = vec!["crate".to_string()];
+    // TODO a file could have an inline module, but not currently supported
+    let mut global_data = GlobalData::new(true, PathBuf::new(), Vec::new());
+    global_data.modules = modules;
     let stmts = js_stmts_from_syn_items(
         file.items,
         true,
-        current_module,
+        &mut current_module,
         &mut global_data,
         &mut None,
     );
     let mut crate_module = JsStmtModule {
         public: false,
         name: "crate".to_string(),
-        module_path: Vec::new(),
+        module_path: vec!["crate".to_string()],
         stmts,
     };
 
     update_classes(&mut crate_module, global_data.impl_items);
+
     crate_module.stmts
 }
 
@@ -1890,7 +1929,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
     for stmt in &item_fn.block.stmts {
         let js_stmt = handle_stmt(
             stmt,
-            &mut GlobalData::new(PathBuf::new(), Vec::new()),
+            &mut GlobalData::new(true, PathBuf::new(), Vec::new()),
             &Vec::new(),
         );
         js_stmts.push(js_stmt);
@@ -1905,8 +1944,8 @@ pub fn from_block(code: &str) -> Vec<JsStmt> {
     for stmt in &expr_block.block.stmts {
         let js_stmt = handle_stmt(
             stmt,
-            &mut GlobalData::new(PathBuf::new(), Vec::new()),
-            &Vec::new(),
+            &mut GlobalData::new(true, PathBuf::new(), Vec::new()),
+            &vec!["crate".to_string()],
         );
         js_stmts.push(js_stmt);
     }
@@ -2538,7 +2577,7 @@ struct JsStmtModule {
     public: bool,
     /// camelCase JS name
     name: String,
-    /// snake_case Rust path
+    /// snake_case Rust path starting with "crate"
     module_path: Vec<String>,
     stmts: Vec<JsStmt>,
 }
@@ -3208,15 +3247,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             current_module,
         ))),
         Expr::Path(expr_path) => {
-            let segs = expr_path
+            let mut segs = expr_path
                 .path
                 .segments
                 .iter()
                 .map(|seg| {
                     let mut var_name = seg.ident.to_string();
-                    if var_name == "self" {
-                        var_name = "this".to_string();
-                    }
                     if var_name == "Document" {
                         var_name = "document".to_string();
                     }
@@ -3236,8 +3272,52 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 if segs[0] == "None" {
                     return JsExpr::Null;
                 }
+                if segs[0] == "self" {
+                    segs[0] = "this".to_string();
+                }
             }
-            JsExpr::Path(segs)
+
+            if global_data.snippet {
+                JsExpr::Path(segs)
+            } else {
+                let module = global_data
+                    .modules
+                    .iter()
+                    .find(|module| &module.path == current_module)
+                    .unwrap();
+
+                if module
+                    .pub_definitions
+                    .iter()
+                    .chain(module.private_definitions.iter())
+                    .any(|definition| definition == &segs[0])
+                {
+                    // Path starts with an item defined in the module
+                    // Check whether it is not globally unique and so has been namespaced
+                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
+                        dup.name == segs[0] && &dup.original_module_path == current_module
+                    }) {
+                        segs[0] = dup
+                            .namespace
+                            .iter()
+                            .map(|seg| camel(seg))
+                            .collect::<Vec<_>>()
+                            .join("__");
+                    }
+                    JsExpr::Path(segs)
+                } else if let Some(use_mapping) = module
+                    .resolved_mappings
+                    .iter()
+                    .find(|use_mapping| use_mapping.0 == segs[0])
+                {
+                    JsExpr::Path(segs)
+                } else {
+                    let mut segs2 = vec!["wtf".to_string()];
+                    segs2.extend(segs.clone());
+                    JsExpr::Path(segs2)
+                    // panic!()
+                }
+            }
         }
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
