@@ -1032,12 +1032,12 @@ fn handle_item(
                 last.push_str(".rs");
                 file_path.extend(module_path_copy);
             }
-            let file = if let Some(_content) = &item_mod.content {
+            let items = if let Some(content) = &item_mod.content {
                 // TODO how does `mod bar { mod foo; }` work?
-                todo!()
+                content.1.clone()
             } else {
                 let code = fs::read_to_string(&file_path).unwrap();
-                syn::parse_file(&code).unwrap()
+                syn::parse_file(&code).unwrap().items
             };
 
             // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
@@ -1058,7 +1058,7 @@ fn handle_item(
 
             global_data.transpiled_modules.push(js_stmt_submodule);
             let stmts = js_stmts_from_syn_items(
-                file.items,
+                items,
                 true,
                 current_module_path,
                 global_data,
@@ -1176,14 +1176,14 @@ fn handle_item(
     }
 }
 
-pub fn from_file_with_main(code: &str) -> Vec<JsStmt> {
-    let mut js_stmts = from_file(code, true);
-    js_stmts.push(JsStmt::Expr(
-        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
-        true,
-    ));
-    js_stmts
-}
+// pub fn from_file_with_main(code: &str) -> Vec<JsStmt> {
+//     let mut js_stmts = from_file(code, true);
+//     js_stmts.push(JsStmt::Expr(
+//         JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
+//         true,
+//     ));
+//     js_stmts
+// }
 
 pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
     stmts.push(JsStmt::Expr(
@@ -1539,89 +1539,28 @@ fn extract_data(
     }
 }
 
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModule> {
-    // dbg!(&main_path);
-    let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
-    let file = syn::parse_file(&code).unwrap();
-    // let mut current_file_path = vec!["main.rs".to_string()];
-
-    let mut names = Vec::new();
-    let mut modules = Vec::new();
-    modules.push(ModuleData {
-        name: "crate".to_string(),
-        parent_name: None,
-        path: vec!["crate".to_string()],
-        pub_definitions: Vec::new(),
-        private_definitions: Vec::new(),
-        pub_submodules: Vec::new(),
-        private_submodules: Vec::new(),
-        pub_use_mappings: Vec::new(),
-        private_use_mappings: Vec::new(),
-        resolved_mappings: Vec::new(),
-    });
-    let mut get_names_module_path = vec!["crate".to_string()];
-    // let mut get_names_crate_path = crate_path.join("src/main.rs");
-    let mut get_names_crate_path = crate_path.clone();
-    extract_data(
-        &file.items,
-        &get_names_crate_path,
-        &mut get_names_module_path,
-        &mut names,
-        &mut modules,
-    );
-
-    // find duplicates
-    // TODO account for local functions which shadow these names
-    // (name space, module path (which gets popped), name, original module path)
-
-    let mut duplicates = Vec::new();
-    for name in &names {
-        if names
+fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
+    let dups_copy = duplicates.clone();
+    for dup in duplicates.iter_mut() {
+        if dups_copy
             .iter()
-            .filter(|(module_path, name2)| &name.1 == name2)
+            .filter(|dup_copy| dup.name == dup_copy.name && dup.namespace == dup_copy.namespace)
             .collect::<Vec<_>>()
             .len()
             > 1
         {
-            duplicates.push(Duplicate {
-                namespace: Vec::<String>::new(),
-                module_path: name.0.clone(),
-                name: name.1.clone(),
-                original_module_path: name.0.clone(),
-            });
-        }
-    }
-    fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
-        let dups_copy = duplicates.clone();
-        for dup in duplicates.iter_mut() {
-            if dups_copy
-                .iter()
-                .filter(|dup_copy| dup.name == dup_copy.name && dup.namespace == dup_copy.namespace)
-                .collect::<Vec<_>>()
-                .len()
-                > 1
-            {
-                if dup.module_path != vec!["crate"] {
-                    dup.namespace.insert(0, dup.module_path.pop().unwrap())
-                }
+            if dup.module_path != vec!["crate"] {
+                dup.namespace.insert(0, dup.module_path.pop().unwrap())
             }
         }
     }
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
+}
 
-    for dup in duplicates.iter_mut() {
-        dup.namespace.push(dup.name.clone());
-    }
-
+fn resolve_use_stmts(modules: &mut Vec<ModuleData>) {
     // Resolve use stmts
     // clone modules so we can use it to lookup up data while mutating the actual modules
     let immutable_modules = modules.clone();
-    for module in &mut modules {
+    for module in modules {
         // Firstly We want to resolve all items that are available at the top level of the module, but not acutally defined in the module ie all use statements. Whether they are `pub` or not is irrelevant since that is only relevant to other modules `use`ing from this module
         // We are only focussing on resolving `use` statements. Something like `mod foo; foo::bar::baz();` will get resolved during the translate stage as there is nothing we can precalculate at this point (from this module, in `foo` we can resolve the `use` stmts (ie what we are doing here) since `bar` might come from `pub use bar::baz;`)
         for (item_name, item_path) in module
@@ -1708,29 +1647,132 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
             }
         }
     }
+}
+
+fn push_rust_types(js_stmts: &mut Vec<JsStmt>) {
+    let mut methods = Vec::new();
+    methods.push((
+        "new".to_string(),
+        false,
+        true,
+        JsFn {
+            iife: false,
+            export: false,
+            public: false,
+            async_: false,
+            is_method: true,
+            name: "new".to_string(),
+            input_names: Vec::new(),
+            body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
+        },
+    ));
+    methods.push((
+        "push".to_string(),
+        false,
+        false,
+        JsFn {
+            iife: false,
+            export: false,
+            public: false,
+            async_: false,
+            is_method: true,
+            name: "push".to_string(),
+            input_names: vec!["elem".to_string()],
+            body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
+        },
+    ));
+    js_stmts.push(JsStmt::Class(JsClass {
+        export: false,
+        public: false,
+        name: "Vec".to_string(),
+        inputs: Vec::new(),
+        static_fields: Vec::new(),
+        methods,
+    }));
+}
+
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModule> {
+    // dbg!(&main_path);
+    let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
+    let file = syn::parse_file(&code).unwrap();
+    // let mut current_file_path = vec!["main.rs".to_string()];
+
+    let mut names = Vec::new();
+    let mut modules = Vec::new();
+    modules.push(ModuleData {
+        name: "crate".to_string(),
+        parent_name: None,
+        path: vec!["crate".to_string()],
+        pub_definitions: Vec::new(),
+        private_definitions: Vec::new(),
+        pub_submodules: Vec::new(),
+        private_submodules: Vec::new(),
+        pub_use_mappings: Vec::new(),
+        private_use_mappings: Vec::new(),
+        resolved_mappings: Vec::new(),
+    });
+    let mut get_names_module_path = vec!["crate".to_string()];
+    // let mut get_names_crate_path = crate_path.join("src/main.rs");
+    let mut get_names_crate_path = crate_path.clone();
+    extract_data(
+        &file.items,
+        &get_names_crate_path,
+        &mut get_names_module_path,
+        &mut names,
+        &mut modules,
+    );
+
+    // find duplicates
+    // TODO account for local functions which shadow these names
+    // (name space, module path (which gets popped), name, original module path)
+
+    let mut duplicates = Vec::new();
+    for name in &names {
+        if names
+            .iter()
+            .filter(|(module_path, name2)| &name.1 == name2)
+            .collect::<Vec<_>>()
+            .len()
+            > 1
+        {
+            duplicates.push(Duplicate {
+                namespace: Vec::<String>::new(),
+                module_path: name.0.clone(),
+                name: name.1.clone(),
+                original_module_path: name.0.clone(),
+            });
+        }
+    }
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+
+    for dup in duplicates.iter_mut() {
+        dup.namespace.push(dup.name.clone());
+    }
+
+    resolve_use_stmts(&mut modules);
 
     let mut js_stmts = Vec::new();
-
-    // let mut module_names = Vec::new();
 
     let mut global_data = GlobalData::new(false, crate_path.clone(), duplicates.clone());
     global_data.modules = modules;
 
-    // let mut transpiled_modules = Vec::new();
     global_data.transpiled_modules.push(JsStmtModule {
         public: true,
         name: "crate".to_string(),
         module_path: vec!["crate".to_string()],
         stmts: Vec::new(),
     });
-    // transpiled_modules.push(crate_module);
     let stmts = js_stmts_from_syn_items(
         file.items,
         true,
         &mut vec!["crate".to_string()],
         &mut global_data,
         &mut Some(crate_path.join("src").join("main.rs")),
-        // &mut transpiled_modules,
     );
     let crate_module = global_data
         .transpiled_modules
@@ -1739,50 +1781,8 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
         .unwrap();
     crate_module.stmts = stmts;
 
-    // js_stmts.extend();
-
     update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
-    dbg!(&global_data.transpiled_modules);
-
-    // Flatten modules so they can be written sequentially rather than nested
-    // let flat_stmts = Vec::new();
-    // for stmt in crate_module.stmts {
-    //     match stmt {
-    //         JsStmt::Class(_) => todo!(),
-    //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
-    //         JsStmt::ClassStatic(_) => todo!(),
-    //         JsStmt::Local(_) => todo!(),
-    //         JsStmt::Expr(_, _) => todo!(),
-    //         JsStmt::Import(_, _, _) => todo!(),
-    //         JsStmt::Function(_) => todo!(),
-    //         JsStmt::ScopeBlock(_) => todo!(),
-    //         JsStmt::TryBlock(_) => todo!(),
-    //         JsStmt::CatchBlock(_, _) => todo!(),
-    //         JsStmt::Raw(_) => todo!(),
-    //         JsStmt::Module(js_stmt_module) => {
-    //             for stmt2 in js_stmt_module.stmts {
-    //                 match stmt2 {
-    //                     JsStmt::Class(_) => todo!(),
-    //                     JsStmt::ClassMethod(_, _, _, _) => todo!(),
-    //                     JsStmt::ClassStatic(_) => todo!(),
-    //                     JsStmt::Local(_) => todo!(),
-    //                     JsStmt::Expr(_, _) => todo!(),
-    //                     JsStmt::Import(_, _, _) => todo!(),
-    //                     JsStmt::Function(_) => todo!(),
-    //                     JsStmt::ScopeBlock(_) => todo!(),
-    //                     JsStmt::TryBlock(_) => todo!(),
-    //                     JsStmt::CatchBlock(_, _) => todo!(),
-    //                     JsStmt::Raw(_) => todo!(),
-    //                     JsStmt::Module(_) => todo!(),
-    //                     JsStmt::Use(_) => todo!(),
-    //                     JsStmt::Comment(_) => todo!(),
-    //                 }
-    //             }
-    //         },
-    //         JsStmt::Use(_) => todo!(),
-    //         JsStmt::Comment(_) => todo!(),
-    //     }
-    // }
+    // dbg!(&global_data.transpiled_modules);
 
     // resolve paths to get canonical path to item
     // Update paths to use namespaced names and account for `use` statements
@@ -1792,64 +1792,35 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
     // Then for each module, add maps of the names of the items that are mod/use'd to the use path
     // go through each module and reconcile each item with the use mapping, and that with the module path where the item is actually defined
 
-    // Maybe do a minimal pass before the main parsing, where we only look at ::Mod and ::Use to build up module data. Then, we can resolve path names directly in the parsing pass, rather than having to iterate through everything in this second pass? Remeber `use` can be anywhere so trading iterating through everything JsStmts for syn is an improvement. Plus it just makes a lot more sense to get that data from the syn types, rather than
-
-    fn resolve_names_jsexpr(js_expr: &mut JsExpr) {}
-    fn resolve_names(
-        this_module: &mut Vec<String>,
-        stmts: &mut Vec<JsStmt>,
-        modules: &Vec<ModuleData>,
-    ) {
-    }
-
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
 
     if with_rust_types {
-        let mut methods = Vec::new();
-        methods.push((
-            "new".to_string(),
-            false,
-            true,
-            JsFn {
-                iife: false,
-                export: false,
-                public: false,
-                async_: false,
-                is_method: true,
-                name: "new".to_string(),
-                input_names: Vec::new(),
-                body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
-            },
-        ));
-        methods.push((
-            "push".to_string(),
-            false,
-            false,
-            JsFn {
-                iife: false,
-                export: false,
-                public: false,
-                async_: false,
-                is_method: true,
-                name: "push".to_string(),
-                input_names: vec!["elem".to_string()],
-                body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
-            },
-        ));
-        js_stmts.push(JsStmt::Class(JsClass {
-            export: false,
-            public: false,
-            name: "Vec".to_string(),
-            inputs: Vec::new(),
-            static_fields: Vec::new(),
-            methods,
-        }));
+        push_rust_types(&mut js_stmts);
+    }
+
+    // and module name comments when there is more than 1 module
+    if global_data.transpiled_modules.len() > 1 {
+        for module in &mut global_data.transpiled_modules {
+            module.stmts.insert(
+                0,
+                JsStmt::Comment(
+                    module
+                        .module_path
+                        .iter()
+                        .cloned()
+                        .skip(1)
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                ),
+            );
+        }
     }
 
     global_data.transpiled_modules.clone()
 }
 
+// TODO combine this with from_file
 pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
@@ -1864,7 +1835,9 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     )
 }
 
-pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
+// Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
+// Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
+pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmtModule> {
     let file = syn::parse_file(code).unwrap();
     // let mut current_file_path = Vec::new();
     // let mut current_module = Vec::new();
@@ -1914,7 +1887,7 @@ pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmt> {
 
     update_classes(&mut transpiled_modules, global_data.impl_items);
 
-    transpiled_modules[0].stmts.clone()
+    transpiled_modules
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -2615,20 +2588,44 @@ impl JsStmtModule {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        format!(
-            "// {}\n{}",
-            if self.module_path.len() == 1 {
-                "main".to_string()
-            } else {
-                self.module_path
-                    .iter()
-                    .cloned()
-                    .skip(1)
-                    .collect::<Vec<_>>()
-                    .join("::")
-            },
-            items
-        )
+        // format!(
+        //     "{}{}",
+        //     if with_name_comment {
+        //         format!(
+        //             "// {}\n",
+        //             if self.module_path.len() == 1 {
+        //                 "main".to_string()
+        //             } else {
+        //                 self.module_path
+        //                     .iter()
+        //                     .cloned()
+        //                     .skip(1)
+        //                     .collect::<Vec<_>>()
+        //                     .join("::")
+        //             }
+        //         )
+        //     } else {
+        //         "".to_string()
+        //     },
+        //     items
+        // )
+
+        // format!(
+        //     "// {}\n{}",
+        //     if self.module_path.len() == 1 {
+        //         "main".to_string()
+        //     } else {
+        //         self.module_path
+        //             .iter()
+        //             .cloned()
+        //             .skip(1)
+        //             .collect::<Vec<_>>()
+        //             .join("::")
+        //     },
+        //     items
+        // )
+
+        items
     }
 }
 
@@ -3281,7 +3278,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 }
             }
             if global_data.snippet {
-                return JsExpr::Path(segs);
+                return JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>());
             }
 
             // TODO:
@@ -3310,19 +3307,19 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .any(|definition| definition == &segs[0])
                 };
 
-                dbg!(&segs);
-                dbg!(&module);
-                dbg!(&current_module);
-                dbg!(&use_private_items);
-                dbg!(&module_level_items_only);
-                dbg!(&module
-                    .pub_submodules
-                    .iter()
-                    .chain(module.private_submodules.iter()));
-                dbg!(module.private_definitions.contains(&segs[0]));
-                println!("");
-                dbg!(&module.resolved_mappings);
-                dbg!(&segs[0]);
+                // dbg!(&segs);
+                // dbg!(&module);
+                // dbg!(&current_module);
+                // dbg!(&use_private_items);
+                // dbg!(&module_level_items_only);
+                // dbg!(&module
+                //     .pub_submodules
+                //     .iter()
+                //     .chain(module.private_submodules.iter()));
+                // dbg!(module.private_definitions.contains(&segs[0]));
+                // println!("");
+                // dbg!(&module.resolved_mappings);
+                // dbg!(&segs[0]);
 
                 if item_defined_in_module {
                     // Path starts with an item defined in the module
@@ -3338,6 +3335,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                             .collect::<Vec<_>>()
                             .join("__");
                     }
+
                     segs
                 } else if let Some(use_mapping) = module
                     .resolved_mappings
@@ -3413,7 +3411,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 } else if segs.len() == 1 && segs[0] == "this" {
                     segs
                 } else if use_private_items {
-                    // If none of the above conditions are met then assume the path refers to an item in an enclosing scope within this module, not at the top level of a module, so simply return the path
+                    // If none of the above conditions are met then assume the path refers to an item/variable in an enclosing scope within this module, not at the top level of a module, so simply return the path
                     segs
                 } else {
                     dbg!(module);
@@ -3423,7 +3421,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 }
             }
 
-            dbg!(&global_data.modules);
+            // dbg!(&global_data.modules);
             let module = global_data
                 .modules
                 .iter()
@@ -3435,7 +3433,18 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             //     .map(|seg| case_convert(seg))
             //     .collect::<Vec<_>>();
 
-            JsExpr::Path(get_path(true, false, module, segs, global_data, current_module))
+            let mut segs = get_path(true, false, module, segs, global_data, current_module);
+
+            // convert case of rest of path
+            for (i, seg) in segs.iter_mut().enumerate() {
+                if i == 0 && seg.contains("__") {
+                    // namespaced item already case converted
+                } else {
+                    *seg = case_convert(seg.clone())
+                }
+            }
+
+            JsExpr::Path(segs)
         }
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {

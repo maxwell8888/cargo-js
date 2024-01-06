@@ -58,6 +58,16 @@ macro_rules! r2j_block {
     }};
 }
 
+macro_rules! r2j_file {
+    ($block:block) => {{
+        #[fn_stmts_as_str]
+        fn fn_wrapper() $block
+        let generated_js = generate_js_from_block(block_code_str());
+        let generated_js = format_js(generated_js);
+        generated_js
+    }};
+}
+
 macro_rules! r2j_assert_eq {
     ($block:block, $expected:literal) => {
         assert_eq!($expected, {
@@ -194,6 +204,13 @@ fn generate_js_from_block(js: impl ToString) -> String {
 }
 fn generate_js_from_module(js: impl ToString) -> String {
     from_module(js.to_string().as_str(), false)
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn generate_js_from_file(js: impl ToString) -> String {
+    from_file(js.to_string().as_str(), false)
         .iter()
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
@@ -502,7 +519,7 @@ async fn closure_return_match() {
     assert_eq!(expected, actual);
 }
 
-// #[ignore]
+#[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
     let actual = from_crate("../for-testing".into(), false);
@@ -611,4 +628,32 @@ async fn it_transpiles_crate_directory() {
     // println!("{}", format_js(&actual));
 
     assert_eq!(format_js(""), format_js(actual));
+}
+
+#[ignore]
+#[tokio::test]
+async fn crate_module_path() {
+    let actual = r2j_block!({
+        mod foo {
+            struct Bar {}
+            pub fn baz() {
+                let _ = self::Bar {};
+            }
+        }
+        foo::baz();
+    });
+    let expected = r#"var _closure = (arg) => {
+  var ifTempAssignment;
+  if (arg.id === someId) {
+    var [num] = arg.data;
+    var sum = num + 5;
+    ifTempAssignment = sum;
+  } else if (arg.id === noneId) {
+    ifTempAssignment = 0;
+  } else {
+    ifTempAssignment = "this shouldn't exist";
+  }
+  return ifTempAssignment;
+};"#;
+    assert_eq!(expected, actual);
 }
