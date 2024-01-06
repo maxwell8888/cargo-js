@@ -3268,7 +3268,8 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                             var_name.pop().unwrap();
                         }
                     }
-                    case_convert(var_name)
+                    // case_convert(var_name)
+                    var_name
                 })
                 .collect::<Vec<_>>();
             if segs.len() == 1 {
@@ -3279,23 +3280,53 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     segs[0] = "this".to_string();
                 }
             }
-
             if global_data.snippet {
-                JsExpr::Path(segs)
-            } else {
-                let module = global_data
-                    .modules
-                    .iter()
-                    .find(|module| &module.path == current_module)
-                    .unwrap();
+                return JsExpr::Path(segs);
+            }
 
-                if module
-                    .pub_definitions
+            // TODO:
+            // handle mixed paths eg submodule -> use
+            // make sure `mod` being pub/private is taken into account - this would only be for use paths since mod is always public in the file it is called from (parent), so would happen in the `use` resolving step
+
+            fn get_path(
+                use_private_items: bool,
+                // So we know whether allow segs to simply be somthing in an outer scope
+                module_level_items_only: bool,
+                module: &ModuleData,
+                mut segs: Vec<String>,
+                global_data: &GlobalData,
+                current_module: &Vec<String>,
+            ) -> Vec<String> {
+                let item_defined_in_module = if use_private_items {
+                    module
+                        .pub_definitions
+                        .iter()
+                        .chain(module.private_definitions.iter())
+                        .any(|definition| definition == &segs[0])
+                } else {
+                    module
+                        .pub_definitions
+                        .iter()
+                        .any(|definition| definition == &segs[0])
+                };
+
+                dbg!(&segs);
+                dbg!(&module);
+                dbg!(&current_module);
+                dbg!(&use_private_items);
+                dbg!(&module_level_items_only);
+                dbg!(&module
+                    .pub_submodules
                     .iter()
-                    .chain(module.private_definitions.iter())
-                    .any(|definition| definition == &segs[0])
-                {
+                    .chain(module.private_submodules.iter()));
+                dbg!(module.private_definitions.contains(&segs[0]));
+                println!("");
+                dbg!(&module.resolved_mappings);
+                dbg!(&segs[0]);
+
+                if item_defined_in_module {
                     // Path starts with an item defined in the module
+
                     // Check whether it is not globally unique and so has been namespaced
                     if let Some(dup) = global_data.duplicates.iter().find(|dup| {
                         dup.name == segs[0] && &dup.original_module_path == current_module
@@ -3307,20 +3338,104 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                             .collect::<Vec<_>>()
                             .join("__");
                     }
-                    JsExpr::Path(segs)
+                    segs
                 } else if let Some(use_mapping) = module
                     .resolved_mappings
                     .iter()
                     .find(|use_mapping| use_mapping.0 == segs[0])
                 {
-                    JsExpr::Path(segs)
+                    // Path starts with an item `use`d (possibly a chain of `use`s which have been resolved to a single path) from the current module
+                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
+                        dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
+                    }) {
+                        // If the item has been namespaced, we need to replace it with the namespace
+                        segs[0] = dup
+                            .namespace
+                            .iter()
+                            .map(|seg| camel(seg))
+                            .collect::<Vec<_>>()
+                            .join("__");
+                        segs
+                    } else {
+                        // If the item has not been namespaced, we don't need to do anything
+                        segs
+                    }
+                } else if module
+                    .pub_submodules
+                    .iter()
+                    .chain(module.private_submodules.iter())
+                    .any(|submodule_name| submodule_name == &segs[0])
+                {
+                    // Path starts with a submodule of the current module
+                    let mut submodule_path = current_module.clone();
+                    submodule_path.push(segs[0].clone());
+
+                    let submodule = global_data
+                        .modules
+                        .iter()
+                        .find(|submodule| submodule.path == submodule_path)
+                        .unwrap();
+
+                    // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
+                    segs.remove(0);
+
+                    get_path(false, true, submodule, segs, global_data, &submodule_path)
+                } else if segs[0] == "super" {
+                    // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
+                    segs.remove(0);
+
+                    let mut current_module = current_module.clone();
+                    current_module.pop();
+
+                    let module = global_data
+                        .modules
+                        .iter()
+                        .find(|module| module.path == current_module)
+                        .unwrap();
+
+                    get_path(false, true, module, segs, global_data, &current_module)
+                } else if segs[0] == "self" {
+                    // NOTE private items are still accessible from the module via self
+                    segs.remove(0);
+
+                    // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
+                    // TODO problem is that we are conflating `in_same_module` with pub/private
+                    get_path(true, true, module, segs, global_data, &current_module)
+                } else if segs[0] == "crate" {
+                    let current_module = vec!["crate".to_string()];
+                    let module = global_data
+                        .modules
+                        .iter()
+                        .find(|module| module.path == current_module)
+                        .unwrap();
+
+                    get_path(false, true, module, segs, global_data, &current_module)
+                } else if segs.len() == 1 && segs[0] == "this" {
+                    segs
+                } else if use_private_items {
+                    // If none of the above conditions are met then assume the path refers to an item in an enclosing scope within this module, not at the top level of a module, so simply return the path
+                    segs
                 } else {
-                    let mut segs2 = vec!["wtf".to_string()];
-                    segs2.extend(segs.clone());
-                    JsExpr::Path(segs2)
-                    // panic!()
+                    dbg!(module);
+                    dbg!(current_module);
+                    dbg!(segs);
+                    panic!()
                 }
             }
+
+            dbg!(&global_data.modules);
+            let module = global_data
+                .modules
+                .iter()
+                .find(|module| &module.path == current_module)
+                .unwrap();
+
+            // let segs = get_path(true, module, segs, global_data, current_module)
+            //     .iter()
+            //     .map(|seg| case_convert(seg))
+            //     .collect::<Vec<_>>();
+
+            JsExpr::Path(get_path(true, false, module, segs, global_data, current_module))
         }
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {

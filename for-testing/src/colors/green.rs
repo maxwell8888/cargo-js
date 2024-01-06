@@ -13,11 +13,13 @@ impl Green {
         }
         self.age
             + self::duplicate_name()
-            + duplicate_name()
+            // TODO shadowed names not impl yet
+            + duplicate_name()  
             + self::super::super::utils::say_something::say_hello()
-            + crate::utils::say_something::say_hello()
-            + crate::colors::green::duplicate_name()
-            + super::DOG_ACTIVITY
-            + super::stuff_function()
+            // + crate::duplicate_name()
+            // + crate::utils::say_something::say_hello()
+            // + crate::colors::green::duplicate_name()
+            // + super::DOG_ACTIVITY
+            // + super::stuff_function()
     }
 }
