@@ -338,7 +338,7 @@ fn tree_parsing_for_boilerplate(
     };
 }
 
-/// CONST_NAMES -> constNames
+/// CONST_NAMES -> CONST_NAMES
 /// PascalCase -> PascalCase
 /// snake_case -> snakeCase
 fn case_convert(name: impl ToString) -> String {
@@ -802,12 +802,8 @@ fn handle_item(
     is_module: bool,
     global_data: &mut GlobalData,
     current_module_path: &mut Vec<String>,
-    // module_object: &mut Vec<(String, Box<JsExpr>)>,
     js_stmts: &mut Vec<JsStmt>,
-    // modules: &mut Vec<JsStmtModule>,
-    // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
-    // js_stmt_module: &mut JsStmtModule,
 ) {
     match item {
         Item::Const(item_const) => {
@@ -1053,7 +1049,7 @@ fn handle_item(
             // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
             let current_module_path_copy = current_module_path.clone();
-            let mut js_stmt_submodule = JsStmtModule {
+            let mut js_stmt_submodule = JsModule {
                 public: match item_mod.vis {
                     Visibility::Public(_) => true,
                     Visibility::Restricted(_) => todo!(),
@@ -1185,23 +1181,6 @@ fn handle_item(
     }
 }
 
-// pub fn from_file_with_main(code: &str) -> Vec<JsStmt> {
-//     let mut js_stmts = from_file(code, true);
-//     js_stmts.push(JsStmt::Expr(
-//         JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
-//         true,
-//     ));
-//     js_stmts
-// }
-
-pub fn stmts_with_main(mut stmts: Vec<JsStmt>) -> Vec<JsStmt> {
-    stmts.push(JsStmt::Expr(
-        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["main".to_string()])), Vec::new()),
-        true,
-    ));
-    stmts
-}
-
 /// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
 ///
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
@@ -1324,7 +1303,7 @@ struct GlobalData {
     rust_prelude_types: RustPreludeTypes,
     impl_items: Vec<ImplItemTemp>,
     duplicates: Vec<Duplicate>,
-    transpiled_modules: Vec<JsStmtModule>,
+    transpiled_modules: Vec<JsModule>,
 }
 impl GlobalData {
     fn new(snippet: bool, crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
@@ -1340,13 +1319,8 @@ impl GlobalData {
     }
 }
 
-struct Module {
-    module_path: Vec<String>,
-    stmts: Vec<JsStmt>,
-}
-
 /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-fn update_classes(js_stmt_modules: &mut Vec<JsStmtModule>, impl_items: Vec<ImplItemTemp>) {
+fn update_classes(js_stmt_modules: &mut Vec<JsModule>, impl_items: Vec<ImplItemTemp>) {
     for js_stmt_module in js_stmt_modules {
         for stmt in js_stmt_module.stmts.iter_mut() {
             match stmt {
@@ -1706,7 +1680,7 @@ fn push_rust_types(js_stmts: &mut Vec<JsStmt>) {
     }));
 }
 
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModule> {
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
     // dbg!(&main_path);
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let file = syn::parse_file(&code).unwrap();
@@ -1776,7 +1750,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
     let mut global_data = GlobalData::new(false, Some(crate_path.clone()), duplicates.clone());
     global_data.modules = modules;
 
-    global_data.transpiled_modules.push(JsStmtModule {
+    global_data.transpiled_modules.push(JsModule {
         public: true,
         name: "crate".to_string(),
         module_path: vec!["crate".to_string()],
@@ -1854,7 +1828,7 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
 // Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
-pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsStmtModule> {
+pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     let file = syn::parse_file(code).unwrap();
 
     let mut names = Vec::new();
@@ -1917,7 +1891,7 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsStmtModule> {
     let mut global_data = GlobalData::new(false, None, duplicates.clone());
     global_data.modules = modules;
 
-    global_data.transpiled_modules.push(JsStmtModule {
+    global_data.transpiled_modules.push(JsModule {
         public: true,
         name: "crate".to_string(),
         module_path: vec!["crate".to_string()],
@@ -2077,6 +2051,7 @@ pub enum JsExpr {
     /// (async, block, inputs, body)
     ArrowFn(bool, bool, Vec<String>, Vec<JsStmt>),
     Assignment(Box<JsExpr>, Box<JsExpr>),
+    Await(Box<JsExpr>),
     Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
     /// Will only make itself disappear
     Blank,
@@ -2085,20 +2060,14 @@ pub enum JsExpr {
     /// (const/let/var, left, right)
     /// use const for immutatble, let for mutable, var for shadowing
     Declaration(bool, String, Box<JsExpr>),
-    Null,
-    LitInt(i32),
-    LitStr(String),
-    LitBool(bool),
-    Object(Vec<(String, Box<JsExpr>)>),
-    ObjectForModule(Vec<JsStmt>),
-    Return(Box<JsExpr>),
-    /// Will make the entire statement disappear no matter where it is nested?
-    Vanish,
     /// (base var name, field name)
     Field(Box<JsExpr>, String),
     Fn(JsFn),
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
+    /// (pat, expr, block)
+    ForLoop(String, Box<JsExpr>, Vec<JsStmt>),
+    Index(Box<JsExpr>, Box<JsExpr>),
     /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
     /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var
     ///
@@ -2111,22 +2080,27 @@ pub enum JsExpr {
         /// For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
         Option<Box<JsExpr>>,
     ),
-    Paren(Box<JsExpr>),
-    Not(Box<JsExpr>),
-    Minus(Box<JsExpr>),
-    Await(Box<JsExpr>),
-    Index(Box<JsExpr>, Box<JsExpr>),
-    Var(String),
-    /// like obj::inner::mynumber -> obj.inner.mynumber;
-    Path(Vec<String>),
-    New(Vec<String>, Vec<JsExpr>),
+    LitInt(i32),
+    LitStr(String),
+    LitBool(bool),
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
     MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
+    New(Vec<String>, Vec<JsExpr>),
+    Null,
+    Object(Vec<(String, Box<JsExpr>)>),
+    ObjectForModule(Vec<JsStmt>),
+    /// like obj::inner::mynumber -> obj.inner.mynumber;
+    Path(Vec<String>),
+    Return(Box<JsExpr>),
+    /// Will make the entire statement disappear no matter where it is nested?
+    Vanish,
+    Paren(Box<JsExpr>),
+    Not(Box<JsExpr>),
+    Minus(Box<JsExpr>),
+    Var(String),
     // Class(JsClass),
     While(Box<JsExpr>, Vec<JsStmt>),
-    /// (pat, expr, block)
-    ForLoop(String, Box<JsExpr>, Vec<JsStmt>),
 }
 
 // Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
@@ -2412,7 +2386,7 @@ impl JsExpr {
             ),
             JsExpr::Fn(js_fn) => js_fn.js_string(),
             JsExpr::ObjectForModule(js_stmts) => {
-                let js_stmt_module = JsStmtModule {
+                let js_stmt_module = JsModule {
                     public: false,
                     name: "whatever".to_string(),
                     module_path: vec![],
@@ -2591,7 +2565,6 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::ScopeBlock(_) => stmt.js_string(),
         JsStmt::TryBlock(_) => stmt.js_string(),
         JsStmt::CatchBlock(_, _) => stmt.js_string(),
-        JsStmt::Module(_) => stmt.js_string(),
         JsStmt::Comment(_) => stmt.js_string(),
         JsStmt::Use(_) => String::new(),
     }
@@ -2629,7 +2602,7 @@ impl JsFn {
 }
 
 #[derive(Clone, Debug)]
-pub struct JsStmtModule {
+pub struct JsModule {
     public: bool,
     /// camelCase JS name
     name: String,
@@ -2637,7 +2610,7 @@ pub struct JsStmtModule {
     module_path: Vec<String>,
     stmts: Vec<JsStmt>,
 }
-impl JsStmtModule {
+impl JsModule {
     pub fn js_string(&self) -> String {
         let items = self
             .stmts
@@ -2738,8 +2711,6 @@ pub enum JsStmt {
     TryBlock(Vec<JsStmt>),
     CatchBlock(String, Vec<JsStmt>),
     Raw(String),
-    /// Unlike the other variants this has meaning for the parsing/transpiling, and isn't just a representation of what to write like the other variants
-    Module(JsStmtModule),
     /// Unlike the other variants this *only* has meaning for the parsing/transpiling, and isn't output (except maybe comments for debugging?)
     ///
     /// (path, item name)
@@ -2762,7 +2733,6 @@ impl JsStmt {
             JsStmt::TryBlock(_) => todo!(),
             JsStmt::CatchBlock(_, _) => todo!(),
             JsStmt::Raw(_) => todo!(),
-            JsStmt::Module(js_stmt_module) => js_stmt_module.public,
             JsStmt::Comment(_) => todo!(),
             JsStmt::Use(_) => todo!(),
         }
@@ -2899,7 +2869,6 @@ impl JsStmt {
                         .join("\n")
                 )
             }
-            JsStmt::Module(js_stmt_module) => js_stmt_module.js_string(),
             JsStmt::Comment(text) => format!("// {text}"),
             JsStmt::Use(_) => "".to_string(),
         }
