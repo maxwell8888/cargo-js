@@ -1,5 +1,4 @@
 class MyEnum {
-    constructor() {}
     static fooBarId = "FooBar";
     static FooBar = {
         id: "FooBar"

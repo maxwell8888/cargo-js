@@ -484,6 +484,8 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
                         })
                         .collect::<Vec<_>>(),
                 ),
+                // for `let _ = foo();` the lhs will be `Pat::Wild`
+                Pat::Wild(_) => LocalName::Single("_".to_string()),
                 other => {
                     dbg!(other);
                     todo!()
@@ -1023,21 +1025,26 @@ fn handle_item(
                     module_path_copy.remove(0);
                 }
             }
-            let mut file_path = global_data.crate_path.clone();
-            file_path.push("src");
-            if module_path_copy.is_empty() {
-                file_path.push("main.rs");
-            } else {
-                let last = module_path_copy.last_mut().unwrap();
-                last.push_str(".rs");
-                file_path.extend(module_path_copy);
-            }
+
             let items = if let Some(content) = &item_mod.content {
                 // TODO how does `mod bar { mod foo; }` work?
                 content.1.clone()
             } else {
-                let code = fs::read_to_string(&file_path).unwrap();
-                syn::parse_file(&code).unwrap().items
+                if let Some(crate_path) = &global_data.crate_path {
+                    let mut file_path = crate_path.clone();
+                    file_path.push("src");
+                    if module_path_copy.is_empty() {
+                        file_path.push("main.rs");
+                    } else {
+                        let last = module_path_copy.last_mut().unwrap();
+                        last.push_str(".rs");
+                        file_path.extend(module_path_copy);
+                    }
+                    let code = fs::read_to_string(&file_path).unwrap();
+                    syn::parse_file(&code).unwrap().items
+                } else {
+                    panic!("not allowed `mod foo` outside of crate")
+                }
             };
 
             // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
@@ -1310,7 +1317,7 @@ struct Duplicate {
 #[derive(Debug, Clone)]
 struct GlobalData {
     snippet: bool,
-    crate_path: PathBuf,
+    crate_path: Option<PathBuf>,
     modules: Vec<ModuleData>,
     rust_prelude_types: RustPreludeTypes,
     impl_items: Vec<ImplItemTemp>,
@@ -1318,7 +1325,7 @@ struct GlobalData {
     transpiled_modules: Vec<JsStmtModule>,
 }
 impl GlobalData {
-    fn new(snippet: bool, crate_path: PathBuf, duplicates: Vec<Duplicate>) -> GlobalData {
+    fn new(snippet: bool, crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
         GlobalData {
             snippet,
             crate_path,
@@ -1385,7 +1392,8 @@ fn update_classes(js_stmt_modules: &mut Vec<JsStmtModule>, impl_items: Vec<ImplI
 /// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
 fn extract_data(
     items: &Vec<Item>,
-    crate_path: &PathBuf,
+    // None if we are extracted data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    crate_path: Option<&PathBuf>,
     module_path: &mut Vec<String>,
     // (module path, name)
     names: &mut Vec<(Vec<String>, String)>,
@@ -1486,25 +1494,30 @@ fn extract_data(
                     resolved_mappings: Vec::new(),
                 });
 
-                let mut file_path = crate_path.clone();
-                file_path.push("src");
-                if *module_path == ["crate"] {
-                    file_path.push("main.rs");
-                } else {
-                    let mut module_path_copy = module_path.clone();
-                    // remove "crate"
-                    module_path_copy.remove(0);
-                    let last = module_path_copy.last_mut().unwrap();
-                    last.push_str(".rs");
-                    file_path.extend(module_path_copy);
-                }
-                if let Some(_content) = &item_mod.content {
+                if let Some(content) = &item_mod.content {
                     // TODO how does `mod bar { mod foo; }` work?
-                    todo!()
+                    extract_data(&content.1, crate_path, module_path, names, modules);
                 } else {
-                    let code = fs::read_to_string(&file_path).unwrap();
-                    let file = syn::parse_file(&code).unwrap();
-                    extract_data(&file.items, crate_path, module_path, names, modules);
+                    if let Some(crate_path) = crate_path {
+                        let mut file_path = crate_path.clone();
+                        file_path.push("src");
+                        if *module_path == ["crate"] {
+                            file_path.push("main.rs");
+                        } else {
+                            let mut module_path_copy = module_path.clone();
+                            // remove "crate"
+                            module_path_copy.remove(0);
+                            let last = module_path_copy.last_mut().unwrap();
+                            last.push_str(".rs");
+                            file_path.extend(module_path_copy);
+                        }
+
+                        let code = fs::read_to_string(&file_path).unwrap();
+                        let file = syn::parse_file(&code).unwrap();
+                        extract_data(&file.items, Some(crate_path), module_path, names, modules);
+                    } else {
+                        panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
+                    }
                 }
                 module_path.pop();
             }
@@ -1716,7 +1729,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
     let mut get_names_crate_path = crate_path.clone();
     extract_data(
         &file.items,
-        &get_names_crate_path,
+        Some(&get_names_crate_path),
         &mut get_names_module_path,
         &mut names,
         &mut modules,
@@ -1758,7 +1771,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
 
     let mut js_stmts = Vec::new();
 
-    let mut global_data = GlobalData::new(false, crate_path.clone(), duplicates.clone());
+    let mut global_data = GlobalData::new(false, Some(crate_path.clone()), duplicates.clone());
     global_data.modules = modules;
 
     global_data.transpiled_modules.push(JsStmtModule {
@@ -1825,7 +1838,7 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
     let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(false, PathBuf::new(), Vec::new());
+    let mut global_data = GlobalData::new(false, None, Vec::new());
     js_stmts_from_syn_items(
         items,
         true,
@@ -1837,11 +1850,10 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
 // Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
-pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmtModule> {
+pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsStmtModule> {
     let file = syn::parse_file(code).unwrap();
-    // let mut current_file_path = Vec::new();
-    // let mut current_module = Vec::new();
 
+    let mut names = Vec::new();
     let mut modules = Vec::new();
     modules.push(ModuleData {
         name: "crate".to_string(),
@@ -1858,36 +1870,105 @@ pub fn from_file(code: &str, with_vec: bool) -> Vec<JsStmtModule> {
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
     // let mut get_names_crate_path = crate_path.clone();
-    // extract_data(
-    //     &file.items,
-    //     &get_names_crate_path,
-    //     &mut get_names_module_path,
-    //     &mut names,
-    //     &mut modules,
-    // );
+    extract_data(
+        &file.items,
+        None,
+        &mut get_names_module_path,
+        &mut names,
+        &mut modules,
+    );
 
-    let mut current_module = vec!["crate".to_string()];
-    // TODO a file could have an inline module, but not currently supported
-    let mut global_data = GlobalData::new(true, PathBuf::new(), Vec::new());
+    let mut duplicates = Vec::new();
+    for name in &names {
+        if names
+            .iter()
+            .filter(|(module_path, name2)| &name.1 == name2)
+            .collect::<Vec<_>>()
+            .len()
+            > 1
+        {
+            duplicates.push(Duplicate {
+                namespace: Vec::<String>::new(),
+                module_path: name.0.clone(),
+                name: name.1.clone(),
+                original_module_path: name.0.clone(),
+            });
+        }
+    }
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+
+    for dup in duplicates.iter_mut() {
+        dup.namespace.push(dup.name.clone());
+    }
+
+    resolve_use_stmts(&mut modules);
+
+    let mut js_stmts = Vec::new();
+
+    let mut global_data = GlobalData::new(false, None, duplicates.clone());
     global_data.modules = modules;
+
+    global_data.transpiled_modules.push(JsStmtModule {
+        public: true,
+        name: "crate".to_string(),
+        module_path: vec!["crate".to_string()],
+        stmts: Vec::new(),
+    });
     let stmts = js_stmts_from_syn_items(
         file.items,
         true,
-        &mut current_module,
+        &mut vec!["crate".to_string()],
         &mut global_data,
         &mut None,
     );
-    let mut crate_module = JsStmtModule {
-        public: false,
-        name: "crate".to_string(),
-        module_path: vec!["crate".to_string()],
-        stmts,
-    };
-    let mut transpiled_modules = vec![crate_module];
+    let crate_module = global_data
+        .transpiled_modules
+        .iter_mut()
+        .find(|tm| tm.module_path == vec!["crate".to_string()])
+        .unwrap();
+    crate_module.stmts = stmts;
 
-    update_classes(&mut transpiled_modules, global_data.impl_items);
+    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
 
-    transpiled_modules
+    if with_rust_types {
+        push_rust_types(&mut js_stmts);
+    }
+
+    // and module name comments when there is more than 1 module
+    if global_data.transpiled_modules.len() > 1 {
+        for module in &mut global_data.transpiled_modules {
+            module.stmts.insert(
+                0,
+                JsStmt::Comment(
+                    module
+                        .module_path
+                        .iter()
+                        .cloned()
+                        .skip(1)
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                ),
+            );
+        }
+    }
+
+    global_data.transpiled_modules.clone()
+}
+
+pub fn generate_js_from_file(code: impl ToString) -> String {
+    // let item_mod = syn::parse_str::<ItemMod>(js.to_string().as_str()).unwrap();
+    // let file = syn::parse_file(code.to_string().as_str()).unwrap();
+    // let items = file.items;
+    from_file(code.to_string().as_str(), false)
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -1897,7 +1978,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
     for stmt in &item_fn.block.stmts {
         let js_stmt = handle_stmt(
             stmt,
-            &mut GlobalData::new(true, PathBuf::new(), Vec::new()),
+            &mut GlobalData::new(true, None, Vec::new()),
             &Vec::new(),
         );
         js_stmts.push(js_stmt);
@@ -1912,7 +1993,7 @@ pub fn from_block(code: &str) -> Vec<JsStmt> {
     for stmt in &expr_block.block.stmts {
         let js_stmt = handle_stmt(
             stmt,
-            &mut GlobalData::new(true, PathBuf::new(), Vec::new()),
+            &mut GlobalData::new(true, None, Vec::new()),
             &vec!["crate".to_string()],
         );
         js_stmts.push(js_stmt);
@@ -2743,15 +2824,22 @@ impl JsStmt {
             JsStmt::Function(js_fn) => js_fn.js_string(),
             JsStmt::Class(js_class) => {
                 format!(
-                    "class {} {{\nconstructor({}) {{\n{}\n}}\n{}\n{}}}",
+                    "class {} {{\n{}{}\n{}}}",
                     js_class.name,
-                    js_class.inputs.join(", "),
-                    js_class
-                        .inputs
-                        .iter()
-                        .map(|input| format!("this.{input} = {input};"))
-                        .collect::<Vec<_>>()
-                        .join(" "),
+                    if js_class.inputs.len() > 0 {
+                        format!(
+                            "constructor({}) {{\n{}\n}}\n",
+                            js_class.inputs.join(", "),
+                            js_class
+                                .inputs
+                                .iter()
+                                .map(|input| format!("this.{input} = {input};"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        )
+                    } else {
+                        "".to_string()
+                    },
                     js_class
                         .static_fields
                         .iter()

@@ -18,7 +18,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use prettify_js::prettyprint;
 use ravascript_core::{
-    catch, from_block, from_crate, from_fn, from_module, try_,
+    catch, from_block, from_crate, from_fn, from_module, generate_js_from_file, try_,
     web::{
         try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
         NAVIGATOR,
@@ -59,13 +59,31 @@ macro_rules! r2j_block {
 }
 
 macro_rules! r2j_file {
-    ($block:block) => {{
-        #[fn_stmts_as_str]
-        fn fn_wrapper() $block
-        let generated_js = generate_js_from_block(block_code_str());
+    ($($item:item)*) => {{
+        mod generated {
+            $($item)*
+        }
+        let file = stringify!($($item)*);
+        let generated_js = generate_js_from_file(file);
         let generated_js = format_js(generated_js);
         generated_js
     }};
+}
+
+// TODO it is nice using `:block` for `r2j_block` because then rustfmt works on it, and I believe cargo check will run on it. For files, we might want to test eg file level attributes, which shouldn't appear in a block. For 99% of cases this won't matter and want rustfmt to work, for file level attrs, cross that bridge when we come to it. Pretty sure macro_rules! inputs can be overloaded so maybe accept block *or* tt.
+// Why not use stringify directly? Because we want to also output the actual Rust module so it gets checked by rustc/RA.
+macro_rules! r2j_module {
+    // rustfmt tt seems to work fine for tt, so I can't remember what the advantage of a block over tt was. For now stick with item because it doesn't require {}, though does require wrapping in `mod foo {}` but that makes it clear we are defining a module and dissallows incorrect code (except for using other items like fn instead)
+    // ($block:tt) => {{
+    ($module:item) => {
+        {
+            $module
+            let file = stringify!($module);
+            let generated_js = generate_js_from_file(file);
+            let generated_js = format_js(generated_js);
+            generated_js
+        }
+    };
 }
 
 macro_rules! r2j_assert_eq {
@@ -204,13 +222,6 @@ fn generate_js_from_block(js: impl ToString) -> String {
 }
 fn generate_js_from_module(js: impl ToString) -> String {
     from_module(js.to_string().as_str(), false)
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-fn generate_js_from_file(js: impl ToString) -> String {
-    from_file(js.to_string().as_str(), false)
         .iter()
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
@@ -630,30 +641,20 @@ async fn it_transpiles_crate_directory() {
     assert_eq!(format_js(""), format_js(actual));
 }
 
-#[ignore]
+// #[ignore]
 #[tokio::test]
 async fn crate_module_path() {
-    let actual = r2j_block!({
-        mod foo {
-            struct Bar {}
-            pub fn baz() {
-                let _ = self::Bar {};
-            }
+    // let actual = r2j_module!(
+    let actual = r2j_file!(
+        struct Bar {}
+        pub fn baz() {
+            let _ = self::Bar {};
         }
-        foo::baz();
-    });
-    let expected = r#"var _closure = (arg) => {
-  var ifTempAssignment;
-  if (arg.id === someId) {
-    var [num] = arg.data;
-    var sum = num + 5;
-    ifTempAssignment = sum;
-  } else if (arg.id === noneId) {
-    ifTempAssignment = 0;
-  } else {
-    ifTempAssignment = "this shouldn't exist";
-  }
-  return ifTempAssignment;
-};"#;
+    );
+    let expected = r#"class Bar {}
+
+function baz() {
+  var _ = self.Bar({});
+}"#;
     assert_eq!(expected, actual);
 }
