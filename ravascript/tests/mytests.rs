@@ -654,7 +654,7 @@ async fn it_transpiles_crate_directory() {
 #[tokio::test]
 async fn simple_module() {
     // let actual = r2j_file_unchecked!(
-        // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
+    // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
     let actual = r2j_file!(
         struct Bar {}
         pub fn baz() {
@@ -680,7 +680,7 @@ function green() {}"#;
 #[tokio::test]
 async fn module_super() {
     // let actual = r2j_file_unchecked!(
-        // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
+    // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
     let actual = r2j_file!(
         struct Bar {}
         fn baz() {
@@ -696,6 +696,51 @@ async fn module_super() {
 class Bar {}
 function baz() {
   var _ = new Bar();
+}
+
+// foo
+function green() {
+  var blue = baz();
+}"#;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn module_self() {
+    let actual = r2j_file!(
+        struct Bar {}
+        fn baz() {
+            let _ = Bar {};
+        }
+        fn green() {
+            let blue = self::baz();
+        }
+    );
+    let expected = r#"class Bar {}
+function baz() {
+  var _ = new Bar();
+}
+function green() {
+  var blue = baz();
+}"#;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn module_crate() {
+    let actual = r2j_file_unchecked!(
+        fn baz() -> i32 {
+            5
+        }
+        mod foo {
+            fn green() {
+                let blue = crate::baz();
+            }
+        }
+    );
+    let expected = r#"// crate
+function baz() {
+  return 5;
 }
 
 // foo

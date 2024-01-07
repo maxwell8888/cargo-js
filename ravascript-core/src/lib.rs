@@ -3427,6 +3427,8 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                             .join("__");
                     }
 
+                    // dbg!("item defined in module");
+
                     segs
                 } else if let Some(use_mapping) = module
                     .resolved_mappings
@@ -3434,6 +3436,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     .find(|use_mapping| use_mapping.0 == segs[0])
                 {
                     // Path starts with an item `use`d (possibly a chain of `use`s which have been resolved to a single path) from the current module
+                    // dbg!("item used");
                     if let Some(dup) = global_data.duplicates.iter().find(|dup| {
                         dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
                     }) {
@@ -3468,6 +3471,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
                     segs.remove(0);
 
+                    // dbg!("Path starts with a submodule of the current module");
                     get_path(false, true, submodule, segs, global_data, &submodule_path)
                 } else if segs[0] == "super" {
                     // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
@@ -3482,6 +3486,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .find(|module| module.path == current_module)
                         .unwrap();
 
+                    // dbg!("in super");
                     get_path(true, true, module, segs, global_data, &current_module)
                 } else if segs[0] == "self" {
                     // NOTE private items are still accessible from the module via self
@@ -3489,6 +3494,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
 
                     // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
                     // TODO problem is that we are conflating `in_same_module` with pub/private
+                    // dbg!("in self");
                     get_path(true, true, module, segs, global_data, &current_module)
                 } else if segs[0] == "crate" {
                     let current_module = vec!["crate".to_string()];
@@ -3498,12 +3504,19 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .find(|module| module.path == current_module)
                         .unwrap();
 
-                    // TODO descendants can access private items, so it depends whether the module trying to access the item is a descendant of the module it item is in
-                    get_path(false, true, module, segs, global_data, &current_module)
+                    // TODO descendants can access private items, so it depends whether the module trying to access the item is a descendant of the module it item is in, so need to keep track of the original call site?
+
+                    // dbg!("in crate");
+                    segs.remove(0);
+
+                    // NOTE all modules are desecendants of crate so all items in crate are visible/public
+                    get_path(true, true, module, segs, global_data, &current_module)
                 } else if segs.len() == 1 && segs[0] == "this" {
+                    // dbg!("in this");
                     segs
                 } else if use_private_items {
                     // If none of the above conditions are met then assume the path refers to an item/variable in an enclosing scope within this module, not at the top level of a module, so simply return the path
+                    // dbg!("in private items");
                     segs
                 } else {
                     dbg!(module);
