@@ -630,6 +630,8 @@ fn handle_item_fn(
             .map(|seg| camel(seg))
             .collect::<Vec<_>>()
             .join("__");
+    } else {
+        name = camel(name);
     }
     if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
@@ -1817,15 +1819,17 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsStmtModul
         for module in &mut global_data.transpiled_modules {
             module.stmts.insert(
                 0,
-                JsStmt::Comment(
+                JsStmt::Comment(if module.module_path == ["crate"] {
+                    "crate".to_string()
+                } else {
                     module
                         .module_path
                         .iter()
                         .cloned()
                         .skip(1)
                         .collect::<Vec<_>>()
-                        .join("::"),
-                ),
+                        .join("::")
+                }),
             );
         }
     }
@@ -3384,8 +3388,19 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 mut segs: Vec<String>,
                 global_data: &GlobalData,
                 current_module: &Vec<String>,
+                original_module: &Vec<String>,
             ) -> Vec<String> {
-                let item_defined_in_module = if use_private_items {
+                // All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...`
+                let is_parent_or_same_module = if original_module.len() >= current_module.len() {
+                    current_module
+                        .iter()
+                        .enumerate()
+                        .all(|(i, current_module)| current_module == &original_module[i])
+                } else {
+                    false
+                };
+
+                let item_defined_in_module = if use_private_items || is_parent_or_same_module {
                     module
                         .pub_definitions
                         .iter()
@@ -3455,6 +3470,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 } else if module
                     .pub_submodules
                     .iter()
+                    // TODO it is not correct to *always* include private modules here. Whilst the immediate child modules are public to all modules (not their items, but the module itself), we might not actually be accessing it directly from the parent eg `foo::bar::baz()` and `bar` is not `pub`
                     .chain(module.private_submodules.iter())
                     .any(|submodule_name| submodule_name == &segs[0])
                 {
@@ -3472,7 +3488,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     segs.remove(0);
 
                     // dbg!("Path starts with a submodule of the current module");
-                    get_path(false, true, submodule, segs, global_data, &submodule_path)
+                    get_path(
+                        false,
+                        true,
+                        submodule,
+                        segs,
+                        global_data,
+                        &submodule_path,
+                        original_module,
+                    )
                 } else if segs[0] == "super" {
                     // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
                     segs.remove(0);
@@ -3487,7 +3511,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .unwrap();
 
                     // dbg!("in super");
-                    get_path(true, true, module, segs, global_data, &current_module)
+                    get_path(
+                        true,
+                        true,
+                        module,
+                        segs,
+                        global_data,
+                        &current_module,
+                        original_module,
+                    )
                 } else if segs[0] == "self" {
                     // NOTE private items are still accessible from the module via self
                     segs.remove(0);
@@ -3495,7 +3527,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
                     // TODO problem is that we are conflating `in_same_module` with pub/private
                     // dbg!("in self");
-                    get_path(true, true, module, segs, global_data, &current_module)
+                    get_path(
+                        true,
+                        true,
+                        module,
+                        segs,
+                        global_data,
+                        &current_module,
+                        original_module,
+                    )
                 } else if segs[0] == "crate" {
                     let current_module = vec!["crate".to_string()];
                     let module = global_data
@@ -3510,7 +3550,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     segs.remove(0);
 
                     // NOTE all modules are desecendants of crate so all items in crate are visible/public
-                    get_path(true, true, module, segs, global_data, &current_module)
+                    get_path(
+                        true,
+                        true,
+                        module,
+                        segs,
+                        global_data,
+                        &current_module,
+                        original_module,
+                    )
                 } else if segs.len() == 1 && segs[0] == "this" {
                     // dbg!("in this");
                     segs
@@ -3527,6 +3575,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             }
 
             // dbg!(&global_data.modules);
+            // dbg!(&current_module);
             let module = global_data
                 .modules
                 .iter()
@@ -3538,7 +3587,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             //     .map(|seg| case_convert(seg))
             //     .collect::<Vec<_>>();
 
-            let mut segs = get_path(true, false, module, segs, global_data, current_module);
+            let mut segs = get_path(
+                true,
+                false,
+                module,
+                segs,
+                global_data,
+                current_module,
+                current_module,
+            );
 
             // convert case of rest of path
             for (i, seg) in segs.iter_mut().enumerate() {

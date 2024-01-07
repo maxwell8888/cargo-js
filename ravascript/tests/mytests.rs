@@ -539,7 +539,7 @@ async fn closure_return_match() {
     assert_eq!(expected, actual);
 }
 
-#[ignore]
+// #[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
     let actual = from_crate("../for-testing".into(), false);
@@ -550,96 +550,87 @@ async fn it_transpiles_crate_directory() {
         .join("\n\n");
 
     let expected = r#"
-    var crate = {
-        fooBar: {
-            Internal: class Internal {
-                constructor(age) {
-                    this.age = age;
-                }
+    // crate
+    function duplicateName() {
+      return 10;
+    }
+    (function main() {
+      duplicateName();
+      utils__colors__duplicateName();
+      var thing = External.new();
+      var fido = new Green(true, 2);
+      assert.strictEqual(fido.woof(), 32);
+    })();
     
-                addTen() {
-                    return this.age + 10
-                }
-            },
-            External: class External {
-                constructor(sub, count) {
-                    this.sub = sub;
-                    this.count = count;
-                }
+    // foo_bar
+    class Internal {
+      constructor(age) {
+        this.age = age;
+      }
     
-                static new() {
-                    return new External(new Internal(0), 9);
-                }
-            }
-        },
-        stuff: {
-            dogActivity: 10,
-            dog: {
-                localFunction: function localFunction() {
-                    return 10;
-                },
-                Dog: class Dog {
-                    constructor(fluffy, age) {
-                        this.fluffy = fluffy;
-                        this.age = age;
-                    }
-
-                    woof() {
-                        function localFunction() {
-                            return 9999;
-                        }
-                        return (
-                            this.age +
-                            this.localFunction() +
-                            this.super.super.utils.saySomething.sayHello() +
-                            crate.utils.saySomething.sayHello() +
-                            crate.stuff.dog.localFunction() +
-                            super.dogActivity +
-                            super.stuffFunction()
-                        )
-                    }
-                }
-            },
-            stuffFunction: function stuffFunction() {
-              return 10;
-            },
-        },
-        utils: {
-            saySomething: {
-                sayHello: function sayHello() {
-                    return 10;
-                }    
-            }
-        },
-        main: function main() {
-            var thing = External.new();
-            var fido = new Dog(true, 2);
-            assert.strictEqual(fido.woof(), 32);
-        },
-        init: function init() {
-            // crate
-            this.fooBar.crate = this;
-            this.stuff.crate = this;
-            this.stuff.dog.crate = this;
-            this.utils.crate = this;
-            this.utils.saySomething.crate = this;
-            
-            // super
-            this.fooBar.super = this;
-            this.stuff.super = this;
-            this.stuff.dog.super = this.stuff;
-            this.utils.super = this;
-            this.utils.saySomething.super = this.utils;
-            
-            // use
-            this.External = this.fooBar.External;
-            this.Dog = this.stuff.dog.Dog;
-            
-            delete this.init;
-            return this;
-          },
-    }.init();
-    main();
+      addTen() {
+        return this.age + 10;
+      }
+    }
+    class External {
+      constructor(sub, count) {
+        this.sub = sub;
+        this.count = count;
+      }
+    
+      static new() {
+        return new External(new Internal(0), 9);
+      }
+    }
+    
+    // colors
+    var DOG_ACTIVITY = 10;
+    function colors__duplicateName() {
+      return 10;
+    }
+    function stuffFunction() {
+      return 10;
+    }
+    
+    // colors::green
+    function green__duplicateName() {
+      return 3;
+    }
+    class Green {
+      constructor(fluffy, age) {
+        this.fluffy = fluffy;
+        this.age = age;
+      }
+    
+      woof() {
+        function green__duplicateName() {
+          return 9999;
+        }
+        return (
+          this.age +
+          green__duplicateName() +
+          green__duplicateName() +
+          sayHello() + 
+          duplicateName() +
+          sayHello() +
+          green__duplicateName() +
+          DOG_ACTIVITY +
+          stuffFunction()
+        );
+      }
+    }
+    
+    // utils
+    
+    // utils::say_something
+    function sayHello() {
+      return 10;
+    }
+    
+    // utils::colors
+    function utils__colors__duplicateName() {
+      return 10;
+    }
     "#;
 
     // println!("{}", expected);
@@ -647,7 +638,7 @@ async fn it_transpiles_crate_directory() {
     // println!("{}", &actual);
     // println!("{}", format_js(&actual));
 
-    assert_eq!(format_js(""), format_js(actual));
+    assert_eq!(format_js(expected), format_js(actual));
 }
 
 // TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust

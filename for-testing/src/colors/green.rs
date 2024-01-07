@@ -16,10 +16,10 @@ impl Green {
             // TODO shadowed names not impl yet
             + duplicate_name()  
             + self::super::super::utils::say_something::say_hello()
-            // + crate::duplicate_name()
-            // + crate::utils::say_something::say_hello()
-            // + crate::colors::green::duplicate_name()
-            // + super::DOG_ACTIVITY
-            // + super::stuff_function()
+            + crate::duplicate_name()
+            + crate::utils::say_something::say_hello()
+            + crate::colors::green::duplicate_name()
+            + super::DOG_ACTIVITY
+            + super::stuff_function()
     }
 }
