@@ -1942,17 +1942,20 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsStmtModule> {
     // and module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {
         for module in &mut global_data.transpiled_modules {
+            // dbg!(&module);
             module.stmts.insert(
                 0,
-                JsStmt::Comment(
+                JsStmt::Comment(if module.module_path == ["crate"] {
+                    "crate".to_string()
+                } else {
                     module
                         .module_path
                         .iter()
                         .cloned()
                         .skip(1)
                         .collect::<Vec<_>>()
-                        .join("::"),
-                ),
+                        .join("::")
+                }),
             );
         }
     }
@@ -1968,7 +1971,7 @@ pub fn generate_js_from_file(code: impl ToString) -> String {
         .iter()
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n\n")
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -2668,7 +2671,7 @@ impl JsStmtModule {
                 stmt.js_string()
             })
             .collect::<Vec<_>>()
-            .join("\n\n");
+            .join("\n");
         // format!(
         //     "{}{}",
         //     if with_name_comment {
@@ -3479,7 +3482,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .find(|module| module.path == current_module)
                         .unwrap();
 
-                    get_path(false, true, module, segs, global_data, &current_module)
+                    get_path(true, true, module, segs, global_data, &current_module)
                 } else if segs[0] == "self" {
                     // NOTE private items are still accessible from the module via self
                     segs.remove(0);
@@ -3495,6 +3498,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         .find(|module| module.path == current_module)
                         .unwrap();
 
+                    // TODO descendants can access private items, so it depends whether the module trying to access the item is a descendant of the module it item is in
                     get_path(false, true, module, segs, global_data, &current_module)
                 } else if segs.len() == 1 && segs[0] == "this" {
                     segs

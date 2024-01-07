@@ -70,6 +70,15 @@ macro_rules! r2j_file {
     }};
 }
 
+macro_rules! r2j_file_unchecked {
+    ($($item:item)*) => {{
+        let file = stringify!($($item)*);
+        let generated_js = generate_js_from_file(file);
+        let generated_js = format_js(generated_js);
+        generated_js
+    }};
+}
+
 // TODO it is nice using `:block` for `r2j_block` because then rustfmt works on it, and I believe cargo check will run on it. For files, we might want to test eg file level attributes, which shouldn't appear in a block. For 99% of cases this won't matter and want rustfmt to work, for file level attrs, cross that bridge when we come to it. Pretty sure macro_rules! inputs can be overloaded so maybe accept block *or* tt.
 // Why not use stringify directly? Because we want to also output the actual Rust module so it gets checked by rustc/RA.
 macro_rules! r2j_module {
@@ -641,20 +650,57 @@ async fn it_transpiles_crate_directory() {
     assert_eq!(format_js(""), format_js(actual));
 }
 
-// #[ignore]
+// TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust
 #[tokio::test]
-async fn crate_module_path() {
-    // let actual = r2j_module!(
+async fn simple_module() {
+    // let actual = r2j_file_unchecked!(
+        // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
     let actual = r2j_file!(
         struct Bar {}
         pub fn baz() {
-            let _ = self::Bar {};
+            let _ = Bar {};
+        }
+        mod foo {
+            fn green() {
+                // let blue = crate::baz();
+            }
         }
     );
-    let expected = r#"class Bar {}
-
+    let expected = r#"// crate
+class Bar {}
 function baz() {
-  var _ = self.Bar({});
+  var _ = new Bar();
+}
+
+// foo
+function green() {}"#;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn module_super() {
+    // let actual = r2j_file_unchecked!(
+        // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
+    let actual = r2j_file!(
+        struct Bar {}
+        fn baz() {
+            let _ = Bar {};
+        }
+        mod foo {
+            fn green() {
+                let blue = super::baz();
+            }
+        }
+    );
+    let expected = r#"// crate
+class Bar {}
+function baz() {
+  var _ = new Bar();
+}
+
+// foo
+function green() {
+  var blue = baz();
 }"#;
     assert_eq!(expected, actual);
 }
