@@ -921,7 +921,7 @@ fn handle_item(
                             // class_name: impl_item_const.ident.to_string(),
                             class_name: class_name.clone(),
                             module_path: current_module_path.clone(),
-                            item_stmt: JsStmt::ClassStatic(JsLocal {
+                            item_stmt: JsImplItem::ClassStatic(JsLocal {
                                 public: false,
                                 export: false,
                                 type_: LocalType::Static,
@@ -967,7 +967,7 @@ fn handle_item(
                             ImplItemTemp {
                                 class_name: class_name.clone(),
                                 module_path: current_module_path.clone(),
-                                item_stmt: JsStmt::ClassMethod(
+                                item_stmt: JsImplItem::ClassMethod(
                                     class_name.clone(),
                                     false,
                                     static_,
@@ -991,16 +991,18 @@ fn handle_item(
                     _ => todo!(),
                 }
             }
-            if is_module {
-                global_data.impl_items.extend(impl_stmts);
-            } else {
-                js_stmts.extend(
-                    impl_stmts
-                        .into_iter()
-                        .map(|ImplItemTemp { item_stmt, .. }| item_stmt)
-                        .collect::<Vec<_>>(),
-                );
-            }
+            // TODO can't remember why I want this differentiation
+            // if is_module {
+            //     global_data.impl_items.extend(impl_stmts);
+            // } else {
+            //     js_stmts.extend(
+            //         impl_stmts
+            //             .into_iter()
+            //             .map(|ImplItemTemp { item_stmt, .. }| item_stmt)
+            //             .collect::<Vec<_>>(),
+            //     );
+            // }
+            global_data.impl_items.extend(impl_stmts);
         }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
@@ -1259,12 +1261,22 @@ struct RustPreludeTypes {
 }
 
 #[derive(Debug, Clone)]
+enum JsImplItem {
+    /// This means that `foo() {}` will be used in place of `function foo() {}`  
+    ///
+    /// Some means it is a method, the first bool is whether it is private and thus should have # prepended to the name, the second bool is whether it is static  
+    ///
+    /// (class name, private, static, JsFn)  
+    ClassMethod(String, bool, bool, JsFn),
+    ClassStatic(JsLocal),
+}
+#[derive(Debug, Clone)]
 struct ImplItemTemp {
     /// snake case
     class_name: String,
     /// snake case
     module_path: Vec<String>,
-    item_stmt: JsStmt,
+    item_stmt: JsImplItem,
 }
 
 #[derive(Debug, Clone)]
@@ -1327,10 +1339,10 @@ fn update_classes(js_stmt_modules: &mut Vec<JsModule>, impl_items: Vec<ImplItemT
                             && js_class.name == impl_item.class_name
                         {
                             match impl_item.item_stmt {
-                                JsStmt::ClassStatic(js_local) => {
+                                JsImplItem::ClassStatic(js_local) => {
                                     js_class.static_fields.push(js_local);
                                 }
-                                JsStmt::ClassMethod(name, private, static_, js_fn) => {
+                                JsImplItem::ClassMethod(name, private, static_, js_fn) => {
                                     js_class.methods.push((name, private, static_, js_fn));
                                 }
                                 stmt => {
@@ -2242,43 +2254,7 @@ impl JsExpr {
                 } else {
                     format!("({})", inputs.join(", "))
                 };
-                // let body = if body.len() == 1 {
-                //     // concise body
-                //     match body.get(0).unwrap() {
-                //         JsStmt::Local(js_local) => js_local.js_string(),
-                //         // TODO single objects returned by concise body must be wrapped in parenthesis
-                //         JsStmt::Expr(js_expr, closing_semi) => {
-                //             if *closing_semi {
-                //                 match js_expr {
-                //                     JsExpr::If(_, _, _, _, _) => panic!(),
-                //                     _ => js_expr.js_string(),
-                //                 }
-                //             } else {
-                //                 match js_expr {
-                //                     JsExpr::If(_, _, _, _, _) => {
-                //                         format!("{{\n{}\n}}", js_expr.js_string())
-                //                     }
-                //                     _ => js_expr.js_string(),
-                //                 }
-                //             }
-                //         }
-                //         JsStmt::Import(_, _, _) => todo!(),
-                //         JsStmt::Function(_) => todo!(),
-                //         JsStmt::Class(_) => todo!(),
-                //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                //         JsStmt::ClassStatic(_) => todo!(),
-                //         JsStmt::Raw(_) => todo!(),
-                //         JsStmt::ScopeBlock(_) => todo!(),
-                //         JsStmt::CatchBlock(_, _) => todo!(),
-                //         JsStmt::TryBlock(_) => todo!(),
-                //     }
-                // } else {
-                //     body.iter()
-                //         .enumerate()
-                //         .map(|(i, stmt)| handle_js_body_stmts(i, stmt, body.len()))
-                //         .collect::<Vec<_>>()
-                //         .join("\n")
-                // };
+                // TODO single objects returned by concise body must be wrapped in parenthesis
                 let body = if *block {
                     body.iter()
                         .enumerate()
@@ -2406,8 +2382,6 @@ pub struct JsClass {
     name: String,
     /// we are assuming input names is equivalent to field names
     inputs: Vec<String>,
-    /// (class name, private, static, JsFn)  
-    // static_fields: Vec<(String, JsLocal)>,
     static_fields: Vec<JsLocal>,
     /// (class name, private, static, JsFn)  
     methods: Vec<(String, bool, bool, JsFn)>,
@@ -2476,13 +2450,10 @@ impl LocalName {
 
 #[derive(Clone, Debug)]
 pub struct JsLocal {
-    /// None if not a const is not defined at module level
-    // module_path: Option<Vec<String>>,
     public: bool,
     export: bool,
     type_: LocalType,
     lhs: LocalName,
-    // names: Vec<String>,
     value: JsExpr,
 }
 impl JsLocal {
@@ -2507,8 +2478,6 @@ impl JsLocal {
 
 #[derive(Clone, Debug)]
 pub struct JsFn {
-    /// None if not a fn defined at module level
-    // module_path: Option<Vec<String>>,
     iife: bool,
     public: bool,
     export: bool,
@@ -2567,7 +2536,6 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
 }
 impl JsFn {
     fn js_string(&self) -> String {
-        // dbg!(self);
         // TODO private fields and methods should be prepended with `#` like `#private_method() {}` but this would require also prepending all callsites of the the field or method, which requires more sophisticated AST analysis than we currently want to do.
         let body_stmts = self
             .body_stmts
@@ -2604,85 +2572,16 @@ pub struct JsModule {
     name: String,
     /// snake_case Rust path starting with "crate"
     module_path: Vec<String>,
+    // TODO consider having JsItems like syn::Items to enforce what is allowed at the module level
     stmts: Vec<JsStmt>,
 }
 impl JsModule {
     pub fn js_string(&self) -> String {
-        let items = self
-            .stmts
+        self.stmts
             .iter()
-            .map(|stmt| {
-                // let name = match stmt {
-                //     JsStmt::Class(js_class) => js_class.name.clone(),
-                //     JsStmt::ClassMethod(_, _, _, _) => todo!("cannot be js module item"),
-                //     JsStmt::ClassStatic(_) => todo!("cannot be js module item"),
-                //     JsStmt::Local(js_local) => {
-                //         if let LocalName::Single(name) = &js_local.lhs {
-                //             // only want the `js_local`'s value, not the whole `var name = value;`
-                //             return format!("{name}: {}", js_local.value.js_string());
-                //         } else {
-                //             // https://github.com/rust-lang/rfcs/issues/3290
-                //             panic!("consts do not support destructuring");
-                //         }
-                //     }
-                //     JsStmt::Expr(js_expr, _) => {
-                //         dbg!(js_expr);
-                //         todo!("cannot be js module item")
-                //     }
-                //     JsStmt::Import(_, _, _) => todo!("cannot be js module item"),
-                //     JsStmt::Function(js_fn) => js_fn.name.clone(),
-                //     JsStmt::ScopeBlock(_) => todo!("cannot be js module item"),
-                //     JsStmt::TryBlock(_) => todo!("cannot be js module item"),
-                //     JsStmt::CatchBlock(_, _) => todo!("cannot be js module item"),
-                //     JsStmt::Raw(_) => todo!("cannot be js module item"),
-                //     JsStmt::Module(js_stmt_module) => js_stmt_module.name.clone(),
-                //     // TODO support allowing comments as module items so they can appear before the item in the object
-                //     JsStmt::Comment(_) => todo!("cannot be js module item"),
-                // };
-                // let value = stmt.js_string();
-                // format!("{name}: {value}")
-                stmt.js_string()
-            })
+            .map(|stmt| stmt.js_string())
             .collect::<Vec<_>>()
-            .join("\n");
-        // format!(
-        //     "{}{}",
-        //     if with_name_comment {
-        //         format!(
-        //             "// {}\n",
-        //             if self.module_path.len() == 1 {
-        //                 "main".to_string()
-        //             } else {
-        //                 self.module_path
-        //                     .iter()
-        //                     .cloned()
-        //                     .skip(1)
-        //                     .collect::<Vec<_>>()
-        //                     .join("::")
-        //             }
-        //         )
-        //     } else {
-        //         "".to_string()
-        //     },
-        //     items
-        // )
-
-        // format!(
-        //     "// {}\n{}",
-        //     if self.module_path.len() == 1 {
-        //         "main".to_string()
-        //     } else {
-        //         self.module_path
-        //             .iter()
-        //             .cloned()
-        //             .skip(1)
-        //             .collect::<Vec<_>>()
-        //             .join("::")
-        //     },
-        //     items
-        // )
-
-        items
+            .join("\n")
     }
 }
 
