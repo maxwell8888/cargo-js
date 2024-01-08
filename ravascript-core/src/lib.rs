@@ -6,8 +6,8 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, FnArg, ImplItem, Item,
-    ItemEnum, ItemFn, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp, UseTree,
-    Visibility,
+    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp,
+    UseTree, Visibility,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -797,6 +797,170 @@ fn handle_item_enum(
     })
 }
 
+fn handle_item_impl(
+    item_impl: ItemImpl,
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+) {
+    // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
+    // fn main() {
+    //     struct Cool {}
+    //     if false {
+    //         fn inner() {
+    //             impl Cool {
+    //                 fn whatever(&self) {
+    //                     dbg!("hi");
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     let cool = Cool {};
+    //     cool.whatever();
+    // }
+    // [src/main.rs:8] "hi" = "hi"
+
+    // Where different impls with the same name in different branches is considered "duplicate definitions". similarly different impls in different modules also causes a duplication error eg:
+    // fn main() {
+    //     struct Cool {}
+    //     if false {
+    //         fn inner() {
+    //             impl Cool {
+    //                 fn whatever(&self) {
+    //                     dbg!("hi");
+    //                 }
+    //             }
+    //         }
+    //     } else {
+    //         fn inner() {
+    //             impl Cool {
+    //                 fn whatever(&self) {
+    //                     dbg!("bye");
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     let cool = Cool {};
+    //     cool.whatever();
+    // }
+    // error[E0592]: duplicate definitions with name `whatever`
+
+    // Likewise we don't want to add methods to classes in JS in ways that depend on code being run, we want all impls to be automatically added to the class at compile time and thus accessible from anywhere.
+
+    // Rules/algorithm for finding class
+    // (in both cases a struct being `use`'d means it must be at the top level of a different module)
+    // * Top level impls *
+    // The struct for an impl defined at the top level, could be defined at the top level, or `use`'d at the top level
+    // 1. look for a struct/enum/class with the same name in the current module.
+    // 2. lool for uses with the same name, somehow get access to that list of JsStmts, find the struct and update it. Maybe by the list of (unmatched) impls, with the module module path, so wrapping callers can check for a return -> check if module path matches it's own, else return the impls again. Likewise to get lower ones, pass them as an argument??? The other mod could be in a completely different branch that has already been parsed... I think we need to just add them, with the struct name and module path, to a global vec, then do a second pass where we go through each module and update any classes we have impls for.
+    //
+    // * Impls in functions *
+    // The struct for an impl defined in a function, could be in any parent function, `use`'d in any parent function, defined at the top level, or `use`'d at the top level
+    // 1. look for struct in current block/function scope stmts
+    // 2. look for use in the current scope
+    // 4. look in current module for struct or use (doing this before parent scopes because it is probably quicker and more likely to be there)
+    // 3. recursively look in the parent scope for the struct or use
+    // Maybe get access to scopes in higher levels by returning any unmatched impls?
+
+    // for the current block/list of stmts, store impl items in a Vec along with the class name
+    // After
+    let class_name = match *item_impl.self_ty {
+        Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
+        _ => todo!(),
+    };
+
+    let mut impl_stmts = Vec::new();
+    for impl_item in item_impl.items {
+        match impl_item {
+            ImplItem::Const(impl_item_const) => {
+                // impl_item_const
+                impl_stmts.push(ImplItemTemp {
+                    // class_name: impl_item_const.ident.to_string(),
+                    class_name: class_name.clone(),
+                    module_path: current_module_path.clone(),
+                    item_stmt: JsImplItem::ClassStatic(JsLocal {
+                        public: false,
+                        export: false,
+                        type_: LocalType::Static,
+                        lhs: LocalName::Single(impl_item_const.ident.to_string()),
+                        value: handle_expr(
+                            &impl_item_const.expr,
+                            global_data,
+                            &current_module_path,
+                        ),
+                    }),
+                })
+            }
+            ImplItem::Fn(item_impl_fn) => {
+                let static_ = if let Some(first_input) = item_impl_fn.sig.inputs.first() {
+                    match first_input {
+                        FnArg::Receiver(receiver) => false,
+                        FnArg::Typed(_) => true,
+                    }
+                } else {
+                    true
+                };
+                // let private = !export;
+                let input_names = item_impl_fn
+                    .sig
+                    .inputs
+                    .into_iter()
+                    .filter_map(|input| match input {
+                        FnArg::Receiver(_) => None,
+                        FnArg::Typed(pat_type) => match *pat_type.pat {
+                            Pat::Ident(pat_ident) => Some(camel(pat_ident.ident)),
+                            _ => todo!(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                let body_stmts = item_impl_fn
+                    .block
+                    .stmts
+                    .into_iter()
+                    .map(|stmt| handle_stmt(&stmt, global_data, &current_module_path))
+                    .collect::<Vec<_>>();
+                impl_stmts.push(
+                    // item_impl_fn.sig.ident.to_string(),
+                    ImplItemTemp {
+                        class_name: class_name.clone(),
+                        module_path: current_module_path.clone(),
+                        item_stmt: JsImplItem::ClassMethod(
+                            class_name.clone(),
+                            false,
+                            static_,
+                            JsFn {
+                                iife: false,
+                                public: false,
+                                export: false,
+                                is_method: true,
+                                async_: item_impl_fn.sig.asyncness.is_some(),
+                                name: camel(item_impl_fn.sig.ident),
+                                input_names,
+                                body_stmts,
+                            },
+                        ),
+                    },
+                )
+            }
+            ImplItem::Type(_) => todo!(),
+            ImplItem::Macro(_) => todo!(),
+            ImplItem::Verbatim(_) => todo!(),
+            _ => todo!(),
+        }
+    }
+    // TODO can't remember why I want this differentiation
+    // if is_module {
+    //     global_data.impl_items.extend(impl_stmts);
+    // } else {
+    //     js_stmts.extend(
+    //         impl_stmts
+    //             .into_iter()
+    //             .map(|ImplItemTemp { item_stmt, .. }| item_stmt)
+    //             .collect::<Vec<_>>(),
+    //     );
+    // }
+    global_data.impl_items.extend(impl_stmts);
+}
+
 fn handle_item(
     item: Item,
     is_module: bool,
@@ -845,165 +1009,7 @@ fn handle_item(
             js_stmts.push(handle_item_fn(&item_fn, global_data, current_module_path));
         }
         Item::ForeignMod(_) => todo!(),
-        Item::Impl(item_impl) => {
-            // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
-            // fn main() {
-            //     struct Cool {}
-            //     if false {
-            //         fn inner() {
-            //             impl Cool {
-            //                 fn whatever(&self) {
-            //                     dbg!("hi");
-            //                 }
-            //             }
-            //         }
-            //     }
-            //     let cool = Cool {};
-            //     cool.whatever();
-            // }
-            // [src/main.rs:8] "hi" = "hi"
-
-            // Where different impls with the same name in different branches is considered "duplicate definitions". similarly different impls in different modules also causes a duplication error eg:
-            // fn main() {
-            //     struct Cool {}
-            //     if false {
-            //         fn inner() {
-            //             impl Cool {
-            //                 fn whatever(&self) {
-            //                     dbg!("hi");
-            //                 }
-            //             }
-            //         }
-            //     } else {
-            //         fn inner() {
-            //             impl Cool {
-            //                 fn whatever(&self) {
-            //                     dbg!("bye");
-            //                 }
-            //             }
-            //         }
-            //     }
-            //     let cool = Cool {};
-            //     cool.whatever();
-            // }
-            // error[E0592]: duplicate definitions with name `whatever`
-
-            // Likewise we don't want to add methods to classes in JS in ways that depend on code being run, we want all impls to be automatically added to the class at compile time and thus accessible from anywhere.
-
-            // Rules/algorithm for finding class
-            // (in both cases a struct being `use`'d means it must be at the top level of a different module)
-            // * Top level impls *
-            // The struct for an impl defined at the top level, could be defined at the top level, or `use`'d at the top level
-            // 1. look for a struct/enum/class with the same name in the current module.
-            // 2. lool for uses with the same name, somehow get access to that list of JsStmts, find the struct and update it. Maybe by the list of (unmatched) impls, with the module module path, so wrapping callers can check for a return -> check if module path matches it's own, else return the impls again. Likewise to get lower ones, pass them as an argument??? The other mod could be in a completely different branch that has already been parsed... I think we need to just add them, with the struct name and module path, to a global vec, then do a second pass where we go through each module and update any classes we have impls for.
-            //
-            // * Impls in functions *
-            // The struct for an impl defined in a function, could be in any parent function, `use`'d in any parent function, defined at the top level, or `use`'d at the top level
-            // 1. look for struct in current block/function scope stmts
-            // 2. look for use in the current scope
-            // 4. look in current module for struct or use (doing this before parent scopes because it is probably quicker and more likely to be there)
-            // 3. recursively look in the parent scope for the struct or use
-            // Maybe get access to scopes in higher levels by returning any unmatched impls?
-
-            // for the current block/list of stmts, store impl items in a Vec along with the class name
-            // After
-            let class_name = match *item_impl.self_ty {
-                Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
-                _ => todo!(),
-            };
-
-            let mut impl_stmts = Vec::new();
-            for impl_item in item_impl.items {
-                match impl_item {
-                    ImplItem::Const(impl_item_const) => {
-                        // impl_item_const
-                        impl_stmts.push(ImplItemTemp {
-                            // class_name: impl_item_const.ident.to_string(),
-                            class_name: class_name.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassStatic(JsLocal {
-                                public: false,
-                                export: false,
-                                type_: LocalType::Static,
-                                lhs: LocalName::Single(impl_item_const.ident.to_string()),
-                                value: handle_expr(
-                                    &impl_item_const.expr,
-                                    global_data,
-                                    &current_module_path,
-                                ),
-                            }),
-                        })
-                    }
-                    ImplItem::Fn(item_impl_fn) => {
-                        let static_ = if let Some(first_input) = item_impl_fn.sig.inputs.first() {
-                            match first_input {
-                                FnArg::Receiver(receiver) => false,
-                                FnArg::Typed(_) => true,
-                            }
-                        } else {
-                            true
-                        };
-                        // let private = !export;
-                        let input_names = item_impl_fn
-                            .sig
-                            .inputs
-                            .into_iter()
-                            .filter_map(|input| match input {
-                                FnArg::Receiver(_) => None,
-                                FnArg::Typed(pat_type) => match *pat_type.pat {
-                                    Pat::Ident(pat_ident) => Some(camel(pat_ident.ident)),
-                                    _ => todo!(),
-                                },
-                            })
-                            .collect::<Vec<_>>();
-                        let body_stmts = item_impl_fn
-                            .block
-                            .stmts
-                            .into_iter()
-                            .map(|stmt| handle_stmt(&stmt, global_data, &current_module_path))
-                            .collect::<Vec<_>>();
-                        impl_stmts.push(
-                            // item_impl_fn.sig.ident.to_string(),
-                            ImplItemTemp {
-                                class_name: class_name.clone(),
-                                module_path: current_module_path.clone(),
-                                item_stmt: JsImplItem::ClassMethod(
-                                    class_name.clone(),
-                                    false,
-                                    static_,
-                                    JsFn {
-                                        iife: false,
-                                        public: false,
-                                        export: false,
-                                        is_method: true,
-                                        async_: item_impl_fn.sig.asyncness.is_some(),
-                                        name: camel(item_impl_fn.sig.ident),
-                                        input_names,
-                                        body_stmts,
-                                    },
-                                ),
-                            },
-                        )
-                    }
-                    ImplItem::Type(_) => todo!(),
-                    ImplItem::Macro(_) => todo!(),
-                    ImplItem::Verbatim(_) => todo!(),
-                    _ => todo!(),
-                }
-            }
-            // TODO can't remember why I want this differentiation
-            // if is_module {
-            //     global_data.impl_items.extend(impl_stmts);
-            // } else {
-            //     js_stmts.extend(
-            //         impl_stmts
-            //             .into_iter()
-            //             .map(|ImplItemTemp { item_stmt, .. }| item_stmt)
-            //             .collect::<Vec<_>>(),
-            //     );
-            // }
-            global_data.impl_items.extend(impl_stmts);
-        }
+        Item::Impl(item_impl) => handle_item_impl(item_impl, global_data, current_module_path),
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
             // Notes
@@ -1079,63 +1085,7 @@ fn handle_item(
             js_stmt_module.stmts = stmts;
             current_module_path.pop();
 
-            // // Get names of pub JsStmts
-            // // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
-            // let defined_names = &mut global_data
-            //     .modules
-            //     .iter_mut()
-            //     .find(|module| module.path == module_path)
-            //     .unwrap()
-            //     .defined_names;
-            // for stmt in &stmts {
-            //     match stmt {
-            //         JsStmt::Class(js_class) => {
-            //             defined_names.push(js_class.name.clone());
-            //         }
-            //         JsStmt::ClassMethod(_, _, _, _) => {}
-            //         JsStmt::ClassStatic(_) => {}
-            //         JsStmt::Local(js_local) => {
-            //             if js_local.public {
-            //                 if let LocalName::Single(name) = &js_local.lhs {
-            //                     defined_names.push(name.clone())
-            //                 } else {
-            //                     // https://github.com/rust-lang/rfcs/issues/3290
-            //                     panic!("consts do not support destructuring");
-            //                 }
-            //             }
-            //         }
-            //         JsStmt::Expr(_, _) => {}
-            //         JsStmt::Import(_, _, _) => {}
-            //         JsStmt::Function(js_fn) => {
-            //             defined_names.push(js_fn.name.clone());
-            //         }
-            //         JsStmt::ScopeBlock(_) => {}
-            //         JsStmt::TryBlock(_) => {}
-            //         JsStmt::CatchBlock(_, _) => {}
-            //         JsStmt::Raw(_) => {}
-            //         JsStmt::Module(_) => {}
-            //         JsStmt::Use(_) => {}
-            //         JsStmt::Comment(_) => {}
-            //     }
-            // }
-
-            // add return Object containing public items
-            // TODO object key and value have same name so don't need to specify value
-            // stmts.push(JsStmt::Raw(format!("return {{ {} }};", names.join(", "))));
-
-            // Wrap mod up in an iffe assigned to the mod name eg
-            // var myModule = (function myModule() {
-            //     ...
-            //     return { publicModuleItem1: publicModuleItem1, publicModuleItem2: publicModuleItem2 };
-            // })();
-
-            // js_stmts.push(JsStmt::Module())
-
-            // let mut stmts = Vec::new();
-            // for thing in item_mod.content.unwrap().1 {
-            //     handle_item(thing, &mut stmts);
-            // }
-            // js_stmts.push(JsStmt::ScopeBlock(stmts))
+            // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
         }
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
