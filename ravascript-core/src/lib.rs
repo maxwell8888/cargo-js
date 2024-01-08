@@ -815,23 +815,6 @@ fn handle_item_impl(
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) {
-    // *** From elsewhere:
-    // Also, impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
-    // fn main() {
-    //     struct Cool {}
-    //     fn inner() {
-    //         impl Cool {
-    //             fn whatever(&self) {
-    //                 dbg!("hi");
-    //             }
-    //         }
-    //     }
-    //     let cool = Cool {};
-    //     cool.whatever();
-    // }
-    // let mut module_object = Vec::new();
-    // ***
-
     // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
     // fn main() {
     //     struct Cool {}

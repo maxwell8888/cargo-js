@@ -708,6 +708,7 @@ function green() {
 
 #[tokio::test]
 async fn impl_in_fn_scope() {
+    // impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
     let actual = r2j_block!({
         struct Cool {}
         if false {
