@@ -6,6 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+biome_formatter = "0.3.1"
+biome_js_formatter = "0.3.1"
+biome_js_parser = "0.3.1"
+biome_js_syntax = "0.3.1"
 heck = "0.4.1"
 prettify-js = "0.1.0"
 proc-macro2 = { version = "1", features = ["span-locations"] }

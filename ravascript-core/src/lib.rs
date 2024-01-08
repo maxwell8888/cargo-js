@@ -1,3 +1,7 @@
+use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
+use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
+use biome_js_parser::JsParserOptions;
+use biome_js_syntax::JsFileSource;
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use std::{
     fmt::Debug,
@@ -6,8 +10,8 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, FnArg, ImplItem, Item,
-    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemUse, Lit, Member, Meta, Pat, Stmt, Type, UnOp,
-    UseTree, Visibility,
+    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemUse, Lit, Member, Meta, Pat, Stmt, Type,
+    UnOp, UseTree, Visibility,
 };
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
@@ -464,10 +468,14 @@ fn camel(text: impl ToString) -> String {
     }
 }
 
-fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsStmt {
+fn handle_stmt(
+    stmt: &Stmt,
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => JsStmt::Expr(
-            handle_expr(expr, global_data, current_module),
+            handle_expr(expr, global_data, current_module_path),
             closing_semi.is_some(),
         ),
         Stmt::Local(local) => {
@@ -494,7 +502,7 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
             let value = handle_expr(
                 &*local.init.as_ref().unwrap().expr,
                 global_data,
-                current_module,
+                current_module_path,
             );
             match value {
                 JsExpr::If(_assignment, _declare_var, condition, succeed, fail) => {
@@ -515,17 +523,22 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
             // TODO this should all be handled by `fn handle_item()`
             Item::Const(_) => todo!(),
             Item::Enum(item_enum) => {
-                handle_item_enum(item_enum.clone(), global_data, current_module)
+                handle_item_enum(item_enum.clone(), global_data, current_module_path)
             }
             Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => handle_item_fn(item_fn, global_data, current_module),
+            Item::Fn(item_fn) => handle_item_fn(item_fn, global_data, current_module_path),
             Item::ForeignMod(_) => todo!(),
-            Item::Impl(_) => JsStmt::Expr(JsExpr::Vanish, false),
+            Item::Impl(item_impl) => {
+                handle_item_impl(item_impl, global_data, current_module_path);
+                JsStmt::Expr(JsExpr::Vanish, false)
+            }
             Item::Macro(_) => todo!(),
             Item::Mod(_) => todo!(),
             Item::Static(_) => todo!(),
             // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
-            Item::Struct(_) => todo!(),
+            Item::Struct(item_struct) => {
+                handle_item_struct(item_struct, global_data, current_module_path)
+            }
             Item::Trait(_) => todo!(),
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -551,7 +564,7 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
                     let stmt_vec = try_block
                         .stmts
                         .iter()
-                        .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                        .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
                         .collect::<Vec<_>>();
                     return JsStmt::TryBlock(stmt_vec);
                 }
@@ -568,7 +581,7 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
                     let stmt_vec = catch_block
                         .stmts
                         .into_iter()
-                        .map(|stmt| handle_stmt(&stmt, global_data, current_module));
+                        .map(|stmt| handle_stmt(&stmt, global_data, current_module_path));
                     let stmt_vec = stmt_vec.collect::<Vec<_>>();
                     return JsStmt::CatchBlock(err_var_name, stmt_vec);
                 }
@@ -578,11 +591,11 @@ fn handle_stmt(stmt: &Stmt, global_data: &mut GlobalData, current_module: &Vec<S
 
                     let lhs = parts.next().unwrap();
                     let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
-                    let lhs = handle_expr(&lhs, global_data, current_module);
+                    let lhs = handle_expr(&lhs, global_data, current_module_path);
 
                     let rhs = parts.next().unwrap();
                     let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
-                    let rhs = handle_expr(&rhs, global_data, current_module);
+                    let rhs = handle_expr(&rhs, global_data, current_module_path);
 
                     return JsStmt::Expr(
                         JsExpr::MethodCall(
@@ -798,10 +811,27 @@ fn handle_item_enum(
 }
 
 fn handle_item_impl(
-    item_impl: ItemImpl,
+    item_impl: &ItemImpl,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) {
+    // *** From elsewhere:
+    // Also, impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
+    // fn main() {
+    //     struct Cool {}
+    //     fn inner() {
+    //         impl Cool {
+    //             fn whatever(&self) {
+    //                 dbg!("hi");
+    //             }
+    //         }
+    //     }
+    //     let cool = Cool {};
+    //     cool.whatever();
+    // }
+    // let mut module_object = Vec::new();
+    // ***
+
     // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
     // fn main() {
     //     struct Cool {}
@@ -863,13 +893,13 @@ fn handle_item_impl(
 
     // for the current block/list of stmts, store impl items in a Vec along with the class name
     // After
-    let class_name = match *item_impl.self_ty {
+    let class_name = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
         _ => todo!(),
     };
 
     let mut impl_stmts = Vec::new();
-    for impl_item in item_impl.items {
+    for impl_item in &item_impl.items {
         match impl_item {
             ImplItem::Const(impl_item_const) => {
                 // impl_item_const
@@ -901,6 +931,7 @@ fn handle_item_impl(
                 };
                 // let private = !export;
                 let input_names = item_impl_fn
+                    .clone()
                     .sig
                     .inputs
                     .into_iter()
@@ -915,6 +946,7 @@ fn handle_item_impl(
                 let body_stmts = item_impl_fn
                     .block
                     .stmts
+                    .clone()
                     .into_iter()
                     .map(|stmt| handle_stmt(&stmt, global_data, &current_module_path))
                     .collect::<Vec<_>>();
@@ -933,7 +965,7 @@ fn handle_item_impl(
                                 export: false,
                                 is_method: true,
                                 async_: item_impl_fn.sig.asyncness.is_some(),
-                                name: camel(item_impl_fn.sig.ident),
+                                name: camel(item_impl_fn.sig.ident.clone()),
                                 input_names,
                                 body_stmts,
                             },
@@ -959,6 +991,45 @@ fn handle_item_impl(
     //     );
     // }
     global_data.impl_items.extend(impl_stmts);
+}
+
+fn handle_item_struct(
+    item_struct: &ItemStruct,
+    global_data: &GlobalData,
+    current_module_path: &Vec<String>,
+) -> JsStmt {
+    let mut name = item_struct.ident.to_string();
+    if let Some(dup) = global_data
+        .duplicates
+        .iter()
+        .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
+    {
+        name = dup
+            .namespace
+            .iter()
+            .map(|seg| camel(seg))
+            .collect::<Vec<_>>()
+            .join("__");
+    }
+    JsStmt::Class(JsClass {
+        export: false,
+        public: match item_struct.vis {
+            Visibility::Public(_) => true,
+            Visibility::Restricted(_) => todo!(),
+            Visibility::Inherited => false,
+        },
+        name,
+        inputs: item_struct
+            .fields
+            .iter()
+            .map(|field| match &field.ident {
+                Some(ident) => camel(ident),
+                None => todo!(),
+            })
+            .collect::<Vec<_>>(),
+        static_fields: Vec::new(),
+        methods: Vec::new(),
+    })
 }
 
 fn handle_item(
@@ -1009,7 +1080,7 @@ fn handle_item(
             js_stmts.push(handle_item_fn(&item_fn, global_data, current_module_path));
         }
         Item::ForeignMod(_) => todo!(),
-        Item::Impl(item_impl) => handle_item_impl(item_impl, global_data, current_module_path),
+        Item::Impl(item_impl) => handle_item_impl(&item_impl, global_data, current_module_path),
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
             // Notes
@@ -1089,38 +1160,7 @@ fn handle_item(
         }
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
-            let mut name = item_struct.ident.to_string();
-            if let Some(dup) = global_data
-                .duplicates
-                .iter()
-                .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
-            {
-                name = dup
-                    .namespace
-                    .iter()
-                    .map(|seg| camel(seg))
-                    .collect::<Vec<_>>()
-                    .join("__");
-            }
-            let js_stmt = JsStmt::Class(JsClass {
-                export: false,
-                public: match item_struct.vis {
-                    Visibility::Public(_) => true,
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => false,
-                },
-                name,
-                inputs: item_struct
-                    .fields
-                    .into_iter()
-                    .map(|field| match field.ident {
-                        Some(ident) => camel(ident),
-                        None => todo!(),
-                    })
-                    .collect::<Vec<_>>(),
-                static_fields: Vec::new(),
-                methods: Vec::new(),
-            });
+            let js_stmt = handle_item_struct(&item_struct, global_data, current_module_path);
             js_stmts.push(js_stmt);
         }
         Item::Trait(_) => js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false)),
@@ -1160,32 +1200,14 @@ fn js_stmts_from_syn_items(
     // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
 
-    // Also, impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
-    // fn main() {
-    //     struct Cool {}
-    //     fn inner() {
-    //         impl Cool {
-    //             fn whatever(&self) {
-    //                 dbg!("hi");
-    //             }
-    //         }
-    //     }
-    //     let cool = Cool {};
-    //     cool.whatever();
-    // }
-    // let mut module_object = Vec::new();
-
     for item in items {
         handle_item(
             item,
             is_module,
             global_data,
             current_module,
-            // &mut module_object,
             &mut js_stmts,
-            // &mut modules,
             current_file_path,
-            // js_stmt_module,
         );
     }
 
@@ -1900,6 +1922,126 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     global_data.transpiled_modules.clone()
 }
 
+pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
+    // let file = syn::parse_file(code).unwrap();
+    let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
+
+    // let mut names = Vec::new();
+    let mut modules = Vec::new();
+    modules.push(ModuleData {
+        name: "crate".to_string(),
+        parent_name: None,
+        path: vec!["crate".to_string()],
+        pub_definitions: Vec::new(),
+        private_definitions: Vec::new(),
+        pub_submodules: Vec::new(),
+        private_submodules: Vec::new(),
+        pub_use_mappings: Vec::new(),
+        private_use_mappings: Vec::new(),
+        resolved_mappings: Vec::new(),
+    });
+    let mut get_names_module_path = vec!["crate".to_string()];
+    // let mut get_names_crate_path = crate_path.join("src/main.rs");
+    // let mut get_names_crate_path = crate_path.clone();
+    // extract_data(
+    //     &file.items,
+    //     None,
+    //     &mut get_names_module_path,
+    //     &mut names,
+    //     &mut modules,
+    // );
+
+    // let mut duplicates = Vec::new();
+    // for name in &names {
+    //     if names
+    //         .iter()
+    //         .filter(|(module_path, name2)| &name.1 == name2)
+    //         .collect::<Vec<_>>()
+    //         .len()
+    //         > 1
+    //     {
+    //         duplicates.push(Duplicate {
+    //             namespace: Vec::<String>::new(),
+    //             module_path: name.0.clone(),
+    //             name: name.1.clone(),
+    //             original_module_path: name.0.clone(),
+    //         });
+    //     }
+    // }
+    // update_dup_names(&mut duplicates);
+    // update_dup_names(&mut duplicates);
+    // update_dup_names(&mut duplicates);
+    // update_dup_names(&mut duplicates);
+    // update_dup_names(&mut duplicates);
+    // update_dup_names(&mut duplicates);
+
+    // for dup in duplicates.iter_mut() {
+    //     dup.namespace.push(dup.name.clone());
+    // }
+
+    // resolve_use_stmts(&mut modules);
+
+    let mut js_stmts = Vec::new();
+
+    let mut global_data = GlobalData::new(false, None, Vec::new());
+    global_data.modules = modules;
+
+    global_data.transpiled_modules.push(JsModule {
+        public: true,
+        name: "crate".to_string(),
+        module_path: vec!["crate".to_string()],
+        stmts: Vec::new(),
+    });
+    // let stmts = js_stmts_from_syn_items(
+    //     file.items,
+    //     true,
+    //     &mut vec!["crate".to_string()],
+    //     &mut global_data,
+    //     &mut None,
+    // );
+    let stmts = expr_block
+        .block
+        .stmts
+        .iter()
+        .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]))
+        .collect::<Vec<_>>();
+    let crate_module = global_data
+        .transpiled_modules
+        .iter_mut()
+        .find(|tm| tm.module_path == vec!["crate".to_string()])
+        .unwrap();
+    crate_module.stmts = stmts;
+
+    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
+
+    if with_rust_types {
+        push_rust_types(&mut js_stmts);
+    }
+
+    // and module name comments when there is more than 1 module
+    if global_data.transpiled_modules.len() > 1 {
+        for module in &mut global_data.transpiled_modules {
+            // dbg!(&module);
+            module.stmts.insert(
+                0,
+                JsStmt::Comment(if module.module_path == ["crate"] {
+                    "crate".to_string()
+                } else {
+                    module
+                        .module_path
+                        .iter()
+                        .cloned()
+                        .skip(1)
+                        .collect::<Vec<_>>()
+                        .join("::")
+                }),
+            );
+        }
+    }
+
+    global_data.transpiled_modules[0].stmts.clone()
+}
+
 pub fn generate_js_from_file(code: impl ToString) -> String {
     // let item_mod = syn::parse_str::<ItemMod>(js.to_string().as_str()).unwrap();
     // let file = syn::parse_file(code.to_string().as_str()).unwrap();
@@ -1926,20 +2068,20 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
     js_stmts
 }
 
-pub fn from_block(code: &str) -> Vec<JsStmt> {
-    let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
+// pub fn from_block(code: &str) -> Vec<JsStmt> {
+//     let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
 
-    let mut js_stmts = Vec::new();
-    for stmt in &expr_block.block.stmts {
-        let js_stmt = handle_stmt(
-            stmt,
-            &mut GlobalData::new(true, None, Vec::new()),
-            &vec!["crate".to_string()],
-        );
-        js_stmts.push(js_stmt);
-    }
-    js_stmts
-}
+//     let mut js_stmts = Vec::new();
+//     for stmt in &expr_block.block.stmts {
+//         let js_stmt = handle_stmt(
+//             stmt,
+//             &mut GlobalData::new(true, None, Vec::new()),
+//             &vec!["crate".to_string()],
+//         );
+//         js_stmts.push(js_stmt);
+//     }
+//     js_stmts
+// }
 
 #[derive(Clone, Debug)]
 pub enum JsOp {
@@ -2462,6 +2604,7 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
             JsExpr::Block(_) => js_expr.js_string(),
             JsExpr::While(_, _) => js_expr.js_string(),
             JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
+            JsExpr::Vanish => "".to_string(),
             _ => {
                 if *semi {
                     format!("{};", js_expr.js_string())
@@ -4279,3 +4422,35 @@ mod typed {
 
 #[derive(Debug)]
 pub struct Element {}
+
+pub fn generate_js(js: impl ToString) -> String {
+    from_fn(js.to_string().as_str())
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+pub fn generate_js_from_block(js: impl ToString) -> String {
+    from_block(js.to_string().as_str(), false)
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+pub fn generate_js_from_module(js: impl ToString) -> String {
+    from_module(js.to_string().as_str(), false)
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn format_js(js: impl ToString) -> String {
+    let parse = biome_js_parser::parse_script(js.to_string().as_str(), JsParserOptions::default());
+    let stmt = parse.syntax().children().nth(1).unwrap();
+    let opts = JsFormatOptions::new(JsFileSource::default())
+        // .with_indent_width(IndentWidth::from(1))
+        .with_indent_style(IndentStyle::Space);
+    let formatted_js = biome_formatter::format_node(&stmt, JsFormatLanguage::new(opts)).unwrap();
+    formatted_js.print().unwrap().as_code().to_string()
+}

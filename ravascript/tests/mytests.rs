@@ -1,7 +1,3 @@
-use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
-use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
-use biome_js_parser::JsParserOptions;
-use biome_js_syntax::JsFileSource;
 use chromiumoxide::{
     browser::{Browser, BrowserConfig},
     cdp::js_protocol::debugger::{
@@ -17,13 +13,6 @@ use anyhow::{anyhow, Context, Result};
 // use chromiumoxide::cdp::js_protocol::debugger::*;
 use futures::StreamExt;
 use prettify_js::prettyprint;
-use ravascript_core::{
-    catch, from_block, from_crate, from_fn, from_module, generate_js_from_file, try_,
-    web::{
-        try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
-        NAVIGATOR,
-    },
-};
 // use std::sync::Arc;
 // use biome_formatter::format;
 // use biome_formatter::prelude::*;
@@ -32,6 +21,14 @@ use std::{fs, path::PathBuf};
 use tokio;
 
 use ravascript::from_file;
+use ravascript_core::{
+    catch, format_js, from_block, from_crate, from_fn, from_module, generate_js_from_block,
+    generate_js_from_file, generate_js_from_module, try_,
+    web::{
+        try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
+        NAVIGATOR,
+    },
+};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 
@@ -213,38 +210,6 @@ async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::error::
         .context("Failed in events_handle.await")??;
 
     Ok(())
-}
-
-fn generate_js(js: impl ToString) -> String {
-    from_fn(js.to_string().as_str())
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-fn generate_js_from_block(js: impl ToString) -> String {
-    from_block(js.to_string().as_str())
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-fn generate_js_from_module(js: impl ToString) -> String {
-    from_module(js.to_string().as_str(), false)
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn format_js(js: impl ToString) -> String {
-    let parse = biome_js_parser::parse_script(js.to_string().as_str(), JsParserOptions::default());
-    let stmt = parse.syntax().children().nth(1).unwrap();
-    let opts = JsFormatOptions::new(JsFileSource::default())
-        // .with_indent_width(IndentWidth::from(1))
-        .with_indent_style(IndentStyle::Space);
-    let formatted_js = biome_formatter::format_node(&stmt, JsFormatLanguage::new(opts)).unwrap();
-    formatted_js.print().unwrap().as_code().to_string()
 }
 
 #[tokio::test]
@@ -739,4 +704,35 @@ function green() {
   var blue = baz();
 }"#;
     assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn impl_in_fn_scope() {
+    let actual = r2j_block!({
+        struct Cool {}
+        if false {
+            fn inner() {
+                impl Cool {
+                    fn whatever(&self) -> i32 {
+                        5
+                    }
+                }
+            }
+        }
+        let cool = Cool {};
+        cool.whatever();
+    });
+    let expected = r#"
+    class Cool {
+        whatever() {
+            return 5;
+        }
+    }
+    if (false) {
+        function inner() {}
+    }
+    var cool = new Cool();
+    cool.whatever();
+    "#;
+    assert_eq!(format_js(expected), actual);
 }
