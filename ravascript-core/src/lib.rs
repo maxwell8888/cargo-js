@@ -1184,17 +1184,14 @@ fn handle_item(
 /// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
 ///
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
-pub fn js_stmts_from_syn_items(
+fn js_stmts_from_syn_items(
     items: Vec<Item>,
     // Need to know whether to return a module Object or just a vec of stmts
     is_module: bool,
     // Need to keep of which module we are currently in, for constructing the boilerplate
     current_module: &mut Vec<String>,
     global_data: &mut GlobalData,
-    // crate_path: Option<PathBuf>,
     current_file_path: &mut Option<PathBuf>,
-    // js_stmt_module: &mut JsStmtModule,
-    // transpiled_modules: &mut Vec<JsStmtModule>,
 ) -> Vec<JsStmt> {
     let mut js_stmts = Vec::new();
     // let mut modules = Vec::new();
@@ -2566,7 +2563,6 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::TryBlock(_) => stmt.js_string(),
         JsStmt::CatchBlock(_, _) => stmt.js_string(),
         JsStmt::Comment(_) => stmt.js_string(),
-        JsStmt::Use(_) => String::new(),
     }
 }
 impl JsFn {
@@ -2714,7 +2710,6 @@ pub enum JsStmt {
     /// Unlike the other variants this *only* has meaning for the parsing/transpiling, and isn't output (except maybe comments for debugging?)
     ///
     /// (path, item name)
-    Use(Vec<(Vec<String>, String)>),
     Comment(String),
 }
 
@@ -2734,7 +2729,6 @@ impl JsStmt {
             JsStmt::CatchBlock(_, _) => todo!(),
             JsStmt::Raw(_) => todo!(),
             JsStmt::Comment(_) => todo!(),
-            JsStmt::Use(_) => todo!(),
         }
     }
     pub fn js_string(&self) -> String {
@@ -2870,7 +2864,6 @@ impl JsStmt {
                 )
             }
             JsStmt::Comment(text) => format!("// {text}"),
-            JsStmt::Use(_) => "".to_string(),
         }
     }
 }
