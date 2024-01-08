@@ -962,7 +962,7 @@ fn handle_item_impl(
             _ => todo!(),
         }
     }
-    // TODO can't remember why I want this differentiation
+    // TODO can't remember why I added this differentiation
     // if is_module {
     //     global_data.impl_items.extend(impl_stmts);
     // } else {
@@ -1156,6 +1156,7 @@ fn handle_item(
     }
 }
 
+// TODO remove this as it is unnecessary redirection
 /// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
 ///
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
@@ -1644,12 +1645,14 @@ fn push_rust_types(js_stmts: &mut Vec<JsStmt>) {
     }));
 }
 
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
-    // dbg!(&main_path);
-    let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
-    let file = syn::parse_file(&code).unwrap();
-    // let mut current_file_path = vec!["main.rs".to_string()];
-
+pub fn process_items(
+    items: Vec<Item>,
+    // TODO combine use of all 3 PathBuf into 1
+    get_names_crate_path: Option<&PathBuf>,
+    global_data_crate_path: Option<PathBuf>,
+    entrypoint_path: &mut Option<PathBuf>,
+    with_rust_types: bool,
+) -> Vec<JsModule> {
     let mut names = Vec::new();
     let mut modules = Vec::new();
     modules.push(ModuleData {
@@ -1666,10 +1669,9 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
     });
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
-    let mut get_names_crate_path = crate_path.clone();
     extract_data(
-        &file.items,
-        Some(&get_names_crate_path),
+        &items,
+        get_names_crate_path,
         &mut get_names_module_path,
         &mut names,
         &mut modules,
@@ -1711,7 +1713,7 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
 
     let mut js_stmts = Vec::new();
 
-    let mut global_data = GlobalData::new(false, Some(crate_path.clone()), duplicates.clone());
+    let mut global_data = GlobalData::new(false, global_data_crate_path, duplicates.clone());
     global_data.modules = modules;
 
     global_data.transpiled_modules.push(JsModule {
@@ -1721,11 +1723,11 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
         stmts: Vec::new(),
     });
     let stmts = js_stmts_from_syn_items(
-        file.items,
+        items,
         true,
         &mut vec!["crate".to_string()],
         &mut global_data,
-        &mut Some(crate_path.join("src").join("main.rs")),
+        entrypoint_path,
     );
     let crate_module = global_data
         .transpiled_modules
@@ -1774,135 +1776,31 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
 
     global_data.transpiled_modules.clone()
 }
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
+    // dbg!(&main_path);
 
-// TODO combine this with from_file
-pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
-    let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
-    let items = item_mod.content.unwrap().1;
-    let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(false, None, Vec::new());
-    js_stmts_from_syn_items(
-        items,
-        true,
-        &mut current_module,
-        &mut global_data,
-        &mut None,
-    )
+    let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
+    let mut entrypoint_path = Some(crate_path.join("src").join("main.rs"));
+    let crate_path_copy = crate_path.clone();
+    let get_names_crate_path = Some(&crate_path_copy);
+    let global_data_crate_path = Some(crate_path.clone());
+    let file = syn::parse_file(&code).unwrap();
+    let items = file.items;
+    // let mut current_file_path = vec!["main.rs".to_string()];
+
+    process_items(items, get_names_crate_path, global_data_crate_path, &mut entrypoint_path, with_rust_types)
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
 // Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
 pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
+    let mut entrypoint_path = None;
+    let get_names_crate_path = None;
+    let global_data_crate_path = None;
     let file = syn::parse_file(code).unwrap();
+    let items = file.items;
 
-    let mut names = Vec::new();
-    let mut modules = Vec::new();
-    modules.push(ModuleData {
-        name: "crate".to_string(),
-        parent_name: None,
-        path: vec!["crate".to_string()],
-        pub_definitions: Vec::new(),
-        private_definitions: Vec::new(),
-        pub_submodules: Vec::new(),
-        private_submodules: Vec::new(),
-        pub_use_mappings: Vec::new(),
-        private_use_mappings: Vec::new(),
-        resolved_mappings: Vec::new(),
-    });
-    let mut get_names_module_path = vec!["crate".to_string()];
-    // let mut get_names_crate_path = crate_path.join("src/main.rs");
-    // let mut get_names_crate_path = crate_path.clone();
-    extract_data(
-        &file.items,
-        None,
-        &mut get_names_module_path,
-        &mut names,
-        &mut modules,
-    );
-
-    let mut duplicates = Vec::new();
-    for name in &names {
-        if names
-            .iter()
-            .filter(|(module_path, name2)| &name.1 == name2)
-            .collect::<Vec<_>>()
-            .len()
-            > 1
-        {
-            duplicates.push(Duplicate {
-                namespace: Vec::<String>::new(),
-                module_path: name.0.clone(),
-                name: name.1.clone(),
-                original_module_path: name.0.clone(),
-            });
-        }
-    }
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-
-    for dup in duplicates.iter_mut() {
-        dup.namespace.push(dup.name.clone());
-    }
-
-    resolve_use_stmts(&mut modules);
-
-    let mut js_stmts = Vec::new();
-
-    let mut global_data = GlobalData::new(false, None, duplicates.clone());
-    global_data.modules = modules;
-
-    global_data.transpiled_modules.push(JsModule {
-        public: true,
-        name: "crate".to_string(),
-        module_path: vec!["crate".to_string()],
-        stmts: Vec::new(),
-    });
-    let stmts = js_stmts_from_syn_items(
-        file.items,
-        true,
-        &mut vec!["crate".to_string()],
-        &mut global_data,
-        &mut None,
-    );
-    let crate_module = global_data
-        .transpiled_modules
-        .iter_mut()
-        .find(|tm| tm.module_path == vec!["crate".to_string()])
-        .unwrap();
-    crate_module.stmts = stmts;
-
-    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
-
-    if with_rust_types {
-        push_rust_types(&mut js_stmts);
-    }
-
-    // and module name comments when there is more than 1 module
-    if global_data.transpiled_modules.len() > 1 {
-        for module in &mut global_data.transpiled_modules {
-            // dbg!(&module);
-            module.stmts.insert(
-                0,
-                JsStmt::Comment(if module.module_path == ["crate"] {
-                    "crate".to_string()
-                } else {
-                    module
-                        .module_path
-                        .iter()
-                        .cloned()
-                        .skip(1)
-                        .collect::<Vec<_>>()
-                        .join("::")
-                }),
-            );
-        }
-    }
-
-    global_data.transpiled_modules.clone()
+    process_items(items, get_names_crate_path, global_data_crate_path, &mut entrypoint_path, with_rust_types)
 }
 
 pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
@@ -1924,6 +1822,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         resolved_mappings: Vec::new(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
+
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
     // let mut get_names_crate_path = crate_path.clone();
     // extract_data(
@@ -2023,6 +1922,21 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     }
 
     global_data.transpiled_modules[0].stmts.clone()
+}
+
+// TODO combine this with from_file
+pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
+    let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
+    let items = item_mod.content.unwrap().1;
+    let mut current_module = Vec::new();
+    let mut global_data = GlobalData::new(false, None, Vec::new());
+    js_stmts_from_syn_items(
+        items,
+        true,
+        &mut current_module,
+        &mut global_data,
+        &mut None,
+    )
 }
 
 pub fn generate_js_from_file(code: impl ToString) -> String {
