@@ -22,8 +22,7 @@ use tokio;
 
 use ravascript::from_file;
 use ravascript_core::{
-    catch, format_js, from_block, from_crate, from_fn, from_module, generate_js_from_block,
-    generate_js_from_file, generate_js_from_module, try_,
+    catch, format_js, from_block, from_crate, generate_js_from_module, try_,
     web::{
         try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError,
         NAVIGATOR,
@@ -44,35 +43,49 @@ mod stuff;
 //     };
 // }
 
+fn r2j_block(code: &str) -> String {
+    let stmts = from_block(code, false);
+    let generated_js = stmts
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let generated_js = format_js(generated_js);
+    generated_js
+}
 /// Input code should be in a block as this allow rustfmt to work on the code, however the block (braces) are removed from the the output code and instead just the lines of code inside the block are used to generate the Javascript
 macro_rules! r2j_block {
     ($block:block) => {{
         #[fn_stmts_as_str]
         fn fn_wrapper() $block
-        let generated_js = generate_js_from_block(block_code_str());
-        let generated_js = format_js(generated_js);
-        generated_js
+        r2j_block(block_code_str())
     }};
 }
 
+fn r2j_file(code: &str) -> String {
+    let modules = from_file(code, false);
+    let generated_js = modules
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let generated_js = format_js(generated_js);
+    generated_js
+}
 macro_rules! r2j_file {
     ($($item:item)*) => {{
         mod generated {
             $($item)*
         }
         let file = stringify!($($item)*);
-        let generated_js = generate_js_from_file(file);
-        let generated_js = format_js(generated_js);
-        generated_js
+        r2j_file(file)
     }};
 }
 
 macro_rules! r2j_file_unchecked {
     ($($item:item)*) => {{
         let file = stringify!($($item)*);
-        let generated_js = generate_js_from_file(file);
-        let generated_js = format_js(generated_js);
-        generated_js
+        r2j_file(file)
     }};
 }
 
@@ -85,9 +98,7 @@ macro_rules! r2j_module {
         {
             $module
             let file = stringify!($module);
-            let generated_js = generate_js_from_file(file);
-            let generated_js = format_js(generated_js);
-            generated_js
+            r2j_file(file)
         }
     };
 }

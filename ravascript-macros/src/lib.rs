@@ -98,9 +98,8 @@ pub fn module_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         pub fn generated_js() -> String {
             let generated_js = generate_js_from_module(#code_string);
-        let generated_js = format_js(generated_js);
-        generated_js
-            
+            let generated_js = format_js(generated_js);
+            generated_js
         }
     };
 

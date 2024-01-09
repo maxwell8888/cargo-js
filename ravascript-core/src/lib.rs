@@ -1788,7 +1788,13 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
     let items = file.items;
     // let mut current_file_path = vec!["main.rs".to_string()];
 
-    process_items(items, get_names_crate_path, global_data_crate_path, &mut entrypoint_path, with_rust_types)
+    process_items(
+        items,
+        get_names_crate_path,
+        global_data_crate_path,
+        &mut entrypoint_path,
+        with_rust_types,
+    )
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
@@ -1800,7 +1806,13 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     let file = syn::parse_file(code).unwrap();
     let items = file.items;
 
-    process_items(items, get_names_crate_path, global_data_crate_path, &mut entrypoint_path, with_rust_types)
+    process_items(
+        items,
+        get_names_crate_path,
+        global_data_crate_path,
+        &mut entrypoint_path,
+        with_rust_types,
+    )
 }
 
 pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
@@ -1937,17 +1949,6 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
         &mut global_data,
         &mut None,
     )
-}
-
-pub fn generate_js_from_file(code: impl ToString) -> String {
-    // let item_mod = syn::parse_str::<ItemMod>(js.to_string().as_str()).unwrap();
-    // let file = syn::parse_file(code.to_string().as_str()).unwrap();
-    // let items = file.items;
-    from_file(code.to_string().as_str(), false)
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n\n")
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {
@@ -4320,20 +4321,6 @@ mod typed {
 #[derive(Debug)]
 pub struct Element {}
 
-pub fn generate_js(js: impl ToString) -> String {
-    from_fn(js.to_string().as_str())
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-pub fn generate_js_from_block(js: impl ToString) -> String {
-    from_block(js.to_string().as_str(), false)
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 pub fn generate_js_from_module(js: impl ToString) -> String {
     from_module(js.to_string().as_str(), false)
         .iter()
