@@ -4,7 +4,7 @@ members = [
     "ravascript-core",
     "ravascript-macros",
     "comprehensive-example",
-    "ravascriptcli",
+    "cargo-js",
     "so_example",
     "for-testing",
 ]

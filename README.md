@@ -1,5 +1,15 @@
 # WIP please do not post links to this project
 
+Rust to Javascript Transpiler
+
+# Usage
+```bash
+git clone git@github.com:maxwell8888/ravascript.git
+cargo install --path cargo-js/
+# write generated JS to the console
+cargo js transpile --package for-testing/
+```
+
 License
 Licensed under either of
 
