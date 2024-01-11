@@ -1776,8 +1776,22 @@ pub fn process_items(
 
     global_data.transpiled_modules.clone()
 }
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
+
+pub fn modules_to_string(modules: &Vec<JsModule>, lib: bool) -> String {
+    if lib {
+        todo!()
+    } else {
+        modules
+            .iter()
+            .map(|module| module.js_string())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, lib: bool) -> String {
     // dbg!(&main_path);
+    // TODO
 
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let mut entrypoint_path = Some(crate_path.join("src").join("main.rs"));
@@ -1788,13 +1802,14 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool) -> Vec<JsModule> {
     let items = file.items;
     // let mut current_file_path = vec!["main.rs".to_string()];
 
-    process_items(
+    let modules = process_items(
         items,
         get_names_crate_path,
         global_data_crate_path,
         &mut entrypoint_path,
         with_rust_types,
-    )
+    );
+    modules_to_string(&modules, lib)
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way

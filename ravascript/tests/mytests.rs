@@ -518,12 +518,7 @@ async fn closure_return_match() {
 // #[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
-    let actual = from_crate("../for-testing".into(), false);
-    let actual = actual
-        .iter()
-        .map(|module| module.js_string())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let actual = from_crate("../for-testing".into(), false, false);
 
     let expected = r#"
     // crate

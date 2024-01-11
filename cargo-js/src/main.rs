@@ -10,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use prettify_js::prettyprint;
 use ravascript::{format_js, from_crate, from_file};
 // use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, env};
+use std::{env, fs, path::PathBuf};
 
 /// Ravascript  
 #[derive(Parser, Debug)]
@@ -28,9 +28,14 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Transpile the specified js file and output to stdout
+    /// A binary crate or file such as main.rs containing a `main` function will output an IIFE (Immediately Invoked Function Expression).
+    /// A library crate or file, including lib.rs, will output all items and modules and export those that are public. Objects are used in place of modules so a lib with an API such as `some_module::some_func()` would be `someModule.someFunc()`. The exported JS items reflect the Rust lib's public API.
     Transpile {
         #[arg(short, long)]
         release: bool,
+
+        #[arg(short, long)]
+        lib: bool,
 
         #[arg(short, long)]
         package: Option<String>,
@@ -52,6 +57,29 @@ enum Commands {
         #[arg(short, long)]
         filepath: Option<String>,
     },
+    /// Intends to be equivalent to `cargo build`. Outputs javascript files to `target/js/``
+    Build {
+        /// Build the package’s library.
+        #[arg(short, long)]
+        lib: bool,
+
+        /// Build the specified binary. This flag may be specified multiple times and supports common Unix glob patterns.
+        #[arg(short, long)]
+        bin: Option<String>,
+
+        /// Build all binary targets.
+        #[arg(short, long)]
+        bins: bool,
+
+        /// Build the specified example. This flag may be specified multiple times and supports common Unix glob patterns.
+        #[arg(short, long)]
+        example: Option<String>,
+
+        /// Build all example targets.
+        #[arg(short, long)]
+        examples: bool,
+    },
+    /// Run target with Deno?
     Run {
         #[arg(short, long)]
         release: bool,
@@ -61,7 +89,8 @@ enum Commands {
 
         #[arg(short, long)]
         filepath: Option<String>,
-    }, // Serve(ServeArgs),
+    },
+    // Serve(ServeArgs),
 }
 // #[derive(Args, Debug)]
 // struct ServeArgs {
@@ -77,6 +106,7 @@ async fn main() {
     match &cli.command {
         Commands::Transpile {
             release,
+            lib,
             package,
             filepath,
             out,
@@ -91,12 +121,7 @@ async fn main() {
                     .collect::<Vec<_>>()
                     .join("\n")
             } else if let Some(crate_path) = package {
-                let modules = from_crate(crate_path.into(), true);
-                modules
-                    .iter()
-                    .map(|module| module.js_string())
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
+                from_crate(crate_path.into(), true, *lib)
             } else {
                 // Look for src/main.rs or src/lib.rs in current folder
                 let crate_path = if PathBuf::from("src/main.rs").exists() {
@@ -107,12 +132,7 @@ async fn main() {
                     eprintln!("Could not find src/main.rs or src/lib.rs in current directory");
                     std::process::exit(1);
                 };
-                let modules = from_crate(crate_path, true);
-                modules
-                    .iter()
-                    .map(|module| module.js_string())
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
+                from_crate(crate_path, true, *lib)
             };
             let output = format_js(js_str);
             if let Some(out) = out {
@@ -134,6 +154,15 @@ async fn main() {
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
             tracing::debug!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app).await.unwrap();
+        }
+        Commands::Build {
+            lib,
+            bin,
+            bins,
+            example,
+            examples,
+        } => {
+            // TODO run with Deno?
         }
         Commands::Run {
             release,
