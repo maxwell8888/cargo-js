@@ -597,11 +597,12 @@ fn handle_stmt(
                     let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
                     let rhs = handle_expr(&rhs, global_data, current_module_path);
 
+                    let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
                     return JsStmt::Expr(
                         JsExpr::MethodCall(
-                            Box::new(JsExpr::Path(vec!["assert".to_string()])),
-                            "strictEqual".to_string(),
-                            vec![lhs, rhs],
+                            Box::new(JsExpr::Path(vec!["console".to_string()])),
+                            "assert".to_string(),
+                            vec![equality_check],
                         ),
                         stmt_macro.semi_token.is_some(),
                     );

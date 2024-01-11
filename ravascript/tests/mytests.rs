@@ -530,7 +530,7 @@ async fn it_transpiles_crate_directory() {
       utils__colors__duplicateName();
       var thing = External.new();
       var fido = new Green(true, 2);
-      assert.strictEqual(fido.woof(), 32);
+      console.assert(fido.woof() === 32);
     })();
     
     // foo_bar
@@ -740,6 +740,22 @@ async fn impl_in_fn_scope() {
     }
     var cool = new Cool();
     cool.whatever();
+    "#;
+    assert_eq!(format_js(expected), actual);
+}
+
+#[tokio::test]
+async fn mutate_int() {
+    // impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
+    let actual = r2j_block!({
+        let mut num = 0;
+        num += 1;
+        assert_eq!(num, 1);
+    });
+    let expected = r#"
+    var num = 0;
+    num += 1;
+    console.assert(num === 1)
     "#;
     assert_eq!(format_js(expected), actual);
 }
