@@ -1,5 +1,6 @@
 pub use ravascript_core::*;
 pub use ravascript_macros::include_ravascript;
+pub mod prelude;
 
 #[cfg(test)]
 mod tests {

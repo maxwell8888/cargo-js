@@ -1,4 +1,4 @@
-use ravascript_core::web::Console;
+use ravascript::prelude::web::Console;
 
 trait MyTrait {
     fn get_age(&self) -> i32;
