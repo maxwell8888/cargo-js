@@ -1,3 +1,4 @@
+#[derive(Clone, Copy)]
 pub struct JsString {
     /// Reflects the length of the string. Read-only.
     pub length: u32,

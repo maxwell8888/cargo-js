@@ -3033,6 +3033,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 return JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>());
             }
 
+            // So we have a path like foo::bar::baz()
+            // The algorithm for finding the full module path to the item is:
+            // Look to see if segs[0] is defined in any other the parent scopes
+            // else
+            // Look to see if segs[0] is
+
             // TODO:
             // handle mixed paths eg submodule -> use
             // make sure `mod` being pub/private is taken into account - this would only be for use paths since mod is always public in the file it is called from (parent), so would happen in the `use` resolving step

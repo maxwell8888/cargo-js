@@ -856,10 +856,12 @@ async fn mut_ref_int_fn_arg() {
 
 // https://www.reddit.com/r/rust/comments/3l3fgo/what_if_rust_had_mutablebox_and_immutablebox/
 // Box's primary design goal is to provide a safe interface for heap allocation. Mutability is controlled by the compiler, as you've already noticed. If you want to allow mutability only to the box's contents, you can operate through a direct reference to the contents:
-
 // let mut my_box = Box::new(11);
 // // Create an &mut i32 referencing the contents of `my_box`.
 // let mut my_bof_ref = &mut *my_box;
 // Edit: I neglected to mention that my_box cannot be mutated or reassigned after my_box_ref is created, since mutable references are mutually exclusive, so it creates the effect you want.
 #[tokio::test]
 async fn mut_ref_box_contents() {}
+
+#[tokio::test]
+async fn array() {}
