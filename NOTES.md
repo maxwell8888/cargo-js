@@ -163,8 +163,13 @@ For example if we want to use the number eg for comparison, we would need to acc
 We can't just blindly replace all places where `num` exists as moving or reassigning would cause us to loose the "mut ref" eg `let new_num = num.rustDeref;` then `new_num` would be a plain primitive, not a mut ref.
 Maybe we could try only replacing with `num.rustDeref` when there is either a deref `*` or a comparison?
 But how would we know which variables are primitive mut ref wrappers and which are normal objects?
-We would have to add `.rustDeref` to *all* values, which might be possible with something like `Object.prototype.rustDeref = function() { return this; }`
+We would have to add `.rustDeref` to _all_ values, which might be possible with something like `Object.prototype.rustDeref = function() { return this; }`
 This does create overhead though, wrapping things that might not need wrapping, which we might be able to avoid with AST analysis, and calling `.rustDeref()` on normal objects
+A temporary solution is to force users to wrap numbers in `MutRefNumber` if they want to mutate numbers.
+
+### Operator overloading
+
+Rust supports operator overloading whereas JS doesn't. Probably need to impl the overloading as methods in JS and covert Rust operator syntax to method calls.
 
 ### Modules
 
