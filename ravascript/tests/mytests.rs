@@ -85,6 +85,20 @@ macro_rules! r2j_file {
     }};
 }
 
+macro_rules! r2j_file_run_main {
+    ($($item:item)*) => {{
+        mod generated {
+            $($item)*
+            pub fn run_main() {
+                main();
+            }
+        }
+        generated::run_main();
+        let file = stringify!($($item)*);
+        r2j_file(file)
+    }};
+}
+
 macro_rules! r2j_file_unchecked {
     ($($item:item)*) => {{
         let file = stringify!($($item)*);
@@ -693,6 +707,7 @@ function green() {
 
 #[tokio::test]
 async fn module_crate() {
+    // Can't be checked because `crate::` will be pointing at the wrong thing
     let actual = r2j_file_unchecked!(
         fn baz() -> i32 {
             5
@@ -713,6 +728,70 @@ function green() {
   var blue = baz();
 }"#;
     assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn use_paths() {
+    let actual = r2j_file_run_main!(
+        fn duplicate() -> i32 {
+            0
+        }
+        mod one {
+            pub fn duplicate() -> i32 {
+                1
+            }
+            pub use two::three;
+            pub mod two {
+                fn duplicate() -> i32 {
+                    2
+                }
+                pub mod three {
+                    // Access private items in parent modules
+                    pub fn duplicate() -> i32 {
+                        super::super::duplicate() + super::duplicate()
+                    }
+                    pub mod another_one {
+                        pub use super::super::super::duplicate;
+                    }
+                }
+            }
+        }
+        mod four {
+            use super::one;
+            pub use one::two;
+            pub fn duplicate() -> i32 {
+                two::three::duplicate() + one::duplicate()
+            }
+        }
+        mod five {
+            use super::four::two;
+            use two::three;
+            pub fn duplicate() -> i32 {
+                two::three::duplicate()
+                    + super::one::three::another_one::duplicate()
+                    + three::another_one::duplicate()
+            }
+        }
+        fn main() {
+            assert_eq!(duplicate(), 0);
+            assert_eq!(one::duplicate(), 1);
+            assert_eq!(one::two::three::duplicate(), 3);
+            assert_eq!(four::duplicate(), 4);
+            assert_eq!(five::duplicate(), 5);
+        }
+    );
+    let actual = format_js(actual);
+
+    let expected = r#"class Bar {}
+function baz() {
+  var _ = new Bar();
+}
+function green() {
+  var blue = baz();
+}"#;
+
+    // let _ = execute_js_with_assertions(&actual).await.unwrap();
+    // assert_eq!(expected, actual);
 }
 
 #[tokio::test]

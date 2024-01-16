@@ -1317,99 +1317,6 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
     }
 }
 
-fn resolve_use_stmts(modules: &mut Vec<ModuleData>) {
-    // Resolve use stmts
-    // clone modules so we can use it to lookup up data while mutating the actual modules
-    let immutable_modules = modules.clone();
-    for module in modules {
-        // Firstly We want to resolve all items that are available at the top level of the module, but not acutally defined in the module ie all use statements. Whether they are `pub` or not is irrelevant since that is only relevant to other modules `use`ing from this module
-        // We are only focussing on resolving `use` statements. Something like `mod foo; foo::bar::baz();` will get resolved during the translate stage as there is nothing we can precalculate at this point (from this module, in `foo` we can resolve the `use` stmts (ie what we are doing here) since `bar` might come from `pub use bar::baz;`)
-        for (item_name, item_path) in module
-            .pub_use_mappings
-            .iter()
-            .chain(module.private_use_mappings.iter())
-        {
-            // get submodule we are `use`ing from (need to compare on full path because module names are not unique)
-            if let Some(submodule) = immutable_modules.iter().find(|submodule| {
-                let mut submodule_path = module.path.clone();
-                submodule_path.push(item_path.first().unwrap().clone());
-                submodule.path == submodule_path
-            }) {
-                // Now we are looking in the sub module
-                // we need to account for the fact that the item might be `pub use ...`'d from the sub module OR `pub mod ...`'d
-
-                // check if we are `use`ing an item *defined* in that module
-                if submodule
-                    .pub_definitions
-                    .iter()
-                    .any(|pub_name| pub_name == item_name)
-                {
-                    // We found the origin of the item being used, so we can record the full path of the item
-                    module
-                        .resolved_mappings
-                        .push((item_name.clone(), submodule.path.clone()))
-                    // item is not defined in this sub module, so lets check if there is a `pub use ...` to a second submodule
-                } else if let Some(use_mapping) = submodule
-                    .pub_use_mappings
-                    .iter()
-                    .find(|(sub_item_name, _)| sub_item_name == item_path.first().unwrap())
-                {
-                    // again/recursive: check if we are `use`ing from a `mod`/sub module
-                    if let Some(sub_module2) = immutable_modules
-                        .iter()
-                        .find(|sub_module2| &sub_module2.name == use_mapping.1.first().unwrap())
-                    {
-                        // again/recursive: check if we are `use`ing an item defined in that module
-                        if sub_module2
-                            .pub_definitions
-                            .iter()
-                            .any(|pub_defined_name2| pub_defined_name2 == item_name)
-                        {
-                            // again/recursive: We found the origin of the item being used, so we can record the full path of the item
-                            module
-                                .resolved_mappings
-                                .push((item_name.clone(), submodule.path.clone()))
-                        } else {
-                            // again/recursive: item is not defined in this sub module, so there must be a `pub use ...` to another module
-                            // TODO refactor to make it properly recursive
-                            todo!()
-                        }
-                    } else {
-                        // if we are not `use`ing from a module, we must be using from a module that has already been used, or from another crate, neither of which are supported currently
-                        todo!()
-                    }
-                    // There is no `pub use` which exports our path name, so check for pub mod instead
-                } else if let Some(submodule2_name) = submodule
-                    .pub_submodules
-                    .iter()
-                    // First first item in item_path was the name the current submodule, now we are looking for a module `pub mod ...` from the current module which would be the second item in the path
-                    .find(|sub_module_name| sub_module_name == &item_path.get(1).unwrap())
-                {
-                    // We matched a sub module name, now lets get the acutal second sub module
-                    let sub_module2 = immutable_modules
-                        .iter()
-                        .find(|sub_module2| &sub_module2.name == submodule2_name)
-                        .unwrap();
-
-                    // Now we again need to check if the item we are looking for is defined in this module, or there is another `pub use ...` or `pub mod ...`
-                    if sub_module2.pub_definitions.contains(item_name) {
-                        module
-                            .resolved_mappings
-                            .push((item_name.clone(), sub_module2.path.clone()))
-                    } else {
-                        todo!("deeper pub use/mod nesting")
-                    }
-                } else {
-                    panic!("no pub use or pub mod found");
-                }
-            } else {
-                // if we are not `use`ing from a module, we must be using from a module that has already been used, or from another crate, neither of which are supported currently
-                todo!()
-            }
-        }
-    }
-}
-
 fn push_rust_types(js_stmts: &mut Vec<JsStmt>) {
     let mut methods = Vec::new();
     methods.push((
@@ -1516,7 +1423,7 @@ pub fn process_items(
         dup.namespace.push(dup.name.clone());
     }
 
-    resolve_use_stmts(&mut modules);
+    // resolve_use_stmts(&mut modules);
 
     let mut js_stmts = Vec::new();
 
