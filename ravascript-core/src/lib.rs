@@ -3069,6 +3069,8 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             // handle mixed paths eg submodule -> use
             // make sure `mod` being pub/private is taken into account - this would only be for use paths since mod is always public in the file it is called from (parent), so would happen in the `use` resolving step
 
+            // Take a path segs like foo::my_func(), and finds the absolute path to the item eg crate::bar::foo::my_func()
+            // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
             fn get_path(
                 use_private_items: bool,
                 // So we know whether allow segs to simply be somthing in an outer scope
@@ -3077,6 +3079,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 mut segs: Vec<String>,
                 global_data: &GlobalData,
                 current_module: &Vec<String>,
+                // Only used to determine if current module is
                 original_module: &Vec<String>,
             ) -> Vec<String> {
                 // TODO All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...` I don't think there is any way to know whether the path leads a module which is a parent of (or is) the original module (ie so should be public), so we need to do this check. No - even if we access an item via `crate`, once we then visit a submodule, `use_private_items` get set to false, the problem is actually that sometimes we will want it to be true, when crate::submodule is actually a parent of the original module. So really we should just keep `is_parent_or_same_module` but a more efficient approach is to use `use_private_items` for crate, super, self, etc, then only calculate `is_parent_or_same_module` for submodule and pass as use_private_items
@@ -3237,9 +3240,21 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         &submodule_path,
                         original_module,
                     )
-                } else if let Some(use_mapping) = path_starts_with_a_used_item_or_mod {
-                    // Path starts with an item `use`d (possibly a chain of `use`s which have been resolved to a single path) from the current module
-                    // dbg!("item used");
+                } else if let Some(use_mapping) = matched_use_mapping {
+                    let mut use_segs = use_mapping.1.clone();
+                    use_segs.push(use_mapping.0.clone());
+                    segs.remove(0);
+                    use_segs.extend(segs);
+                    let mut segs = get_path(
+                        true,
+                        true,
+                        module,
+                        use_segs,
+                        global_data,
+                        current_module,
+                        original_module,
+                    );
+
                     if let Some(dup) = global_data.duplicates.iter().find(|dup| {
                         dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
                     }) {
