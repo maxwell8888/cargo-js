@@ -159,11 +159,9 @@ fn handle_item_use(
 
     if root_module_or_crate == "ravascript" {
         match &sub_modules.0[0] {
-            DestructureValue::KeyName(_) => {
-            }
+            DestructureValue::KeyName(_) => {}
             DestructureValue::Rename(_, _) => {}
             DestructureValue::Nesting(name, _) => {
-
                 if name == "prelude" {
                     return;
                 }
@@ -1037,6 +1035,28 @@ struct ModuleData {
     /// Same format as use mapping but has absolute module path
     /// (snake case item name, snake case absolute module path)
     resolved_mappings: Vec<(String, Vec<String>)>,
+}
+impl ModuleData {
+    fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
+        let mut definitions = self.pub_definitions.iter();
+        if use_private {
+            definitions
+                .chain(self.private_definitions.iter())
+                .any(|definition| definition == item)
+        } else {
+            definitions.any(|definition| definition == item)
+        }
+    }
+    fn path_starts_with_sub_module(&self, use_private: bool, item: &String) -> bool {
+        let mut submodules = self.pub_submodules.iter();
+        if use_private {
+            submodules
+                .chain(self.private_submodules.iter())
+                .any(|submodule_name| submodule_name == item)
+        } else {
+            submodules.any(|submodule_name| submodule_name == item)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3035,9 +3055,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
 
             // So we have a path like foo::bar::baz()
             // The algorithm for finding the full module path to the item is:
+            // Iif segs[0] is crate, super, or self, then jump to that module
+            // else
             // Look to see if segs[0] is defined in any other the parent scopes
             // else
-            // Look to see if segs[0] is
+            // Look to see if segs[0] is defined at the module level
+            // else
+            // Look to see if segs[0] is a child module
+            // else
+            // Look to see if segs[0] is used
 
             // TODO:
             // handle mixed paths eg submodule -> use
@@ -3053,7 +3079,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 current_module: &Vec<String>,
                 original_module: &Vec<String>,
             ) -> Vec<String> {
-                // All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...`
+                // TODO All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...` I don't think there is any way to know whether the path leads a module which is a parent of (or is) the original module (ie so should be public), so we need to do this check. No - even if we access an item via `crate`, once we then visit a submodule, `use_private_items` get set to false, the problem is actually that sometimes we will want it to be true, when crate::submodule is actually a parent of the original module. So really we should just keep `is_parent_or_same_module` but a more efficient approach is to use `use_private_items` for crate, super, self, etc, then only calculate `is_parent_or_same_module` for submodule and pass as use_private_items
                 let is_parent_or_same_module = if original_module.len() >= current_module.len() {
                     current_module
                         .iter()
@@ -3063,18 +3089,21 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     false
                 };
 
-                let item_defined_in_module = if use_private_items || is_parent_or_same_module {
-                    module
-                        .pub_definitions
-                        .iter()
-                        .chain(module.private_definitions.iter())
-                        .any(|definition| definition == &segs[0])
-                } else {
-                    module
-                        .pub_definitions
-                        .iter()
-                        .any(|definition| definition == &segs[0])
-                };
+                let item_defined_in_module = module.item_defined_in_module(
+                    use_private_items || is_parent_or_same_module,
+                    &segs[0],
+                );
+
+                // Whilst the immediate child modules are public to all modules (not their items, but the module itself), we might not actually be accessing it directly from the parent eg `foo::bar::baz()` and `bar` is not `pub`
+                let path_starts_with_sub_module = module.path_starts_with_sub_module(
+                    use_private_items || is_parent_or_same_module,
+                    &segs[0],
+                );
+
+                let path_starts_with_a_used_item_or_mod = module
+                    .resolved_mappings
+                    .iter()
+                    .find(|use_mapping| use_mapping.0 == segs[0]);
 
                 // dbg!(&segs);
                 // dbg!(&module);
@@ -3108,58 +3137,6 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     // dbg!("item defined in module");
 
                     segs
-                } else if let Some(use_mapping) = module
-                    .resolved_mappings
-                    .iter()
-                    .find(|use_mapping| use_mapping.0 == segs[0])
-                {
-                    // Path starts with an item `use`d (possibly a chain of `use`s which have been resolved to a single path) from the current module
-                    // dbg!("item used");
-                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
-                        dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
-                    }) {
-                        // If the item has been namespaced, we need to replace it with the namespace
-                        segs[0] = dup
-                            .namespace
-                            .iter()
-                            .map(|seg| camel(seg))
-                            .collect::<Vec<_>>()
-                            .join("__");
-                        segs
-                    } else {
-                        // If the item has not been namespaced, we don't need to do anything
-                        segs
-                    }
-                } else if module
-                    .pub_submodules
-                    .iter()
-                    // TODO it is not correct to *always* include private modules here. Whilst the immediate child modules are public to all modules (not their items, but the module itself), we might not actually be accessing it directly from the parent eg `foo::bar::baz()` and `bar` is not `pub`
-                    .chain(module.private_submodules.iter())
-                    .any(|submodule_name| submodule_name == &segs[0])
-                {
-                    // Path starts with a submodule of the current module
-                    let mut submodule_path = current_module.clone();
-                    submodule_path.push(segs[0].clone());
-
-                    let submodule = global_data
-                        .modules
-                        .iter()
-                        .find(|submodule| submodule.path == submodule_path)
-                        .unwrap();
-
-                    // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
-                    segs.remove(0);
-
-                    // dbg!("Path starts with a submodule of the current module");
-                    get_path(
-                        false,
-                        true,
-                        submodule,
-                        segs,
-                        global_data,
-                        &submodule_path,
-                        original_module,
-                    )
                 } else if segs[0] == "super" {
                     // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
                     segs.remove(0);
@@ -3222,6 +3199,48 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         &current_module,
                         original_module,
                     )
+                } else if path_starts_with_sub_module {
+                    // Path starts with a submodule of the current module
+                    let mut submodule_path = current_module.clone();
+                    submodule_path.push(segs[0].clone());
+
+                    let submodule = global_data
+                        .modules
+                        .iter()
+                        .find(|submodule| submodule.path == submodule_path)
+                        .unwrap();
+
+                    // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
+                    segs.remove(0);
+
+                    // dbg!("Path starts with a submodule of the current module");
+                    get_path(
+                        false,
+                        true,
+                        submodule,
+                        segs,
+                        global_data,
+                        &submodule_path,
+                        original_module,
+                    )
+                } else if let Some(use_mapping) = path_starts_with_a_used_item_or_mod {
+                    // Path starts with an item `use`d (possibly a chain of `use`s which have been resolved to a single path) from the current module
+                    // dbg!("item used");
+                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
+                        dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
+                    }) {
+                        // If the item has been namespaced, we need to replace it with the namespace
+                        segs[0] = dup
+                            .namespace
+                            .iter()
+                            .map(|seg| camel(seg))
+                            .collect::<Vec<_>>()
+                            .join("__");
+                        segs
+                    } else {
+                        // If the item has not been namespaced, we don't need to do anything
+                        segs
+                    }
                 } else if segs.len() == 1 && segs[0] == "this" {
                     // dbg!("in this");
                     segs
