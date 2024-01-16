@@ -3100,10 +3100,24 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     &segs[0],
                 );
 
-                let path_starts_with_a_used_item_or_mod = module
-                    .resolved_mappings
-                    .iter()
-                    .find(|use_mapping| use_mapping.0 == segs[0]);
+                // We are looking for the origin of some name so we want to compare that name with the item the use statement is importing
+                // If we have a match then use want to add the use path to the path of the current module, eg:
+                // current_module::crate::foo:item - we can overwrite the current module with "crate"
+                // current_module::super::foo:item - we can pop the last seg of the current module
+                // current_module::submodule::foo::item - add the submodule to the current module
+                // current_module::another_used_item::item - we need to get the path of this subsequent used item in the same way described here, so we are recursing, then return to the original use path and carry on adding the rest of the segments
+                let mut use_mappings = module.pub_use_mappings.iter();
+                let matched_use_mapping = if use_private_items || is_parent_or_same_module {
+                    use_mappings
+                        .chain(module.private_use_mappings.iter())
+                        .find(|use_mapping| use_mapping.0 == segs[0])
+                } else {
+                    use_mappings.find(|use_mapping| use_mapping.0 == segs[0])
+                };
+                // let path_starts_with_a_used_item_or_mod = module
+                //     .resolved_mappings
+                //     .iter()
+                //     .find(|use_mapping| use_mapping.0 == segs[0]);
 
                 // dbg!(&segs);
                 // dbg!(&module);
