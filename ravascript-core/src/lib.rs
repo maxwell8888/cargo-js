@@ -987,6 +987,7 @@ fn js_stmts_from_syn_items(
 struct RustPreludeTypes {
     vec: bool,
     hash_map: bool,
+    // TODO need to check which fns return an Option, and set `option` for those
     option: bool,
     some: bool,
     // TODO Is this just null?
@@ -1092,7 +1093,7 @@ impl GlobalData {
 }
 
 /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-fn update_classes(js_stmt_modules: &mut Vec<JsModule>, impl_items: Vec<ImplItemTemp>) {
+fn update_classes(js_stmt_modules: &mut Vec<JsModule>, impl_items: &Vec<ImplItemTemp>) {
     for js_stmt_module in js_stmt_modules {
         for stmt in js_stmt_module.stmts.iter_mut() {
             match stmt {
@@ -1317,46 +1318,80 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
     }
 }
 
-fn push_rust_types(js_stmts: &mut Vec<JsStmt>) {
-    let mut methods = Vec::new();
-    methods.push((
-        "new".to_string(),
-        false,
-        true,
-        JsFn {
-            iife: false,
+fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
+    let rust_prelude_types = &global_data.rust_prelude_types;
+    if rust_prelude_types.vec {
+        let mut methods = Vec::new();
+        methods.push((
+            "new".to_string(),
+            false,
+            true,
+            JsFn {
+                iife: false,
+                export: false,
+                public: false,
+                async_: false,
+                is_method: true,
+                name: "new".to_string(),
+                input_names: Vec::new(),
+                body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
+            },
+        ));
+        methods.push((
+            "push".to_string(),
+            false,
+            false,
+            JsFn {
+                iife: false,
+                export: false,
+                public: false,
+                async_: false,
+                is_method: true,
+                name: "push".to_string(),
+                input_names: vec!["elem".to_string()],
+                body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
+            },
+        ));
+        js_stmts.push(JsStmt::Class(JsClass {
             export: false,
             public: false,
-            async_: false,
-            is_method: true,
-            name: "new".to_string(),
-            input_names: Vec::new(),
-            body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
-        },
-    ));
-    methods.push((
-        "push".to_string(),
-        false,
-        false,
-        JsFn {
-            iife: false,
-            export: false,
-            public: false,
-            async_: false,
-            is_method: true,
-            name: "push".to_string(),
-            input_names: vec!["elem".to_string()],
-            body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
-        },
-    ));
-    js_stmts.push(JsStmt::Class(JsClass {
-        export: false,
-        public: false,
-        name: "Vec".to_string(),
-        inputs: Vec::new(),
-        static_fields: Vec::new(),
-        methods,
-    }));
+            name: "Vec".to_string(),
+            inputs: Vec::new(),
+            static_fields: Vec::new(),
+            methods,
+        }));
+    }
+
+    if rust_prelude_types.none {
+        js_stmts.insert(0, JsStmt::Raw("var None = MyEnum.None;".to_string()))
+    }
+    if rust_prelude_types.some {
+        js_stmts.insert(0, JsStmt::Raw("var Some = MyEnum.Some;".to_string()))
+    }
+    if rust_prelude_types.option {
+        js_stmts.insert(
+            0,
+            JsStmt::Raw(
+                r#"
+                class Option {
+                    static noneId = "None";
+                    static None = {
+                        id: "None"
+                    };
+                    static someId = "Some";
+                    static Some(arg_0) {
+                        const data = {
+                            id: "Some"
+                        };
+                        data.data = [arg_0];
+                        return data;
+                    }
+                }
+                "#
+                .to_string(),
+            ),
+        )
+    }
 }
 
 pub fn process_items(
@@ -1450,7 +1485,7 @@ pub fn process_items(
         .unwrap();
     crate_module.stmts = stmts;
 
-    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
+    update_classes(&mut global_data.transpiled_modules, &global_data.impl_items);
     // dbg!(&global_data.transpiled_modules);
 
     // resolve paths to get canonical path to item
@@ -1465,7 +1500,7 @@ pub fn process_items(
     // dbg!(global_data.modules);
 
     if with_rust_types {
-        push_rust_types(&mut js_stmts);
+        push_rust_types(&global_data, &mut js_stmts);
     }
 
     // and module name comments when there is more than 1 module
@@ -1604,8 +1639,6 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
 
     // resolve_use_stmts(&mut modules);
 
-    let mut js_stmts = Vec::new();
-
     let mut global_data = GlobalData::new(false, None, Vec::new());
     global_data.modules = modules;
 
@@ -1622,12 +1655,17 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     //     &mut global_data,
     //     &mut None,
     // );
-    let stmts = expr_block
+    let mut stmts = expr_block
         .block
         .stmts
         .iter()
         .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]))
         .collect::<Vec<_>>();
+
+    if with_rust_types {
+        push_rust_types(&global_data, &mut stmts);
+    }
+
     let crate_module = global_data
         .transpiled_modules
         .iter_mut()
@@ -1635,11 +1673,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         .unwrap();
     crate_module.stmts = stmts;
 
-    update_classes(&mut global_data.transpiled_modules, global_data.impl_items);
-
-    if with_rust_types {
-        push_rust_types(&mut js_stmts);
-    }
+    update_classes(&mut global_data.transpiled_modules, &global_data.impl_items);
 
     // and module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {
@@ -2590,6 +2624,19 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .map(|arg| handle_expr(arg, global_data, current_module))
                 .collect::<Vec<_>>();
             match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    let last = expr_path.path.segments.last().unwrap().ident.to_string();
+                    if last == "Some" {
+                        global_data.rust_prelude_types.option = true;
+                        global_data.rust_prelude_types.some = true;
+                    } else if last == "None" {
+                        global_data.rust_prelude_types.option = true;
+                        global_data.rust_prelude_types.none = true;
+                    }
+                }
+                _ => {}
+            }
+            match &*expr_call.func {
                 Expr::Path(expr_path)
                     if expr_path.path.segments.last().unwrap().ident.to_string() == "fetch2" =>
                 {
@@ -2666,12 +2713,13 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         vec![JsExpr::LitStr("div".to_string())],
                     )
                 }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.len() == 1
-                        && expr_path.path.segments[0].ident.to_string() == "Some" =>
-                {
-                    args.into_iter().next().unwrap()
-                }
+                // TODO Can we remove Some and just treat Some as any value vs None which is null?
+                // Expr::Path(expr_path)
+                //     if expr_path.path.segments.len() == 1
+                //         && expr_path.path.segments[0].ident.to_string() == "Some" =>
+                // {
+                //     args.into_iter().next().unwrap()
+                // }
                 _ => JsExpr::FnCall(
                     Box::new(handle_expr(&*expr_call.func, global_data, current_module)),
                     args,

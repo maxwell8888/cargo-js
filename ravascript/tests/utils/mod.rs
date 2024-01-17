@@ -57,6 +57,30 @@ macro_rules! r2j_block {
     }};
 }
 
+pub fn r2j_block_with_prelude(code: &str) -> String {
+    let stmts = from_block(code, true);
+    let generated_js = stmts
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let generated_js = format_js(generated_js);
+    generated_js
+}
+/// Input code should be in a block as this allow rustfmt to work on the code, however the block (braces) are removed from the the output code and instead just the lines of code inside the block are used to generate the Javascript
+#[macro_export]
+macro_rules! r2j_block_with_prelude {
+    ($block:block) => {{
+        // Output the block to ensure that it runs without errors, eg failed asserts
+        $block
+
+        #[fn_stmts_as_str]
+        fn fn_wrapper() $block
+
+        r2j_block_with_prelude(block_code_str())
+    }};
+}
+
 pub fn r2j_file(code: &str) -> String {
     let modules = from_file(code, false);
     let generated_js = modules

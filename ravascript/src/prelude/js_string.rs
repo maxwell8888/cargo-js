@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 #[derive(Clone, Copy)]
 pub struct JsString {
     /// Reflects the length of the string. Read-only.

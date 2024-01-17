@@ -57,3 +57,35 @@ async fn it_writes_to_clipboard() {
 
     assert_eq!(expected_js, actual);
 }
+
+// Check web "prelude" items are correctly inserted
+#[tokio::test]
+async fn option_null() {
+    let actual = r2j_block_with_prelude!({
+        let _five = Some(5);
+    });
+
+    let expected_js = format_js(
+        r#"
+        class Option {
+            static noneId = "None";
+            static None = {
+                id: "None"
+            };
+            static someId = "Some";
+            static Some(arg_0) {
+                const data = {
+                    id: "Some"
+                };
+                data.data = [arg_0];
+                return data;
+            }
+        }
+
+        var Some = MyEnum.Some;
+        var _five = Some(5);
+        "#,
+    );
+
+    assert_eq!(expected_js, actual);
+}

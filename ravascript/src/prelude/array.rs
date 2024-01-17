@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 /// Arrays are allowed to be:
 /// `mut` since JS arrays are mutable
 /// `&` since we can just reassign the array which actually gives us a mutable reference but that doesn't matter since Rust won't let us make any mutations
