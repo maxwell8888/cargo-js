@@ -1,4 +1,4 @@
-use ravascript::web::*;
+use ravascript::prelude::web::*;
 
 fn expanding_textarea() -> HTMLDivElement {
     let div = Document::create_element_div();
