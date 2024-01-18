@@ -3,9 +3,8 @@ members = [
     "ravascript",
     "ravascript-core",
     "ravascript-macros",
-    "comprehensive-example",
+    # "comprehensive-example",
     "cargo-js",
-    "so_example",
     "for-testing",
 ]
 resolver = "2"
