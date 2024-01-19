@@ -1,5 +1,6 @@
 mod stuff;
 mod utils;
+use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
 };

@@ -6,6 +6,7 @@ use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use std::{
     fmt::Debug,
     fs,
+    net::ToSocketAddrs,
     path::{Path, PathBuf},
 };
 use syn::{
@@ -13,6 +14,7 @@ use syn::{
     ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemUse, Lit, Member, Meta, Pat, Stmt, Type,
     UnOp, UseTree, Visibility,
 };
+mod rust_prelude;
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
@@ -50,7 +52,7 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
             case_convert(&use_name.ident),
         )]),
         UseTree::Rename(_) => todo!(),
-        UseTree::Glob(_) => todo!(),
+        UseTree::Glob(_) => DestructureObject(vec![]),
         UseTree::Group(use_group) => DestructureObject(
             use_group
                 .items
@@ -119,7 +121,9 @@ fn tree_parsing_for_boilerplate(
 /// snake_case -> snakeCase
 fn case_convert(name: impl ToString) -> String {
     let name = name.to_string();
+
     if name.chars().all(|c| c.is_uppercase() || c == '_') {
+        // NOTE JS seems to be okay with uppercase keywords so don't need to convert
         name
     } else if name.chars().next().unwrap().is_ascii_uppercase() {
         // TODO this is redundant?
@@ -156,6 +160,12 @@ fn handle_item_use(
         UseTree::Name(use_name) => todo!(),
         _ => panic!("root of use trees are always a path or name"),
     };
+
+    // handle globs
+    if sub_modules.0.len() == 0 {
+        // For now we are not handling globs but need to use them for using enum variants which we will then need to inject manually
+        return;
+    }
 
     if root_module_or_crate == "ravascript" {
         match &sub_modules.0[0] {
@@ -243,6 +253,14 @@ fn handle_item_use(
 
 fn camel(text: impl ToString) -> String {
     let text = text.to_string();
+
+    // rename JavaScript keywords
+    let text = if text == "default" {
+        "default_vzxyw".to_string()
+    } else {
+        text
+    };
+
     let underscore_prefix = text.starts_with("_");
     let camel = AsLowerCamelCase(text).to_string();
     if underscore_prefix {
@@ -482,6 +500,8 @@ fn handle_item_enum(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
+    let mut class_name = item_enum.ident.to_string();
+
     let mut static_fields = Vec::new();
     for variant in &item_enum.variants {
         static_fields.push(JsLocal {
@@ -491,6 +511,7 @@ fn handle_item_enum(
             lhs: LocalName::Single(format!("{}Id", camel(&variant.ident))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
+
         match variant.fields {
             syn::Fields::Named(_) => {}
             syn::Fields::Unnamed(_) => {}
@@ -503,10 +524,11 @@ fn handle_item_enum(
                         "{}",
                         AsPascalCase(variant.ident.to_string()).to_string()
                     )),
-                    value: JsExpr::Object(vec![(
-                        "id".to_string(),
-                        Box::new(JsExpr::LitStr(variant.ident.to_string())),
-                    )]),
+                    value: JsExpr::New(
+                        vec![class_name.clone()],
+                        vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
+                    ),
+                    // Box::new(JsExpr::LitStr(variant.ident.to_string())),
                 });
             }
         };
@@ -529,23 +551,26 @@ fn handle_item_enum(
                 // const data = { id: "Baz" };
                 // data.data = [text, num];
                 // return data;
-                let mut stmts = Vec::new();
-                stmts.push(JsStmt::Raw(format!(
-                    r#"const data = {{ id: "{}" }};"#,
-                    variant.ident.to_string()
-                )));
                 let arg_names = fields_unnamed
                     .unnamed
                     .iter()
                     .enumerate()
                     .map(|(i, _)| format!("arg_{i}"))
                     .collect::<Vec<_>>();
-                stmts.push(JsStmt::Raw(format!(
-                    r#"data.data = [{}];"#,
-                    arg_names.join(", ")
+
+                let return_expr = JsExpr::Return(Box::new(JsExpr::New(
+                    vec![class_name.clone()],
+                    vec![
+                        JsExpr::LitStr(variant.ident.to_string()),
+                        JsExpr::Array(
+                            arg_names
+                                .iter()
+                                .map(|name| JsExpr::Path(vec![name.clone()]))
+                                .collect::<Vec<_>>(),
+                        ),
+                    ],
                 )));
-                stmts.push(JsStmt::Raw("return data;".to_string()));
-                (arg_names, stmts)
+                (arg_names, vec![JsStmt::Expr(return_expr, true)])
             }
             syn::Fields::Unit => (Vec::new(), Vec::new()),
         };
@@ -568,13 +593,12 @@ fn handle_item_enum(
         }
     }
 
-    let mut name = item_enum.ident.to_string();
     if let Some(dup) = global_data
         .duplicates
         .iter()
-        .find(|dup| dup.name == name && &dup.original_module_path == current_module)
+        .find(|dup| dup.name == class_name && &dup.original_module_path == current_module)
     {
-        name = dup
+        class_name = dup
             .namespace
             .iter()
             .map(|seg| camel(seg))
@@ -588,7 +612,7 @@ fn handle_item_enum(
             Visibility::Inherited => false,
         },
         export: false,
-        name,
+        name: class_name,
         inputs: Vec::new(),
         static_fields,
         methods,
@@ -711,13 +735,16 @@ fn handle_item_impl(
                         },
                     })
                     .collect::<Vec<_>>();
+
+                let n_stmts = item_impl_fn.block.stmts.len();
                 let body_stmts = item_impl_fn
                     .block
                     .stmts
                     .clone()
                     .into_iter()
-                    .map(|stmt| handle_stmt(&stmt, global_data, &current_module_path))
+                    .map(|stmt| stmt)
                     .collect::<Vec<_>>();
+                let body_stmts = parse_fn_body_stmts(&body_stmts, global_data, current_module_path);
                 impl_stmts.push(
                     // item_impl_fn.sig.ident.to_string(),
                     ImplItemTemp {
@@ -1319,6 +1346,11 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
 }
 
 fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
+    let option_code = include_str!("rust_prelude.rs");
+    let modules = from_file(option_code, false);
+    assert_eq!(modules.len(), 1);
+    let module = &modules[0];
+
     let rust_prelude_types = &global_data.rust_prelude_types;
     if rust_prelude_types.vec {
         let mut methods = Vec::new();
@@ -1363,34 +1395,41 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     }
 
     if rust_prelude_types.none {
-        js_stmts.insert(0, JsStmt::Raw("var None = MyEnum.None;".to_string()))
+        js_stmts.insert(0, JsStmt::Raw("var None = Option.None;".to_string()))
     }
     if rust_prelude_types.some {
-        js_stmts.insert(0, JsStmt::Raw("var Some = MyEnum.Some;".to_string()))
+        js_stmts.insert(0, JsStmt::Raw("var Some = Option.Some;".to_string()))
     }
     if rust_prelude_types.option {
-        js_stmts.insert(
-            0,
-            JsStmt::Raw(
-                r#"
-                class Option {
-                    static noneId = "None";
-                    static None = {
-                        id: "None"
-                    };
-                    static someId = "Some";
-                    static Some(arg_0) {
-                        const data = {
-                            id: "Some"
-                        };
-                        data.data = [arg_0];
-                        return data;
+        for stmt in &module.stmts {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    if js_class.name == "Option" {
+                        js_stmts.insert(0, stmt.clone());
                     }
                 }
-                "#
-                .to_string(),
-            ),
-        )
+                JsStmt::ClassMethod(_, _, _, _) => todo!(),
+                JsStmt::ClassStatic(_) => todo!(),
+                // JsStmt::Local(js_local) => match &js_local.lhs {
+                //     LocalName::Single(name) => {
+                //         if name == "Some" || name == "None" {
+                //             js_stmts.insert(0, stmt.clone());
+                //         }
+                //     }
+                //     LocalName::DestructureObject(_) => todo!(),
+                //     LocalName::DestructureArray(_) => todo!(),
+                // },
+                JsStmt::Local(_) => todo!(),
+                JsStmt::Expr(_, _) => todo!(),
+                JsStmt::Import(_, _, _) => todo!(),
+                JsStmt::Function(_) => todo!(),
+                JsStmt::ScopeBlock(_) => todo!(),
+                JsStmt::TryBlock(_) => todo!(),
+                JsStmt::CatchBlock(_, _) => todo!(),
+                JsStmt::Raw(_) => todo!(),
+                JsStmt::Comment(_) => todo!(),
+            }
+        }
     }
 }
 
@@ -1460,8 +1499,6 @@ pub fn process_items(
 
     // resolve_use_stmts(&mut modules);
 
-    let mut js_stmts = Vec::new();
-
     let mut global_data = GlobalData::new(false, global_data_crate_path, duplicates.clone());
     global_data.modules = modules;
 
@@ -1471,13 +1508,18 @@ pub fn process_items(
         module_path: vec!["crate".to_string()],
         stmts: Vec::new(),
     });
-    let stmts = js_stmts_from_syn_items(
+    let mut stmts = js_stmts_from_syn_items(
         items,
         true,
         &mut vec!["crate".to_string()],
         &mut global_data,
         entrypoint_path,
     );
+
+    if with_rust_types {
+        push_rust_types(&global_data, &mut stmts);
+    }
+
     let crate_module = global_data
         .transpiled_modules
         .iter_mut()
@@ -1498,10 +1540,6 @@ pub fn process_items(
 
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
-
-    if with_rust_types {
-        push_rust_types(&global_data, &mut js_stmts);
-    }
 
     // and module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {
@@ -1848,6 +1886,7 @@ pub enum JsExpr {
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
     MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
+    /// (Class path, args)
     New(Vec<String>, Vec<JsExpr>),
     Null,
     Object(Vec<(String, Box<JsExpr>)>),
@@ -2011,7 +2050,7 @@ impl JsExpr {
                 let body = if *block {
                     body.iter()
                         .enumerate()
-                        .map(|(i, stmt)| handle_fn_body_stmts(i, stmt, body.len()))
+                        .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, body.len()))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
@@ -2245,13 +2284,13 @@ pub struct JsFn {
 }
 
 /// Adds return and semi to expr being returned. For an if expression this means we also need to get the name of the assignment var that needs returning  
-fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
+fn handle_fn_body_stmt(i: usize, stmt: &JsStmt, len: usize) -> String {
     match stmt {
         JsStmt::Local(js_local) => js_local.js_string(),
         JsStmt::Expr(js_expr, semi) => match js_expr {
             JsExpr::If(assignment, _, _, _, _) => {
-                // TODO wrongly assuming that all single if expr bodys should be returned
                 if i == len - 1 {
+                    // TODO wrongly assuming that all single if expr bodys should be returned
                     if let Some(assignment) = assignment {
                         format!(
                             "{}\nreturn {};",
@@ -2259,7 +2298,9 @@ fn handle_fn_body_stmts(i: usize, stmt: &JsStmt, len: usize) -> String {
                             assignment.js_string()
                         )
                     } else {
-                        todo!()
+                        // dbg!(stmt);
+                        // todo!()
+                        js_expr.js_string()
                     }
                 } else {
                     js_expr.js_string()
@@ -2298,7 +2339,7 @@ impl JsFn {
             .body_stmts
             .iter()
             .enumerate()
-            .map(|(i, stmt)| handle_fn_body_stmts(i, stmt, self.body_stmts.len()))
+            .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, self.body_stmts.len()))
             .collect::<Vec<_>>()
             .join("\n");
         let fn_string = format!(
@@ -2570,7 +2611,21 @@ fn parse_fn_body_stmts(
                                 )
                             }
                         }
-                        Expr::Match(_) => todo!(),
+                        Expr::Match(expr_match) => {
+                            if semi.is_some() {
+                                handle_stmt(stmt, global_data, current_module)
+                            } else {
+                                JsStmt::Expr(
+                                    handle_expr_match(
+                                        expr_match,
+                                        true,
+                                        global_data,
+                                        current_module,
+                                    ),
+                                    false,
+                                )
+                            }
+                        }
                         _ => handle_stmt(stmt, global_data, current_module),
                     },
                     _ => handle_stmt(stmt, global_data, current_module),
@@ -2623,25 +2678,77 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .iter()
                 .map(|arg| handle_expr(arg, global_data, current_module))
                 .collect::<Vec<_>>();
+
             match &*expr_call.func {
                 Expr::Path(expr_path) => {
                     let last = expr_path.path.segments.last().unwrap().ident.to_string();
                     if last == "Some" {
                         global_data.rust_prelude_types.option = true;
                         global_data.rust_prelude_types.some = true;
-                    } else if last == "None" {
-                        global_data.rust_prelude_types.option = true;
-                        global_data.rust_prelude_types.none = true;
                     }
                 }
                 _ => {}
             }
+
             match &*expr_call.func {
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.last().unwrap().ident.to_string() == "fetch2" =>
-                {
-                    // TODO improve this code
-                    JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args)
+                Expr::Path(expr_path) => {
+                    let segments = expr_path
+                        .path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.ident.to_string())
+                        .collect::<Vec<_>>();
+
+                    if segments.last().unwrap() == "fetch2" {
+                        // TODO improve this code
+                        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args)
+                    } else if segments.last().unwrap() == "stringify" {
+                        JsExpr::FnCall(
+                            Box::new(JsExpr::Path(vec![
+                                "JSON".to_string(),
+                                "stringify".to_string(),
+                            ])),
+                            args,
+                        )
+                    } else if segments.len() == 2 && segments[0] == "Json" && segments[1] == "parse"
+                    {
+                        JsExpr::FnCall(
+                            Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
+                            args,
+                        )
+                    } else if segments.len() == 2
+                        && segments[0] == "Date"
+                        && segments[1] == "from_iso_string"
+                    {
+                        JsExpr::New(vec!["Date".to_string()], args)
+                    } else if segments.len() == 2
+                        && segments[0] == "Document"
+                        && segments[1] == "query_selector_body"
+                    {
+                        JsExpr::FnCall(
+                            Box::new(JsExpr::Path(vec![
+                                "document".to_string(),
+                                "querySelector".to_string(),
+                            ])),
+                            vec![JsExpr::LitStr("body".to_string())],
+                        )
+                    } else if segments.len() == 2
+                        && segments[0] == "Document"
+                        && segments[1] == "create_element_div"
+                    {
+                        JsExpr::FnCall(
+                            Box::new(JsExpr::Path(vec![
+                                "document".to_string(),
+                                "createElement".to_string(),
+                            ])),
+                            vec![JsExpr::LitStr("div".to_string())],
+                        )
+                    } else {
+                        JsExpr::FnCall(
+                            Box::new(handle_expr(&*expr_call.func, global_data, current_module)),
+                            args,
+                        )
+                    }
                 }
                 // Expr::Path(expr_path)
                 //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
@@ -2658,61 +2765,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 //         args,
                 //     )
                 // }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.last().unwrap().ident.to_string() == "stringify" =>
-                {
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Path(vec![
-                            "JSON".to_string(),
-                            "stringify".to_string(),
-                        ])),
-                        args,
-                    )
-                }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.len() == 2
-                        && expr_path.path.segments[0].ident.to_string() == "Json"
-                        && expr_path.path.segments[1].ident.to_string() == "parse" =>
-                {
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
-                        args,
-                    )
-                }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.len() == 2
-                        && expr_path.path.segments[0].ident.to_string() == "Date"
-                        && expr_path.path.segments[1].ident.to_string() == "from_iso_string" =>
-                {
-                    JsExpr::New(vec!["Date".to_string()], args)
-                }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.len() == 2
-                        && expr_path.path.segments[0].ident.to_string() == "Document"
-                        && expr_path.path.segments[1].ident.to_string()
-                            == "query_selector_body" =>
-                {
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Path(vec![
-                            "document".to_string(),
-                            "querySelector".to_string(),
-                        ])),
-                        vec![JsExpr::LitStr("body".to_string())],
-                    )
-                }
-                Expr::Path(expr_path)
-                    if expr_path.path.segments.len() == 2
-                        && expr_path.path.segments[0].ident.to_string() == "Document"
-                        && expr_path.path.segments[1].ident.to_string() == "create_element_div" =>
-                {
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Path(vec![
-                            "document".to_string(),
-                            "createElement".to_string(),
-                        ])),
-                        vec![JsExpr::LitStr("div".to_string())],
-                    )
-                }
+
                 // TODO Can we remove Some and just treat Some as any value vs None which is null?
                 // Expr::Path(expr_path)
                 //     if expr_path.path.segments.len() == 1
@@ -2940,9 +2993,9 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             if method_name.len() > 3 && &method_name[0..3] == "js_" {
                 method_name = method_name[3..].to_string();
             }
-            if method_name == "is_some" {
-                return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
-            }
+            // if method_name == "is_some" {
+            //     return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
+            // }
             // if method_name == "slice1" || method_name == "slice2" {
             //     method_name = "slice".to_string();
             // }
@@ -2997,8 +3050,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 })
                 .collect::<Vec<_>>();
             if segs.len() == 1 {
+                // if segs[0] == "None" {
+                //     return JsExpr::Null;
+                // }
                 if segs[0] == "None" {
-                    return JsExpr::Null;
+                    global_data.rust_prelude_types.option = true;
+                    global_data.rust_prelude_types.none = true;
                 }
                 if segs[0] == "self" {
                     segs[0] = "this".to_string();
@@ -3432,7 +3489,10 @@ fn handle_match_pat(
                 .iter()
                 .map(|elem| match elem {
                     Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                    _ => todo!(),
+                    other => {
+                        dbg!(other);
+                        todo!();
+                    }
                 })
                 .collect::<Vec<_>>();
             let stmt = JsStmt::Local(JsLocal {
@@ -3477,6 +3537,10 @@ fn handle_expr_match(
         |acc, arm| {
             let (mut rhs, mut body_data_destructure) =
                 handle_match_pat(&arm.pat, expr_match, global_data, current_module);
+
+            if rhs == ["Some"] || rhs == ["None"] {
+                rhs.insert(0, "Option".to_string());
+            }
 
             // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
             let index = rhs.len() - 1;

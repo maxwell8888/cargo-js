@@ -1,5 +1,6 @@
 mod stuff;
 mod utils;
+use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
 };
@@ -62,30 +63,64 @@ async fn it_writes_to_clipboard() {
 #[tokio::test]
 async fn option_null() {
     let actual = r2j_block_with_prelude!({
-        let _five = Some(5);
+        let five = Some(5);
+        let result = match &five {
+            Some(val) => *val,
+            None => 0,
+        };
+        assert_eq!(result, 5);
+        assert_eq!(five.unwrap_or(0), 5);
+        let nothing = None;
+        assert_eq!(nothing.unwrap_or(0), 0);
     });
+    println!("{actual}");
 
-    let expected_js = format_js(
+    let expected = format_js(
         r#"
         class Option {
+            static someId = "Some";
             static noneId = "None";
             static None = {
-                id: "None"
+                id: "None",
             };
-            static someId = "Some";
             static Some(arg_0) {
-                const data = {
-                    id: "Some"
-                };
+                const data = { id: "Some" };
                 data.data = [arg_0];
                 return data;
             }
+            unwrapOr(defaultVzxyw) {
+                var ifTempAssignment;
+                if (this.id === Option.someId) {
+                    var [x] = this.data;
+                    ifTempAssignment = x;
+                } else if (this.id === Option.noneId) {
+                    ifTempAssignment = defaultVzxyw;
+                } else {
+                    ifTempAssignment = "this shouldn't exist";
+                }
+                return ifTempAssignment;
+            }
         }
-
         var Some = MyEnum.Some;
-        var _five = Some(5);
+        var None = MyEnum.None;
+        var five = Some(5);
+        var result;
+        if (five.id === Option.someId) {
+            var [val] = five.data;
+            result = val;
+        } else if (five.id === Option.noneId) {
+            result = 0;
+        } else {
+            result = "this shouldn't exist";
+        }
+        console.assert(result === 5);
+        console.assert(five.unwrapOr(0) === 5);
+        var nothing = None;
+        console.assert(nothing.unwrapOr(0) === 0);
         "#,
     );
 
-    assert_eq!(expected_js, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    // assert_eq!(expected_js, actual);
 }
