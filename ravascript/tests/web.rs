@@ -73,20 +73,19 @@ async fn option_null() {
         let nothing = None;
         assert_eq!(nothing.unwrap_or(0), 0);
     });
-    println!("{actual}");
 
     let expected = format_js(
         r#"
         class Option {
             static someId = "Some";
             static noneId = "None";
-            static None = {
-                id: "None",
-            };
+            static None = new Option("None", null);
+            constructor(id, data) {
+                this.id = id;
+                this.data = data;
+            }
             static Some(arg_0) {
-                const data = { id: "Some" };
-                data.data = [arg_0];
-                return data;
+                return new Option("Some", [arg_0]);
             }
             unwrapOr(defaultVzxyw) {
                 var ifTempAssignment;
@@ -101,8 +100,8 @@ async fn option_null() {
                 return ifTempAssignment;
             }
         }
-        var Some = MyEnum.Some;
-        var None = MyEnum.None;
+        var Some = Option.Some;
+        var None = Option.None;
         var five = Some(5);
         var result;
         if (five.id === Option.someId) {

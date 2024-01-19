@@ -502,6 +502,27 @@ fn handle_item_enum(
 ) -> JsStmt {
     let mut class_name = item_enum.ident.to_string();
 
+    let mut methods = Vec::new();
+    let body_stmts = vec![
+        JsStmt::Raw("this.id = id;".to_string()),
+        JsStmt::Raw("this.data = data;".to_string()),
+    ];
+    methods.push((
+        item_enum.ident.to_string(),
+        false,
+        false,
+        JsFn {
+            iife: false,
+            public: false,
+            export: false,
+            async_: false,
+            is_method: true,
+            name: "constructor".to_string(),
+            input_names: vec!["id".to_string(), "data".to_string()],
+            body_stmts,
+        },
+    ));
+
     let mut static_fields = Vec::new();
     for variant in &item_enum.variants {
         static_fields.push(JsLocal {
@@ -534,7 +555,6 @@ fn handle_item_enum(
         };
     }
 
-    let mut methods = Vec::new();
     for variant in &item_enum.variants {
         let (input_names, body_stmts) = match &variant.fields {
             syn::Fields::Named(_fields_named) => {
