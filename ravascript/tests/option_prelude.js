@@ -33,6 +33,18 @@ class Option {
         }
         return ifTempAssignment;
     }
+    unwrap() {
+        var ifTempAssignment;
+        if (this.id === Option.someId) {
+            var [val] = this.data;
+            ifTempAssignment = val;
+        } else if (this.id === Option.noneId) {
+            throw new Error("called `Option::unwrap()` on a `None` value");
+        } else {
+            ifTempAssignment = "this shouldn't exist";
+        }
+        return ifTempAssignment;
+    }
     unwrapOr(defaultVzxyw) {
         var ifTempAssignment;
         if (this.id === Option.someId) {

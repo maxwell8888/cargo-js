@@ -90,3 +90,23 @@ async fn option_is_some_and() {
 
     assert_eq!(expected, actual);
 }
+
+#[tokio::test]
+async fn option_unwrap() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        assert_eq!(five.unwrap(), 5);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("option_prelude.js"),
+        r#"var Some = Option.Some;
+        var five = Some(5);
+        console.assert(five.unwrap() === 5);
+        "#,
+    ));
+
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
