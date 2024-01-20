@@ -11,23 +11,24 @@ impl<T> Option<T> {
     //     matches!(*self, Some(_))
     // }
 
-    // pub fn is_some_and(self, f: impl FnOnce(T) -> bool) -> bool {
-    //     match self {
-    //         None => false,
-    //         Some(x) => f(x),
-    //     }
-    // }
+    pub fn is_some_and(self, f: impl FnOnce(T) -> bool) -> bool {
+        match self {
+            None => false,
+            Some(x) => f(x),
+        }
+    }
 
     // pub fn is_none(&self) -> bool {
     //     !self.is_some()
     // }
 
-    // pub fn expect(self, msg: &str) -> T {
-    //     match self {
-    //         Some(val) => val,
-    //         None => panic!("{}", msg),
-    //     }
-    // }
+    // TODO need to parse and handle panic! input properly
+    pub fn expect(self, msg: &str) -> T {
+        match self {
+            Some(val) => val,
+            None => panic!("{}", msg),
+        }
+    }
 
     // pub fn unwrap(self) -> T {
     //     match self {

@@ -1,10 +1,12 @@
 class MyEnum {
     static fooBarId = "FooBar";
-    static FooBar = {
-        id: "FooBar"
-    };
+    static FooBar = new MyEnum("FooBar", null);
     static barId = "Bar";
     static bazId = "Baz";
+    constructor(id, data) {
+        this.id = id;
+        this.data = data;
+    }
     static Bar(data) {
         return {
             id: "Bar",
@@ -12,11 +14,10 @@ class MyEnum {
         };
     }
     static Baz(arg_0, arg_1) {
-        const data = {
-            id: "Baz"
-        };
-        data.data = [arg_0, arg_1];
-        return data;
+        return new MyEnum("Baz", [
+            arg_0, 
+            arg_1
+        ]);
     }
 }
 (function main() {

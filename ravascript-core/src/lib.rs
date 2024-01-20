@@ -351,7 +351,6 @@ fn handle_stmt(
             _ => todo!(),
         },
         Stmt::Macro(stmt_macro) => {
-            // dbg!(stmt_macro);
             let path_segs = stmt_macro
                 .mac
                 .path
@@ -360,6 +359,11 @@ fn handle_stmt(
                 .map(|seg| seg.ident.to_string())
                 .collect::<Vec<_>>();
             if path_segs.len() == 1 {
+                if path_segs[0] == "panic" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
+                    return JsStmt::Raw(format!(r#"throw new Error("{input}")"#));
+                }
                 if path_segs[0] == "try_" {
                     let input = stmt_macro.mac.tokens.clone().to_string();
                     let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
@@ -387,6 +391,21 @@ fn handle_stmt(
                     let stmt_vec = stmt_vec.collect::<Vec<_>>();
                     return JsStmt::CatchBlock(err_var_name, stmt_vec);
                 }
+                if path_segs[0] == "assert" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
+                    let condition_js =
+                        handle_expr(&condition_expr, global_data, current_module_path);
+
+                    return JsStmt::Expr(
+                        JsExpr::MethodCall(
+                            Box::new(JsExpr::Path(vec!["console".to_string()])),
+                            "assert".to_string(),
+                            vec![condition_js],
+                        ),
+                        stmt_macro.semi_token.is_some(),
+                    );
+                }
                 if path_segs[0] == "assert_eq" {
                     let input = stmt_macro.mac.tokens.clone().to_string();
                     let mut parts = input.split(",");
@@ -410,6 +429,7 @@ fn handle_stmt(
                     );
                 }
             }
+            dbg!(stmt_macro);
             todo!()
         }
     }
@@ -1913,7 +1933,9 @@ pub enum JsExpr {
     ObjectForModule(Vec<JsStmt>),
     /// like obj::inner::mynumber -> obj.inner.mynumber;
     Path(Vec<String>),
+    Raw(String),
     Return(Box<JsExpr>),
+    ThrowError(String),
     /// Will make the entire statement disappear no matter where it is nested?
     Vanish,
     Paren(Box<JsExpr>),
@@ -1924,7 +1946,7 @@ pub enum JsExpr {
     While(Box<JsExpr>, Vec<JsStmt>),
 }
 
-// Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
+// TODO Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
 fn if_expr_to_string(
     assignment: &Option<LocalName>,
     declare_var: &bool,
@@ -1954,6 +1976,13 @@ fn if_expr_to_string(
                         .map(|(i, stmt)| {
                             if i == stmts.len() - 1 {
                                 if let Some(assignment) = assignment {
+                                    let is_error = match stmt {
+                                        JsStmt::Expr(expr, _) => match expr {
+                                            JsExpr::ThrowError(_) => todo!(),
+                                            _ => false,
+                                        },
+                                        _ => false,
+                                    };
                                     format!("{} = {};", assignment.js_string(), stmt.js_string())
                                 } else {
                                     stmt.js_string()
@@ -1966,6 +1995,10 @@ fn if_expr_to_string(
                         .join("\n"),
                     _ => {
                         if let Some(assignment) = assignment {
+                            // let is_error = match &*else_ {
+                            //     JsExpr::ThrowError(_) => todo!(),
+                            //     _ => false,
+                            // };
                             format!("{} = {};", assignment.js_string(), else_.js_string())
                         } else {
                             else_.js_string()
@@ -2021,7 +2054,18 @@ fn if_expr_to_string(
                         //     }
                         // }
 
-                        format!("{} = {};", assignment.js_string(), stmt.js_string())
+                        let is_error = match stmt {
+                            JsStmt::Expr(expr, _) => match expr {
+                                JsExpr::ThrowError(_) => true,
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                        if is_error {
+                            stmt.js_string()
+                        } else {
+                            format!("{} = {};", assignment.js_string(), stmt.js_string())
+                        }
                     } else {
                         stmt.js_string()
                     }
@@ -2180,8 +2224,37 @@ impl JsExpr {
                     module_path: vec![],
                     stmts: js_stmts.clone(),
                 };
-                // dbg!(&js_stmt_module);
                 js_stmt_module.js_string()
+            }
+            JsExpr::Raw(text) => text.clone(),
+            JsExpr::ThrowError(message) => {
+                // TODO improve this - ideally use existing code eg from rustc
+                let parts = message
+                    .split(",")
+                    .into_iter()
+                    .map(|part| part.trim().to_string())
+                    .collect::<Vec<String>>();
+                let expanded_message = if parts.len() > 1 {
+                    let mut text = parts[0].clone();
+                    if text.is_ascii() {
+                        text.remove(0);
+                        text.insert(0, '`');
+                        text.pop();
+                        text.push('`');
+                    } else {
+                        todo!()
+                    }
+                    text = text.replacen("{}", format!("${{{}}}", &parts[1]).as_str(), 1);
+                    text
+                } else {
+                    parts[0].clone()
+                };
+
+                // let lhs = parts.next().unwrap();
+                // let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
+                // let lhs = handle_expr(&lhs, global_data, current_module_path);
+
+                format!(r#"throw new Error({expanded_message})"#)
             }
         }
     }
@@ -2318,8 +2391,6 @@ fn handle_fn_body_stmt(i: usize, stmt: &JsStmt, len: usize) -> String {
                             assignment.js_string()
                         )
                     } else {
-                        // dbg!(stmt);
-                        // todo!()
                         js_expr.js_string()
                     }
                 } else {
@@ -2945,6 +3016,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .collect::<Vec<_>>(),
         ),
         Expr::Macro(expr_macro) => {
+            // TODO share this code with Stmt::Macro
             let path_segs = expr_macro
                 .mac
                 .path
@@ -2952,6 +3024,8 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .iter()
                 .map(|seg| seg.ident.to_string())
                 .collect::<Vec<_>>();
+
+            // TODO update this to output Vec not []
             if path_segs.len() == 1 {
                 if path_segs[0] == "vec" {
                     let input = expr_macro.mac.tokens.clone().to_string();
@@ -2965,7 +3039,76 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     return JsExpr::Array(expr_vec);
                 }
             }
-            JsExpr::Vanish
+
+            let stmt_macro = expr_macro;
+            let current_module_path = current_module;
+
+            if path_segs.len() == 1 {
+                if path_segs[0] == "panic" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
+                    return JsExpr::ThrowError(input);
+                }
+                // if path_segs[0] == "try_" {
+                //     let input = stmt_macro.mac.tokens.clone().to_string();
+                //     let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
+                //     let stmt_vec = try_block
+                //         .stmts
+                //         .iter()
+                //         .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
+                //         .collect::<Vec<_>>();
+                //     return JsStmt::TryBlock(stmt_vec);
+                // }
+                // if path_segs[0] == "catch" {
+                //     let input = stmt_macro.mac.tokens.clone().to_string();
+                //     let mut parts = input.split(",");
+                //     let err_var_name = parts.next().unwrap();
+                //     let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
+                //         .unwrap()
+                //         .to_string();
+                //     let _err_var_type = parts.next().unwrap();
+                //     let catch_block = parts.collect::<String>();
+                //     let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
+                //     let stmt_vec = catch_block
+                //         .stmts
+                //         .into_iter()
+                //         .map(|stmt| handle_stmt(&stmt, global_data, current_module_path));
+                //     let stmt_vec = stmt_vec.collect::<Vec<_>>();
+                //     return JsStmt::CatchBlock(err_var_name, stmt_vec);
+                // }
+                if path_segs[0] == "assert" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
+                    let condition_js =
+                        handle_expr(&condition_expr, global_data, current_module_path);
+
+                    return JsExpr::MethodCall(
+                        Box::new(JsExpr::Path(vec!["console".to_string()])),
+                        "assert".to_string(),
+                        vec![condition_js],
+                    );
+                }
+                if path_segs[0] == "assert_eq" {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let mut parts = input.split(",");
+
+                    let lhs = parts.next().unwrap();
+                    let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
+                    let lhs = handle_expr(&lhs, global_data, current_module_path);
+
+                    let rhs = parts.next().unwrap();
+                    let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
+                    let rhs = handle_expr(&rhs, global_data, current_module_path);
+
+                    let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+                    return JsExpr::MethodCall(
+                        Box::new(JsExpr::Path(vec!["console".to_string()])),
+                        "assert".to_string(),
+                        vec![equality_check],
+                    );
+                }
+            }
+            todo!()
         }
         Expr::Match(expr_match) => {
             handle_expr_match(expr_match, false, global_data, current_module)

@@ -128,11 +128,11 @@ async fn closure_return_match() {
     });
     let expected = r#"var _closure = (arg) => {
   var ifTempAssignment;
-  if (arg.id === someId) {
+  if (arg.id === Option.someId) {
     var [num] = arg.data;
     var sum = num + 5;
     ifTempAssignment = sum;
-  } else if (arg.id === noneId) {
+  } else if (arg.id === Option.noneId) {
     ifTempAssignment = 0;
   } else {
     ifTempAssignment = "this shouldn't exist";
