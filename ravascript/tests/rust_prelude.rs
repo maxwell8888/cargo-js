@@ -22,7 +22,7 @@ async fn option_match() {
         assert_eq!(result, 5);
     });
 
-    // println!("{actual}");
+    println!("{actual}");
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
@@ -38,31 +38,6 @@ async fn option_match() {
             result = "this shouldn't exist";
         }
         console.assert(result === 5);
-        "#,
-    ));
-
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn option_unwrap_or() {
-    let actual = r2j_block_with_prelude!({
-        let five = Some(5);
-        assert_eq!(five.unwrap_or(0), 5);
-        let nothing = None;
-        assert_eq!(nothing.unwrap_or(0), 0);
-    });
-
-    let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var None = Option.None;
-        var five = Some(5);
-        console.assert(five.unwrapOr(0) === 5);
-        var nothing = None;
-        console.assert(nothing.unwrapOr(0) === 0);
         "#,
     ));
 
@@ -103,6 +78,56 @@ async fn option_unwrap() {
         r#"var Some = Option.Some;
         var five = Some(5);
         console.assert(five.unwrap() === 5);
+        "#,
+    ));
+
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn option_unwrap_or() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        assert_eq!(five.unwrap_or(0), 5);
+        let nothing = None;
+        assert_eq!(nothing.unwrap_or(0), 0);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("option_prelude.js"),
+        r#"var Some = Option.Some;
+        var None = Option.None;
+        var five = Some(5);
+        console.assert(five.unwrapOr(0) === 5);
+        var nothing = None;
+        console.assert(nothing.unwrapOr(0) === 0);
+        "#,
+    ));
+
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn option_unwrap_or_else() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        let none: Option<i32> = None;
+        assert_eq!(five.unwrap_or_else(|| 4), 5);
+        assert_eq!(none.unwrap_or_else(|| 4), 4);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("option_prelude.js"),
+        r#"var Some = Option.Some;
+        var None = Option.None;
+        var five = Some(5);
+        var none = None;
+        console.assert(five.unwrapOrElse(() => 4) === 5);
+        console.assert(none.unwrapOrElse(() => 4) === 4);
         "#,
     ));
 

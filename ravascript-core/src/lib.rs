@@ -282,25 +282,29 @@ fn handle_stmt(
         ),
         Stmt::Local(local) => {
             //
-            let lhs = match &local.pat {
-                Pat::Ident(pat_ident) => LocalName::Single(camel(&pat_ident.ident)),
-                Pat::Tuple(pat_tuple) => LocalName::DestructureArray(
-                    pat_tuple
-                        .elems
-                        .iter()
-                        .map(|elem| match elem {
-                            Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                            _ => todo!(),
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                // for `let _ = foo();` the lhs will be `Pat::Wild`
-                Pat::Wild(_) => LocalName::Single("_".to_string()),
-                other => {
-                    dbg!(other);
-                    todo!()
+            fn handle_pat(pat: &Pat) -> LocalName {
+                match pat {
+                    Pat::Ident(pat_ident) => LocalName::Single(camel(&pat_ident.ident)),
+                    Pat::Tuple(pat_tuple) => LocalName::DestructureArray(
+                        pat_tuple
+                            .elems
+                            .iter()
+                            .map(|elem| match elem {
+                                Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+                                _ => todo!(),
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    // for `let _ = foo();` the lhs will be `Pat::Wild`
+                    Pat::Wild(_) => LocalName::Single("_".to_string()),
+                    Pat::Type(pat_type) => handle_pat(&pat_type.pat),
+                    other => {
+                        dbg!(other);
+                        todo!();
+                    }
                 }
-            };
+            }
+            let lhs = handle_pat(&local.pat);
             let value = handle_expr(
                 &*local.init.as_ref().unwrap().expr,
                 global_data,
@@ -1386,7 +1390,7 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
 }
 
 fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
-    let option_code = include_str!("rust_prelude.rs");
+    let option_code = include_str!("rust_prelude/option.rs");
     let modules = from_file(option_code, false);
     assert_eq!(modules.len(), 1);
     let module = &modules[0];

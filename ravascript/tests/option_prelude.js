@@ -57,4 +57,16 @@ class Option {
         }
         return ifTempAssignment;
     }
+    unwrapOrElse(f) {
+        var ifTempAssignment;
+        if (this.id === Option.someId) {
+            var [x] = this.data;
+            ifTempAssignment = x;
+        } else if (this.id === Option.noneId) {
+            ifTempAssignment = f();
+        } else {
+            ifTempAssignment = "this shouldn't exist";
+        }
+        return ifTempAssignment;
+    }
 }
