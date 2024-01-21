@@ -524,6 +524,8 @@ fn handle_item_enum(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
+    // dbg!(item_enum.attrs);
+
     let mut class_name = item_enum.ident.to_string();
 
     let mut methods = Vec::new();
@@ -837,7 +839,60 @@ fn handle_item_struct(
     global_data: &GlobalData,
     current_module_path: &Vec<String>,
 ) -> JsStmt {
+    // Attribute {
+    //     pound_token: Pound,
+    //     style: AttrStyle::Outer,
+    //     bracket_token: Bracket,
+    //     meta: Meta::List {
+    //         path: Path {
+    //             leading_colon: None,
+    //             segments: [
+    //                 PathSegment {
+    //                     ident: Ident {
+    //                         sym: derive,
+    //                         span: bytes(154..160),
+    //                     },
+    //                     arguments: PathArguments::None,
+    //                 },
+    //             ],
+    //         },
+    //         delimiter: MacroDelimiter::Paren(
+    //             Paren,
+    //         ),
+    //         tokens: TokenStream [
+    //             Ident {
+    //                 sym: PartialEq,
+    //                 span: bytes(161..170),
+    //             },
+    //         ],
+    //     },
+    // },
+
+    let mut methods = Vec::new();
+
     let mut name = item_struct.ident.to_string();
+
+    // TODO deriving PartialEq for our Option causes a clash with the proper Option, so just manually add it for now
+    // fn eq(&self, other: &Self) -> bool
+    if name == "Option" {
+        let stmt = JsStmt::Raw("return JSON.stringify(this) === JSON.stringify(other)".to_string());
+        methods.push((
+            name.clone(),
+            false,
+            false,
+            JsFn {
+                iife: false,
+                public: false,
+                export: false,
+                async_: false,
+                is_method: true,
+                name: "eq".to_string(),
+                input_names: vec!["other".to_string()],
+                body_stmts: vec![stmt],
+            },
+        ));
+    }
+
     if let Some(dup) = global_data
         .duplicates
         .iter()
@@ -867,7 +922,7 @@ fn handle_item_struct(
             })
             .collect::<Vec<_>>(),
         static_fields: Vec::new(),
-        methods: Vec::new(),
+        methods,
     })
 }
 

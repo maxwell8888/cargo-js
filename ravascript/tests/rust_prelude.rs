@@ -22,7 +22,7 @@ async fn option_match() {
         assert_eq!(result, 5);
     });
 
-    println!("{actual}");
+    // println!("{actual}");
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
@@ -132,6 +132,63 @@ async fn option_unwrap_or_else() {
     ));
 
     let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
+
+// TODO unwrap_or_default uses T::default() which means we would need to know the type of five or none so we can convert it to eg i32.default() ???
+#[ignore = "needs to know type of instance"]
+#[tokio::test]
+async fn option_unwrap_or_default() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        let none: Option<i32> = None;
+        assert_eq!(five.unwrap_or_default(), 5);
+        assert_eq!(none.unwrap_or_default(), 0);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("option_prelude.js"),
+        r#"var Some = Option.Some;
+        var None = Option.None;
+        var five = Some(5);
+        var none = None;
+        console.assert(five.unwrapOrElse(() => 4) === 5);
+        console.assert(none.unwrapOrElse(() => 4) === 4);
+        "#,
+    ));
+
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn option_map() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        let none: Option<i32> = None;
+        assert_eq!(five.map(|x| x + 2), Some(7));
+        assert_eq!(none.map(|x| x + 2), None);
+        let _ = 5.eq(&4);
+    });
+
+    // println!("{actual}");
+
+    // TODO this won't pass because we need to impl deep copies for JS
+    let expected = format_js(concat!(
+        include_str!("option_prelude.js"),
+        r#"var Some = Option.Some;
+        var None = Option.None;
+        var five = Some(5);
+        var none = None;
+        console.assert(five.map((x) => x + 2) === Some(7));
+        console.assert(none.map((x) => x + 2) === None);
+        var _ = 5.eq(4);
+        "#,
+    ));
+
+    // let _ = execute_js_with_assertions(&expected).await.unwrap();
 
     assert_eq!(expected, actual);
 }

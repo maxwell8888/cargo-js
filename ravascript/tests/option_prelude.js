@@ -69,4 +69,16 @@ class Option {
         }
         return ifTempAssignment;
     }
+    map(f) {
+        var ifTempAssignment;
+        if (this.id === Option.someId) {
+            var [x] = this.data;
+            ifTempAssignment = Some(f(x));
+        } else if (this.id === Option.noneId) {
+            ifTempAssignment = None;
+        } else {
+            ifTempAssignment = "this shouldn't exist";
+        }
+        return ifTempAssignment;
+    }
 }

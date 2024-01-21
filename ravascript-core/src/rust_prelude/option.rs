@@ -1,8 +1,11 @@
 #[allow(dead_code)]
+// #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
+// #[derive(PartialEq)]
 pub enum Option<T> {
     Some(T),
     None,
 }
+// pub use self::Option::*;
 pub use Option::*;
 
 #[allow(dead_code)]
@@ -64,15 +67,15 @@ impl<T> Option<T> {
     //     }
     // }
 
-    // pub fn map<U, F>(self, f: F) -> Option<U>
-    // where
-    //     F: FnOnce(T) -> U,
-    // {
-    //     match self {
-    //         Some(x) => Some(f(x)),
-    //         None => None,
-    //     }
-    // }
+    pub fn map<U, F>(self, f: F) -> Option<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            Some(x) => Some(f(x)),
+            None => None,
+        }
+    }
 
     // pub fn map_or<U, F>(self, default: U, f: F) -> U
     // where
