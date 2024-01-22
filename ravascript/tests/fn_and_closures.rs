@@ -135,7 +135,7 @@ async fn closure_return_match() {
   } else if (arg.id === Option.noneId) {
     ifTempAssignment = 0;
   } else {
-    ifTempAssignment = "this shouldn't exist";
+    throw new Error("couldn't match enum variant");
   }
   return ifTempAssignment;
 };"#;

@@ -2016,6 +2016,7 @@ fn if_expr_to_string(
 ) -> String {
     let else_ = if let Some(else_) = else_ {
         match &**else_ {
+            // if else {}
             JsExpr::If(_, _, cond, succeed, fail) => format!(
                 " else {}",
                 JsExpr::If(
@@ -2027,8 +2028,10 @@ fn if_expr_to_string(
                 )
                 .js_string()
             ),
+            // else {}
             _ => {
                 let thing = match &**else_ {
+                    // else { block of stmts }
                     JsExpr::Block(stmts) => stmts
                         .iter()
                         .enumerate()
@@ -2052,13 +2055,26 @@ fn if_expr_to_string(
                         })
                         .collect::<Vec<_>>()
                         .join("\n"),
+                    // else { expr }
                     _ => {
                         if let Some(assignment) = assignment {
-                            // let is_error = match &*else_ {
-                            //     JsExpr::ThrowError(_) => todo!(),
+                            let is_error = match **else_ {
+                                JsExpr::ThrowError(_) => true,
+                                _ => false,
+                            };
+                            // let is_error = match stmt {
+                            //     JsStmt::Expr(expr, _) => match expr {
+                            //         JsExpr::ThrowError(_) => true,
+                            //         _ => false,
+                            //     },
                             //     _ => false,
                             // };
-                            format!("{} = {};", assignment.js_string(), else_.js_string())
+                            if is_error {
+                                format!("{};", else_.js_string())
+                            } else {
+                                // format!("{} = {};", assignment.js_string(), stmt.js_string())
+                                format!("{} = {};", assignment.js_string(), else_.js_string())
+                            }
                         } else {
                             else_.js_string()
                         }
@@ -2288,6 +2304,7 @@ impl JsExpr {
             JsExpr::Raw(text) => text.clone(),
             JsExpr::ThrowError(message) => {
                 // TODO improve this - ideally use existing code eg from rustc
+
                 let parts = message
                     .split(",")
                     .into_iter()
@@ -2305,8 +2322,10 @@ impl JsExpr {
                     }
                     text = text.replacen("{}", format!("${{{}}}", &parts[1]).as_str(), 1);
                     text
-                } else {
+                } else if parts[0].chars().next() == Some('"') {
                     parts[0].clone()
+                } else {
+                    format!(r#""{}""#, parts[0])
                 };
 
                 // let lhs = parts.next().unwrap();
@@ -3755,7 +3774,7 @@ fn handle_expr_match(
 
     // Fold match arms into if else statements
     let if_expr = expr_match.arms.iter().rev().fold(
-        JsExpr::LitStr("this shouldn't exist".to_string()),
+        JsExpr::ThrowError("couldn't match enum variant".to_string()),
         |acc, arm| {
             let (mut rhs, mut body_data_destructure) =
                 handle_match_pat(&arm.pat, expr_match, global_data, current_module);

@@ -35,7 +35,7 @@ async fn option_match() {
         } else if (five.id === Option.noneId) {
             result = 0;
         } else {
-            result = "this shouldn't exist";
+            throw new Error("couldn't match enum variant");
         }
         console.assert(result === 5);
         "#,

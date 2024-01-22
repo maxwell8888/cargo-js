@@ -8,21 +8,18 @@ class MyEnum {
         this.data = data;
     }
     static Bar(data) {
-        return {
-            id: "Bar",
-            data
-        };
+        return { id: "Bar", data };
     }
     static Baz(arg_0, arg_1) {
-        return new MyEnum("Baz", [
-            arg_0, 
-            arg_1
-        ]);
+        return new MyEnum("Baz", [arg_0, arg_1]);
     }
 }
 (function main() {
     var myData = MyEnum.FooBar;
-    var myData = MyEnum.Bar({ x: 4, y: "Hello" });
+    var myData = MyEnum.Bar({
+        x: 4,
+        y: "Hello",
+    });
     var myData = MyEnum.Baz("Hi", 5);
     var matchResult;
     if (myData.id === MyEnum.fooBarId) {
@@ -38,7 +35,7 @@ class MyEnum {
         console.log(num);
         matchResult = num;
     } else {
-        matchResult = "this shouldn't exist";
+        throw new Error("couldn't match enum variant");
     }
     return matchResult === 5;
 })();

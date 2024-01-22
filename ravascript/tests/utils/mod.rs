@@ -190,10 +190,8 @@ pub async fn get_rust_module_and_expected_js(
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let (generated_js, _) = prettyprint(generated_js.as_str());
-    let (target_js, _) = prettyprint(&expected_js);
 
-    Ok((target_js, generated_js))
+    Ok((format_js(expected_js), format_js(generated_js)))
 }
 
 pub async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::error::Error>> {

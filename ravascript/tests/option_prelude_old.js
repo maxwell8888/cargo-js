@@ -17,7 +17,7 @@ class Option {
             var [x] = this.data;
             ifTempAssignment = f(x);
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }
@@ -29,7 +29,7 @@ class Option {
         } else if (this.id === Option.noneId) {
             throw new Error(`${msg}`);
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }
@@ -41,7 +41,7 @@ class Option {
         } else if (this.id === Option.noneId) {
             throw new Error("called `Option::unwrap()` on a `None` value");
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }
@@ -53,7 +53,7 @@ class Option {
         } else if (this.id === Option.noneId) {
             ifTempAssignment = defaultVzxyw;
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }
@@ -65,7 +65,7 @@ class Option {
         } else if (this.id === Option.noneId) {
             ifTempAssignment = f();
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }
@@ -77,7 +77,7 @@ class Option {
         } else if (this.id === Option.noneId) {
             ifTempAssignment = None;
         } else {
-            throw new Error("couldn't match enum variant");
+            ifTempAssignment = "couldn't match enum variant";
         }
         return ifTempAssignment;
     }

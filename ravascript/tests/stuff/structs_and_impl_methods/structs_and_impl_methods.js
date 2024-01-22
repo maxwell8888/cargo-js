@@ -3,6 +3,7 @@ class MyStruct {
         this.age = age;
         this.name = name;
     }
+
     static new(age, name) {
         return new MyStruct(age, name);
     }
