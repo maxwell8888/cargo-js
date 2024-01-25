@@ -26,8 +26,9 @@ async fn option_match() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var five = Some(5);
+        "var Some = Option.Some;",
+        include_str!("rust_integer_prelude.js"),
+        r#"var five = Some(5);
         var result;
         if (five.id === Option.someId) {
             var [val] = five.data;
@@ -55,8 +56,9 @@ async fn option_is_some_and() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var five = Some(5);
+        "var Some = Option.Some;",
+        include_str!("rust_integer_prelude.js"),
+        r#"var five = Some(5);
         console.assert(five.isSomeAnd((x) => x === 5));
         "#,
     ));
@@ -75,8 +77,9 @@ async fn option_unwrap() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var five = Some(5);
+        "var Some = Option.Some;",
+        include_str!("rust_integer_prelude.js"),
+        r#"var five = Some(5);
         console.assert(five.unwrap() === 5);
         "#,
     ));
@@ -97,13 +100,14 @@ async fn option_unwrap_or() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var None = Option.None;
-        var five = Some(5);
+        "var Some = Option.Some;
+        var None = Option.None;",
+        include_str!("rust_integer_prelude.js"),
+        "var five = Some(5);
         console.assert(five.unwrapOr(0) === 5);
         var nothing = None;
         console.assert(nothing.unwrapOr(0) === 0);
-        "#,
+        ",
     ));
 
     let _ = execute_js_with_assertions(&expected).await.unwrap();
@@ -122,13 +126,14 @@ async fn option_unwrap_or_else() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var None = Option.None;
-        var five = Some(5);
+        "var Some = Option.Some;
+        var None = Option.None;",
+        include_str!("rust_integer_prelude.js"),
+        "var five = Some(5);
         var none = None;
         console.assert(five.unwrapOrElse(() => 4) === 5);
         console.assert(none.unwrapOrElse(() => 4) === 4);
-        "#,
+        ",
     ));
 
     let _ = execute_js_with_assertions(&expected).await.unwrap();
@@ -149,9 +154,10 @@ async fn option_unwrap_or_default() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var None = Option.None;
-        var five = Some(5);
+        "var Some = Option.Some;
+        var None = Option.None;",
+        include_str!("rust_integer_prelude.js"),
+        r#"var five = Some(5);
         var none = None;
         console.assert(five.unwrapOrElse(() => 4) === 5);
         console.assert(none.unwrapOrElse(() => 4) === 4);
@@ -178,9 +184,10 @@ async fn option_map() {
     // TODO this won't pass because we need to impl deep copies for JS
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        r#"var Some = Option.Some;
-        var None = Option.None;
-        var five = Some(5);
+        "var Some = Option.Some;
+        var None = Option.None;",
+        include_str!("rust_integer_prelude.js"),
+        r#"var five = Some(5);
         var none = None;
         console.assert(five.map((x) => x + 2) === Some(7));
         console.assert(none.map((x) => x + 2) === None);

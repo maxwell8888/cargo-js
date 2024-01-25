@@ -14,7 +14,8 @@ use syn::{
     ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemUse, Lit, Member, Meta, Pat, Stmt, Type,
     UnOp, UseTree, Visibility,
 };
-mod rust_prelude;
+pub mod prelude;
+pub mod rust_prelude;
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
@@ -167,7 +168,7 @@ fn handle_item_use(
         return;
     }
 
-    if root_module_or_crate == "ravascript" {
+    if root_module_or_crate == "ravascript" || root_module_or_crate == "crate" {
         match &sub_modules.0[0] {
             DestructureValue::KeyName(_) => {}
             DestructureValue::Rename(_, _) => {}
@@ -1126,6 +1127,9 @@ struct RustPreludeTypes {
     dbg: bool,
     // println: bool,
     // print: bool,
+    integer: bool,
+    float: bool,
+    equals: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1444,11 +1448,19 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
     }
 }
 
-fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
-    let option_code = include_str!("rust_prelude/option.rs");
-    let modules = from_file(option_code, false);
+fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<JsStmt> {
+    let code = include_str!("rust_prelude/option.rs");
+    let modules = from_file(code, false);
     assert_eq!(modules.len(), 1);
-    let module = &modules[0];
+    let option_module = &modules[0];
+
+    let code = include_str!("rust_prelude/number.rs");
+    let modules = from_file(code, false);
+    assert_eq!(modules.len(), 1);
+    let number_module = &modules[0];
+
+    // We want to insert prelude stmts at the beginning of js_stmts, but if we do that per item we will reverse the order they appear in the source files. Instead we push them to `prelude_stmts` and then insert that in one go
+    let mut prelude_stmts = Vec::new();
 
     let rust_prelude_types = &global_data.rust_prelude_types;
     if rust_prelude_types.vec {
@@ -1483,7 +1495,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                 body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
             },
         ));
-        js_stmts.push(JsStmt::Class(JsClass {
+        prelude_stmts.push(JsStmt::Class(JsClass {
             export: false,
             public: false,
             name: "Vec".to_string(),
@@ -1493,18 +1505,12 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
         }));
     }
 
-    if rust_prelude_types.none {
-        js_stmts.insert(0, JsStmt::Raw("var None = Option.None;".to_string()))
-    }
-    if rust_prelude_types.some {
-        js_stmts.insert(0, JsStmt::Raw("var Some = Option.Some;".to_string()))
-    }
     if rust_prelude_types.option {
-        for stmt in &module.stmts {
+        for stmt in &option_module.stmts {
             match stmt {
                 JsStmt::Class(js_class) => {
                     if js_class.name == "Option" {
-                        js_stmts.insert(0, stmt.clone());
+                        prelude_stmts.push(stmt.clone());
                     }
                 }
                 JsStmt::ClassMethod(_, _, _, _) => todo!(),
@@ -1530,6 +1536,43 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
             }
         }
     }
+    if rust_prelude_types.some {
+        prelude_stmts.push(JsStmt::Raw("var Some = Option.Some;".to_string()))
+    }
+    if rust_prelude_types.none {
+        prelude_stmts.push(JsStmt::Raw("var None = Option.None;".to_string()))
+    }
+
+    if rust_prelude_types.integer || rust_prelude_types.float {
+        for stmt in &number_module.stmts {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    if js_class.name == "RustInteger" {
+                        if rust_prelude_types.integer {
+                            prelude_stmts.push(stmt.clone());
+                        }
+                    } else if js_class.name == "RustFloat" {
+                        if rust_prelude_types.float {
+                            prelude_stmts.push(stmt.clone());
+                        }
+                    } else {
+                        todo!()
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+    }
+
+    if rust_prelude_types.equals {
+        // TODO write the function in Rust and transpile it
+        prelude_stmts.push(JsStmt::Raw(
+            "function eq(lhs, rhs) { return JSON.stringify(lhs) === JSON.stringify(rhs); }"
+                .to_string(),
+        ))
+    }
+    prelude_stmts.append(&mut js_stmts);
+    prelude_stmts
 }
 
 pub fn process_items(
@@ -1615,9 +1658,11 @@ pub fn process_items(
         entrypoint_path,
     );
 
-    if with_rust_types {
-        push_rust_types(&global_data, &mut stmts);
-    }
+    let stmts = if with_rust_types {
+        push_rust_types(&global_data, stmts)
+    } else {
+        stmts
+    };
 
     let crate_module = global_data
         .transpiled_modules
@@ -1799,9 +1844,11 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]))
         .collect::<Vec<_>>();
 
-    if with_rust_types {
-        push_rust_types(&global_data, &mut stmts);
-    }
+    let stmts = if with_rust_types {
+        push_rust_types(&global_data, stmts)
+    } else {
+        stmts
+    };
 
     let crate_module = global_data
         .transpiled_modules
@@ -1893,6 +1940,7 @@ pub enum JsOp {
     Gt,
     GtEq,
     Lt,
+    Rem,
 }
 impl JsOp {
     fn js_string(&self) -> &str {
@@ -1907,6 +1955,7 @@ impl JsOp {
             JsOp::Gt => ">",
             JsOp::GtEq => ">=",
             JsOp::Lt => "<",
+            JsOp::Rem => "%",
         }
     }
     fn from_binop(binop: BinOp) -> JsOp {
@@ -1915,7 +1964,7 @@ impl JsOp {
             BinOp::Sub(_) => JsOp::Sub,
             BinOp::Mul(_) => todo!(),
             BinOp::Div(_) => todo!(),
-            BinOp::Rem(_) => todo!(),
+            BinOp::Rem(_) => JsOp::Rem,
             BinOp::And(_) => JsOp::And,
             BinOp::Or(_) => JsOp::Or,
             BinOp::BitXor(_) => todo!(),
@@ -1926,7 +1975,7 @@ impl JsOp {
             BinOp::Eq(_) => JsOp::Eq,
             BinOp::Lt(_) => JsOp::Lt,
             BinOp::Le(_) => todo!(),
-            BinOp::Ne(_) => todo!(),
+            BinOp::Ne(_) => JsOp::NotEq,
             BinOp::Ge(_) => JsOp::GtEq,
             BinOp::Gt(_) => JsOp::Gt,
             BinOp::AddAssign(_) => JsOp::AddAssign,
@@ -1980,6 +2029,7 @@ pub enum JsExpr {
         Option<Box<JsExpr>>,
     ),
     LitInt(i32),
+    LitFloat(f32),
     LitStr(String),
     LitBool(bool),
     /// (receiver, method name, method args)
@@ -2006,6 +2056,7 @@ pub enum JsExpr {
 }
 
 // TODO Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
+// TODO we want to know if the if is a single statment being return from a fn and if so in line the return in the branches rather than use an assignment var
 fn if_expr_to_string(
     assignment: &Option<LocalName>,
     declare_var: &bool,
@@ -2157,6 +2208,8 @@ impl JsExpr {
     fn js_string(&self) -> String {
         match self {
             JsExpr::LitInt(int) => int.to_string(),
+            // NOTE `(5.).to_string()` is "5" not "5." or "5.0"
+            JsExpr::LitFloat(float) => float.to_string(),
             JsExpr::LitStr(text) => format!(r#""{text}""#),
             JsExpr::LitBool(bool) => bool.to_string(),
             JsExpr::Object(fields) => {
@@ -3078,8 +3131,14 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             Lit::ByteStr(_) => todo!(),
             Lit::Byte(_) => todo!(),
             Lit::Char(_) => todo!(),
-            Lit::Int(lit_int) => JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap()),
-            Lit::Float(_) => todo!(),
+            Lit::Int(lit_int) => {
+                global_data.rust_prelude_types.integer = true;
+                JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())
+            }
+            Lit::Float(lit_float) => {
+                global_data.rust_prelude_types.float = true;
+                JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())
+            }
             Lit::Bool(lit_bool) => JsExpr::LitBool(lit_bool.value),
             Lit::Verbatim(_) => todo!(),
             _ => todo!(),
