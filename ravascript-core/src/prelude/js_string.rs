@@ -1,12 +1,20 @@
 #![allow(non_snake_case)]
 
-#[derive(Clone, Copy)]
+// TODO would be nice to have Copy so when using JsString it can be easily copied given it is a primitive in JS, but not sure how to do this given we also want to store a String so we can compile it with rustc
+// #[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct JsString {
+    value: String,
     /// Reflects the length of the string. Read-only.
     pub length: u32,
 }
+impl PartialEq for JsString {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
 
-pub trait StrExtensions {
+pub trait JsStringTrait {
     //    Static methods
     /// Returns a string created by using the specified sequence of Unicode values.
     fn fromCharCode() {}
@@ -114,10 +122,7 @@ pub trait StrExtensions {
     /// Returns the calling string value converted to uppercase.
     fn to_upper_case(self) -> JsString
     where
-        Self: Sized,
-    {
-        JsString { length: 0 }
-    }
+        Self: Sized;
 
     /// Returns a string where all lone surrogates of this string are replaced with the Unicode replacement character U+FFFD.
     fn toWellFormed() {}
@@ -134,4 +139,11 @@ pub trait StrExtensions {
     /// Returns the primitive value of the specified object. Overrides the Object.prototype.valueOf() method.
     fn valueOf() {}
 }
-impl StrExtensions for &str {}
+impl JsStringTrait for JsString {
+    fn to_upper_case(self) -> JsString
+    where
+        Self: Sized,
+    {
+        self
+    }
+}

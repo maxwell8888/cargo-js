@@ -22,5 +22,5 @@ fn main() -> bool {
             num
         }
     };
-    match_result == 5
+    assert_eq!(match_result, 5);
 }

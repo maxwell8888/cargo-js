@@ -184,7 +184,7 @@ pub async fn get_rust_module_and_expected_js(
     let js_file_path = dir_path.join(js_file_name);
     let expected_js = fs::read_to_string(js_file_path).unwrap();
 
-    let stmts = from_file(&rust_input, false);
+    let stmts = from_file(&rust_input, true);
     let generated_js = stmts
         .iter()
         .map(|stmt| stmt.js_string())

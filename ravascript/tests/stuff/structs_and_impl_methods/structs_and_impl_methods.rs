@@ -34,24 +34,23 @@ impl MyTrait for MyStruct {
     }
 }
 
-fn main() -> bool {
+fn main() {
     let thing = MyStruct::new(2, "Bruce");
     // Console::assert(thing.my_method() == "Bruce");
     // Console::assert(thing.my_method_with_arg(2) == 4);
     // Console::assert(MyStruct::my_associated_method(2) == 12);
     // Console::assert(thing.with_generic(99) == 2);
     // Console::assert(thing.get_age() == 2);
-    
+
     // console.assert(thing.myMethod() === "Bruce");
     // console.assert(thing.myMethodWithArg(2) === 4);
     // console.assert(MyStruct.myAssociatedMethod(2) === 12);
     // console.assert(thing.withGeneric(99) === 2);
     // console.assert(thing.getAge() === 2);
-    
-    let one = thing.my_method() == "Bruce";
-    let two = thing.my_method_with_arg(2) == 4;
-    let three = MyStruct::my_associated_method(2) == 12;
-    let four = thing.with_generic(99) == 2;
-    let five = thing.get_age() == 2;
-    one && two && three && four && five
+
+    assert_eq!(thing.my_method(), "Bruce");
+    assert_eq!(thing.my_method_with_arg(2), 4);
+    assert_eq!(MyStruct::my_associated_method(2), 12);
+    assert_eq!(thing.with_generic(99), 2);
+    assert_eq!(thing.get_age(), 2);
 }

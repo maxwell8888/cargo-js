@@ -9,10 +9,16 @@ class Option {
     static Some(arg_0) {
         return new Option("Some", [arg_0]);
     }
+    eq(other) {
+        return new RustBool(this.id === other.id && this.data.eq(other.data));
+    }
+    ne(other) {
+        return new RustBool(this.id !== other.id || this.data.ne(other.data));
+    }
     isSomeAnd(f) {
         var ifTempAssignment;
         if (this.id === Option.noneId) {
-            ifTempAssignment = false;
+            ifTempAssignment = new RustBool(false);
         } else if (this.id === Option.someId) {
             var [x] = this.data;
             ifTempAssignment = f(x);

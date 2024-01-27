@@ -4,10 +4,10 @@ class RustFloat {
     }
 
     eq(other) {
-        return this.jsNumber === other.jsNumber;
+        return new RustBool(this.jsNumber === other.jsNumber);
     }
     ne(other) {
-        return this.jsNumber !== other.jsNumber;
+        return new RustBool(this.jsNumber !== other.jsNumber);
     }
     add(other) {
         return new RustFloat(this.jsNumber + other.jsNumber);

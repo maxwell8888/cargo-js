@@ -19,14 +19,14 @@ async fn it_transpiles_crate_directory() {
     let expected = r#"
     // crate
     function duplicateName() {
-      return 10;
+      return new RustInteger(10);
     }
     (function main() {
       duplicateName();
       utils__colors__duplicateName();
       var thing = External.new();
-      var fido = new Green(true, 2);
-      console.assert(fido.woof() === 32);
+      var fido = new Green(new RustBool(true), new RustInteger(2));
+      console.assert(fido.woof().eq(new RustInteger(32)));
     })();
     
     // foo_bar
@@ -36,7 +36,7 @@ async fn it_transpiles_crate_directory() {
       }
     
       addTen() {
-        return this.age + 10;
+        return this.age.add(new RustInteger(10));
       }
     }
     class External {
@@ -46,22 +46,22 @@ async fn it_transpiles_crate_directory() {
       }
     
       static new() {
-        return new External(new Internal(0), 9);
+        return new External(new Internal(new RustInteger(0)), new RustInteger(9));
       }
     }
     
     // colors
-    var DOG_ACTIVITY = 10;
+    var DOG_ACTIVITY = new RustInteger(10);
     function colors__duplicateName() {
-      return 10;
+      return new RustInteger(10);
     }
     function stuffFunction() {
-      return 10;
+      return new RustInteger(10);
     }
     
     // colors::green
     function green__duplicateName() {
-      return 3;
+      return new RustInteger(3);
     }
     class Green {
       constructor(fluffy, age) {
@@ -71,18 +71,18 @@ async fn it_transpiles_crate_directory() {
     
       woof() {
         function green__duplicateName() {
-          return 9999;
+          return new RustInteger(9999);
         }
         return (
-          this.age +
-          green__duplicateName() +
-          green__duplicateName() +
-          sayHello() + 
-          duplicateName() +
-          sayHello() +
-          green__duplicateName() +
-          DOG_ACTIVITY +
-          stuffFunction()
+          this.age
+          .add(green__duplicateName())
+          .add(green__duplicateName())
+          .add(sayHello())
+          .add(duplicateName())
+          .add(sayHello())
+          .add(green__duplicateName())
+          .add(DOG_ACTIVITY)
+          .add(stuffFunction())
         );
       }
     }
@@ -91,12 +91,12 @@ async fn it_transpiles_crate_directory() {
     
     // utils::say_something
     function sayHello() {
-      return 10;
+      return new RustInteger(10);
     }
     
     // utils::colors
     function utils__colors__duplicateName() {
-      return 10;
+      return new RustInteger(10);
     }
     "#;
 
@@ -199,7 +199,7 @@ async fn module_crate() {
     );
     let expected = r#"// crate
 function baz() {
-  return 5;
+  return new RustInteger(5);
 }
 
 // foo
@@ -209,6 +209,7 @@ function green() {
     assert_eq!(expected, actual);
 }
 
+// TODO why is this not checking anything?
 #[tokio::test]
 async fn use_paths() {
     let actual = r2j_file_run_main!(

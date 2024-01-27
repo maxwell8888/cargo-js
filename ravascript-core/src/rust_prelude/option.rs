@@ -1,7 +1,11 @@
+use super::RustBool;
+use crate::prelude::JsBoolean;
+
 #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
 // #[derive(PartialEq)]
-pub enum Option<T> {
+// TODO don't want to force T to always be PartialEq?
+pub enum Option<T: PartialEq> {
     Some(T),
     None,
 }
@@ -9,7 +13,30 @@ pub enum Option<T> {
 pub use Option::*;
 
 #[allow(dead_code)]
-impl<T> Option<T> {
+impl<T: PartialEq> Option<T> {
+    fn eq(&self, other: &Option<T>) -> RustBool {
+        // return new RustBool(this.id === other.id && this.data.eq(other.data));
+        RustBool {
+            js_boolean: JsBoolean(match (self, other) {
+                (Some(a), Some(b)) => a == b,
+                (Some(_), None) => false,
+                (None, Some(_)) => false,
+                (None, None) => true,
+            }),
+        }
+    }
+
+    fn ne(&self, other: &Option<T>) -> RustBool {
+        RustBool {
+            js_boolean: JsBoolean(match (self, other) {
+                (Some(a), Some(b)) => a != b,
+                (Some(_), None) => true,
+                (None, Some(_)) => true,
+                (None, None) => false,
+            }),
+        }
+    }
+
     // pub fn is_some(&self) -> bool {
     //     matches!(*self, Some(_))
     // }
@@ -67,7 +94,7 @@ impl<T> Option<T> {
     //     }
     // }
 
-    pub fn map<U, F>(self, f: F) -> Option<U>
+    pub fn map<U: PartialEq, F>(self, f: F) -> Option<U>
     where
         F: FnOnce(T) -> U,
     {

@@ -51,16 +51,16 @@ var _closure5 = async (arg) => {
   var _x = arg;
 };
 var _closure6 = async (arg) => {
-  var _x = "hello";
+  var _x = new RustString("hello");
   return arg;
 }
 var _closure7 = (arg) => {
   var ifTempAssignment;
-  if (arg >= 0) {
-    ifTempAssignment = "positive";
+  if (arg.ge(new RustInteger(0)).jsBoolean) {
+    ifTempAssignment = new RustString("positive");
   } else {
-    var _thing = 5;
-    ifTempAssignment = "negative";
+    var _thing = new RustInteger(5);
+    ifTempAssignment = new RustString("negative");
   }
   return ifTempAssignment;
 };"#;
@@ -80,7 +80,7 @@ var _closure7 = (arg) => {
         };
     });
     let expected = "var _closure = () => {
-  5;
+  new RustInteger(5);
 };";
     assert_eq!(expected, actual);
 }
@@ -100,18 +100,22 @@ async fn function_returns_if_else_if_else() {
             }
         };
     });
-    let expected = r#"var _closure = (arg) => {
-  var ifTempAssignment;
-  if (arg >= 0) {
-    var _thing = 5;
-    ifTempAssignment = "positive";
-  } else if (arg === 0) {
-    ifTempAssignment = "zero";
-  } else {
-    ifTempAssignment = "negative";
-  }
-  return ifTempAssignment;
-};"#;
+    let expected = format_js(
+        r#"
+        var _closure = (arg) => {
+            var ifTempAssignment;
+            if (arg.ge(new RustInteger(0)).jsBoolean) {
+                var _thing = new RustInteger(5);
+                ifTempAssignment = new RustString("positive");
+            } else if (arg.eq(new RustInteger(0)).jsBoolean) {
+                ifTempAssignment = new RustString("zero");
+            } else {
+                ifTempAssignment = new RustString("negative");
+            }
+            return ifTempAssignment;
+        };
+        "#,
+    );
     assert_eq!(expected, actual);
 }
 
@@ -130,10 +134,10 @@ async fn closure_return_match() {
   var ifTempAssignment;
   if (arg.id === Option.someId) {
     var [num] = arg.data;
-    var sum = num + 5;
+    var sum = num.add(new RustInteger(5));
     ifTempAssignment = sum;
   } else if (arg.id === Option.noneId) {
-    ifTempAssignment = 0;
+    ifTempAssignment = new RustInteger(0);
   } else {
     throw new Error("couldn't match enum variant");
   }

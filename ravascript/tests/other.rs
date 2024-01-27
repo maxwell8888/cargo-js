@@ -22,10 +22,10 @@ async fn testing_asserts() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
-async fn it_executes_simple_expressions() -> Result<(), Box<dyn std::error::Error>> {
-    let generated_js = r2j_block!({
+async fn it_executes_simple_expressions() {
+    let generated_js = r2j_block_with_prelude!({
         let my_num = 5;
-        Console::assert(my_num == 2 + 3);
+        assert!(my_num == 2 + 3);
         enum Colors {
             Red,
             Blue,
@@ -35,10 +35,10 @@ async fn it_executes_simple_expressions() -> Result<(), Box<dyn std::error::Erro
             Colors::Red => 1,
             Colors::Blue => 2,
         };
-        Console::assert(answer == 2);
+        assert!(answer == 2);
     });
-    let _ = execute_js_with_assertions(&generated_js).await?;
-    Ok(())
+
+    let _ = execute_js_with_assertions(&generated_js).await.unwrap();
 }
 
 #[tokio::test]
@@ -46,18 +46,20 @@ async fn it_transpiles_vec_macro() {
     let actual = r2j_block!({
         let _data = vec![1, 2, 3];
     });
-    assert_eq!("var _data = [1, 2, 3];", actual);
+    assert_eq!(
+        "var _data = [new RustInteger(1), new RustInteger(2), new RustInteger(3)];",
+        actual
+    );
 }
 
 #[tokio::test]
-async fn it_transpiles_vec_macro2() -> Result<(), Box<dyn std::error::Error>> {
-    let generated_js = r2j_block!({
+async fn it_transpiles_vec_macro2() {
+    let generated_js = r2j_block_with_prelude!({
         let data = vec![1, 2, 3];
-        Console::assert(data[1] == 2);
+        assert!(data[1] == 2);
     });
 
-    let _ = execute_js_with_assertions(&generated_js).await?;
-    Ok(())
+    let _ = execute_js_with_assertions(&generated_js).await.unwrap();
 }
 
 #[tokio::test]
@@ -72,9 +74,9 @@ async fn it_transpiles_iter_map() {
             })
             .collect::<Vec<_>>();
     });
-    let expected = r#"var data = [1, 2, 3];
+    let expected = r#"var data = [new RustInteger(1), new RustInteger(2), new RustInteger(3)];
 var _data = data.map((num) => {
-  var _sum = num + 2;
+  var _sum = num.add(new RustInteger(2));
   return num;
 });"#;
     // let expected = format_js(expected_js);

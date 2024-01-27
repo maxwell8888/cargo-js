@@ -4,8 +4,8 @@ use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
 };
-use ravascript::{catch, try_};
 use ravascript::prelude::*;
+use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
@@ -28,30 +28,27 @@ async fn it_transpiles_struct_no_new() {
 }
 
 #[tokio::test]
-async fn it_transpiles_structs_and_impl_methods() -> Result<(), Box<dyn std::error::Error>> {
-    let (target_js, generated_js) =
+async fn it_transpiles_structs_and_impl_methods() {
+    let (expected, actual) =
         get_rust_module_and_expected_js("tests/stuff/structs_and_impl_methods".into())
             .await
             .unwrap();
-    assert_eq!(target_js, generated_js);
 
-    let outcome = exexute_js(&generated_js).await?;
-    assert!(outcome);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 
-    Ok(())
+    assert_eq!(expected, actual);
 }
 
 #[tokio::test]
-async fn it_transpiles_enum_match() -> Result<(), Box<dyn std::error::Error>> {
-    let (target_js, generated_js) =
-        get_rust_module_and_expected_js("tests/stuff/enum_match".into())
-            .await
-            .unwrap();
-    assert_eq!(target_js, generated_js);
+async fn it_transpiles_enum_match() {
+    // TODO use js file preludes here so we don't have to update them in enum_match.js also
+    let (expected, actual) = get_rust_module_and_expected_js("tests/stuff/enum_match".into())
+        .await
+        .unwrap();
 
-    let outcome = exexute_js(&generated_js).await?;
-    assert!(outcome);
-    Ok(())
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
 }
 
 #[tokio::test]
@@ -69,19 +66,19 @@ async fn impl_in_fn_scope() {
             }
         }
         let cool = Cool {};
-        cool.whatever();
+        assert_eq!(cool.whatever(), 5)
     });
     let expected = r#"
     class Cool {
         whatever() {
-            return 5;
+            return new RustInteger(5);
         }
     }
-    if (false) {
+    if (new RustBool(false).jsBoolean) {
         function inner() {}
     }
     var cool = new Cool();
-    cool.whatever();
+    console.assert(cool.whatever().eq(new RustInteger(5)));
     "#;
     assert_eq!(format_js(expected), actual);
 }

@@ -4,13 +4,16 @@ class RustInteger {
     }
 
     eq(other) {
-        return this.jsNumber === other.jsNumber;
+        return new RustBool(this.jsNumber === other.jsNumber);
     }
     ne(other) {
-        return this.jsNumber !== other.jsNumber;
+        return new RustBool(this.jsNumber !== other.jsNumber);
     }
     add(other) {
         return new RustInteger(this.jsNumber + other.jsNumber);
+    }
+    addAssign(other) {
+        this.jsNumber += other.jsNumber;
     }
     abs() {
         return new RustInteger(Math.abs(this.jsNumber));

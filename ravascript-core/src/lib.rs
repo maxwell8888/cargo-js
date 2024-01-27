@@ -423,7 +423,9 @@ fn handle_stmt(
                     let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
                     let rhs = handle_expr(&rhs, global_data, current_module_path);
 
-                    let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+                    // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+                    let equality_check =
+                        JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs]);
                     return JsStmt::Expr(
                         JsExpr::MethodCall(
                             Box::new(JsExpr::Path(vec!["console".to_string()])),
@@ -445,6 +447,8 @@ fn handle_item_fn(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
+    let mut name = item_fn.sig.ident.to_string();
+
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -460,7 +464,7 @@ fn handle_item_fn(
     } else {
         false
     };
-    let mut name = item_fn.sig.ident.to_string();
+
     if let Some(dup) = duplicates
         .iter()
         .find(|dup| dup.name == name && &dup.original_module_path == current_module)
@@ -783,37 +787,154 @@ fn handle_item_impl(
                     })
                     .collect::<Vec<_>>();
 
-                let n_stmts = item_impl_fn.block.stmts.len();
-                let body_stmts = item_impl_fn
-                    .block
-                    .stmts
-                    .clone()
-                    .into_iter()
-                    .map(|stmt| stmt)
-                    .collect::<Vec<_>>();
-                let body_stmts = parse_fn_body_stmts(&body_stmts, global_data, current_module_path);
-                impl_stmts.push(
-                    // item_impl_fn.sig.ident.to_string(),
-                    ImplItemTemp {
-                        class_name: class_name.clone(),
-                        module_path: current_module_path.clone(),
-                        item_stmt: JsImplItem::ClassMethod(
-                            class_name.clone(),
-                            false,
-                            static_,
-                            JsFn {
-                                iife: false,
-                                public: false,
-                                export: false,
-                                is_method: true,
-                                async_: item_impl_fn.sig.asyncness.is_some(),
-                                name: camel(item_impl_fn.sig.ident.clone()),
-                                input_names,
-                                body_stmts,
-                            },
+                // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
+
+                if class_name == "RustBool" && item_impl_fn.sig.ident == "bool_and" {
+                    let body_stmts = vec![JsStmt::Expr(
+                        JsExpr::New(
+                            vec!["RustBool".to_string()],
+                            vec![JsExpr::Raw("this.jsBoolean && other.jsBoolean".to_string())],
                         ),
-                    },
-                )
+                        false,
+                    )];
+                    impl_stmts.push(
+                        // item_impl_fn.sig.ident.to_string(),
+                        ImplItemTemp {
+                            class_name: class_name.clone(),
+                            module_path: current_module_path.clone(),
+                            item_stmt: JsImplItem::ClassMethod(
+                                class_name.clone(),
+                                false,
+                                static_,
+                                JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    is_method: true,
+                                    async_: item_impl_fn.sig.asyncness.is_some(),
+                                    name: camel(item_impl_fn.sig.ident.clone()),
+                                    input_names,
+                                    body_stmts,
+                                },
+                            ),
+                        },
+                    );
+                    // fn add_assign(&mut self, other: RustInteger<T>) {
+                    //     self.js_number.0 += other.js_number.0;
+                    // }
+                } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "add_assign" {
+                    let body_stmts =
+                        vec![JsStmt::Raw("this.jsNumber += other.jsNumber".to_string())];
+                    impl_stmts.push(
+                        // item_impl_fn.sig.ident.to_string(),
+                        ImplItemTemp {
+                            class_name: class_name.clone(),
+                            module_path: current_module_path.clone(),
+                            item_stmt: JsImplItem::ClassMethod(
+                                class_name.clone(),
+                                false,
+                                static_,
+                                JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    is_method: true,
+                                    async_: item_impl_fn.sig.asyncness.is_some(),
+                                    name: camel(item_impl_fn.sig.ident.clone()),
+                                    input_names,
+                                    body_stmts,
+                                },
+                            ),
+                        },
+                    );
+                } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
+                    let body_stmts = vec![JsStmt::Raw(
+                        "return new RustBool(this.id === other.id && this.data.eq(other.data))"
+                            .to_string(),
+                    )];
+                    impl_stmts.push(
+                        // item_impl_fn.sig.ident.to_string(),
+                        ImplItemTemp {
+                            class_name: class_name.clone(),
+                            module_path: current_module_path.clone(),
+                            item_stmt: JsImplItem::ClassMethod(
+                                class_name.clone(),
+                                false,
+                                static_,
+                                JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    is_method: true,
+                                    async_: item_impl_fn.sig.asyncness.is_some(),
+                                    name: camel(item_impl_fn.sig.ident.clone()),
+                                    input_names,
+                                    body_stmts,
+                                },
+                            ),
+                        },
+                    );
+                } else if class_name == "Option" && item_impl_fn.sig.ident == "ne" {
+                    let body_stmts = vec![JsStmt::Raw(
+                        "return new RustBool(this.id !== other.id || this.data.ne(other.data))"
+                            .to_string(),
+                    )];
+                    impl_stmts.push(
+                        // item_impl_fn.sig.ident.to_string(),
+                        ImplItemTemp {
+                            class_name: class_name.clone(),
+                            module_path: current_module_path.clone(),
+                            item_stmt: JsImplItem::ClassMethod(
+                                class_name.clone(),
+                                false,
+                                static_,
+                                JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    is_method: true,
+                                    async_: item_impl_fn.sig.asyncness.is_some(),
+                                    name: camel(item_impl_fn.sig.ident.clone()),
+                                    input_names,
+                                    body_stmts,
+                                },
+                            ),
+                        },
+                    );
+                } else {
+                    let n_stmts = item_impl_fn.block.stmts.len();
+                    let body_stmts = item_impl_fn
+                        .block
+                        .stmts
+                        .clone()
+                        .into_iter()
+                        .map(|stmt| stmt)
+                        .collect::<Vec<_>>();
+                    let body_stmts =
+                        parse_fn_body_stmts(&body_stmts, global_data, current_module_path);
+                    impl_stmts.push(
+                        // item_impl_fn.sig.ident.to_string(),
+                        ImplItemTemp {
+                            class_name: class_name.clone(),
+                            module_path: current_module_path.clone(),
+                            item_stmt: JsImplItem::ClassMethod(
+                                class_name.clone(),
+                                false,
+                                static_,
+                                JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    is_method: true,
+                                    async_: item_impl_fn.sig.asyncness.is_some(),
+                                    name: camel(item_impl_fn.sig.ident.clone()),
+                                    input_names,
+                                    body_stmts,
+                                },
+                            ),
+                        },
+                    )
+                }
             }
             ImplItem::Type(_) => todo!(),
             ImplItem::Macro(_) => todo!(),
@@ -1129,6 +1250,8 @@ struct RustPreludeTypes {
     // print: bool,
     integer: bool,
     float: bool,
+    string: bool,
+    bool: bool,
     equals: bool,
 }
 
@@ -1459,10 +1582,24 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
     assert_eq!(modules.len(), 1);
     let number_module = &modules[0];
 
+    let code = include_str!("rust_prelude/string.rs");
+    let modules = from_file(code, false);
+    assert_eq!(modules.len(), 1);
+    let string_module = &modules[0];
+
+    let code = include_str!("rust_prelude/bool.rs");
+    let modules = from_file(code, false);
+    assert_eq!(modules.len(), 1);
+    let bool_module = &modules[0];
+
     // We want to insert prelude stmts at the beginning of js_stmts, but if we do that per item we will reverse the order they appear in the source files. Instead we push them to `prelude_stmts` and then insert that in one go
     let mut prelude_stmts = Vec::new();
 
     let rust_prelude_types = &global_data.rust_prelude_types;
+
+    let bool_in_other_prelude =
+        rust_prelude_types.string || rust_prelude_types.integer || rust_prelude_types.float;
+
     if rust_prelude_types.vec {
         let mut methods = Vec::new();
         methods.push((
@@ -1555,6 +1692,37 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
                         if rust_prelude_types.float {
                             prelude_stmts.push(stmt.clone());
                         }
+                    } else {
+                        todo!()
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+    }
+
+    if rust_prelude_types.string {
+        for stmt in &string_module.stmts {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    // TODO don't need this if check?
+                    if js_class.name == "RustString" {
+                        prelude_stmts.push(stmt.clone());
+                    } else {
+                        todo!()
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+    }
+
+    if rust_prelude_types.bool || bool_in_other_prelude {
+        for stmt in &bool_module.stmts {
+            match stmt {
+                JsStmt::Class(js_class) => {
+                    if js_class.name == "RustBool" {
+                        prelude_stmts.push(stmt.clone());
                     } else {
                         todo!()
                     }
@@ -2040,6 +2208,7 @@ pub enum JsExpr {
     Null,
     Object(Vec<(String, Box<JsExpr>)>),
     ObjectForModule(Vec<JsStmt>),
+    Paren(Box<JsExpr>),
     /// like obj::inner::mynumber -> obj.inner.mynumber;
     Path(Vec<String>),
     Raw(String),
@@ -2047,7 +2216,6 @@ pub enum JsExpr {
     ThrowError(String),
     /// Will make the entire statement disappear no matter where it is nested?
     Vanish,
-    Paren(Box<JsExpr>),
     Not(Box<JsExpr>),
     Minus(Box<JsExpr>),
     Var(String),
@@ -2804,15 +2972,19 @@ fn parse_fn_body_stmts(
                             if semi.is_some() {
                                 handle_stmt(stmt, global_data, current_module)
                             } else {
+                                let condition = Box::new(JsExpr::Field(
+                                    Box::new(JsExpr::Paren(Box::new(handle_expr(
+                                        &*expr_if.cond,
+                                        global_data,
+                                        current_module,
+                                    )))),
+                                    "jsBoolean".to_string(),
+                                ));
                                 JsStmt::Expr(
                                     JsExpr::If(
                                         Some(LocalName::Single("ifTempAssignment".to_string())),
                                         true,
-                                        Box::new(handle_expr(
-                                            &*expr_if.cond,
-                                            global_data,
-                                            current_module,
-                                        )),
+                                        condition,
                                         expr_if
                                             .then_branch
                                             .stmts
@@ -2876,15 +3048,68 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             global_data,
             current_module,
         ))),
-        Expr::Binary(expr_binary) => JsExpr::Binary(
-            Box::new(handle_expr(&*expr_binary.left, global_data, current_module)),
-            JsOp::from_binop(expr_binary.op),
-            Box::new(handle_expr(
-                &*expr_binary.right,
+        Expr::Binary(expr_binary) => {
+            // TODO hack to not convert === to .eq() when comparing JS primitives
+            let primitive = match &*expr_binary.left {
+                Expr::Field(expr_field) => match &expr_field.member {
+                    Member::Named(ident) => {
+                        ident == "js_number" || ident == "js_string" || ident == "js_bool"
+                    }
+                    Member::Unnamed(_) => false,
+                },
+                _ => false,
+            };
+            if primitive {
+                return JsExpr::Binary(
+                    Box::new(handle_expr(&*expr_binary.left, global_data, current_module)),
+                    JsOp::from_binop(expr_binary.op),
+                    Box::new(handle_expr(
+                        &*expr_binary.right,
+                        global_data,
+                        current_module,
+                    )),
+                );
+            }
+
+            let lhs = Box::new(JsExpr::Paren(Box::new(handle_expr(
+                &*expr_binary.left,
                 global_data,
                 current_module,
-            )),
-        ),
+            ))));
+            let method_name = match expr_binary.op {
+                BinOp::Add(_) => "add",
+                BinOp::Sub(_) => "sub",
+                BinOp::Mul(_) => "mul",
+                BinOp::Div(_) => "div",
+                BinOp::Rem(_) => "rem",
+                BinOp::And(_) => "bool_and",
+                BinOp::Or(_) => "or",
+                BinOp::BitXor(_) => todo!(),
+                BinOp::BitAnd(_) => todo!(),
+                BinOp::BitOr(_) => todo!(),
+                BinOp::Shl(_) => todo!(),
+                BinOp::Shr(_) => todo!(),
+                BinOp::Eq(_) => "eq",
+                BinOp::Lt(_) => "lt",
+                BinOp::Le(_) => "le",
+                BinOp::Ne(_) => "ne",
+                BinOp::Ge(_) => "ge",
+                BinOp::Gt(_) => "gt",
+                BinOp::AddAssign(_) => "add_assign",
+                BinOp::SubAssign(_) => "sub_assign",
+                BinOp::MulAssign(_) => todo!(),
+                BinOp::DivAssign(_) => todo!(),
+                BinOp::RemAssign(_) => todo!(),
+                BinOp::BitXorAssign(_) => todo!(),
+                BinOp::BitAndAssign(_) => todo!(),
+                BinOp::BitOrAssign(_) => todo!(),
+                BinOp::ShlAssign(_) => todo!(),
+                BinOp::ShrAssign(_) => todo!(),
+                _ => todo!(),
+            };
+            let rhs = handle_expr(&*expr_binary.right, global_data, current_module);
+            JsExpr::MethodCall(lhs, camel(method_name), vec![rhs])
+        }
         Expr::Block(expr_block) => JsExpr::Block(
             expr_block
                 .block
@@ -2895,6 +3120,21 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         ),
         Expr::Break(_) => JsExpr::Break,
         Expr::Call(expr_call) => {
+            let js_primitive = match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    if expr_path.path.segments.len() == 1 {
+                        let ident = &expr_path.path.segments.first().unwrap().ident;
+                        ident == "JsNumber" || ident == "JsString" || ident == "JsBoolean"
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+            if js_primitive {
+                return handle_expr(expr_call.args.first().unwrap(), global_data, current_module);
+            }
+
             let args = expr_call
                 .args
                 .iter()
@@ -3081,7 +3321,10 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             Box::new(handle_expr(&*expr_field.base, global_data, current_module)),
             match &expr_field.member {
                 Member::Named(ident) => camel(ident),
-                Member::Unnamed(_) => todo!(),
+                Member::Unnamed(_) => {
+                    dbg!(expr_field);
+                    todo!()
+                }
             },
         ),
         Expr::ForLoop(expr_for_loop) => JsExpr::ForLoop(
@@ -3105,7 +3348,14 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         Expr::If(expr_if) => JsExpr::If(
             None,
             false,
-            Box::new(handle_expr(&*expr_if.cond, global_data, current_module)),
+            Box::new(JsExpr::Field(
+                Box::new(JsExpr::Paren(Box::new(handle_expr(
+                    &*expr_if.cond,
+                    global_data,
+                    current_module,
+                )))),
+                "jsBoolean".to_string(),
+            )),
             expr_if
                 .then_branch
                 .stmts
@@ -3119,7 +3369,10 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         ),
         Expr::Index(expr_index) => JsExpr::Index(
             Box::new(handle_expr(&*expr_index.expr, global_data, current_module)),
-            Box::new(handle_expr(&*expr_index.index, global_data, current_module)),
+            Box::new(JsExpr::Field(
+                Box::new(handle_expr(&*expr_index.index, global_data, current_module)),
+                "jsNumber".to_string(),
+            )),
         ),
         Expr::Infer(_) => todo!(),
         Expr::Let(expr_let) => {
@@ -3127,19 +3380,37 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             todo!()
         }
         Expr::Lit(expr_lit) => match &expr_lit.lit {
-            Lit::Str(lit_str) => JsExpr::LitStr(lit_str.value()),
+            Lit::Str(lit_str) => {
+                global_data.rust_prelude_types.string = true;
+                JsExpr::New(
+                    vec!["RustString".to_string()],
+                    vec![JsExpr::LitStr(lit_str.value())],
+                )
+            }
             Lit::ByteStr(_) => todo!(),
             Lit::Byte(_) => todo!(),
             Lit::Char(_) => todo!(),
             Lit::Int(lit_int) => {
                 global_data.rust_prelude_types.integer = true;
-                JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())
+                JsExpr::New(
+                    vec!["RustInteger".to_string()],
+                    vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
+                )
             }
             Lit::Float(lit_float) => {
                 global_data.rust_prelude_types.float = true;
-                JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())
+                JsExpr::New(
+                    vec!["RustFloat".to_string()],
+                    vec![JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())],
+                )
             }
-            Lit::Bool(lit_bool) => JsExpr::LitBool(lit_bool.value),
+            Lit::Bool(lit_bool) => {
+                global_data.rust_prelude_types.bool = true;
+                JsExpr::New(
+                    vec!["RustBool".to_string()],
+                    vec![JsExpr::LitBool(lit_bool.value)],
+                )
+            }
             Lit::Verbatim(_) => todo!(),
             _ => todo!(),
         },
@@ -3237,7 +3508,9 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
                     let rhs = handle_expr(&rhs, global_data, current_module_path);
 
-                    let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+                    // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+                    let equality_check =
+                        JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs]);
                     return JsExpr::MethodCall(
                         Box::new(JsExpr::Path(vec!["console".to_string()])),
                         "assert".to_string(),

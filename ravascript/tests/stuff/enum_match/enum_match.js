@@ -1,3 +1,54 @@
+class RustInteger {
+    constructor(jsNumber) {
+        this.jsNumber = jsNumber;
+    }
+
+    eq(other) {
+        return new RustBool(this.jsNumber === other.jsNumber);
+    }
+    ne(other) {
+        return new RustBool(this.jsNumber !== other.jsNumber);
+    }
+    add(other) {
+        return new RustInteger(this.jsNumber + other.jsNumber);
+    }
+    addAssign(other) {
+        this.jsNumber += other.jsNumber;
+    }
+    abs() {
+        return new RustInteger(Math.abs(this.jsNumber));
+    }
+    rem(other) {
+        return new RustInteger(this.jsNumber % other.jsNumber);
+    }
+}
+class RustString {
+    constructor(jsString) {
+        this.jsString = jsString;
+    }
+
+    eq(other) {
+        return new RustBool(this.jsString === other.jsString);
+    }
+    ne(other) {
+        return new RustBool(this.jsString !== other.jsString);
+    }
+}
+class RustBool {
+    constructor(jsBoolean) {
+        this.jsBoolean = jsBoolean;
+    }
+
+    eq(other) {
+        return new RustBool(this.jsBoolean.eq(other.jsBoolean));
+    }
+    ne(other) {
+        return new RustBool(this.jsBoolean.ne(other.jsBoolean));
+    }
+    boolAnd(other) {
+        return new RustBool(this.jsBoolean && other.jsBoolean);
+    }
+}
 class MyEnum {
     static fooBarId = "FooBar";
     static FooBar = new MyEnum("FooBar", null);
@@ -17,13 +68,13 @@ class MyEnum {
 (function main() {
     var myData = MyEnum.FooBar;
     var myData = MyEnum.Bar({
-        x: 4,
-        y: "Hello",
+        x: new RustInteger(4),
+        y: new RustString("Hello"),
     });
-    var myData = MyEnum.Baz("Hi", 5);
+    var myData = MyEnum.Baz(new RustString("Hi"), new RustInteger(5));
     var matchResult;
     if (myData.id === MyEnum.fooBarId) {
-        matchResult = 1;
+        matchResult = new RustInteger(1);
     } else if (myData.id === MyEnum.barId) {
         var { x, y } = myData.data;
         console.log(x);
@@ -37,5 +88,5 @@ class MyEnum {
     } else {
         throw new Error("couldn't match enum variant");
     }
-    return matchResult === 5;
+    console.assert(matchResult.eq(new RustInteger(5)));
 })();
