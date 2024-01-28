@@ -13,7 +13,7 @@ use utils::*;
 
 #[tokio::test]
 async fn impl_in_fn_scope() {
-    let actual = r2j_block!({
+    let actual = r2j_block_with_prelude!({
         trait Interaction {
             fn greeting() -> String {
                 "Hello".to_string()
@@ -36,27 +36,33 @@ async fn impl_in_fn_scope() {
         assert_eq!(bob.age_plus_ten(), 40);
         assert_eq!(bob.age_plus_twenty(), 50);
     });
-    let expected = r#"
-    class Person {
-        constructor(age) {
-            this.age = age;
+    let expected = concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_string_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"
+        class Person {
+            constructor(age) {
+                this.age = age;
+            }
+
+            agePlusTen() {
+                return this.age.add(new RustInteger(10));
+            }
+            static greeting() {
+                return new RustString("Hello").toString();
+            }
+            agePlusTwenty() {
+                return this.agePlusTen().add(new RustInteger(10));
+            }
         }
 
-        agePlusTen() {
-            return this.age.add(new RustInteger(10));
-        }
-        static greeting() {
-            return new RustString("Hello").toString();
-        }
-        agePlusTwenty() {
-            return this.agePlusTen().add(new RustInteger(10));
-        }
-    }
-
-    var bob = new Person(new RustInteger(30));
-    console.assert(Person.greeting().eq(new RustString("Hello").toString()));
-    console.assert(bob.agePlusTen().eq(new RustInteger(40)));
-    console.assert(bob.agePlusTwenty().eq(new RustInteger(50)));
-    "#;
+        var bob = new Person(new RustInteger(30));
+        console.assert(Person.greeting().eq(new RustString("Hello").toString()));
+        console.assert(bob.agePlusTen().eq(new RustInteger(40)));
+        console.assert(bob.agePlusTwenty().eq(new RustInteger(50)));
+        "#,
+    );
     assert_eq!(format_js(expected), actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -40,18 +40,6 @@ async fn it_transpiles_structs_and_impl_methods() {
 }
 
 #[tokio::test]
-async fn it_transpiles_enum_match() {
-    // TODO use js file preludes here so we don't have to update them in enum_match.js also
-    let (expected, actual) = get_rust_module_and_expected_js("tests/stuff/enum_match".into())
-        .await
-        .unwrap();
-
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
 async fn impl_in_fn_scope() {
     // impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
     let actual = r2j_block!({
@@ -80,5 +68,28 @@ async fn impl_in_fn_scope() {
     var cool = new Cool();
     console.assert(cool.whatever().eq(new RustInteger(5)));
     "#;
+    assert_eq!(format_js(expected), actual);
+}
+
+#[tokio::test]
+async fn tuple_struct() {
+    let actual = r2j_block_with_prelude!({
+        struct Cool(i32);
+        let cool = Cool(5);
+        assert_eq!(cool.0, 5);
+    });
+    let expected = concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"class Cool {
+            constructor(arg0) {
+                this[0] = arg0
+            }
+        }
+        var cool = new Cool(new RustInteger(5));
+        console.assert(cool[0].eq(new RustInteger(5)));
+        "#
+    );
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
     assert_eq!(format_js(expected), actual);
 }

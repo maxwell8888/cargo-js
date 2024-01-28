@@ -10,9 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, FnArg, ImplItem, Item,
-    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Member, Meta, Pat,
-    Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, Fields, FnArg, ImplItem,
+    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Member, Meta,
+    Pat, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -666,6 +666,7 @@ fn handle_item_enum(
             Visibility::Inherited => false,
         },
         export: false,
+        tuple_struct: false,
         name: class_name,
         inputs: Vec::new(),
         static_fields,
@@ -962,6 +963,27 @@ fn handle_item_struct(
             .collect::<Vec<_>>()
             .join("__");
     }
+
+    let (tuple_struct, inputs) = match &item_struct.fields {
+        Fields::Named(fields_named) => (
+            false,
+            fields_named
+                .named
+                .iter()
+                .map(|field| camel(field.ident.as_ref().unwrap()))
+                .collect::<Vec<_>>(),
+        ),
+        Fields::Unnamed(fields_unnamed) => (
+            true,
+            fields_unnamed
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(i, _field)| format!("arg{i}"))
+                .collect::<Vec<_>>(),
+        ),
+        Fields::Unit => todo!(),
+    };
     JsStmt::Class(JsClass {
         export: false,
         public: match item_struct.vis {
@@ -970,14 +992,8 @@ fn handle_item_struct(
             Visibility::Inherited => false,
         },
         name,
-        inputs: item_struct
-            .fields
-            .iter()
-            .map(|field| match &field.ident {
-                Some(ident) => camel(ident),
-                None => todo!(),
-            })
-            .collect::<Vec<_>>(),
+        tuple_struct,
+        inputs,
         static_fields: Vec::new(),
         methods,
     })
@@ -1676,6 +1692,7 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             export: false,
             public: false,
             name: "Vec".to_string(),
+            tuple_struct: false,
             inputs: Vec::new(),
             static_fields: Vec::new(),
             methods,
@@ -2253,9 +2270,11 @@ pub enum JsExpr {
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
     MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
+    Minus(Box<JsExpr>),
     /// (Class path, args)
     New(Vec<String>, Vec<JsExpr>),
     Null,
+    Not(Box<JsExpr>),
     Object(Vec<(String, Box<JsExpr>)>),
     ObjectForModule(Vec<JsStmt>),
     Paren(Box<JsExpr>),
@@ -2266,8 +2285,6 @@ pub enum JsExpr {
     ThrowError(String),
     /// Will make the entire statement disappear no matter where it is nested?
     Vanish,
-    Not(Box<JsExpr>),
-    Minus(Box<JsExpr>),
     Var(String),
     // Class(JsClass),
     While(Box<JsExpr>, Vec<JsStmt>),
@@ -2616,6 +2633,7 @@ pub struct JsClass {
     // module_path: Option<Vec<String>>,
     public: bool,
     export: bool,
+    tuple_struct: bool,
     name: String,
     /// we are assuming input names is equivalent to field names
     inputs: Vec<String>,
@@ -2941,7 +2959,12 @@ impl JsStmt {
                             js_class
                                 .inputs
                                 .iter()
-                                .map(|input| format!("this.{input} = {input};"))
+                                .enumerate()
+                                .map(|(i, input)| if js_class.tuple_struct {
+                                    format!("this[{i}] = {input};")
+                                } else {
+                                    format!("this.{input} = {input};")
+                                })
                                 .collect::<Vec<_>>()
                                 .join(" "),
                         )
@@ -3191,6 +3214,29 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .map(|arg| handle_expr(arg, global_data, current_module))
                 .collect::<Vec<_>>();
 
+            // handle tuple structs
+            match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    let path = expr_path
+                        .path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.ident.to_string())
+                        .collect::<Vec<_>>();
+                    let name = path.last().unwrap();
+                    // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
+                    if path.len() == 1
+                        && name.chars().next().unwrap().is_ascii_uppercase()
+                        && name != "Some"
+                        && name != "Ok"
+                        && name != "Err"
+                    {
+                        return JsExpr::New(path, args);
+                    }
+                }
+                _ => {}
+            }
+
             match &*expr_call.func {
                 Expr::Path(expr_path) => {
                     let last = expr_path.path.segments.last().unwrap().ident.to_string();
@@ -3367,16 +3413,15 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         }
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
-        Expr::Field(expr_field) => JsExpr::Field(
-            Box::new(handle_expr(&*expr_field.base, global_data, current_module)),
+        Expr::Field(expr_field) => {
+            let base = Box::new(handle_expr(&*expr_field.base, global_data, current_module));
             match &expr_field.member {
-                Member::Named(ident) => camel(ident),
-                Member::Unnamed(_) => {
-                    dbg!(expr_field);
-                    todo!()
+                Member::Named(ident) => JsExpr::Field(base, camel(ident)),
+                Member::Unnamed(index) => {
+                    JsExpr::Index(base, Box::new(JsExpr::LitInt(index.index as i32)))
                 }
-            },
-        ),
+            }
+        }
         Expr::ForLoop(expr_for_loop) => JsExpr::ForLoop(
             match &*expr_for_loop.pat {
                 Pat::Ident(pat_ident) => camel(&pat_ident.ident),
