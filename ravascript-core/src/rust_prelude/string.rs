@@ -30,4 +30,15 @@ impl RustString {
             js_boolean: JsBoolean(self.js_string != other.js_string),
         }
     }
+
+    fn to_string(&self) -> RustString {
+        self.clone()
+    }
+
+    fn clone(&self) -> RustString {
+        RustString {
+            // NOTE this manually overridden to remove `.clone()`
+            js_string: self.js_string.clone(),
+        }
+    }
 }

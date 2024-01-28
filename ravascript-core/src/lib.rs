@@ -11,8 +11,8 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, FnArg, ImplItem, Item,
-    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemUse, Lit, Member, Meta, Pat, Stmt, Type,
-    UnOp, UseTree, Visibility,
+    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Member, Meta, Pat,
+    Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -346,7 +346,10 @@ fn handle_stmt(
             Item::Struct(item_struct) => {
                 handle_item_struct(item_struct, global_data, current_module_path)
             }
-            Item::Trait(_) => todo!(),
+            Item::Trait(item_trait) => {
+                handle_item_trait(item_trait, global_data, current_module_path);
+                JsStmt::Expr(JsExpr::Vanish, false)
+            }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
@@ -741,6 +744,16 @@ fn handle_item_impl(
         _ => todo!(),
     };
 
+    if let Some(trait_) = &item_impl.trait_ {
+        if trait_.1.segments.len() != 1 {
+            todo!()
+        }
+        global_data.default_trait_impls_class_mapping.push((
+            class_name.clone(),
+            trait_.1.segments.first().unwrap().ident.to_string(),
+        ));
+    }
+
     let mut impl_stmts = Vec::new();
     for impl_item in &item_impl.items {
         match impl_item {
@@ -789,118 +802,37 @@ fn handle_item_impl(
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
-                if class_name == "RustBool" && item_impl_fn.sig.ident == "bool_and" {
-                    let body_stmts = vec![JsStmt::Expr(
+                let body_stmts = if class_name == "RustBool" && item_impl_fn.sig.ident == "bool_and"
+                {
+                    Some(vec![JsStmt::Expr(
                         JsExpr::New(
                             vec!["RustBool".to_string()],
                             vec![JsExpr::Raw("this.jsBoolean && other.jsBoolean".to_string())],
                         ),
                         false,
-                    )];
-                    impl_stmts.push(
-                        // item_impl_fn.sig.ident.to_string(),
-                        ImplItemTemp {
-                            class_name: class_name.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassMethod(
-                                class_name.clone(),
-                                false,
-                                static_,
-                                JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    is_method: true,
-                                    async_: item_impl_fn.sig.asyncness.is_some(),
-                                    name: camel(item_impl_fn.sig.ident.clone()),
-                                    input_names,
-                                    body_stmts,
-                                },
-                            ),
-                        },
-                    );
+                    )])
+
                     // fn add_assign(&mut self, other: RustInteger<T>) {
                     //     self.js_number.0 += other.js_number.0;
                     // }
                 } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "add_assign" {
-                    let body_stmts =
-                        vec![JsStmt::Raw("this.jsNumber += other.jsNumber".to_string())];
-                    impl_stmts.push(
-                        // item_impl_fn.sig.ident.to_string(),
-                        ImplItemTemp {
-                            class_name: class_name.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassMethod(
-                                class_name.clone(),
-                                false,
-                                static_,
-                                JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    is_method: true,
-                                    async_: item_impl_fn.sig.asyncness.is_some(),
-                                    name: camel(item_impl_fn.sig.ident.clone()),
-                                    input_names,
-                                    body_stmts,
-                                },
-                            ),
-                        },
-                    );
+                    Some(vec![JsStmt::Raw(
+                        "this.jsNumber += other.jsNumber".to_string(),
+                    )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
-                    let body_stmts = vec![JsStmt::Raw(
+                    Some(vec![JsStmt::Raw(
                         "return new RustBool(this.id === other.id && this.data.eq(other.data))"
                             .to_string(),
-                    )];
-                    impl_stmts.push(
-                        // item_impl_fn.sig.ident.to_string(),
-                        ImplItemTemp {
-                            class_name: class_name.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassMethod(
-                                class_name.clone(),
-                                false,
-                                static_,
-                                JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    is_method: true,
-                                    async_: item_impl_fn.sig.asyncness.is_some(),
-                                    name: camel(item_impl_fn.sig.ident.clone()),
-                                    input_names,
-                                    body_stmts,
-                                },
-                            ),
-                        },
-                    );
+                    )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "ne" {
-                    let body_stmts = vec![JsStmt::Raw(
+                    Some(vec![JsStmt::Raw(
                         "return new RustBool(this.id !== other.id || this.data.ne(other.data))"
                             .to_string(),
-                    )];
-                    impl_stmts.push(
-                        // item_impl_fn.sig.ident.to_string(),
-                        ImplItemTemp {
-                            class_name: class_name.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassMethod(
-                                class_name.clone(),
-                                false,
-                                static_,
-                                JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    is_method: true,
-                                    async_: item_impl_fn.sig.asyncness.is_some(),
-                                    name: camel(item_impl_fn.sig.ident.clone()),
-                                    input_names,
-                                    body_stmts,
-                                },
-                            ),
-                        },
-                    );
+                    )])
+                } else if class_name == "RustString" && item_impl_fn.sig.ident == "clone" {
+                    Some(vec![JsStmt::Raw(
+                        "return new RustString(this.jsString)".to_string(),
+                    )])
                 } else {
                     let n_stmts = item_impl_fn.block.stmts.len();
                     let body_stmts = item_impl_fn
@@ -912,6 +844,9 @@ fn handle_item_impl(
                         .collect::<Vec<_>>();
                     let body_stmts =
                         parse_fn_body_stmts(&body_stmts, global_data, current_module_path);
+                    Some(body_stmts)
+                };
+                if let Some(body_stmts) = body_stmts {
                     impl_stmts.push(
                         // item_impl_fn.sig.ident.to_string(),
                         ImplItemTemp {
@@ -933,7 +868,7 @@ fn handle_item_impl(
                                 },
                             ),
                         },
-                    )
+                    );
                 }
             }
             ImplItem::Type(_) => todo!(),
@@ -1179,13 +1114,75 @@ fn handle_item(
             let js_stmt = handle_item_struct(&item_struct, global_data, current_module_path);
             js_stmts.push(js_stmt);
         }
-        Item::Trait(_) => js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false)),
+        Item::Trait(item_trait) => {
+            handle_item_trait(&item_trait, global_data, current_module_path);
+            js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
+        }
         Item::TraitAlias(_) => todo!(),
         Item::Type(_) => todo!(),
         Item::Union(_) => todo!(),
         Item::Use(_) => {}
         Item::Verbatim(_) => todo!(),
         _ => todo!(),
+    }
+}
+
+fn handle_item_trait(
+    item_trait: &ItemTrait,
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+) {
+    for trait_item in &item_trait.items {
+        match trait_item {
+            TraitItem::Const(_) => todo!(),
+            TraitItem::Fn(trait_item_fn) => {
+                if let Some(default) = &trait_item_fn.default {
+                    let js_fn = JsFn {
+                        iife: false,
+                        public: false,
+                        export: false,
+                        async_: false,
+                        is_method: true,
+                        name: camel(trait_item_fn.sig.ident.to_string()),
+                        input_names: trait_item_fn
+                            .sig
+                            .inputs
+                            .iter()
+                            .filter_map(|input| match input {
+                                FnArg::Receiver(_) => None,
+                                FnArg::Typed(pat_type) => match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => Some(camel(&pat_ident.ident)),
+                                    _ => todo!(),
+                                },
+                            })
+                            .collect::<Vec<_>>(),
+                        body_stmts: default
+                            .stmts
+                            .iter()
+                            .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
+                            .collect::<Vec<_>>(),
+                    };
+                    global_data.default_trait_impls.push((
+                        item_trait.ident.to_string(),
+                        // TODO remove class name from JsImplItem::ClassMethod
+                        JsImplItem::ClassMethod(
+                            "shouldntneedclassnamehere".to_string(),
+                            false,
+                            match trait_item_fn.sig.inputs.first() {
+                                Some(FnArg::Receiver(_)) => false,
+                                Some(FnArg::Typed(_)) => true,
+                                None => true,
+                            },
+                            js_fn,
+                        ),
+                    ));
+                }
+            }
+            TraitItem::Type(_) => todo!(),
+            TraitItem::Macro(_) => todo!(),
+            TraitItem::Verbatim(_) => todo!(),
+            _ => todo!(),
+        }
     }
 }
 
@@ -1327,6 +1324,10 @@ struct GlobalData {
     crate_path: Option<PathBuf>,
     modules: Vec<ModuleData>,
     rust_prelude_types: RustPreludeTypes,
+    /// (trait name, impl item)
+    default_trait_impls: Vec<(String, JsImplItem)>,
+    /// (class name, trait name)
+    default_trait_impls_class_mapping: Vec<(String, String)>,
     impl_items: Vec<ImplItemTemp>,
     duplicates: Vec<Duplicate>,
     transpiled_modules: Vec<JsModule>,
@@ -1338,6 +1339,8 @@ impl GlobalData {
             crate_path,
             modules: Vec::new(),
             rust_prelude_types: RustPreludeTypes::default(),
+            default_trait_impls_class_mapping: Vec::new(),
+            default_trait_impls: Vec::new(),
             impl_items: Vec::new(),
             duplicates,
             transpiled_modules: Vec::new(),
@@ -1346,16 +1349,53 @@ impl GlobalData {
 }
 
 /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
-fn update_classes(js_stmt_modules: &mut Vec<JsModule>, impl_items: &Vec<ImplItemTemp>) {
+fn update_classes(
+    js_stmt_modules: &mut Vec<JsModule>,
+    impl_items: &Vec<ImplItemTemp>,
+    default_trait_impls_class_mapping: &Vec<(String, String)>,
+    default_trait_impls: &Vec<(String, JsImplItem)>,
+) {
     for js_stmt_module in js_stmt_modules {
         for stmt in js_stmt_module.stmts.iter_mut() {
             match stmt {
                 JsStmt::Class(js_class) => {
+                    // add impl methods to class
                     for impl_item in impl_items.clone() {
+                        // TODO impl could be in another module?
                         if impl_item.module_path == js_stmt_module.module_path
                             && js_class.name == impl_item.class_name
                         {
                             match impl_item.item_stmt {
+                                JsImplItem::ClassStatic(js_local) => {
+                                    js_class.static_fields.push(js_local);
+                                }
+                                JsImplItem::ClassMethod(name, private, static_, js_fn) => {
+                                    js_class.methods.push((name, private, static_, js_fn));
+                                }
+                                stmt => {
+                                    dbg!(stmt);
+                                    panic!("this JsStmt cannot be an impl item")
+                                }
+                            }
+                        }
+                    }
+
+                    // TODO when adding a default impl to a class, we need to know which module/scope it came from in case there are two trait with the same name
+                    // TODO also need to only add if there is not an impl which overrides the default
+                    // add trait methods with default impl to class
+                    for trait_name in default_trait_impls_class_mapping.iter().filter_map(
+                        |(class_name, trait_name)| {
+                            (class_name == &js_class.name).then_some(trait_name)
+                        },
+                    ) {
+                        for js_impl_item in
+                            default_trait_impls
+                                .iter()
+                                .filter_map(|(trait_name2, js_impl_item)| {
+                                    (trait_name == trait_name2).then_some(js_impl_item.clone())
+                                })
+                        {
+                            match js_impl_item {
                                 JsImplItem::ClassStatic(js_local) => {
                                     js_class.static_fields.push(js_local);
                                 }
@@ -1839,7 +1879,12 @@ pub fn process_items(
         .unwrap();
     crate_module.stmts = stmts;
 
-    update_classes(&mut global_data.transpiled_modules, &global_data.impl_items);
+    update_classes(
+        &mut global_data.transpiled_modules,
+        &global_data.impl_items,
+        &global_data.default_trait_impls_class_mapping,
+        &global_data.default_trait_impls,
+    );
     // dbg!(&global_data.transpiled_modules);
 
     // resolve paths to get canonical path to item
@@ -2025,7 +2070,12 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         .unwrap();
     crate_module.stmts = stmts;
 
-    update_classes(&mut global_data.transpiled_modules, &global_data.impl_items);
+    update_classes(
+        &mut global_data.transpiled_modules,
+        &global_data.impl_items,
+        &global_data.default_trait_impls_class_mapping,
+        &global_data.default_trait_impls,
+    );
 
     // and module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {

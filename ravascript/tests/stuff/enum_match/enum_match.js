@@ -33,6 +33,12 @@ class RustString {
     ne(other) {
         return new RustBool(this.jsString !== other.jsString);
     }
+    toString() {
+        return this.clone();
+    }
+    clone() {
+        return new RustString(this.jsString);
+    }
 }
 class RustBool {
     constructor(jsBoolean) {
