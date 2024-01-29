@@ -841,6 +841,16 @@ fn handle_item_impl(
                         "return new RustBool(this.id !== other.id || this.data.ne(other.data))"
                             .to_string(),
                     )])
+                } else if class_name == "RustBool" && item_impl_fn.sig.ident == "eq" {
+                    Some(vec![JsStmt::Raw(
+                        "return new RustBool(this.jsBoolean === other.jsBoolean)"
+                            .to_string(),
+                    )])
+                } else if class_name == "RustBool" && item_impl_fn.sig.ident == "ne" {
+                    Some(vec![JsStmt::Raw(
+                        "return new RustBool(this.jsBoolean !== other.jsBoolean)"
+                            .to_string(),
+                    )])
                 } else if class_name == "RustString" && item_impl_fn.sig.ident == "clone" {
                     Some(vec![JsStmt::Raw(
                         "return new RustString(this.jsString)".to_string(),

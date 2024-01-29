@@ -1,4 +1,3 @@
-mod stuff;
 mod utils;
 use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
@@ -12,15 +11,81 @@ use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
 #[tokio::test]
-async fn it_transpiles_enum_match() {
-    // TODO use js file preludes here so we don't have to update them in enum_match.js also
-    let (expected, actual) = get_rust_module_and_expected_js("tests/stuff/enum_match".into())
-        .await
-        .unwrap();
+async fn enum_match() {
+    let actual = r2j_block_with_prelude!({
+        enum MyEnum {
+            FooBar,
+            // Foo(MyType),
+            Bar { x: i32, y: &'static str },
+            Baz(&'static str, i32),
+        }
+        let my_data = MyEnum::FooBar;
+        let my_data = MyEnum::Bar { x: 4, y: "Hello" };
+        let my_data = MyEnum::Baz("Hi", 5);
+        // TODO need to use a better pretty printer cos the current one messes up the the destructure formatting
+        let match_result = match my_data {
+            MyEnum::FooBar => 1,
+            MyEnum::Bar { x, y } => {
+                Console::log(x);
+                Console::log(y);
+                x
+            }
+            MyEnum::Baz(text, num) => {
+                Console::log(text);
+                Console::log(num);
+                num
+            }
+        };
+        assert_eq!(match_result, 5);
+    });
 
+    let expected = concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_string_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"class MyEnum {
+            static fooBarId = "FooBar";
+            static FooBar = new MyEnum("FooBar", null);
+            static barId = "Bar";
+            static bazId = "Baz";
+            constructor(id, data) {
+                this.id = id;
+                this.data = data;
+            }
+            static Bar(data) {
+                return new MyEnum("Bar", data);
+            }
+            static Baz(arg_0, arg_1) {
+                return new MyEnum("Baz", [arg_0, arg_1]);
+            }
+        }
+        var myData = MyEnum.FooBar;
+        var myData = MyEnum.Bar({
+            x: new RustInteger(4),
+            y: new RustString("Hello"),
+        });
+        var myData = MyEnum.Baz(new RustString("Hi"), new RustInteger(5));
+        var matchResult;
+        if (myData.id === MyEnum.fooBarId) {
+            matchResult = new RustInteger(1);
+        } else if (myData.id === MyEnum.barId) {
+            var { x, y } = myData.data;
+            console.log(x);
+            console.log(y);
+            matchResult = x;
+        } else if (myData.id === MyEnum.bazId) {
+            var [text, num] = myData.data;
+            console.log(text);
+            console.log(num);
+            matchResult = num;
+        } else {
+            throw new Error("couldn't match enum variant");
+        }
+        console.assert(matchResult.eq(new RustInteger(5)));
+        "#
+    );
+    assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
-
-    assert_eq!(expected, actual);
 }
 
 #[tokio::test]

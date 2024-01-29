@@ -4,10 +4,10 @@ class RustBool {
     }
 
     eq(other) {
-        return new RustBool(this.jsBoolean.eq(other.jsBoolean));
+        return new RustBool(this.jsBoolean === other.jsBoolean);
     }
     ne(other) {
-        return new RustBool(this.jsBoolean.ne(other.jsBoolean));
+        return new RustBool(this.jsBoolean !== other.jsBoolean);
     }
     boolAnd(other) {
         return new RustBool(this.jsBoolean && other.jsBoolean);
