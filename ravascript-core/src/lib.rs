@@ -595,10 +595,21 @@ fn handle_item_enum(
                 // for thing in fields_named.named {
                 //     let name = thing.ident.unwrap();
                 // }
-                let stmt = JsStmt::Raw(format!(
-                    r#"return {{ id: "{}", data }};"#,
-                    variant.ident.to_string()
-                ));
+                // let stmt = JsStmt::Raw(format!(
+                //     r#"return {{ id: "{}", data }};"#,
+                //     variant.ident.to_string()
+                // ));
+
+                let stmt = JsStmt::Expr(
+                    JsExpr::Return(Box::new(JsExpr::New(
+                        vec![class_name.clone()],
+                        vec![
+                            JsExpr::LitStr(variant.ident.to_string()),
+                            JsExpr::Var("data".to_string()),
+                        ],
+                    ))),
+                    true,
+                );
                 (vec!["data".to_string()], vec![stmt])
             }
             syn::Fields::Unnamed(fields_unnamed) => {
@@ -822,7 +833,7 @@ fn handle_item_impl(
                     )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.id === other.id && this.data.eq(other.data))"
+                        "return new RustBool(this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data))"
                             .to_string(),
                     )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "ne" {

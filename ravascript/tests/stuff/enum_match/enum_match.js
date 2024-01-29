@@ -65,7 +65,7 @@ class MyEnum {
         this.data = data;
     }
     static Bar(data) {
-        return { id: "Bar", data };
+        return new MyEnum("Bar", data);
     }
     static Baz(arg_0, arg_1) {
         return new MyEnum("Baz", [arg_0, arg_1]);

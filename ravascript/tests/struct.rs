@@ -75,6 +75,14 @@ async fn impl_in_fn_scope() {
 async fn tuple_struct() {
     let actual = r2j_block_with_prelude!({
         struct Cool(i32);
+        impl Cool {
+            fn get_inner(&self) -> i32 {
+                self.0
+            }
+            fn other_number(&self) -> i32 {
+                5
+            }
+        }
         let cool = Cool(5);
         assert_eq!(cool.0, 5);
     });
@@ -85,7 +93,15 @@ async fn tuple_struct() {
             constructor(arg0) {
                 this[0] = arg0
             }
+
+            getInner() {
+                return this[0];
+            }
+            otherNumber() {
+                return new RustInteger(5);
+            }
         }
+        
         var cool = new Cool(new RustInteger(5));
         console.assert(cool[0].eq(new RustInteger(5)));
         "#

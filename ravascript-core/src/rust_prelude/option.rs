@@ -16,6 +16,7 @@ pub use Option::*;
 impl<T: PartialEq> Option<T> {
     fn eq(&self, other: &Option<T>) -> RustBool {
         // return new RustBool(this.id === other.id && this.data.eq(other.data));
+        // This gets manually overriden
         RustBool {
             js_boolean: JsBoolean(match (self, other) {
                 (Some(a), Some(b)) => a == b,

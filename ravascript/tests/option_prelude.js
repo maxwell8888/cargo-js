@@ -10,7 +10,7 @@ class Option {
         return new Option("Some", [arg_0]);
     }
     eq(other) {
-        return new RustBool(this.id === other.id && this.data.eq(other.data));
+        return new RustBool(this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data));
     }
     ne(other) {
         return new RustBool(this.id !== other.id || this.data.ne(other.data));
