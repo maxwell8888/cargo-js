@@ -271,6 +271,96 @@ fn camel(text: impl ToString) -> String {
     }
 }
 
+fn handle_destructure_pat(pat: &Pat, member: &Member) -> DestructureValue {
+    match pat {
+        Pat::Const(_) => todo!(),
+        Pat::Ident(pat_ident) => {
+            let pat_ident = pat_ident.ident.to_string();
+            let member = match member {
+                Member::Named(ident) => ident.to_string(),
+                Member::Unnamed(_) => todo!(),
+            };
+            if member == pat_ident {
+                DestructureValue::KeyName(camel(member))
+            } else {
+                DestructureValue::Rename(camel(member), camel(pat_ident))
+            }
+        }
+        Pat::Lit(_) => todo!(),
+        Pat::Macro(_) => todo!(),
+        Pat::Or(_) => todo!(),
+        Pat::Paren(_) => todo!(),
+        Pat::Path(_) => todo!(),
+        Pat::Range(_) => todo!(),
+        Pat::Reference(_) => todo!(),
+        Pat::Rest(_) => todo!(),
+        Pat::Slice(_) => todo!(),
+        Pat::Struct(pat_struct) => {
+            let member = match member {
+                Member::Named(ident) => ident.to_string(),
+                Member::Unnamed(_) => todo!(),
+            };
+            let fields = pat_struct
+                .fields
+                .iter()
+                .map(|field| handle_destructure_pat(&field.pat, &field.member))
+                .collect::<Vec<_>>();
+            DestructureValue::Nesting(camel(member), DestructureObject(fields))
+        }
+        Pat::Tuple(_) => todo!(),
+        Pat::TupleStruct(_) => todo!(),
+        Pat::Type(_) => todo!(),
+        Pat::Verbatim(_) => todo!(),
+        Pat::Wild(_) => todo!(),
+        _ => todo!(),
+    }
+}
+fn handle_pat(pat: &Pat) -> LocalName {
+    match pat {
+        Pat::Const(_) => todo!(),
+        Pat::Ident(pat_ident) => LocalName::Single(camel(&pat_ident.ident)),
+        Pat::Lit(_) => todo!(),
+        Pat::Macro(_) => todo!(),
+        Pat::Or(_) => todo!(),
+        Pat::Paren(_) => todo!(),
+        Pat::Path(_) => todo!(),
+        Pat::Range(_) => todo!(),
+        Pat::Reference(_) => todo!(),
+        Pat::Rest(_) => todo!(),
+        Pat::Slice(pat_slice) => LocalName::DestructureArray(
+            pat_slice
+                .elems
+                .iter()
+                .map(|elem| handle_pat(elem))
+                .collect::<Vec<_>>(),
+        ),
+        Pat::Struct(pat_struct) => {
+            let fields = pat_struct
+                .fields
+                .iter()
+                .map(|field| handle_destructure_pat(&field.pat, &field.member))
+                .collect::<Vec<_>>();
+            LocalName::DestructureObject(DestructureObject(fields))
+        }
+        Pat::Tuple(pat_tuple) => LocalName::DestructureArray(
+            pat_tuple
+                .elems
+                .iter()
+                .map(|elem| handle_pat(elem))
+                .collect::<Vec<_>>(),
+        ),
+        Pat::TupleStruct(_) => todo!(),
+        Pat::Type(pat_type) => handle_pat(&pat_type.pat),
+        Pat::Verbatim(_) => todo!(),
+        // for `let _ = foo();` the lhs will be `Pat::Wild`
+        Pat::Wild(_) => LocalName::Single("_".to_string()),
+        other => {
+            dbg!(other);
+            todo!();
+        }
+    }
+}
+
 fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
@@ -282,29 +372,6 @@ fn handle_stmt(
             closing_semi.is_some(),
         ),
         Stmt::Local(local) => {
-            //
-            fn handle_pat(pat: &Pat) -> LocalName {
-                match pat {
-                    Pat::Ident(pat_ident) => LocalName::Single(camel(&pat_ident.ident)),
-                    Pat::Tuple(pat_tuple) => LocalName::DestructureArray(
-                        pat_tuple
-                            .elems
-                            .iter()
-                            .map(|elem| match elem {
-                                Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                                _ => todo!(),
-                            })
-                            .collect::<Vec<_>>(),
-                    ),
-                    // for `let _ = foo();` the lhs will be `Pat::Wild`
-                    Pat::Wild(_) => LocalName::Single("_".to_string()),
-                    Pat::Type(pat_type) => handle_pat(&pat_type.pat),
-                    other => {
-                        dbg!(other);
-                        todo!();
-                    }
-                }
-            }
             let lhs = handle_pat(&local.pat);
             let value = handle_expr(
                 &*local.init.as_ref().unwrap().expr,
@@ -843,13 +910,11 @@ fn handle_item_impl(
                     )])
                 } else if class_name == "RustBool" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.jsBoolean === other.jsBoolean)"
-                            .to_string(),
+                        "return new RustBool(this.jsBoolean === other.jsBoolean)".to_string(),
                     )])
                 } else if class_name == "RustBool" && item_impl_fn.sig.ident == "ne" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.jsBoolean !== other.jsBoolean)"
-                            .to_string(),
+                        "return new RustBool(this.jsBoolean !== other.jsBoolean)".to_string(),
                     )])
                 } else if class_name == "RustString" && item_impl_fn.sig.ident == "clone" {
                     Some(vec![JsStmt::Raw(
@@ -2680,6 +2745,17 @@ enum DestructureValue {
     /// A nested destructure like `var { a: { b } } = obj;`
     Nesting(String, DestructureObject),
 }
+impl DestructureValue {
+    fn js_string(&self) -> String {
+        match self {
+            DestructureValue::KeyName(key) => key.clone(),
+            DestructureValue::Rename(key, new_name) => format!("{key}: {new_name}"),
+            DestructureValue::Nesting(key, destructure_object) => {
+                format!("{key}: {}", destructure_object.js_string())
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct DestructureObject(Vec<DestructureValue>);
@@ -2689,12 +2765,7 @@ impl DestructureObject {
             "{{ {} }}",
             self.0
                 .iter()
-                .map(|name| match name {
-                    DestructureValue::KeyName(key) => key.clone(),
-                    DestructureValue::Rename(key, new_name) => format!("{key}: {new_name}"),
-                    DestructureValue::Nesting(key, destructure_object) =>
-                        format!("{key}: {}", destructure_object.js_string()),
-                })
+                .map(|destructure_value| destructure_value.js_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -2705,7 +2776,7 @@ impl DestructureObject {
 pub enum LocalName {
     Single(String),
     DestructureObject(DestructureObject),
-    DestructureArray(Vec<String>),
+    DestructureArray(Vec<LocalName>),
 }
 impl LocalName {
     fn js_string(&self) -> String {
@@ -2716,7 +2787,7 @@ impl LocalName {
                 "[ {} ]",
                 destructure_array
                     .iter()
-                    .map(|name| name.clone())
+                    .map(|destructure_object| destructure_object.js_string())
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
@@ -3127,7 +3198,13 @@ fn parse_fn_body_stmts(
 
 fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsExpr {
     match expr {
-        Expr::Array(_) => todo!(),
+        Expr::Array(expr_array) => JsExpr::Array(
+            expr_array
+                .elems
+                .iter()
+                .map(|elem| handle_expr(elem, global_data, current_module))
+                .collect::<Vec<_>>(),
+        ),
         Expr::Assign(expr_assign) => JsExpr::Assignment(
             Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
             Box::new(handle_expr(
@@ -4176,13 +4253,7 @@ fn handle_match_pat(
             let names = pat_tuple_struct
                 .elems
                 .iter()
-                .map(|elem| match elem {
-                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                    other => {
-                        dbg!(other);
-                        todo!();
-                    }
-                })
+                .map(|elem| handle_pat(elem))
                 .collect::<Vec<_>>();
             let stmt = JsStmt::Local(JsLocal {
                 public: false,
