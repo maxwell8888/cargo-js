@@ -379,9 +379,18 @@ fn handle_stmt(
                 current_module_path,
             );
             match value {
-                JsExpr::If(_assignment, _declare_var, condition, succeed, fail) => {
+                JsExpr::If(js_if) => {
                     // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
-                    JsStmt::Expr(JsExpr::If(Some(lhs), true, condition, succeed, fail), true)
+                    JsStmt::Expr(
+                        JsExpr::If(JsIf {
+                            assignment: Some(lhs),
+                            declare_var: true,
+                            condition: js_if.condition,
+                            succeed: js_if.succeed,
+                            fail: js_if.fail,
+                        }),
+                        true,
+                    )
                 }
 
                 value => JsStmt::Local(JsLocal {
@@ -2340,15 +2349,7 @@ pub enum JsExpr {
     /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
     /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var
     ///
-    /// (assignment, declare_var, condition, succeed, fail)
-    If(
-        Option<LocalName>,
-        bool,
-        Box<JsExpr>,
-        Vec<JsStmt>,
-        /// For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
-        Option<Box<JsExpr>>,
-    ),
+    If(JsIf),
     LitInt(i32),
     LitFloat(f32),
     LitStr(String),
@@ -2376,155 +2377,6 @@ pub enum JsExpr {
     While(Box<JsExpr>, Vec<JsStmt>),
 }
 
-// TODO Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
-// TODO we want to know if the if is a single statment being return from a fn and if so in line the return in the branches rather than use an assignment var
-fn if_expr_to_string(
-    assignment: &Option<LocalName>,
-    declare_var: &bool,
-    cond: &Box<JsExpr>,
-    succeed: &Vec<JsStmt>,
-    // For some reason syn has an expr as the else branch, rather than the typical iter of statements - because the expr might be another if expr, not always a block
-    else_: &Option<Box<JsExpr>>,
-) -> String {
-    let else_ = if let Some(else_) = else_ {
-        match &**else_ {
-            // if else {}
-            JsExpr::If(_, _, cond, succeed, fail) => format!(
-                " else {}",
-                JsExpr::If(
-                    assignment.clone(),
-                    false,
-                    cond.clone(),
-                    succeed.clone(),
-                    fail.clone()
-                )
-                .js_string()
-            ),
-            // else {}
-            _ => {
-                let thing = match &**else_ {
-                    // else { block of stmts }
-                    JsExpr::Block(stmts) => stmts
-                        .iter()
-                        .enumerate()
-                        .map(|(i, stmt)| {
-                            if i == stmts.len() - 1 {
-                                if let Some(assignment) = assignment {
-                                    let is_error = match stmt {
-                                        JsStmt::Expr(expr, _) => match expr {
-                                            JsExpr::ThrowError(_) => todo!(),
-                                            _ => false,
-                                        },
-                                        _ => false,
-                                    };
-                                    format!("{} = {};", assignment.js_string(), stmt.js_string())
-                                } else {
-                                    stmt.js_string()
-                                }
-                            } else {
-                                stmt.js_string()
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    // else { expr }
-                    _ => {
-                        if let Some(assignment) = assignment {
-                            let is_error = match **else_ {
-                                JsExpr::ThrowError(_) => true,
-                                _ => false,
-                            };
-                            // let is_error = match stmt {
-                            //     JsStmt::Expr(expr, _) => match expr {
-                            //         JsExpr::ThrowError(_) => true,
-                            //         _ => false,
-                            //     },
-                            //     _ => false,
-                            // };
-                            if is_error {
-                                format!("{};", else_.js_string())
-                            } else {
-                                // format!("{} = {};", assignment.js_string(), stmt.js_string())
-                                format!("{} = {};", assignment.js_string(), else_.js_string())
-                            }
-                        } else {
-                            else_.js_string()
-                        }
-                    }
-                };
-                format!(" else {{\n{}\n}}", thing)
-            }
-        }
-    } else {
-        "".to_string()
-    };
-    let assignment_str = if let Some(lhs) = assignment {
-        if *declare_var {
-            let local = JsLocal {
-                public: false,
-                export: false,
-                type_: LocalType::Var,
-                lhs: lhs.clone(),
-                value: JsExpr::Blank,
-            };
-            format!("{}\n", local.js_string())
-            // "jargallleee".to_string()
-        } else {
-            "".to_string()
-        }
-    } else {
-        "".to_string()
-    };
-
-    format!(
-        "{}if ({}) {{\n{}\n}}{}",
-        assignment_str,
-        cond.js_string(),
-        succeed
-            .iter()
-            .enumerate()
-            .map(|(i, stmt)| {
-                if i == succeed.len() - 1 {
-                    if let Some(assignment) = assignment {
-                        // TODO not sure how to handle `let (var1, var2) = if true { (1, 2) } else { (3, 4) };`. I think we would need to use:
-                        // `var temp;`
-                        // `if (true) { temp = [1, 2] } else { temp = [3, 4] }`
-                        // `var [var1, var2] = temp;`
-
-                        // _ => {
-                        //     if *semi {
-                        //         format!("{};", js_expr.js_string())
-                        //     } else if i == self.body_stmts.len() - 1 {
-                        //         format!("return {};", js_expr.js_string())
-                        //     } else {
-                        //         js_expr.js_string()
-                        //     }
-                        // }
-
-                        let is_error = match stmt {
-                            JsStmt::Expr(expr, _) => match expr {
-                                JsExpr::ThrowError(_) => true,
-                                _ => false,
-                            },
-                            _ => false,
-                        };
-                        if is_error {
-                            stmt.js_string()
-                        } else {
-                            format!("{} = {};", assignment.js_string(), stmt.js_string())
-                        }
-                    } else {
-                        stmt.js_string()
-                    }
-                } else {
-                    stmt.js_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        else_
-    )
-}
 impl JsExpr {
     fn js_string(&self) -> String {
         match self {
@@ -2639,9 +2491,7 @@ impl JsExpr {
                     .collect::<Vec<_>>()
                     .join("\n")
             ),
-            JsExpr::If(assignment, declare_var, cond, succeed, fail) => {
-                if_expr_to_string(assignment, declare_var, cond, succeed, fail)
-            }
+            JsExpr::If(js_if) => js_if.if_expr_to_string(),
             JsExpr::Declaration(_, name, expr) => format!("var {name} = {}", expr.js_string()),
             JsExpr::Break => "break".to_string(),
             JsExpr::Not(expr) => format!("!{}", expr.js_string()),
@@ -2709,6 +2559,175 @@ impl JsExpr {
                 format!(r#"throw new Error({expanded_message})"#)
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct JsIf {
+    /// The name of the initialised var we are assigning to in the final statement of the block
+    assignment: Option<LocalName>,
+    /// Whether to prepend the if statement with eg `var result = `
+    /// TODO not sure why this is necessary and not handle by the original `let` `Local` statement
+    declare_var: bool,
+    condition: Box<JsExpr>,
+    succeed: Vec<JsStmt>,
+    /// syn has an expr as the else branch, rather than an iter of statements - because the expr might be another if expr, not always a block
+    fail: Option<Box<JsExpr>>,
+}
+
+// TODO Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
+// TODO we want to know if the if is a single statment being return from a fn and if so in line the return in the branches rather than use an assignment var
+impl JsIf {
+    fn if_expr_to_string(&self) -> String {
+        let JsIf {
+            assignment,
+            declare_var,
+            condition: cond,
+            succeed,
+            fail: else_,
+        } = self;
+        let else_ = if let Some(else_) = else_ {
+            match &**else_ {
+                // if else {}
+                JsExpr::If(js_if) => format!(
+                    " else {}",
+                    JsExpr::If(JsIf {
+                        assignment: assignment.clone(),
+                        declare_var: false,
+                        condition: js_if.condition.clone(),
+                        succeed: js_if.succeed.clone(),
+                        fail: js_if.fail.clone()
+                    })
+                    .js_string()
+                ),
+                // else {}
+                _ => {
+                    let thing = match &**else_ {
+                        // else { block of stmts }
+                        JsExpr::Block(stmts) => stmts
+                            .iter()
+                            .enumerate()
+                            .map(|(i, stmt)| {
+                                if i == stmts.len() - 1 {
+                                    if let Some(assignment) = assignment {
+                                        let is_error = match stmt {
+                                            JsStmt::Expr(expr, _) => match expr {
+                                                JsExpr::ThrowError(_) => todo!(),
+                                                _ => false,
+                                            },
+                                            _ => false,
+                                        };
+                                        format!(
+                                            "{} = {};",
+                                            assignment.js_string(),
+                                            stmt.js_string()
+                                        )
+                                    } else {
+                                        stmt.js_string()
+                                    }
+                                } else {
+                                    stmt.js_string()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        // else { expr }
+                        _ => {
+                            if let Some(assignment) = assignment {
+                                let is_error = match **else_ {
+                                    JsExpr::ThrowError(_) => true,
+                                    _ => false,
+                                };
+                                // let is_error = match stmt {
+                                //     JsStmt::Expr(expr, _) => match expr {
+                                //         JsExpr::ThrowError(_) => true,
+                                //         _ => false,
+                                //     },
+                                //     _ => false,
+                                // };
+                                if is_error {
+                                    format!("{};", else_.js_string())
+                                } else {
+                                    // format!("{} = {};", assignment.js_string(), stmt.js_string())
+                                    format!("{} = {};", assignment.js_string(), else_.js_string())
+                                }
+                            } else {
+                                else_.js_string()
+                            }
+                        }
+                    };
+                    format!(" else {{\n{}\n}}", thing)
+                }
+            }
+        } else {
+            "".to_string()
+        };
+        let assignment_str = if let Some(lhs) = assignment {
+            if *declare_var {
+                let local = JsLocal {
+                    public: false,
+                    export: false,
+                    type_: LocalType::Var,
+                    lhs: lhs.clone(),
+                    value: JsExpr::Blank,
+                };
+                format!("{}\n", local.js_string())
+                // "jargallleee".to_string()
+            } else {
+                "".to_string()
+            }
+        } else {
+            "".to_string()
+        };
+
+        format!(
+            "{}if ({}) {{\n{}\n}}{}",
+            assignment_str,
+            cond.js_string(),
+            succeed
+                .iter()
+                .enumerate()
+                .map(|(i, stmt)| {
+                    if i == succeed.len() - 1 {
+                        if let Some(assignment) = assignment {
+                            // TODO not sure how to handle `let (var1, var2) = if true { (1, 2) } else { (3, 4) };`. I think we would need to use:
+                            // `var temp;`
+                            // `if (true) { temp = [1, 2] } else { temp = [3, 4] }`
+                            // `var [var1, var2] = temp;`
+
+                            // _ => {
+                            //     if *semi {
+                            //         format!("{};", js_expr.js_string())
+                            //     } else if i == self.body_stmts.len() - 1 {
+                            //         format!("return {};", js_expr.js_string())
+                            //     } else {
+                            //         js_expr.js_string()
+                            //     }
+                            // }
+
+                            let is_error = match stmt {
+                                JsStmt::Expr(expr, _) => match expr {
+                                    JsExpr::ThrowError(_) => true,
+                                    _ => false,
+                                },
+                                _ => false,
+                            };
+                            if is_error {
+                                stmt.js_string()
+                            } else {
+                                format!("{} = {};", assignment.js_string(), stmt.js_string())
+                            }
+                        } else {
+                            stmt.js_string()
+                        }
+                    } else {
+                        stmt.js_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            else_
+        )
     }
 }
 
@@ -2840,10 +2859,10 @@ fn handle_fn_body_stmt(i: usize, stmt: &JsStmt, len: usize) -> String {
     match stmt {
         JsStmt::Local(js_local) => js_local.js_string(),
         JsStmt::Expr(js_expr, semi) => match js_expr {
-            JsExpr::If(assignment, _, _, _, _) => {
+            JsExpr::If(js_if) => {
                 if i == len - 1 {
                     // TODO wrongly assuming that all single if expr bodys should be returned
-                    if let Some(assignment) = assignment {
+                    if let Some(assignment) = &js_if.assignment {
                         format!(
                             "{}\nreturn {};",
                             js_expr.js_string(),
@@ -3146,11 +3165,13 @@ fn parse_fn_body_stmts(
                                     "jsBoolean".to_string(),
                                 ));
                                 JsStmt::Expr(
-                                    JsExpr::If(
-                                        Some(LocalName::Single("ifTempAssignment".to_string())),
-                                        true,
+                                    JsExpr::If(JsIf {
+                                        assignment: Some(LocalName::Single(
+                                            "ifTempAssignment".to_string(),
+                                        )),
+                                        declare_var: true,
                                         condition,
-                                        expr_if
+                                        succeed: expr_if
                                             .then_branch
                                             .stmts
                                             .iter()
@@ -3158,14 +3179,14 @@ fn parse_fn_body_stmts(
                                                 handle_stmt(stmt, global_data, current_module)
                                             })
                                             .collect::<Vec<_>>(),
-                                        expr_if.else_branch.as_ref().map(|(_, expr)| {
+                                        fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
                                             Box::new(handle_expr(
                                                 &*expr,
                                                 global_data,
                                                 current_module,
                                             ))
                                         }),
-                                    ),
+                                    }),
                                     false,
                                 )
                             }
@@ -3538,28 +3559,34 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .collect::<Vec<_>>(),
         ),
         Expr::Group(_) => todo!(),
-        Expr::If(expr_if) => JsExpr::If(
-            None,
-            false,
-            Box::new(JsExpr::Field(
-                Box::new(JsExpr::Paren(Box::new(handle_expr(
-                    &*expr_if.cond,
-                    global_data,
-                    current_module,
-                )))),
-                "jsBoolean".to_string(),
-            )),
-            expr_if
-                .then_branch
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
-            expr_if
-                .else_branch
-                .as_ref()
-                .map(|(_, expr)| Box::new(handle_expr(&*expr, global_data, current_module))),
-        ),
+        Expr::If(expr_if) => {
+            match &*expr_if.cond {
+                Expr::Let(_) => todo!(),
+                _ => {}
+            }
+            JsExpr::If(JsIf {
+                assignment: None,
+                declare_var: false,
+                condition: Box::new(JsExpr::Field(
+                    Box::new(JsExpr::Paren(Box::new(handle_expr(
+                        &*expr_if.cond,
+                        global_data,
+                        current_module,
+                    )))),
+                    "jsBoolean".to_string(),
+                )),
+                succeed: expr_if
+                    .then_branch
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                    .collect::<Vec<_>>(),
+                fail: expr_if
+                    .else_branch
+                    .as_ref()
+                    .map(|(_, expr)| Box::new(handle_expr(&*expr, global_data, current_module))),
+            })
+        }
         Expr::Index(expr_index) => JsExpr::Index(
             Box::new(handle_expr(&*expr_index.expr, global_data, current_module)),
             Box::new(JsExpr::Field(
@@ -4330,10 +4357,11 @@ fn handle_expr_match(
             body_data_destructure.extend(body.into_iter());
             let body = body_data_destructure;
 
-            JsExpr::If(
-                is_returned.then_some(LocalName::Single("ifTempAssignment".to_string())),
-                is_returned,
-                Box::new(JsExpr::Binary(
+            JsExpr::If(JsIf {
+                assignment: is_returned
+                    .then_some(LocalName::Single("ifTempAssignment".to_string())),
+                declare_var: is_returned,
+                condition: Box::new(JsExpr::Binary(
                     Box::new(JsExpr::Field(
                         Box::new(handle_expr(&*expr_match.expr, global_data, current_module)),
                         "id".to_string(),
@@ -4341,10 +4369,10 @@ fn handle_expr_match(
                     JsOp::Eq,
                     Box::new(JsExpr::Path(rhs)),
                 )),
-                body,
+                succeed: body,
                 // TODO
-                Some(Box::new(acc)),
-            )
+                fail: Some(Box::new(acc)),
+            })
         },
     );
     // for arm in &expr_match.arms {
