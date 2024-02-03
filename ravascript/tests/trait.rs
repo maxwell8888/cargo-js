@@ -57,9 +57,9 @@ async fn impl_in_fn_scope() {
         }
 
         var bob = new Person(new RustInteger(30));
-        console.assert(Person.greeting().eq(new RustString("Hello").toString()));
-        console.assert(bob.agePlusTen().eq(new RustInteger(40)));
-        console.assert(bob.agePlusTwenty().eq(new RustInteger(50)));
+        console.assert(Person.greeting().eq(new RustString("Hello").toString()).jsBoolean);
+        console.assert(bob.agePlusTen().eq(new RustInteger(40)).jsBoolean);
+        console.assert(bob.agePlusTwenty().eq(new RustInteger(50)).jsBoolean);
         "#,
     );
     assert_eq!(format_js(expected), actual);

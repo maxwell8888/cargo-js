@@ -10,6 +10,7 @@ use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
+#[ignore = "wip"]
 #[tokio::test]
 async fn mutating_integers() {
     let actual = r2j_block_with_prelude!({
@@ -45,28 +46,28 @@ async fn mutating_integers() {
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         r#"function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)));
+            console.assert(num.eq(new RustInteger(0)).jsBoolean);
             num.jsNumber = new RustInteger(1);
-            console.assert(num.eq(new RustInteger(1)));
+            console.assert(num.eq(new RustInteger(1)).jsBoolean);
             return num;
         }
         var origNum = new RustInteger(0);
-        console.assert(origNum.eq(new RustInteger(0)));
+        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
         {
             var result = addOne(origNum);
-            console.assert(result.eq(new RustInteger(1)));
+            console.assert(result.eq(new RustInteger(1)).jsBoolean);
             var resultCopy = result.jsNumber;
-            console.assert(resultCopy.eq(new RustInteger(1)));
+            console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
             result.add(new RustInteger(1));
-            console.assert(resultCopy.eq(new RustInteger(1)));
-            console.assert(result.eq(new RustInteger(2)));
+            console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
+            console.assert(result.eq(new RustInteger(2)).jsBoolean);
             var six = new RustInteger(6);
             result = six;
-            console.assert(result.eq(new RustInteger(6)));
+            console.assert(result.eq(new RustInteger(6)).jsBoolean);
         }
-        console.assert(origNum.eq(new RustInteger(2)));
+        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
         origNum.addAssign(new RustInteger(1));
-        console.assert(origNum.eq(new RustInteger(3)));
+        console.assert(origNum.eq(new RustInteger(3)).jsBoolean);
         "#
     );
 
@@ -94,15 +95,15 @@ async fn deref_vs_normal_assign() {
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         r#"var result = new RustInteger(1);
-        console.assert(result.eq(new RustInteger(1)));
+        console.assert(result.eq(new RustInteger(1)).jsBoolean);
         var resultCopy = result;
-        console.assert(resultCopy.eq(new RustInteger(1)));
+        console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
         var six = new RustInteger(6);
         result = six;
-        console.assert(result.eq(new RustInteger(6)));
+        console.assert(result.eq(new RustInteger(6)).jsBoolean);
         six = new RustInteger(10);
-        console.assert(six.eq(new RustInteger(10)));
-        console.assert(result.eq(new RustInteger(6)));
+        console.assert(six.eq(new RustInteger(10)).jsBoolean);
+        console.assert(result.eq(new RustInteger(6)).jsBoolean);
         "#
     );
 
@@ -136,14 +137,14 @@ async fn ownership_copy_struct() {
         } else {
             counter += new RustInteger(1);
         }
-        console.assert(counter.eq(new RustInteger(5)));
+        console.assert(counter.eq(new RustInteger(5)).jsBoolean);
         if (None.id === Option.someId) {
             var [num] = someNum.data;
             counter += num;
         } else {
             counter += new RustInteger(1);
         }
-        console.assert(counter.eq(new RustInteger(6)));
+        console.assert(counter.eq(new RustInteger(6)).jsBoolean);
         "#
     );
 

@@ -50,16 +50,16 @@ async fn abs() {
         include_str!("rust_float_prelude.js"),
         r#"var num = new RustInteger(-5);
         var abs = num.abs();
-        console.assert(abs.eq(new RustInteger(5)));
+        console.assert(abs.eq(new RustInteger(5)).jsBoolean);
         var num = new RustFloat(-5.5);
         var abs = num.abs();
-        console.assert(abs.eq(new RustFloat(5.5)));
+        console.assert(abs.eq(new RustFloat(5.5)).jsBoolean);
         var num = new RustInteger(-5);
         var abs = num.abs();
-        console.assert(abs.eq(new RustInteger(5)));
+        console.assert(abs.eq(new RustInteger(5)).jsBoolean);
         var num = new RustFloat(-5.5);
         var abs = num.abs();
-        console.assert(abs.eq(new RustFloat(5.5)));
+        console.assert(abs.eq(new RustFloat(5.5)).jsBoolean);
         var num = -5;
         var abs = Math.abs(num);
         console.assert(abs === 5);

@@ -25,7 +25,7 @@ async fn it_transpiles_crate_directory() {
       utils__colors__duplicateName();
       var thing = External.new();
       var fido = new Green(new RustBool(true), new RustInteger(2));
-      console.assert(fido.woof().eq(new RustInteger(32)));
+      console.assert(fido.woof().eq(new RustInteger(32)).jsBoolean);
     })();
     
     // foo_bar

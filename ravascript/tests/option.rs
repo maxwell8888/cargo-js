@@ -38,7 +38,7 @@ async fn option_match() {
         } else {
             throw new Error("couldn't match enum variant");
         }
-        console.assert(result.eq(new RustInteger(5)));
+        console.assert(result.eq(new RustInteger(5)).jsBoolean);
         "#,
     ));
 
@@ -62,7 +62,7 @@ async fn option_is_some_and() {
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         r#"var five = Some(new RustInteger(5));
-        console.assert(five.isSomeAnd((x) => x.eq(new RustInteger(5))));
+        console.assert(five.isSomeAnd((x) => x.eq(new RustInteger(5))).jsBoolean);
         "#,
     ));
 
@@ -84,7 +84,7 @@ async fn option_unwrap() {
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         r#"var five = Some(new RustInteger(5));
-        console.assert(five.unwrap().eq(new RustInteger(5)));
+        console.assert(five.unwrap().eq(new RustInteger(5)).jsBoolean);
         "#,
     ));
 
@@ -109,9 +109,9 @@ async fn option_unwrap_or() {
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         "var five = Some(new RustInteger(5));
-        console.assert(five.unwrapOr(new RustInteger(0)).eq(new RustInteger(5)));
+        console.assert(five.unwrapOr(new RustInteger(0)).eq(new RustInteger(5)).jsBoolean);
         var nothing = None;
-        console.assert(nothing.unwrapOr(new RustInteger(0)).eq(new RustInteger(0)));
+        console.assert(nothing.unwrapOr(new RustInteger(0)).eq(new RustInteger(0)).jsBoolean);
         ",
     ));
 
@@ -137,8 +137,8 @@ async fn option_unwrap_or_else() {
         include_str!("rust_bool_prelude.js"),
         "var five = Some(new RustInteger(5));
         var none = None;
-        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)));
-        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)));
+        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)).jsBoolean);
+        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)).jsBoolean);
         ",
     ));
 
@@ -166,8 +166,8 @@ async fn option_unwrap_or_default() {
         include_str!("rust_bool_prelude.js"),
         r#"var five = Some(new RustInteger(5));
         var none = None;
-        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)));
-        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)));
+        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)).jsBoolean);
+        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)).jsBoolean);
         "#,
     ));
 
@@ -197,8 +197,8 @@ async fn option_map() {
         include_str!("rust_bool_prelude.js"),
         r#"var five = Some(new RustInteger(5));
         var none = None;
-        console.assert(five.map((x) => x.add(new RustInteger(2))).eq(Some(new RustInteger(7))));
-        console.assert(none.map((x) => x.add(new RustInteger(2))).eq(None));
+        console.assert(five.map((x) => x.add(new RustInteger(2))).eq(Some(new RustInteger(7))).jsBoolean);
+        console.assert(none.map((x) => x.add(new RustInteger(2))).eq(None).jsBoolean);
         var _ = new RustInteger(5).eq(new RustInteger(4));
         "#,
     ));

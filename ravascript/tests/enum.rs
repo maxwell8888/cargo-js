@@ -81,7 +81,7 @@ async fn enum_match() {
         } else {
             throw new Error("couldn't match enum variant");
         }
-        console.assert(matchResult.eq(new RustInteger(5)));
+        console.assert(matchResult.eq(new RustInteger(5)).jsBoolean);
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -128,8 +128,8 @@ async fn enum_methods() {
         assert_eq!(bar_y, Some("hibar".to_string()));
 
         // None
-        let bar_y2 = baz.bar_y();
-        assert_eq!(bar_y2, None);
+        let bar_y_two = baz.bar_y();
+        assert_eq!(bar_y_two, None);
 
         // Some("hibar")
         let baz_num = bar.baz_num();
@@ -140,7 +140,7 @@ async fn enum_methods() {
         assert_eq!(baz_num, 5);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
         include_str!("option_prelude.js"),
         "var Some = Option.Some;
         var None = Option.None;",
@@ -209,15 +209,15 @@ async fn enum_methods() {
         });
         var baz = Animal.Baz(new RustString("hibaz"), new RustInteger(5));
         var barY = bar.barY();
-        console.assert(barY.eq(Some(new RustString("hibar").toString())));
-        var barY2 = baz.barY();
-        console.assert(barY.eq(None));
+        console.assert(barY.eq(Some(new RustString("hibar").toString())).jsBoolean);
+        var barYTwo = baz.barY();
+        console.assert(barYTwo.eq(None).jsBoolean);
         var bazNum = bar.bazNum();
-        console.assert(bazNum.eq(new RustInteger(0)));
+        console.assert(bazNum.eq(new RustInteger(0)).jsBoolean);
         var bazNum = baz.bazNum();
-        console.assert(bazNum.eq(new RustInteger(5)));        
+        console.assert(bazNum.eq(new RustInteger(5)).jsBoolean);
         "#
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

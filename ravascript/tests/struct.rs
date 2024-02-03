@@ -114,11 +114,11 @@ async fn struct_and_impl_methods() {
         }
 
         var thing = MyStruct.new(new RustInteger(2), new RustString("Bruce"));
-        console.assert(thing.myMethod().eq(new RustString("Bruce")));
-        console.assert(thing.myMethodWithArg(new RustInteger(2)).eq(new RustInteger(4)));
-        console.assert(MyStruct.myAssociatedMethod(new RustInteger(2)).eq(new RustInteger(12)));
-        console.assert(thing.withGeneric(new RustInteger(99)).eq(new RustInteger(2)));
-        console.assert(thing.getAge().eq(new RustInteger(2)));        
+        console.assert(thing.myMethod().eq(new RustString("Bruce")).jsBoolean);
+        console.assert(thing.myMethodWithArg(new RustInteger(2)).eq(new RustInteger(4)).jsBoolean);
+        console.assert(MyStruct.myAssociatedMethod(new RustInteger(2)).eq(new RustInteger(12)).jsBoolean);
+        console.assert(thing.withGeneric(new RustInteger(99)).eq(new RustInteger(2)).jsBoolean);
+        console.assert(thing.getAge().eq(new RustInteger(2)).jsBoolean);
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -152,7 +152,7 @@ async fn impl_in_fn_scope() {
         function inner() {}
     }
     var cool = new Cool();
-    console.assert(cool.whatever().eq(new RustInteger(5)));
+    console.assert(cool.whatever().eq(new RustInteger(5)).jsBoolean);
     "#;
     assert_eq!(format_js(expected), actual);
 }
@@ -191,9 +191,9 @@ async fn tuple_struct() {
         }
         
         var cool = new Cool(new RustInteger(5));
-        console.assert(cool[0].eq(new RustInteger(5)));
-        console.assert(cool.getInner().eq(new RustInteger(5)));
-        console.assert(cool.otherNumber().eq(new RustInteger(4)));
+        console.assert(cool[0].eq(new RustInteger(5)).jsBoolean);
+        console.assert(cool.getInner().eq(new RustInteger(5)).jsBoolean);
+        console.assert(cool.otherNumber().eq(new RustInteger(4)).jsBoolean);
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -251,10 +251,10 @@ async fn tuple_struct_multiple_fields() {
         }
 
         var cool = new Cool(new RustInteger(5), new RustString("hi").toString(), new RustBool(true), new RustInteger(4));
-        console.assert(cool[0].eq(new RustInteger(5)));
-        console.assert(cool[1].eq(new RustString("hi").toString()));
-        console.assert(cool[2].eq(new RustBool(true)));
-        console.assert(cool[3].eq(new RustInteger(4)));
+        console.assert(cool[0].eq(new RustInteger(5)).jsBoolean);
+        console.assert(cool[1].eq(new RustString("hi").toString()).jsBoolean);
+        console.assert(cool[2].eq(new RustBool(true)).jsBoolean);
+        console.assert(cool[3].eq(new RustInteger(4)).jsBoolean);
         "#
     );
     assert_eq!(format_js(expected), actual);

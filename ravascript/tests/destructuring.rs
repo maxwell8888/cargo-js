@@ -41,10 +41,10 @@ async fn destructure_struct() {
         }
         var foo = new Foo(new RustInteger(1), new RustString("hi"));
         var { bar, baz } = foo;
-        console.assert(bar.eq(new RustInteger(1)));
-        console.assert(baz.eq(new RustString("hi")));
+        console.assert(bar.eq(new RustInteger(1)).jsBoolean);
+        console.assert(baz.eq(new RustString("hi")).jsBoolean);
         var { bar: cool } = foo;
-        console.assert(cool.eq(new RustInteger(1)));
+        console.assert(cool.eq(new RustInteger(1)).jsBoolean);
         "#
     );
 
@@ -84,7 +84,7 @@ async fn destructure_struct_nested() {
         }
         var foo = new Foo(new Bar(new RustInteger(1)));
         var { bar: { baz } } = foo;
-        console.assert(baz.eq(new RustInteger(1)));
+        console.assert(baz.eq(new RustInteger(1)).jsBoolean);
         "#
     );
 
@@ -115,8 +115,8 @@ async fn destructure_array() {
         include_str!("rust_bool_prelude.js"),
         r#"var arr = [new RustInteger(1), new RustInteger(2)];
         var [one, two] = arr;
-        console.assert(one.eq(new RustInteger(1)));
-        console.assert(two.eq(new RustInteger(2)));
+        console.assert(one.eq(new RustInteger(1)).jsBoolean);
+        console.assert(two.eq(new RustInteger(2)).jsBoolean);
         class Foo {
             constructor(bar) {
                 this.bar = bar;
@@ -124,8 +124,8 @@ async fn destructure_array() {
         }
         var fooArr = [new Foo(new RustInteger(1)), new Foo(new RustInteger(2))];
         var [{bar: barOne}, {bar: barTwo}] = fooArr;
-        console.assert(barOne.eq(new RustInteger(1)));
-        console.assert(barTwo.eq(new RustInteger(2)));
+        console.assert(barOne.eq(new RustInteger(1)).jsBoolean);
+        console.assert(barTwo.eq(new RustInteger(2)).jsBoolean);
         "#
     );
 

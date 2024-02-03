@@ -478,8 +478,15 @@ fn handle_stmt(
                 if path_segs[0] == "assert" {
                     let input = stmt_macro.mac.tokens.clone().to_string();
                     let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
-                    let condition_js =
-                        handle_expr(&condition_expr, global_data, current_module_path);
+
+                    let condition_js = JsExpr::Field(
+                        Box::new(JsExpr::Paren(Box::new(handle_expr(
+                            &condition_expr,
+                            global_data,
+                            current_module_path,
+                        )))),
+                        "jsBoolean".to_string(),
+                    );
 
                     return JsStmt::Expr(
                         JsExpr::MethodCall(
@@ -503,8 +510,14 @@ fn handle_stmt(
                     let rhs = handle_expr(&rhs, global_data, current_module_path);
 
                     // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
-                    let equality_check =
-                        JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs]);
+                    let equality_check = JsExpr::Field(
+                        Box::new(JsExpr::Paren(Box::new(JsExpr::MethodCall(
+                            Box::new(lhs),
+                            "eq".to_string(),
+                            vec![rhs],
+                        )))),
+                        "jsBoolean".to_string(),
+                    );
                     return JsStmt::Expr(
                         JsExpr::MethodCall(
                             Box::new(JsExpr::Path(vec!["console".to_string()])),
@@ -3707,8 +3720,14 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 if path_segs[0] == "assert" {
                     let input = stmt_macro.mac.tokens.clone().to_string();
                     let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
-                    let condition_js =
-                        handle_expr(&condition_expr, global_data, current_module_path);
+                    let condition_js = JsExpr::Field(
+                        Box::new(JsExpr::Paren(Box::new(handle_expr(
+                            &condition_expr,
+                            global_data,
+                            current_module_path,
+                        )))),
+                        "jsBoolean".to_string(),
+                    );
 
                     return JsExpr::MethodCall(
                         Box::new(JsExpr::Path(vec!["console".to_string()])),
@@ -3729,8 +3748,14 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     let rhs = handle_expr(&rhs, global_data, current_module_path);
 
                     // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
-                    let equality_check =
-                        JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs]);
+                    let equality_check = JsExpr::Field(
+                        Box::new(JsExpr::Paren(Box::new(JsExpr::MethodCall(
+                            Box::new(lhs),
+                            "eq".to_string(),
+                            vec![rhs],
+                        )))),
+                        "jsBoolean".to_string(),
+                    );
                     return JsExpr::MethodCall(
                         Box::new(JsExpr::Path(vec!["console".to_string()])),
                         "assert".to_string(),
