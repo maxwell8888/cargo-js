@@ -15,6 +15,9 @@ class RustInteger {
     add(other) {
         return new RustInteger(this.jsNumber + other.jsNumber);
     }
+    derefAssign(other) {
+        this.jsNumber = other.jsNumber;
+    }
     addAssign(other) {
         this.jsNumber += other.jsNumber;
     }

@@ -46,6 +46,9 @@ impl<T: JsNumberTrait> RustInteger<T> {
             js_number: self.js_number + other.js_number,
         }
     }
+    fn deref_assign(&mut self, other: RustInteger<T>) {
+        self.js_number.0 = other.js_number.0;
+    }
     fn add_assign(&mut self, other: RustInteger<T>) {
         self.js_number.0 += other.js_number.0;
     }

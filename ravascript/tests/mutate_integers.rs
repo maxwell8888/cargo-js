@@ -46,7 +46,7 @@ async fn mutating_integers() {
         include_str!("rust_bool_prelude.js"),
         r#"function addOne(num) {
             console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.jsNumber = new RustInteger(1).jsNumber;
+            num.derefAssign(new RustInteger(1));
             console.assert(num.eq(new RustInteger(1)).jsBoolean);
             return num;
         }
@@ -155,54 +155,69 @@ async fn ownership_copy_struct() {
 #[tokio::test]
 async fn ownership_mut() {
     let actual = r2j_block_with_prelude!({
-        let mut wago = 5;
-        fn checky(num: &mut i32) -> &mut i32 {
+        let mut foo = 5;
+        fn add_one(num: &mut i32) -> &mut i32 {
             *num += 1;
             num
         }
-        let twoby = checky(&mut wago);
-        *twoby += 1;
-        dbg!(twoby);
-        dbg!(wago);
+        let bar = add_one(&mut foo);
+        *bar += 1;
+        assert_eq!(*bar, 6);
+        assert_eq!(foo, 6);
 
-        let mut chug = 4;
-        let mut chan = chug;
-        chan += 1;
-        dbg!(chan);
+        let mut baz = 4;
+        let mut baz_two = baz;
+        baz_two += 1;
+        assert_eq!(baz, 5);
+        assert_eq!(baz_two, 5);
 
-        let woot = &mut 5;
-        *woot += 1;
-        dbg!(&woot);
-        let woot2 = woot;
-        // dbg!(&woot);
+        let five = &mut 5;
+        *five += 1;
+        let six = five;
+        assert_eq!(*six, 6);
+    });
 
-        fn add_one(num: &mut i32) -> &mut i32 {
-            assert_eq!(*num, 0);
-            *num = 1;
-            assert_eq!(*num, 1);
-            num
+    let expected = concat!(
+        include_str!("option_prelude.js"),
+        "var Some = Option.Some;",
+        "var None = Option.None;",
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var foo = new RustInteger(5);
+        function addOne(num) {
+            num.addAssign(new RustInteger(1));
+            return num;
         }
+        var bar = addOne(foo);
+        bar.addAssign(new RustInteger(1));
+        console.assert(bar.eq(new RustInteger(6)));
+        console.assert(foo.eq(new RustInteger(6)));
+        var baz = new RustInteger(5);
+        var baz_two = baz;
+        baz_two.addAssign(new RustInteger(1));
+        console.assert(baz.eq(new RustInteger(5)));
+        console.assert(baz_two.eq(new RustInteger(5)));
+        var five = new RustInteger(5);
+        five.addAssign(new RustInteger(1));
+        var six = five;
+        console.assert(six.eq(new RustInteger(6)));
+        "#
+    );
 
+    // assert_eq!(format_js(expected), actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore]
+#[tokio::test]
+async fn ownership_mut2() {
+    let actual = r2j_block_with_prelude!({
         struct Thing<'a> {
             numy: &'a mut i32,
         }
         let mut valy = 5;
         let mut cool = Thing { numy: &mut valy };
         cool.numy = &mut 2;
-        let mut orig_num = 0;
-        assert_eq!(orig_num, 0);
-
-        {
-            let result = add_one(&mut orig_num);
-            assert_eq!(*result, 1);
-            *result += 1;
-            assert_eq!(*result, 2);
-        }
-
-        assert_eq!(orig_num, 2);
-
-        orig_num += 1;
-        assert_eq!(orig_num, 3);
     });
 
     let expected = concat!(

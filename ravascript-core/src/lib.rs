@@ -437,8 +437,6 @@ fn handle_stmt(
                 rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
             }
 
-            dbg!(&lhs);
-            dbg!(global_data.scopes.last().unwrap());
             // rhs is a fn call that returns a &mut
             let fn_call_mut_ref = match &*local.init.as_ref().unwrap().expr {
                 Expr::Call(expr_call) => {
@@ -493,7 +491,6 @@ fn handle_stmt(
                 _ => false,
             };
 
-            dbg!(fn_call_mut_ref);
             // Record name if creating a mut or &mut variable
             match &local.pat {
                 Pat::Ident(pat_ident) => {
@@ -508,7 +505,6 @@ fn handle_stmt(
                 }
                 _ => {}
             }
-            dbg!(global_data.scopes.last().unwrap());
             // match &lhs {
             //     LocalName::Single(var_name) => {
             //         if is_mut_ref || local.init.
@@ -681,8 +677,6 @@ fn handle_item_fn(
     current_module: &Vec<String>,
 ) -> JsStmt {
     let mut name = item_fn.sig.ident.to_string();
-    dbg!(&name);
-
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -1121,6 +1115,10 @@ fn handle_item_impl(
                 } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "add_assign" {
                     Some(vec![JsStmt::Raw(
                         "this.jsNumber += other.jsNumber".to_string(),
+                    )])
+                } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "deref_assign" {
+                    Some(vec![JsStmt::Raw(
+                        "this.jsNumber = other.jsNumber".to_string(),
                     )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
@@ -3545,6 +3543,22 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             if should_copy_expr_unary(&*expr_assign.right, global_data) {
                 rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), Vec::new());
             }
+
+            // Check if lhs is a deref, in which case replace assignment with `.derefAssign()`
+            match &*expr_assign.left {
+                Expr::Unary(expr_unary) => match &expr_unary.op {
+                    UnOp::Deref(_) => {
+                        return JsExpr::MethodCall(
+                            Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+                            "derefAssign".to_string(),
+                            vec![rhs],
+                        );
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+
             JsExpr::Assignment(
                 Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
                 Box::new(rhs),
