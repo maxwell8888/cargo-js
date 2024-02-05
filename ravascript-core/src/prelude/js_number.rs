@@ -1,4 +1,4 @@
-use std::ops::{Add, Rem, AddAssign};
+use std::ops::{Add, AddAssign, Rem};
 
 // #[derive(Debug, Default)]
 // struct JsNumber{}
@@ -21,7 +21,7 @@ use std::ops::{Add, Rem, AddAssign};
 
 // NOTE JS can't call methods directly on number literals eg `5.toString()` and instead we have to paranthesise like `(5).toString()`
 pub trait JsNumberTrait:
-    PartialEq + Add<Self, Output = Self> + AddAssign + Rem<Self, Output = Self> + Sized
+    Copy + Clone + PartialEq + Add<Self, Output = Self> + AddAssign + Rem<Self, Output = Self> + Sized
 {
     fn abs(self) -> Self;
 }
@@ -58,7 +58,7 @@ impl JsNumberTrait for f64 {
 // If we want to transpile to a normal JS number, we must write it in rust like `JsNumber(5)`. This is because number literals like `5` will get directly transpiled to number wrappers like `RustInteger`
 // TODO eventually we actually only want numbers that are used as mutable refs to transpile to `RustInteger`, and non mut ref numbers to transpile to normal js numbers.
 // We have proper implementations here because even though they are not used when transpiling to JS, they are useful even we want to use these types in code compiled with rustc
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct JsNumber<T: JsNumberTrait>(pub T);
 impl<T: JsNumberTrait> JsNumber<T> {
     pub fn abs(self) -> Self {

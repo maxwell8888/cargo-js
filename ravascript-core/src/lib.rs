@@ -12,7 +12,7 @@ use std::{
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, Fields, FnArg, ImplItem,
     Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Member, Meta,
-    Pat, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -367,18 +367,159 @@ fn handle_stmt(
     current_module_path: &Vec<String>,
 ) -> JsStmt {
     match stmt {
-        Stmt::Expr(expr, closing_semi) => JsStmt::Expr(
-            handle_expr(expr, global_data, current_module_path),
-            closing_semi.is_some(),
-        ),
+        Stmt::Expr(expr, closing_semi) => {
+            //
+            let mut js_expr = handle_expr(expr, global_data, current_module_path);
+            if should_copy_expr_unary(expr, global_data) {
+                js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
+            }
+
+            JsStmt::Expr(js_expr, closing_semi.is_some())
+        }
         Stmt::Local(local) => {
             let lhs = handle_pat(&local.pat);
-            let value = handle_expr(
+
+            // TODO should also check:
+            // by_ref: Some(
+            //     Ref,
+            // ),
+            // mutability: Some(
+            //     Mut,
+            // ),
+            let is_mut_ref = match &*local.init.as_ref().unwrap().expr {
+                Expr::Reference(expr_ref) => expr_ref.mutability.is_some(),
+                _ => false,
+            };
+            let mut rhs = handle_expr(
                 &*local.init.as_ref().unwrap().expr,
                 global_data,
                 current_module_path,
             );
-            match value {
+
+            // Add .copy() if rhs is a mut...
+            // and rhs is `Copy`
+            let rhs_is_mut = global_data.scopes.last().unwrap().0.iter().rev().find(
+                |ScopedVar { name, mut_, .. }| {
+                    *mut_
+                        && match &*local.init.as_ref().unwrap().expr {
+                            Expr::Path(expr_path) => {
+                                if expr_path.path.segments.len() == 1 {
+                                    expr_path.path.segments.first().unwrap().ident == name
+                                } else {
+                                    false
+                                }
+                            }
+                            _ => false,
+                        }
+                },
+            );
+
+            // TODO
+            // let rhs_is_deref_mut_ref = ...
+
+            let lhs_is_mut = match &local.pat {
+                Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                _ => false,
+            };
+            let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
+                Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
+                _ => false,
+            };
+
+            // copy rhs if is mut and is a variable, which is being assigned
+            if let Some(rhs_is_mut) = rhs_is_mut {
+                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+
+            // Also copy if we are assigning *a variable* (not a literal) to a mutable variable (eg the rhs hand side is immutable so we didn't care about copying, but now that it is being assigned to another var, we need to copy to make sure that mutating the new var doesn't update the original var)
+            } else if lhs_is_mut && rhs_is_var {
+                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+            } else if should_copy_expr_unary(&*local.init.as_ref().unwrap().expr, global_data) {
+                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+            }
+
+            dbg!(&lhs);
+            dbg!(global_data.scopes.last().unwrap());
+            // rhs is a fn call that returns a &mut
+            let fn_call_mut_ref = match &*local.init.as_ref().unwrap().expr {
+                Expr::Call(expr_call) => {
+                    match &*expr_call.func {
+                        Expr::Path(expr_path) => {
+                            if expr_path.path.segments.len() == 1 {
+                                let fn_name =
+                                    expr_path.path.segments.first().unwrap().ident.to_string();
+                                global_data.scopes.iter().rev().any(|(vars, item_fns)| {
+                                    let item_fn = item_fns
+                                        .iter()
+                                        .rev()
+                                        .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
+                                    if let Some(item_fn) = item_fn {
+                                        match &item_fn.sig.output {
+                                            ReturnType::Default => false,
+                                            ReturnType::Type(_, type_) => {
+                                                // TODO handle other cases eg a tuple containing &mut
+                                                match &**type_ {
+                                                    Type::Array(_) => false,
+                                                    Type::BareFn(_) => false,
+                                                    Type::Group(_) => false,
+                                                    Type::ImplTrait(_) => false,
+                                                    Type::Infer(_) => false,
+                                                    Type::Macro(_) => false,
+                                                    Type::Never(_) => false,
+                                                    Type::Paren(_) => false,
+                                                    Type::Path(_) => false,
+                                                    Type::Ptr(_) => false,
+                                                    Type::Reference(type_reference) => {
+                                                        type_reference.mutability.is_some()
+                                                    }
+                                                    Type::Slice(_) => false,
+                                                    Type::TraitObject(_) => false,
+                                                    Type::Tuple(_) => false,
+                                                    Type::Verbatim(_) => false,
+                                                    _ => false,
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                })
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+
+            dbg!(fn_call_mut_ref);
+            // Record name if creating a mut or &mut variable
+            match &local.pat {
+                Pat::Ident(pat_ident) => {
+                    if is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
+                        global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
+                            name: pat_ident.ident.to_string(),
+                            mut_: pat_ident.mutability.is_some(),
+                            mut_ref: is_mut_ref || fn_call_mut_ref,
+                            type_: "".to_string(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+            dbg!(global_data.scopes.last().unwrap());
+            // match &lhs {
+            //     LocalName::Single(var_name) => {
+            //         if is_mut_ref || local.init.
+            //         global_data.vars_in_scope.push((var_name, ))
+            //     },
+            //     // TODO handle_pat needs to capture whether destructured variables are mut
+            //     LocalName::DestructureObject(_) => {}
+            //     LocalName::DestructureArray(_) => {}
+            // }
+
+            match rhs {
                 JsExpr::If(js_if) => {
                     // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
                     JsStmt::Expr(
@@ -393,12 +534,12 @@ fn handle_stmt(
                     )
                 }
 
-                value => JsStmt::Local(JsLocal {
+                rhs => JsStmt::Local(JsLocal {
                     public: false,
                     export: false,
                     type_: LocalType::Var,
                     lhs,
-                    value,
+                    value: rhs,
                 }),
             }
         }
@@ -540,6 +681,7 @@ fn handle_item_fn(
     current_module: &Vec<String>,
 ) -> JsStmt {
     let mut name = item_fn.sig.ident.to_string();
+    dbg!(&name);
 
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
@@ -570,9 +712,69 @@ fn handle_item_fn(
     } else {
         name = camel(name);
     }
-    if ignore {
+
+    // Record this fn in the *parent* scope
+    global_data
+        .scopes
+        .last_mut()
+        .unwrap()
+        .1
+        .push(item_fn.clone());
+
+    // Create new scope for fn vars
+    global_data.scopes.push((Vec::new(), Vec::new()));
+
+    // record which vars are mut and/or &mut
+    let mut copy_stmts = Vec::new();
+    for input in &item_fn.sig.inputs {
+        match input {
+            FnArg::Receiver(_) => {}
+            FnArg::Typed(pat_type) => match &*pat_type.pat {
+                Pat::Ident(pat_ident) => {
+                    let mut_ref = match &*pat_type.ty {
+                        Type::Reference(type_reference) => type_reference.mutability.is_some(),
+                        _ => false,
+                    };
+
+                    if pat_ident.mutability.is_some() || mut_ref {
+                        global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
+                            name: pat_ident.ident.to_string(),
+                            mut_: pat_ident.mutability.is_some(),
+                            mut_ref,
+                            type_: "".to_string(),
+                        })
+                    }
+
+                    // record var name if mut or &mut
+                    if pat_ident.mutability.is_some() {
+                        copy_stmts.push(JsStmt::Local(JsLocal {
+                            public: false,
+                            export: false,
+                            type_: LocalType::Var,
+                            lhs: LocalName::Single(pat_ident.ident.to_string()),
+                            value: JsExpr::MethodCall(
+                                Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
+                                "copy".to_string(),
+                                Vec::new(),
+                            ),
+                        }))
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    let stmt = if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
+        copy_stmts.extend(
+            item_fn
+                .block
+                .stmts
+                .iter()
+                .map(|stmt| handle_stmt(stmt, global_data, current_module)),
+        );
         let iife = item_fn.sig.ident == "main";
         let js_fn = JsFn {
             iife,
@@ -598,12 +800,7 @@ fn handle_item_fn(
                     },
                 })
                 .collect::<Vec<_>>(),
-            body_stmts: item_fn
-                .block
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
+            body_stmts: copy_stmts,
         };
         if iife {
             JsStmt::Expr(JsExpr::Fn(js_fn), true)
@@ -611,7 +808,12 @@ fn handle_item_fn(
             JsStmt::Function(js_fn)
         }
         // JsStmt::Function(js_fn)
-    }
+    };
+
+    // pop fn scope
+    global_data.scopes.pop();
+
+    stmt
 }
 
 /// We convert enum variants like Foo::Bar to Foo.bar because otherwise when the variant has arguments, syn is not able to distinguish it from an associated method, so we cannot deduce when Pascal or Camel case should be used, so stick to Pascal for both case.
@@ -1410,6 +1612,29 @@ struct ModuleData {
     /// Same format as use mapping but has absolute module path
     /// (snake case item name, snake case absolute module path)
     resolved_mappings: Vec<(String, Vec<String>)>,
+    /// For recording information about the return type of fns
+    ///
+    /// TODO what if the fn is just imported from another module?
+    ///
+    /// We need:
+    ///
+    /// 1. A list of mappings from fn name to crate-global identifiers for all the fns available in the module (including imported ones), eg their absolute path or it's deduplicated name
+    ///
+    /// 2. A list of *all* fns in the crate
+    ///
+    /// Not easy to know which fns are available in module since some might be called like some_module::my_func() so we have to look at all Expr::Path in the code, not just use statements
+    ///
+    /// For now only lookup fns which are defined in module (including scopes)
+    ///
+    /// Should bear in mind how this might support generic associated fns eg T::default() - should be easy to store the extra info needed about the fn, or just store the whole ItemFn
+    ///
+    /// Module paths work as a unique key for top level items, but for fns in scopes need to just store them by name in a stack. The stack will need to be dynamic and follow the scopes, and pop stuff, so needs to happen during parsing, whereas top level fns get stored in the first pass ie extract_data()
+    ///
+    ///
+    /// Top-level defined fns (possibly from other modules) available in this module, including cases like `use some_module; some_module::some_fn()`
+    ///
+    /// (<name>, <module path>)
+    fn_info: Vec<(String, Vec<String>)>,
 }
 impl ModuleData {
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
@@ -1443,10 +1668,26 @@ struct Duplicate {
 }
 
 #[derive(Debug, Clone)]
+struct ScopedVar {
+    name: String,
+    mut_: bool,
+    mut_ref: bool,
+    // TODO
+    type_: String,
+}
+
+#[derive(Debug, Clone)]
 struct GlobalData {
     snippet: bool,
     crate_path: Option<PathBuf>,
     modules: Vec<ModuleData>,
+    // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
+    // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
+    // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
+    /// (variable, fns)
+    scopes: Vec<(Vec<ScopedVar>, Vec<ItemFn>)>,
+    // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
+    // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
     /// (trait name, impl item)
     default_trait_impls: Vec<(String, JsImplItem)>,
@@ -1462,6 +1703,9 @@ impl GlobalData {
             snippet,
             crate_path,
             modules: Vec::new(),
+            // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
+            scopes: vec![(Vec::new(), Vec::new())],
+            // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
             default_trait_impls: Vec::new(),
@@ -1658,6 +1902,7 @@ fn extract_data(
                     pub_use_mappings: Vec::new(),
                     private_use_mappings: Vec::new(),
                     resolved_mappings: Vec::new(),
+                    fn_info: Vec::new(),
                 });
 
                 if let Some(content) = &item_mod.content {
@@ -1929,6 +2174,7 @@ pub fn process_items(
         pub_use_mappings: Vec::new(),
         private_use_mappings: Vec::new(),
         resolved_mappings: Vec::new(),
+        fn_info: Vec::new(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
@@ -2116,6 +2362,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         pub_use_mappings: Vec::new(),
         private_use_mappings: Vec::new(),
         resolved_mappings: Vec::new(),
+        fn_info: Vec::new(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
 
@@ -3230,6 +3477,60 @@ fn parse_fn_body_stmts(
         .collect::<Vec<_>>()
 }
 
+/// Like handle_expr() but will wrap the result in a `.copy()` if a Expr::Unary for certain cases
+///
+/// TODO why
+fn should_copy_expr_unary(expr: &Expr, global_data: &GlobalData) -> bool {
+    // NOTE be careful not to call handle_expr() for any expression that might be Expr::Unary to avoid an infinite loop
+    match expr {
+        Expr::Unary(expr_unary) => {
+            // let copy_stmt = JsStmt::Expr(
+            //     JsExpr::MethodCall(
+            //         Box::new(handle_expr(
+            //             &*expr_unary.expr,
+            //             global_data,
+            //             current_module,
+            //         )),
+            //         "copy".to_string(),
+            //         Vec::new(),
+            //     ),
+            //     false,
+            // );
+            match expr_unary.op {
+                UnOp::Deref(_) => match &*expr_unary.expr {
+                    Expr::Call(expr_call) => {
+                        // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
+                        true
+                    }
+                    Expr::If(_) => todo!(),
+                    Expr::Macro(_) => todo!(),
+                    Expr::Match(_) => todo!(),
+                    Expr::MethodCall(_) => todo!(),
+                    Expr::Paren(_) => todo!(),
+                    Expr::Path(expr_path) => {
+                        if expr_path.path.segments.len() == 1 {
+                            global_data.scopes.last().unwrap().0.iter().rev().any(
+                                |ScopedVar { name, mut_ref, .. }| {
+                                    let lookup_varname =
+                                        expr_path.path.segments.first().unwrap().ident.to_string();
+                                    *name == lookup_varname && *mut_ref
+                                },
+                            )
+                        } else {
+                            todo!()
+                        }
+                    }
+                    Expr::Reference(_) => todo!(),
+                    Expr::Unary(_) => todo!(),
+                    _ => todo!(),
+                },
+                _ => todo!(),
+            }
+        }
+        _ => false,
+    }
+}
+
 fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsExpr {
     match expr {
         Expr::Array(expr_array) => JsExpr::Array(
@@ -3239,14 +3540,16 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .map(|elem| handle_expr(elem, global_data, current_module))
                 .collect::<Vec<_>>(),
         ),
-        Expr::Assign(expr_assign) => JsExpr::Assignment(
-            Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
-            Box::new(handle_expr(
-                &*expr_assign.right,
-                global_data,
-                current_module,
-            )),
-        ),
+        Expr::Assign(expr_assign) => {
+            let mut rhs = handle_expr(&*expr_assign.right, global_data, current_module);
+            if should_copy_expr_unary(&*expr_assign.right, global_data) {
+                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), Vec::new());
+            }
+            JsExpr::Assignment(
+                Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+                Box::new(rhs),
+            )
+        }
         Expr::Async(_) => todo!(),
         Expr::Await(expr_await) => JsExpr::Await(Box::new(handle_expr(
             &*expr_await.base,
@@ -4156,8 +4459,22 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         Expr::Repeat(_) => todo!(),
         Expr::Return(expr_return) => {
             if let Some(expr) = &expr_return.expr {
-                JsExpr::Return(Box::new(handle_expr(&*expr, global_data, current_module)))
+                // If return is the deref of a &mut, then `.copy()` it
+                let js_expr = match &**expr {
+                    Expr::Unary(expr_unary) => match expr_unary.op {
+                        UnOp::Deref(_) => JsExpr::MethodCall(
+                            Box::new(handle_expr(expr, global_data, current_module)),
+                            "copy".to_string(),
+                            Vec::new(),
+                        ),
+                        _ => handle_expr(expr, global_data, current_module),
+                    },
+                    _ => handle_expr(expr, global_data, current_module),
+                };
+
+                JsExpr::Return(Box::new(js_expr))
             } else {
+                // TODO surely an empty in Rust should also be an empty return in JS?
                 JsExpr::Return(Box::new(JsExpr::Vanish))
             }
         }

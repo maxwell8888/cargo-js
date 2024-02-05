@@ -3,6 +3,9 @@ class RustInteger {
         this.jsNumber = jsNumber;
     }
 
+    copy() {
+        return new RustInteger(this.jsNumber);
+    }
     eq(other) {
         return new RustBool(this.jsNumber === other.jsNumber);
     }

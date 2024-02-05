@@ -10,7 +10,6 @@ use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
-#[ignore = "wip"]
 #[tokio::test]
 async fn mutating_integers() {
     let actual = r2j_block_with_prelude!({
@@ -47,7 +46,7 @@ async fn mutating_integers() {
         include_str!("rust_bool_prelude.js"),
         r#"function addOne(num) {
             console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.jsNumber = new RustInteger(1);
+            num.jsNumber = new RustInteger(1).jsNumber;
             console.assert(num.eq(new RustInteger(1)).jsBoolean);
             return num;
         }
@@ -56,9 +55,9 @@ async fn mutating_integers() {
         {
             var result = addOne(origNum);
             console.assert(result.eq(new RustInteger(1)).jsBoolean);
-            var resultCopy = result.jsNumber;
+            var resultCopy = result.copy();
             console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
-            result.add(new RustInteger(1));
+            result.addAssign(new RustInteger(1));
             console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
             console.assert(result.eq(new RustInteger(2)).jsBoolean);
             var six = new RustInteger(6);
@@ -71,7 +70,7 @@ async fn mutating_integers() {
         "#
     );
 
-    // assert_eq!(format_js(expected), actual);
+    assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 

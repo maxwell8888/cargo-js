@@ -24,6 +24,11 @@ struct RustInteger<T: JsNumberTrait> {
     js_number: JsNumber<T>,
 }
 impl<T: JsNumberTrait> RustInteger<T> {
+    fn copy(&self) -> Self {
+        RustInteger {
+            js_number: self.js_number,
+        }
+    }
     fn eq(&self, other: &RustInteger<T>) -> RustBool {
         RustBool {
             js_boolean: JsBoolean(self.js_number == other.js_number),

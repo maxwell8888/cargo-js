@@ -29,7 +29,103 @@ async fn mutate_int() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "needs num to be copied"]
+#[tokio::test]
+async fn copy_and_mutate() {
+    let actual = r2j_block_with_prelude!({
+        let mut orig_num = 0;
+        let copy_num = orig_num;
+        orig_num += 1;
+        // NOTE assert_eq! doesn't need a .copy() because it doesn't mutate it's args and immediately releases them so basically has no effect
+        assert_eq!(copy_num, 0);
+        assert_eq!(orig_num, 1);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        var copyNum = origNum.copy();
+        origNum.addAssign(new RustInteger(1));
+        console.assert(copyNum.eq(new RustInteger(0)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn copy_mut_ref() {
+    let actual = r2j_block_with_prelude!({
+        let mut_ref = &mut 0;
+        let copy_mut_ref = *mut_ref;
+        *mut_ref += 1;
+        assert_eq!(*mut_ref, 1);
+        assert_eq!(copy_mut_ref, 0);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var mutRef = new RustInteger(0);
+        var copyMutRef = mutRef.copy();
+        mutRef.addAssign(new RustInteger(1));
+        console.assert(mutRef.eq(new RustInteger(1)).jsBoolean);
+        console.assert(copyMutRef.eq(new RustInteger(0)).jsBoolean);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn non_mut_copy_to_mut() {
+    let actual = r2j_block_with_prelude!({
+        let orig_num = 0;
+        let mut copy_num = orig_num;
+        copy_num += 1;
+        assert_eq!(copy_num, 1);
+        assert_eq!(orig_num, 0);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        var copyNum = origNum.copy();
+        copyNum.addAssign(new RustInteger(1));
+        console.assert(copyNum.eq(new RustInteger(1)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn mut_ref_from_non_mut() {
+    let actual = r2j_block_with_prelude!({
+        let mut orig_num = 0;
+        let mut_ref_num = &mut orig_num;
+        *mut_ref_num += 1;
+        assert_eq!(*mut_ref_num, 1);
+        assert_eq!(orig_num, 1);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        var mutRefNum = origNum;
+        mutRefNum.addAssign(new RustInteger(1));
+        console.assert(mutRefNum.eq(new RustInteger(1)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
 #[tokio::test]
 async fn mutate_int_fn_arg() {
     let actual = r2j_block_with_prelude!({
@@ -37,12 +133,14 @@ async fn mutate_int_fn_arg() {
         assert_eq!(orig_num, 0);
         fn add_one(mut num: i32) -> i32 {
             assert_eq!(num, 0);
-            num += 1;
-            assert_eq!(num, 1);
+            num += 2;
+            assert_eq!(num, 2);
+            num += num;
+            assert_eq!(num, 4);
             num
         }
         let result = add_one(orig_num);
-        assert_eq!(result, 1);
+        assert_eq!(result, 4);
         assert_eq!(orig_num, 0);
     });
 
@@ -52,17 +150,20 @@ async fn mutate_int_fn_arg() {
         r#"var origNum = new RustInteger(0);
         console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
         function addOne(num) {
+            var num = num.copy();
             console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            num.addAssign(new RustInteger(2));
+            console.assert(num.eq(new RustInteger(2)).jsBoolean);
+            num.addAssign(num);
+            console.assert(num.eq(new RustInteger(4)).jsBoolean);
             return num;
         }
         var result = addOne(origNum);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
+        console.assert(result.eq(new RustInteger(4)).jsBoolean);
         console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
         "#
     ));
-    println!("{expected}");
+    // println!("{expected}");
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -116,6 +217,204 @@ async fn mut_ref_int_fn_arg() {
         console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
         origNum.addAssign(new RustInteger(1));
         console.assert(origNum.eq(new RustInteger(3)).jsBoolean);
+        "#
+    );
+    assert_eq!(format_js(expected), actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn copy_mut_inside_fn() {
+    let actual = r2j_block_with_prelude!({
+        let orig_num = 0;
+
+        fn add_one(mut num: i32) -> i32 {
+            let other = num;
+            num += 1;
+            assert_eq!(num, 1);
+            assert_eq!(other, 0);
+            num
+        }
+
+        let result = add_one(orig_num);
+        assert_eq!(result, 1);
+        assert_eq!(orig_num, 0);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        function addOne(num) {
+            var num = num.copy();
+            var other = num.copy();
+            num.addAssign(new RustInteger(1));
+            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            console.assert(other.eq(new RustInteger(0)).jsBoolean);
+            return num;
+        }
+        var result = addOne(origNum);
+        console.assert(result.eq(new RustInteger(1)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn mut_ref_to_copy() {
+    let actual = r2j_block_with_prelude!({
+        let mut orig_num = 0;
+
+        fn add_one(num: &mut i32) -> i32 {
+            assert_eq!(*num, 0);
+            *num += 1;
+            assert_eq!(*num, 1);
+            *num
+        }
+
+        let mut result = add_one(&mut orig_num);
+        assert_eq!(result, 1);
+        assert_eq!(orig_num, 1);
+
+        result += 1;
+        assert_eq!(result, 2);
+        assert_eq!(orig_num, 1);
+
+        orig_num += 1;
+        assert_eq!(result, 2);
+        assert_eq!(orig_num, 2);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        function addOne(num) {
+            console.assert(num.eq(new RustInteger(0)).jsBoolean);
+            num.addAssign(new RustInteger(1));
+            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            return num.copy();
+        }
+        var result = addOne(origNum);
+        console.assert(result.eq(new RustInteger(1)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        result.addAssign(new RustInteger(1));
+        console.assert(result.eq(new RustInteger(2)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        origNum.addAssign(new RustInteger(1));
+        console.assert(result.eq(new RustInteger(2)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
+        "#
+    ));
+    // println!("{expected}");
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn fn_call_return_mut_ref_to_copy() {
+    let actual = r2j_block_with_prelude!({
+        let mut orig_num = 0;
+
+        fn mut_ref_do_nothing(num: &mut i32) -> &mut i32 {
+            num
+        }
+
+        fn add_one(num: &mut i32) -> i32 {
+            assert_eq!(*num, 0);
+            *num += 1;
+            assert_eq!(*num, 1);
+            *mut_ref_do_nothing(num)
+        }
+
+        let mut result = add_one(&mut orig_num);
+        assert_eq!(result, 1);
+        assert_eq!(orig_num, 1);
+
+        result += 1;
+        assert_eq!(result, 2);
+        assert_eq!(orig_num, 1);
+
+        orig_num += 1;
+        assert_eq!(result, 2);
+        assert_eq!(orig_num, 2);
+    });
+
+    let expected = format_js(concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        function mutRefDoNothing(num) {
+            return num;
+        }
+        function addOne(num) {
+            console.assert(num.eq(new RustInteger(0)).jsBoolean);
+            num.addAssign(new RustInteger(1));
+            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            return mutRefDoNothing(num).copy();
+        }
+        var result = addOne(origNum);
+        console.assert(result.eq(new RustInteger(1)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        result.addAssign(new RustInteger(1));
+        console.assert(result.eq(new RustInteger(2)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        origNum.addAssign(new RustInteger(1));
+        console.assert(result.eq(new RustInteger(2)).jsBoolean);
+        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
+        "#
+    ));
+    // println!("{expected}");
+    // assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn mutating_non_copy_value() {
+    let actual = r2j_block_with_prelude!({
+        let mut orig_num = 0;
+
+        fn add_one(num: &mut i32) -> i32 {
+            assert_eq!(*num, 0);
+            *num += 1;
+            assert_eq!(*num, 1);
+            *num
+        }
+
+        {
+            let mut result = add_one(&mut orig_num);
+            assert_eq!(result, 1);
+            result += 1;
+            assert_eq!(result, 2);
+        }
+
+        assert_eq!(orig_num, 1);
+
+        orig_num += 1;
+        assert_eq!(orig_num, 2);
+    });
+
+    let expected = concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"var origNum = new RustInteger(0);
+        function addOne(num) {
+            console.assert(num.eq(new RustInteger(0)).jsBoolean);
+            num.addAssign(new RustInteger(1));
+            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            return num.copy();
+        }
+        {
+            var result = addOne(origNum);
+            console.assert(result.eq(new RustInteger(1)).jsBoolean);
+            result.addAssign(new RustInteger(1));
+            console.assert(result.eq(new RustInteger(2)).jsBoolean);
+        }
+        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        origNum.addAssign(new RustInteger(1));
+        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
         "#
     );
     assert_eq!(format_js(expected), actual);
