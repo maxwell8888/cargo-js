@@ -1120,6 +1120,18 @@ fn handle_item_impl(
                     Some(vec![JsStmt::Raw(
                         "this.jsNumber = other.jsNumber".to_string(),
                     )])
+                } else if class_name == "RustString" && item_impl_fn.sig.ident == "add_assign" {
+                    Some(vec![JsStmt::Raw(
+                        "this.jsString += other.jsString".to_string(),
+                    )])
+                } else if class_name == "RustString" && item_impl_fn.sig.ident == "push_str" {
+                    Some(vec![JsStmt::Raw(
+                        "this.jsString += other.jsString".to_string(),
+                    )])
+                } else if class_name == "RustString" && item_impl_fn.sig.ident == "deref_assign" {
+                    Some(vec![JsStmt::Raw(
+                        "this.jsString = other.jsString".to_string(),
+                    )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
                         "return new RustBool(this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data))"

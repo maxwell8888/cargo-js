@@ -4,7 +4,7 @@
 // #[derive(Clone, Copy)]
 #[derive(Clone)]
 pub struct JsString {
-    value: String,
+    pub value: String,
     /// Reflects the length of the string. Read-only.
     pub length: u32,
 }

@@ -31,6 +31,16 @@ impl RustString {
         }
     }
 
+    fn deref_assign(&mut self, other: RustString) {
+        self.js_string.value = other.js_string.value;
+    }
+    fn add_assign(&mut self, other: RustString) {
+        self.js_string.value += &other.js_string.value;
+    }
+    fn push_str(&mut self, other: RustString) {
+        self.js_string.value += &other.js_string.value;
+    }
+
     fn to_string(&self) -> RustString {
         self.clone()
     }
