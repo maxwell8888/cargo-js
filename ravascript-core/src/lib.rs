@@ -11,8 +11,8 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, Fields, FnArg, ImplItem,
-    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Member, Meta,
-    Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Member,
+    Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -361,6 +361,315 @@ fn handle_pat(pat: &Pat) -> LocalName {
     }
 }
 
+// In some cases we are only extracting the type, in others we have more info because we are extracting an existing variable or there is also info about the mutability, so wrap in this enum for convenience
+// TODO probably shouldn't be using ScopedVar though because we will never extract the name or `mut` here
+// TODO revisit if this enum is necessary or the best approach
+enum TypeOrVar {
+    RustType(RustType),
+    Var(ScopedVar),
+    Unknown,
+}
+fn get_type(type_: &Type) -> TypeOrVar {
+    match type_ {
+        Type::Array(_) => TypeOrVar::Unknown,
+        Type::BareFn(_) => TypeOrVar::Unknown,
+        Type::Group(_) => TypeOrVar::Unknown,
+        Type::ImplTrait(_) => TypeOrVar::Unknown,
+        Type::Infer(_) => TypeOrVar::Unknown,
+        Type::Macro(_) => TypeOrVar::Unknown,
+        Type::Never(_) => TypeOrVar::Unknown,
+        Type::Paren(_) => TypeOrVar::Unknown,
+        Type::Path(_) => TypeOrVar::Unknown,
+        Type::Ptr(_) => TypeOrVar::Unknown,
+        Type::Reference(type_reference) => {
+            let type_ = get_type(&type_reference.elem);
+            let type_ = match type_ {
+                TypeOrVar::RustType(rust_type) => rust_type,
+                TypeOrVar::Var(_) => {
+                    todo!()
+                }
+                TypeOrVar::Unknown => RustType::Unknown,
+            };
+            TypeOrVar::Var(ScopedVar {
+                name: "donotuse".to_string(),
+                mut_: false,
+                mut_ref: type_reference.mutability.is_some(),
+                type_,
+            })
+        }
+        Type::Slice(_) => TypeOrVar::Unknown,
+        Type::TraitObject(_) => TypeOrVar::Unknown,
+        Type::Tuple(_) => TypeOrVar::Unknown,
+        Type::Verbatim(_) => TypeOrVar::Unknown,
+        _ => TypeOrVar::Unknown,
+    }
+}
+
+fn handle_local(
+    local: &Local,
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+) -> JsStmt {
+    let lhs = handle_pat(&local.pat);
+
+    // TODO should also check:
+    // by_ref: Some(
+    //     Ref,
+    // ),
+    // mutability: Some(
+    //     Mut,
+    // ),
+    let rhs_is_mut_ref = match &*local.init.as_ref().unwrap().expr {
+        Expr::Reference(expr_ref) => expr_ref.mutability.is_some(),
+        _ => false,
+    };
+    // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
+    // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
+    // determining types
+    // easy: fn calls, method calls, fields,
+    // hard: if expression, parens, block, if let, match, method call
+
+    match &*local.init.as_ref().unwrap().expr {
+        Expr::Lit(_) => {
+            //
+            // JsExpr::New(
+            //     vec!["RustInteger".to_string()],
+            //     vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
+            // );
+        }
+        _ => {}
+    };
+    let mut rhs = handle_expr(
+        &*local.init.as_ref().unwrap().expr,
+        global_data,
+        current_module_path,
+    );
+
+    // Add .copy() if rhs is a mut...
+    // and rhs is `Copy`
+    let rhs_is_mut = global_data.scopes.last().unwrap().0.iter().rev().find(
+        |ScopedVar { name, mut_, .. }| {
+            *mut_
+                && match &*local.init.as_ref().unwrap().expr {
+                    Expr::Path(expr_path) => {
+                        if expr_path.path.segments.len() == 1 {
+                            expr_path.path.segments.first().unwrap().ident == name
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+        },
+    );
+
+    // TODO
+    // let rhs_is_deref_mut_ref = ...
+
+    let lhs_is_mut = match &local.pat {
+        Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+        _ => false,
+    };
+    let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
+        Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
+        _ => false,
+    };
+
+    // copy rhs if is mut and is a variable, which is being assigned
+    if let Some(rhs_is_mut) = rhs_is_mut {
+        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+
+    // Also copy if we are assigning *a variable* (not a literal) to a mutable variable (eg the rhs hand side is immutable so we didn't care about copying, but now that it is being assigned to another var, we need to copy to make sure that mutating the new var doesn't update the original var)
+    } else if lhs_is_mut && rhs_is_var {
+        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+    } else if should_copy_expr_unary(&*local.init.as_ref().unwrap().expr, global_data) {
+        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+    }
+
+    // Record var info
+    let type_or_var = match &*local.init.as_ref().unwrap().expr {
+        Expr::Array(_) => TypeOrVar::Unknown,
+        Expr::Assign(_) => TypeOrVar::Unknown,
+        Expr::Async(_) => TypeOrVar::Unknown,
+        Expr::Await(_) => TypeOrVar::Unknown,
+        Expr::Binary(_) => TypeOrVar::Unknown,
+        Expr::Block(_) => TypeOrVar::Unknown,
+        Expr::Break(_) => TypeOrVar::Unknown,
+        Expr::Call(expr_call) => {
+            match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    if expr_path.path.segments.len() == 1 {
+                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
+                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        global_data
+                            .scopes
+                            .iter()
+                            .rev()
+                            .find_map(|(vars, item_fns)| {
+                                let item_fn = item_fns
+                                    .iter()
+                                    .rev()
+                                    .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
+                                item_fn.map(|item_fn| {
+                                    // We found a fn so try and parse it's return type
+                                    match &item_fn.sig.output {
+                                        ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
+                                        ReturnType::Type(_, type_) => {
+                                            // TODO handle other cases eg a tuple containing &mut
+                                            get_type(&**type_)
+                                        }
+                                    }
+                                })
+                            })
+                            .unwrap_or(TypeOrVar::Unknown)
+                    } else {
+                        TypeOrVar::Unknown
+                    }
+                }
+                _ => TypeOrVar::Unknown,
+            }
+        }
+        Expr::Cast(_) => TypeOrVar::Unknown,
+        Expr::Closure(_) => TypeOrVar::Unknown,
+        Expr::Const(_) => TypeOrVar::Unknown,
+        Expr::Continue(_) => TypeOrVar::Unknown,
+        Expr::Field(_) => TypeOrVar::Unknown,
+        Expr::ForLoop(_) => TypeOrVar::Unknown,
+        Expr::Group(_) => TypeOrVar::Unknown,
+        Expr::If(_) => TypeOrVar::Unknown,
+        Expr::Index(_) => TypeOrVar::Unknown,
+        Expr::Infer(_) => TypeOrVar::Unknown,
+        Expr::Let(_) => TypeOrVar::Unknown,
+        Expr::Lit(expr_lit) => {
+            match expr_lit.lit {
+                Lit::Str(_) => TypeOrVar::RustType(RustType::String),
+                Lit::ByteStr(_) => TypeOrVar::Unknown,
+                Lit::Byte(_) => TypeOrVar::Unknown,
+                Lit::Char(_) => TypeOrVar::Unknown,
+                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
+                Lit::Int(_) => TypeOrVar::RustType(RustType::I32),
+                Lit::Float(_) => TypeOrVar::RustType(RustType::F32),
+                Lit::Bool(_) => TypeOrVar::RustType(RustType::Bool),
+                Lit::Verbatim(_) => TypeOrVar::Unknown,
+                _ => TypeOrVar::Unknown,
+            }
+        }
+        Expr::Loop(_) => TypeOrVar::Unknown,
+        Expr::Macro(_) => TypeOrVar::Unknown,
+        Expr::Match(_) => TypeOrVar::Unknown,
+        Expr::MethodCall(_) => TypeOrVar::Unknown,
+        Expr::Paren(_) => TypeOrVar::Unknown,
+        Expr::Path(expr_path) => {
+            if expr_path.path.segments.len() == 1 {
+                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
+                    vars.iter().rev().find(|var| {
+                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        var.name == name
+                    })
+                }) {
+                    TypeOrVar::Var(var.clone())
+                } else {
+                    TypeOrVar::Unknown
+                }
+            } else {
+                TypeOrVar::Unknown
+            }
+        }
+        Expr::Range(_) => TypeOrVar::Unknown,
+        Expr::Reference(_) => TypeOrVar::Unknown,
+        Expr::Repeat(_) => TypeOrVar::Unknown,
+        Expr::Return(_) => TypeOrVar::Unknown,
+        Expr::Struct(_) => TypeOrVar::Unknown,
+        Expr::Try(_) => TypeOrVar::Unknown,
+        Expr::TryBlock(_) => TypeOrVar::Unknown,
+        Expr::Tuple(_) => TypeOrVar::Unknown,
+        Expr::Unary(_) => TypeOrVar::Unknown,
+        Expr::Unsafe(_) => TypeOrVar::Unknown,
+        Expr::Verbatim(_) => TypeOrVar::Unknown,
+        Expr::While(_) => TypeOrVar::Unknown,
+        Expr::Yield(_) => TypeOrVar::Unknown,
+        _ => TypeOrVar::Unknown,
+    };
+
+    // rhs is a fn call that returns a &mut
+    // TODO only handles fns defined in scope, not at top level
+    // let fn_call_mut_ref = match &*local.init.as_ref().unwrap().expr {};
+
+    // Record name if creating a mut or &mut variable
+    // match &local.pat {
+    //     Pat::Ident(pat_ident) => {
+    //         if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
+    //             global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
+    //                 name: pat_ident.ident.to_string(),
+    //                 mut_: pat_ident.mutability.is_some(),
+    //                 mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
+    //                 type_: rust_type,
+    //             });
+    //         }
+    //     }
+    //     _ => {}
+    // }
+
+    match &local.pat {
+        Pat::Ident(pat_ident) => {
+            let mut scoped_var = ScopedVar {
+                name: pat_ident.ident.to_string(),
+                mut_: pat_ident.mutability.is_some(),
+                // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
+                mut_ref: rhs_is_mut_ref,
+                type_: RustType::Unknown,
+            };
+            match type_or_var {
+                TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
+                TypeOrVar::Var(found_var) => {
+                    scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
+                    scoped_var.type_ = found_var.type_;
+                }
+                TypeOrVar::Unknown => {}
+            };
+
+            // if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
+            //     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
+            // }
+            global_data.scopes.last_mut().unwrap().0.push(scoped_var);
+        }
+        _ => {}
+    }
+
+    // match &lhs {
+    //     LocalName::Single(var_name) => {
+    //         if is_mut_ref || local.init.
+    //         global_data.vars_in_scope.push((var_name, ))
+    //     },
+    //     // TODO handle_pat needs to capture whether destructured variables are mut
+    //     LocalName::DestructureObject(_) => {}
+    //     LocalName::DestructureArray(_) => {}
+    // }
+
+    match rhs {
+        JsExpr::If(js_if) => {
+            // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
+            JsStmt::Expr(
+                JsExpr::If(JsIf {
+                    assignment: Some(lhs),
+                    declare_var: true,
+                    condition: js_if.condition,
+                    succeed: js_if.succeed,
+                    fail: js_if.fail,
+                }),
+                true,
+            )
+        }
+
+        rhs => JsStmt::Local(JsLocal {
+            public: false,
+            export: false,
+            type_: LocalType::Var,
+            lhs,
+            value: rhs,
+        }),
+    }
+}
 fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
@@ -376,169 +685,7 @@ fn handle_stmt(
 
             JsStmt::Expr(js_expr, closing_semi.is_some())
         }
-        Stmt::Local(local) => {
-            let lhs = handle_pat(&local.pat);
-
-            // TODO should also check:
-            // by_ref: Some(
-            //     Ref,
-            // ),
-            // mutability: Some(
-            //     Mut,
-            // ),
-            let is_mut_ref = match &*local.init.as_ref().unwrap().expr {
-                Expr::Reference(expr_ref) => expr_ref.mutability.is_some(),
-                _ => false,
-            };
-            let mut rhs = handle_expr(
-                &*local.init.as_ref().unwrap().expr,
-                global_data,
-                current_module_path,
-            );
-
-            // Add .copy() if rhs is a mut...
-            // and rhs is `Copy`
-            let rhs_is_mut = global_data.scopes.last().unwrap().0.iter().rev().find(
-                |ScopedVar { name, mut_, .. }| {
-                    *mut_
-                        && match &*local.init.as_ref().unwrap().expr {
-                            Expr::Path(expr_path) => {
-                                if expr_path.path.segments.len() == 1 {
-                                    expr_path.path.segments.first().unwrap().ident == name
-                                } else {
-                                    false
-                                }
-                            }
-                            _ => false,
-                        }
-                },
-            );
-
-            // TODO
-            // let rhs_is_deref_mut_ref = ...
-
-            let lhs_is_mut = match &local.pat {
-                Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                _ => false,
-            };
-            let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
-                Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
-                _ => false,
-            };
-
-            // copy rhs if is mut and is a variable, which is being assigned
-            if let Some(rhs_is_mut) = rhs_is_mut {
-                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-
-            // Also copy if we are assigning *a variable* (not a literal) to a mutable variable (eg the rhs hand side is immutable so we didn't care about copying, but now that it is being assigned to another var, we need to copy to make sure that mutating the new var doesn't update the original var)
-            } else if lhs_is_mut && rhs_is_var {
-                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-            } else if should_copy_expr_unary(&*local.init.as_ref().unwrap().expr, global_data) {
-                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-            }
-
-            // rhs is a fn call that returns a &mut
-            let fn_call_mut_ref = match &*local.init.as_ref().unwrap().expr {
-                Expr::Call(expr_call) => {
-                    match &*expr_call.func {
-                        Expr::Path(expr_path) => {
-                            if expr_path.path.segments.len() == 1 {
-                                let fn_name =
-                                    expr_path.path.segments.first().unwrap().ident.to_string();
-                                global_data.scopes.iter().rev().any(|(vars, item_fns)| {
-                                    let item_fn = item_fns
-                                        .iter()
-                                        .rev()
-                                        .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
-                                    if let Some(item_fn) = item_fn {
-                                        match &item_fn.sig.output {
-                                            ReturnType::Default => false,
-                                            ReturnType::Type(_, type_) => {
-                                                // TODO handle other cases eg a tuple containing &mut
-                                                match &**type_ {
-                                                    Type::Array(_) => false,
-                                                    Type::BareFn(_) => false,
-                                                    Type::Group(_) => false,
-                                                    Type::ImplTrait(_) => false,
-                                                    Type::Infer(_) => false,
-                                                    Type::Macro(_) => false,
-                                                    Type::Never(_) => false,
-                                                    Type::Paren(_) => false,
-                                                    Type::Path(_) => false,
-                                                    Type::Ptr(_) => false,
-                                                    Type::Reference(type_reference) => {
-                                                        type_reference.mutability.is_some()
-                                                    }
-                                                    Type::Slice(_) => false,
-                                                    Type::TraitObject(_) => false,
-                                                    Type::Tuple(_) => false,
-                                                    Type::Verbatim(_) => false,
-                                                    _ => false,
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                })
-                            } else {
-                                false
-                            }
-                        }
-                        _ => false,
-                    }
-                }
-                _ => false,
-            };
-
-            // Record name if creating a mut or &mut variable
-            match &local.pat {
-                Pat::Ident(pat_ident) => {
-                    if is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
-                        global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
-                            name: pat_ident.ident.to_string(),
-                            mut_: pat_ident.mutability.is_some(),
-                            mut_ref: is_mut_ref || fn_call_mut_ref,
-                            type_: "".to_string(),
-                        });
-                    }
-                }
-                _ => {}
-            }
-            // match &lhs {
-            //     LocalName::Single(var_name) => {
-            //         if is_mut_ref || local.init.
-            //         global_data.vars_in_scope.push((var_name, ))
-            //     },
-            //     // TODO handle_pat needs to capture whether destructured variables are mut
-            //     LocalName::DestructureObject(_) => {}
-            //     LocalName::DestructureArray(_) => {}
-            // }
-
-            match rhs {
-                JsExpr::If(js_if) => {
-                    // TODO currently cases where the branch scope has a var with the same name as the result var means that the result will get assigned to that var, not the result var. Need to consider how to handle this. putting the branch lines inside a new `{}` scope and then doing the result assignment outside of this would work, but is ugly so would want to only do it where necessary, which would require iterating over the lines in a block to check for local declarations with that name.
-                    JsStmt::Expr(
-                        JsExpr::If(JsIf {
-                            assignment: Some(lhs),
-                            declare_var: true,
-                            condition: js_if.condition,
-                            succeed: js_if.succeed,
-                            fail: js_if.fail,
-                        }),
-                        true,
-                    )
-                }
-
-                rhs => JsStmt::Local(JsLocal {
-                    public: false,
-                    export: false,
-                    type_: LocalType::Var,
-                    lhs,
-                    value: rhs,
-                }),
-            }
-        }
+        Stmt::Local(local) => handle_local(local, global_data, current_module_path),
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`
             Item::Const(_) => todo!(),
@@ -730,14 +877,29 @@ fn handle_item_fn(
                         _ => false,
                     };
 
-                    if pat_ident.mutability.is_some() || mut_ref {
-                        global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
-                            name: pat_ident.ident.to_string(),
-                            mut_: pat_ident.mutability.is_some(),
-                            mut_ref,
-                            type_: "".to_string(),
-                        })
+                    // if pat_ident.mutability.is_some() || mut_ref {
+                    //     global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
+                    //         name: pat_ident.ident.to_string(),
+                    //         mut_: pat_ident.mutability.is_some(),
+                    //         mut_ref,
+                    //         type_: "".to_string(),
+                    //     })
+                    // }
+                    let mut scoped_var = ScopedVar {
+                        name: pat_ident.ident.to_string(),
+                        mut_: pat_ident.mutability.is_some(),
+                        mut_ref,
+                        type_: RustType::Unknown,
+                    };
+                    match get_type(&*pat_type.ty) {
+                        TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
+                        TypeOrVar::Var(found_var) => {
+                            scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
+                            scoped_var.type_ = found_var.type_;
+                        }
+                        TypeOrVar::Unknown => {}
                     }
+                    global_data.scopes.last_mut().unwrap().0.push(scoped_var);
 
                     // record var name if mut or &mut
                     if pat_ident.mutability.is_some() {
@@ -1678,12 +1840,26 @@ struct Duplicate {
 }
 
 #[derive(Debug, Clone)]
+enum RustType {
+    Unknown,
+    Unit,
+    I32,
+    F32,
+    Bool,
+    String,
+    /// (name)
+    Struct(String),
+    /// (name)  
+    Enum(String),
+}
+
+#[derive(Debug, Clone)]
 struct ScopedVar {
     name: String,
     mut_: bool,
     mut_ref: bool,
     // TODO
-    type_: String,
+    type_: RustType,
 }
 
 #[derive(Debug, Clone)]
