@@ -29,26 +29,26 @@ async fn destructure_struct() {
         assert_eq!(cool, 1);
     });
 
-    let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"class Foo {
+    let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        r#"
+        class Foo {
             constructor(bar, baz) {
                 this.bar = bar;
                 this.baz = baz;
             }
         }
-        var foo = new Foo(new RustInteger(1), new RustString("hi"));
+        var foo = new Foo(1, "hi");
         var { bar, baz } = foo;
-        console.assert(bar.eq(new RustInteger(1)).jsBoolean);
-        console.assert(baz.eq(new RustString("hi")).jsBoolean);
+        console.assert(bar.eq(1));
+        console.assert(baz.eq("hi"));
         var { bar: cool } = foo;
-        console.assert(cool.eq(new RustInteger(1)).jsBoolean);
-        "#
-    );
-
-    assert_eq!(format_js(expected), actual);
+        console.assert(cool.eq(1));
+        "#,
+    ));
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -70,9 +70,11 @@ async fn destructure_struct_nested() {
     });
 
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"class Foo {
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        r#"
+        class Foo {
             constructor(bar) {
                 this.bar = bar;
             }
@@ -82,9 +84,9 @@ async fn destructure_struct_nested() {
                 this.baz = baz;
             }
         }
-        var foo = new Foo(new Bar(new RustInteger(1)));
+        var foo = new Foo(new Bar(1));
         var { bar: { baz } } = foo;
-        console.assert(baz.eq(new RustInteger(1)).jsBoolean);
+        console.assert(baz.eq(1));
         "#
     );
 
@@ -110,69 +112,27 @@ async fn destructure_array() {
         assert_eq!(bar_two, 2);
     });
 
-    let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var arr = [new RustInteger(1), new RustInteger(2)];
+    let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        r#"
+        var arr = [1, 2];
         var [one, two] = arr;
-        console.assert(one.eq(new RustInteger(1)).jsBoolean);
-        console.assert(two.eq(new RustInteger(2)).jsBoolean);
+        console.assert(one.eq(1));
+        console.assert(two.eq(2));
         class Foo {
             constructor(bar) {
                 this.bar = bar;
             }
         }
-        var fooArr = [new Foo(new RustInteger(1)), new Foo(new RustInteger(2))];
+        var fooArr = [new Foo(1), new Foo(2)];
         var [{bar: barOne}, {bar: barTwo}] = fooArr;
-        console.assert(barOne.eq(new RustInteger(1)).jsBoolean);
-        console.assert(barTwo.eq(new RustInteger(2)).jsBoolean);
-        "#
-    );
+        console.assert(barOne.eq(1));
+        console.assert(barTwo.eq(2));
+        "#,
+    ));
 
-    assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[ignore]
-#[tokio::test]
-async fn destructure_option() {
-    let actual = r2j_block_with_prelude!({
-        struct Foo {
-            bar: i32,
-            baz: &'static str,
-        }
-
-        let foo = Foo {
-            bar: 1,
-            baz: "hello",
-        };
-        let Foo { bar, baz } = foo;
-        assert_eq!(bar, 1);
-        assert_eq!(baz, "hello");
-    });
-
-    let expected = concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-            var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"class Foo {
-            constructor(bar, baz) {
-                this.bar = bar;
-                this.baz = baz;
-            }
-        }
-        var foo = new Foo(1, "hello");
-        var { bar, baz } = foo;
-        assert_eq!(bar, 1);
-        assert_eq!(baz, "hello");
-        console.assert(bar.eq(new RustInteger(1)));        
-        console.assert(baz.eq(new RustInteger()));        
-        "#
-    );
-
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

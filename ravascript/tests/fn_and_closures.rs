@@ -50,16 +50,16 @@ var _closure5 = async (arg) => {
   var _x = arg;
 };
 var _closure6 = async (arg) => {
-  var _x = new RustString("hello");
+  var _x = "hello";
   return arg;
 }
 var _closure7 = (arg) => {
   var ifTempAssignment;
-  if (arg.ge(new RustInteger(0)).jsBoolean) {
-    ifTempAssignment = new RustString("positive");
+  if (arg.ge(0)) {
+    ifTempAssignment = "positive";
   } else {
-    var _thing = new RustInteger(5);
-    ifTempAssignment = new RustString("negative");
+    var _thing = 5;
+    ifTempAssignment = "negative";
   }
   return ifTempAssignment;
 };"#;
@@ -79,7 +79,7 @@ var _closure7 = (arg) => {
         };
     });
     let expected = "var _closure = () => {
-  new RustInteger(5);
+  5;
 };";
     assert_eq!(expected, actual);
 }
@@ -103,13 +103,13 @@ async fn function_returns_if_else_if_else() {
         r#"
         var _closure = (arg) => {
             var ifTempAssignment;
-            if (arg.ge(new RustInteger(0)).jsBoolean) {
-                var _thing = new RustInteger(5);
-                ifTempAssignment = new RustString("positive");
-            } else if (arg.eq(new RustInteger(0)).jsBoolean) {
-                ifTempAssignment = new RustString("zero");
+            if (arg.ge(0)) {
+                var _thing = 5;
+                ifTempAssignment = "positive";
+            } else if (arg.eq(0)) {
+                ifTempAssignment = "zero";
             } else {
-                ifTempAssignment = new RustString("negative");
+                ifTempAssignment = "negative";
             }
             return ifTempAssignment;
         };
@@ -133,10 +133,10 @@ async fn closure_return_match() {
   var ifTempAssignment;
   if (arg.id === Option.someId) {
     var [num] = arg.data;
-    var sum = num.add(new RustInteger(5));
+    var sum = num.add(5);
     ifTempAssignment = sum;
   } else if (arg.id === Option.noneId) {
-    ifTempAssignment = new RustInteger(0);
+    ifTempAssignment = 0;
   } else {
     throw new Error("couldn't match enum variant");
   }

@@ -18,14 +18,14 @@ async fn it_transpiles_crate_directory() {
     let expected = r#"
     // crate
     function duplicateName() {
-      return new RustInteger(10);
+      return 10;
     }
     (function main() {
       duplicateName();
       utils__colors__duplicateName();
       var thing = External.new();
-      var fido = new Green(new RustBool(true), new RustInteger(2));
-      console.assert(fido.woof().eq(new RustInteger(32)).jsBoolean);
+      var fido = new Green(true, 2);
+      console.assert(fido.woof().eq(32));
     })();
     
     // foo_bar
@@ -35,7 +35,7 @@ async fn it_transpiles_crate_directory() {
       }
     
       addTen() {
-        return this.age.add(new RustInteger(10));
+        return this.age.add(10);
       }
     }
     class External {
@@ -45,22 +45,22 @@ async fn it_transpiles_crate_directory() {
       }
     
       static new() {
-        return new External(new Internal(new RustInteger(0)), new RustInteger(9));
+        return new External(new Internal(0), 9);
       }
     }
     
     // colors
-    var DOG_ACTIVITY = new RustInteger(10);
+    var DOG_ACTIVITY = 10;
     function colors__duplicateName() {
-      return new RustInteger(10);
+      return 10;
     }
     function stuffFunction() {
-      return new RustInteger(10);
+      return 10;
     }
     
     // colors::green
     function green__duplicateName() {
-      return new RustInteger(3);
+      return 3;
     }
     class Green {
       constructor(fluffy, age) {
@@ -70,7 +70,7 @@ async fn it_transpiles_crate_directory() {
     
       woof() {
         function green__duplicateName() {
-          return new RustInteger(9999);
+          return 9999;
         }
         return (
           this.age
@@ -90,12 +90,12 @@ async fn it_transpiles_crate_directory() {
     
     // utils::say_something
     function sayHello() {
-      return new RustInteger(10);
+      return 10;
     }
     
     // utils::colors
     function utils__colors__duplicateName() {
-      return new RustInteger(10);
+      return 10;
     }
     "#;
 
@@ -198,7 +198,7 @@ async fn module_crate() {
     );
     let expected = r#"// crate
 function baz() {
-  return new RustInteger(5);
+  return 5;
 }
 
 // foo

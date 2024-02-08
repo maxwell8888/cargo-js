@@ -24,7 +24,7 @@ mod tests {
             .map(|stmt| stmt.js_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(generated_js, "var myvar = new RustInteger(5);");
+        assert_eq!(generated_js, "var myvar = 5;");
     }
 
     // #[test]

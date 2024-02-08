@@ -26,19 +26,17 @@ async fn option_match() {
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
         "var Some = Option.Some;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var five = Some(new RustInteger(5));
         var result;
         if (five.id === Option.someId) {
             var [val] = five.data;
             result = val;
         } else if (five.id === Option.noneId) {
-            result = new RustInteger(0);
+            result = 0;
         } else {
             throw new Error("couldn't match enum variant");
         }
-        console.assert(result.eq(new RustInteger(5)).jsBoolean);
+        console.assert(result.eq(5));
         "#,
     ));
 
@@ -59,10 +57,8 @@ async fn option_is_some_and() {
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
         "var Some = Option.Some;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var five = Some(new RustInteger(5));
-        console.assert(five.isSomeAnd((x) => x.eq(new RustInteger(5))).jsBoolean);
+        r#"var five = Some(5);
+        console.assert(five.isSomeAnd((x) => x.eq(5)));
         "#,
     ));
 
@@ -81,10 +77,8 @@ async fn option_unwrap() {
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
         "var Some = Option.Some;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var five = Some(new RustInteger(5));
-        console.assert(five.unwrap().eq(new RustInteger(5)).jsBoolean);
+        r#"var five = Some(5);
+        console.assert(five.unwrap().eq(5));
         "#,
     ));
 
@@ -106,12 +100,10 @@ async fn option_unwrap_or() {
         include_str!("option_prelude.js"),
         "var Some = Option.Some;
         var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        "var five = Some(new RustInteger(5));
-        console.assert(five.unwrapOr(new RustInteger(0)).eq(new RustInteger(5)).jsBoolean);
+        "var five = Some(5);
+        console.assert(five.unwrapOr(0).eq(5));
         var nothing = None;
-        console.assert(nothing.unwrapOr(new RustInteger(0)).eq(new RustInteger(0)).jsBoolean);
+        console.assert(nothing.unwrapOr(0).eq(0));
         ",
     ));
 
@@ -133,12 +125,10 @@ async fn option_unwrap_or_else() {
         include_str!("option_prelude.js"),
         "var Some = Option.Some;
         var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        "var five = Some(new RustInteger(5));
+        "var five = Some(5);
         var none = None;
-        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)).jsBoolean);
-        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)).jsBoolean);
+        console.assert(five.unwrapOrElse(() => 4).eq(5));
+        console.assert(none.unwrapOrElse(() => 4).eq(4));
         ",
     ));
 
@@ -162,12 +152,10 @@ async fn option_unwrap_or_default() {
         include_str!("option_prelude.js"),
         "var Some = Option.Some;
         var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var five = Some(new RustInteger(5));
+        r#"var five = Some(5);
         var none = None;
-        console.assert(five.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(5)).jsBoolean);
-        console.assert(none.unwrapOrElse(() => new RustInteger(4)).eq(new RustInteger(4)).jsBoolean);
+        console.assert(five.unwrapOrElse(() => 4).eq(5));
+        console.assert(none.unwrapOrElse(() => 4).eq(4));
         "#,
     ));
 
@@ -191,15 +179,13 @@ async fn option_map() {
     // TODO this won't pass because we need to impl deep copies for JS
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-        var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var five = Some(new RustInteger(5));
+        "var Some = Option.Some;",
+        "var None = Option.None;",
+        r#"var five = Some(5);
         var none = None;
-        console.assert(five.map((x) => x.add(new RustInteger(2))).eq(Some(new RustInteger(7))).jsBoolean);
-        console.assert(none.map((x) => x.add(new RustInteger(2))).eq(None).jsBoolean);
-        var _ = new RustInteger(5).eq(new RustInteger(4));
+        console.assert(five.map((x) => x.add(2)).eq(Some(7)));
+        console.assert(none.map((x) => x.add(2)).eq(None));
+        var _ = 5.eq(4);
         "#,
     ));
 

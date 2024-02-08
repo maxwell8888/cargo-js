@@ -46,7 +46,7 @@ async fn it_transpiles_vec_macro() {
         let _data = vec![1, 2, 3];
     });
     assert_eq!(
-        "var _data = [new RustInteger(1), new RustInteger(2), new RustInteger(3)];",
+        "var _data = [1, 2, 3];",
         actual
     );
 }
@@ -73,9 +73,9 @@ async fn it_transpiles_iter_map() {
             })
             .collect::<Vec<_>>();
     });
-    let expected = r#"var data = [new RustInteger(1), new RustInteger(2), new RustInteger(3)];
+    let expected = r#"var data = [1, 2, 3];
 var _data = data.map((num) => {
-  var _sum = num.add(new RustInteger(2));
+  var _sum = num.add(2);
   return num;
 });"#;
     // let expected = format_js(expected_js);

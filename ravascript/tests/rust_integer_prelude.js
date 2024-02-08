@@ -3,28 +3,31 @@ class RustInteger {
         this.jsNumber = jsNumber;
     }
 
+    inner() {
+        return this.jsNumber;
+    }
     copy() {
-        return new RustInteger(this.jsNumber);
+        return this.jsNumber;
     }
     eq(other) {
-        return new RustBool(this.jsNumber === other.jsNumber);
+        return this.jsNumber === other.inner();
     }
     ne(other) {
-        return new RustBool(this.jsNumber !== other.jsNumber);
+        return this.jsNumber !== other.inner();
     }
     add(other) {
-        return new RustInteger(this.jsNumber + other.jsNumber);
+        return this.jsNumber + other.inner();
     }
     derefAssign(other) {
-        this.jsNumber = other.jsNumber;
+        this.jsNumber = other.inner();
     }
     addAssign(other) {
-        this.jsNumber += other.jsNumber;
+        this.jsNumber += other.inner();
     }
     abs() {
-        return new RustInteger(Math.abs(this.jsNumber));
+        return Math.abs(this.jsNumber);
     }
     rem(other) {
-        return new RustInteger(this.jsNumber % other.jsNumber);
+        return this.jsNumber % other.inner();
     }
 }

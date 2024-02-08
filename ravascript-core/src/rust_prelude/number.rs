@@ -24,27 +24,22 @@ struct RustInteger<T: JsNumberTrait> {
     js_number: JsNumber<T>,
 }
 impl<T: JsNumberTrait> RustInteger<T> {
-    fn copy(&self) -> Self {
-        RustInteger {
-            js_number: self.js_number,
-        }
+    fn inner(&self) -> JsNumber<T> {
+        self.js_number
     }
-    fn eq(&self, other: &RustInteger<T>) -> RustBool {
-        RustBool {
-            js_boolean: JsBoolean(self.js_number == other.js_number),
-        }
+    fn copy(&self) -> JsNumber<T> {
+        self.js_number
+    }
+    fn eq(&self, other: &RustInteger<T>) -> bool {
+        self.js_number == other.inner()
     }
 
-    fn ne(&self, other: &RustInteger<T>) -> RustBool {
-        RustBool {
-            js_boolean: JsBoolean(self.js_number != other.js_number),
-        }
+    fn ne(&self, other: &RustInteger<T>) -> bool {
+        self.js_number != other.inner()
     }
     // fn add(self, other: $t) -> $t { self + other }
-    fn add(self, other: RustInteger<T>) -> Self {
-        RustInteger {
-            js_number: self.js_number + other.js_number,
-        }
+    fn add(self, other: RustInteger<T>) -> JsNumber<T> {
+        self.js_number + other.inner()
     }
     fn deref_assign(&mut self, other: RustInteger<T>) {
         self.js_number.0 = other.js_number.0;
@@ -53,15 +48,11 @@ impl<T: JsNumberTrait> RustInteger<T> {
         self.js_number.0 += other.js_number.0;
     }
     // pub const fn abs(self) -> Self {
-    fn abs(self) -> Self {
-        RustInteger {
-            js_number: Math::abs(self.js_number),
-        }
+    fn abs(self) -> JsNumber<T> {
+        Math::abs(self.js_number)
     }
-    fn rem(self, other: RustInteger<T>) -> Self {
-        RustInteger {
-            js_number: self.js_number % other.js_number,
-        }
+    fn rem(self, other: RustInteger<T>) -> JsNumber<T> {
+        self.js_number % other.inner()
     }
 }
 

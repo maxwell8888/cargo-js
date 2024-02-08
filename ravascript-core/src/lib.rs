@@ -11,8 +11,8 @@ use std::{
 };
 use syn::{
     parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, Fields, FnArg, ImplItem,
-    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Member,
-    Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro,
+    Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -369,7 +369,7 @@ enum TypeOrVar {
     Var(ScopedVar),
     Unknown,
 }
-fn get_type(type_: &Type) -> TypeOrVar {
+fn parse_type(type_: &Type) -> TypeOrVar {
     match type_ {
         Type::Array(_) => TypeOrVar::Unknown,
         Type::BareFn(_) => TypeOrVar::Unknown,
@@ -382,7 +382,7 @@ fn get_type(type_: &Type) -> TypeOrVar {
         Type::Path(_) => TypeOrVar::Unknown,
         Type::Ptr(_) => TypeOrVar::Unknown,
         Type::Reference(type_reference) => {
-            let type_ = get_type(&type_reference.elem);
+            let type_ = parse_type(&type_reference.elem);
             let type_ = match type_ {
                 TypeOrVar::RustType(rust_type) => rust_type,
                 TypeOrVar::Var(_) => {
@@ -419,9 +419,11 @@ fn handle_local(
     // mutability: Some(
     //     Mut,
     // ),
-    let rhs_is_mut_ref = match &*local.init.as_ref().unwrap().expr {
-        Expr::Reference(expr_ref) => expr_ref.mutability.is_some(),
-        _ => false,
+
+    // Check is rhs if &mut and if so remove &mut from expr
+    let (rhs_is_mut_ref, rhs_expr) = match &*local.init.as_ref().unwrap().expr {
+        Expr::Reference(expr_ref) => (expr_ref.mutability.is_some(), *expr_ref.expr.clone()),
+        _ => (false, *local.init.as_ref().unwrap().expr.clone()),
     };
     // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
     // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
@@ -429,18 +431,8 @@ fn handle_local(
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
-    match &*local.init.as_ref().unwrap().expr {
-        Expr::Lit(_) => {
-            //
-            // JsExpr::New(
-            //     vec!["RustInteger".to_string()],
-            //     vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
-            // );
-        }
-        _ => {}
-    };
     let mut rhs = handle_expr(
-        &*local.init.as_ref().unwrap().expr,
+        &rhs_expr,
         global_data,
         current_module_path,
     );
@@ -486,8 +478,8 @@ fn handle_local(
         rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
     }
 
-    // Record var info
-    let type_or_var = match &*local.init.as_ref().unwrap().expr {
+    // Get var info
+    let type_or_var = match &rhs_expr {
         Expr::Array(_) => TypeOrVar::Unknown,
         Expr::Assign(_) => TypeOrVar::Unknown,
         Expr::Async(_) => TypeOrVar::Unknown,
@@ -516,7 +508,7 @@ fn handle_local(
                                         ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
                                         ReturnType::Type(_, type_) => {
                                             // TODO handle other cases eg a tuple containing &mut
-                                            get_type(&**type_)
+                                            parse_type(&**type_)
                                         }
                                     }
                                 })
@@ -610,6 +602,7 @@ fn handle_local(
     //     _ => {}
     // }
 
+    // Record var info
     match &local.pat {
         Pat::Ident(pat_ident) => {
             let mut scoped_var = ScopedVar {
@@ -645,6 +638,45 @@ fn handle_local(
     //     LocalName::DestructureObject(_) => {}
     //     LocalName::DestructureArray(_) => {}
     // }
+
+    // dbg!(&lhs);
+    // dbg!(&rhs);
+    // dbg!(&rhs_is_mut_ref);
+    // dbg!(&lhs_is_mut);
+    if rhs_is_mut_ref || lhs_is_mut {
+        match &rhs_expr {
+            Expr::Lit(expr_lit) => match &expr_lit.lit {
+                Lit::Str(lit_str) => {
+                    global_data.rust_prelude_types.string = true;
+                    rhs = JsExpr::New(
+                        vec!["RustString".to_string()],
+                        vec![JsExpr::LitStr(lit_str.value())],
+                    );
+                }
+                Lit::ByteStr(_) => {}
+                Lit::Byte(_) => {}
+                Lit::Char(_) => {}
+                Lit::Int(lit_int) => {
+                    global_data.rust_prelude_types.integer = true;
+                    rhs = JsExpr::New(
+                        vec!["RustInteger".to_string()],
+                        vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
+                    );
+                }
+                Lit::Float(_) => {}
+                Lit::Bool(lit_bool) => {
+                    global_data.rust_prelude_types.bool = true;
+                    rhs = JsExpr::New(
+                        vec!["RustBool".to_string()],
+                        vec![JsExpr::LitBool(lit_bool.value)],
+                    )
+                }
+                Lit::Verbatim(_) => {}
+                _ => {}
+            },
+            _ => {}
+        }
+    }
 
     match rhs {
         JsExpr::If(js_if) => {
@@ -718,103 +750,10 @@ fn handle_stmt(
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Stmt::Macro(stmt_macro) => {
-            let path_segs = stmt_macro
-                .mac
-                .path
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>();
-            if path_segs.len() == 1 {
-                if path_segs[0] == "panic" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
-                    return JsStmt::Raw(format!(r#"throw new Error("{input}")"#));
-                }
-                if path_segs[0] == "try_" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
-                    let stmt_vec = try_block
-                        .stmts
-                        .iter()
-                        .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
-                        .collect::<Vec<_>>();
-                    return JsStmt::TryBlock(stmt_vec);
-                }
-                if path_segs[0] == "catch" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let mut parts = input.split(",");
-                    let err_var_name = parts.next().unwrap();
-                    let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
-                        .unwrap()
-                        .to_string();
-                    let _err_var_type = parts.next().unwrap();
-                    let catch_block = parts.collect::<String>();
-                    let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
-                    let stmt_vec = catch_block
-                        .stmts
-                        .into_iter()
-                        .map(|stmt| handle_stmt(&stmt, global_data, current_module_path));
-                    let stmt_vec = stmt_vec.collect::<Vec<_>>();
-                    return JsStmt::CatchBlock(err_var_name, stmt_vec);
-                }
-                if path_segs[0] == "assert" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
-
-                    let condition_js = JsExpr::Field(
-                        Box::new(JsExpr::Paren(Box::new(handle_expr(
-                            &condition_expr,
-                            global_data,
-                            current_module_path,
-                        )))),
-                        "jsBoolean".to_string(),
-                    );
-
-                    return JsStmt::Expr(
-                        JsExpr::MethodCall(
-                            Box::new(JsExpr::Path(vec!["console".to_string()])),
-                            "assert".to_string(),
-                            vec![condition_js],
-                        ),
-                        stmt_macro.semi_token.is_some(),
-                    );
-                }
-                if path_segs[0] == "assert_eq" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let mut parts = input.split(",");
-
-                    let lhs = parts.next().unwrap();
-                    let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
-                    let lhs = handle_expr(&lhs, global_data, current_module_path);
-
-                    let rhs = parts.next().unwrap();
-                    let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
-                    let rhs = handle_expr(&rhs, global_data, current_module_path);
-
-                    // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
-                    let equality_check = JsExpr::Field(
-                        Box::new(JsExpr::Paren(Box::new(JsExpr::MethodCall(
-                            Box::new(lhs),
-                            "eq".to_string(),
-                            vec![rhs],
-                        )))),
-                        "jsBoolean".to_string(),
-                    );
-                    return JsStmt::Expr(
-                        JsExpr::MethodCall(
-                            Box::new(JsExpr::Path(vec!["console".to_string()])),
-                            "assert".to_string(),
-                            vec![equality_check],
-                        ),
-                        stmt_macro.semi_token.is_some(),
-                    );
-                }
-            }
-            dbg!(stmt_macro);
-            todo!()
-        }
+        Stmt::Macro(stmt_macro) => JsStmt::Expr(
+            handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path),
+            stmt_macro.semi_token.is_some(),
+        ),
     }
 }
 
@@ -891,7 +830,7 @@ fn handle_item_fn(
                         mut_ref,
                         type_: RustType::Unknown,
                     };
-                    match get_type(&*pat_type.ty) {
+                    match parse_type(&*pat_type.ty) {
                         TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
                         TypeOrVar::Var(found_var) => {
                             scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
@@ -1263,28 +1202,23 @@ fn handle_item_impl(
 
                 let body_stmts = if class_name == "RustBool" && item_impl_fn.sig.ident == "bool_and"
                 {
-                    Some(vec![JsStmt::Expr(
-                        JsExpr::New(
-                            vec!["RustBool".to_string()],
-                            vec![JsExpr::Raw("this.jsBoolean && other.jsBoolean".to_string())],
-                        ),
-                        false,
+                    Some(vec![JsStmt::Raw(
+                        "this.jsBoolean && other.jsBoolean".to_string(),
                     )])
-
                     // fn add_assign(&mut self, other: RustInteger<T>) {
                     //     self.js_number.0 += other.js_number.0;
                     // }
                 } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "add_assign" {
                     Some(vec![JsStmt::Raw(
-                        "this.jsNumber += other.jsNumber".to_string(),
+                        "this.jsNumber += other.inner()".to_string(),
                     )])
                 } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "deref_assign" {
                     Some(vec![JsStmt::Raw(
-                        "this.jsNumber = other.jsNumber".to_string(),
+                        "this.jsNumber = other.inner()".to_string(),
                     )])
                 } else if class_name == "RustString" && item_impl_fn.sig.ident == "add_assign" {
                     Some(vec![JsStmt::Raw(
-                        "this.jsString += other.jsString".to_string(),
+                        "this.jsString += other.inner()".to_string(),
                     )])
                 } else if class_name == "RustString" && item_impl_fn.sig.ident == "push_str" {
                     Some(vec![JsStmt::Raw(
@@ -1296,26 +1230,23 @@ fn handle_item_impl(
                     )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data))"
+                        "return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data)"
                             .to_string(),
                     )])
                 } else if class_name == "Option" && item_impl_fn.sig.ident == "ne" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.id !== other.id || this.data.ne(other.data))"
-                            .to_string(),
+                        "return this.id !== other.id || this.data.ne(other.data)".to_string(),
                     )])
                 } else if class_name == "RustBool" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.jsBoolean === other.jsBoolean)".to_string(),
+                        "return this.jsBoolean === other.jsBoolean".to_string(),
                     )])
                 } else if class_name == "RustBool" && item_impl_fn.sig.ident == "ne" {
                     Some(vec![JsStmt::Raw(
-                        "return new RustBool(this.jsBoolean !== other.jsBoolean)".to_string(),
+                        "return this.jsBoolean !== other.jsBoolean".to_string(),
                     )])
                 } else if class_name == "RustString" && item_impl_fn.sig.ident == "clone" {
-                    Some(vec![JsStmt::Raw(
-                        "return new RustString(this.jsString)".to_string(),
-                    )])
+                    Some(vec![JsStmt::Raw("return this.jsString".to_string())])
                 } else {
                     let n_stmts = item_impl_fn.block.stmts.len();
                     let body_stmts = item_impl_fn
@@ -1743,6 +1674,9 @@ struct RustPreludeTypes {
     dbg: bool,
     // println: bool,
     // print: bool,
+    number_prototype_extensions: bool,
+    string_prototype_extensions: bool,
+    boolean_prototype_extensions: bool,
     integer: bool,
     float: bool,
     string: bool,
@@ -2192,9 +2126,6 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
 
     let rust_prelude_types = &global_data.rust_prelude_types;
 
-    let bool_in_other_prelude =
-        rust_prelude_types.string || rust_prelude_types.integer || rust_prelude_types.float;
-
     if rust_prelude_types.vec {
         let mut methods = Vec::new();
         methods.push((
@@ -2262,8 +2193,8 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
                 JsStmt::Import(_, _, _) => todo!(),
                 JsStmt::Function(_) => todo!(),
                 JsStmt::ScopeBlock(_) => todo!(),
-                JsStmt::TryBlock(_) => todo!(),
-                JsStmt::CatchBlock(_, _) => todo!(),
+                // JsStmt::TryBlock(_) => todo!(),
+                // JsStmt::CatchBlock(_, _) => todo!(),
                 JsStmt::Raw(_) => todo!(),
                 JsStmt::Comment(_) => todo!(),
             }
@@ -2274,6 +2205,17 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
     }
     if rust_prelude_types.none {
         prelude_stmts.push(JsStmt::Raw("var None = Option.None;".to_string()))
+    }
+
+    if rust_prelude_types.string_prototype_extensions {
+        prelude_stmts.push(JsStmt::Raw(
+            include_str!("../../ravascript/tests/string_prototype_extensions.js").to_string(),
+        ))
+    }
+    if rust_prelude_types.number_prototype_extensions {
+        prelude_stmts.push(JsStmt::Raw(
+            include_str!("../../ravascript/tests/number_prototype_extensions.js").to_string(),
+        ))
     }
 
     if rust_prelude_types.integer || rust_prelude_types.float {
@@ -2313,7 +2255,7 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
         }
     }
 
-    if rust_prelude_types.bool || bool_in_other_prelude {
+    if rust_prelude_types.bool {
         for stmt in &bool_module.stmts {
             match stmt {
                 JsStmt::Class(js_class) => {
@@ -2821,6 +2763,8 @@ pub enum JsExpr {
     Var(String),
     // Class(JsClass),
     While(Box<JsExpr>, Vec<JsStmt>),
+    TryBlock(Vec<JsStmt>),
+    CatchBlock(String, Vec<JsStmt>),
 }
 
 impl JsExpr {
@@ -3004,6 +2948,27 @@ impl JsExpr {
 
                 format!(r#"throw new Error({expanded_message})"#)
             }
+            JsExpr::TryBlock(try_block) => {
+                format!(
+                    "try {{\n{}\n}}",
+                    try_block
+                        .iter()
+                        .map(|s| s.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            }
+            JsExpr::CatchBlock(err_var_name, catch_block) => {
+                format!(
+                    "catch ({}) {{\n{}\n}}",
+                    err_var_name,
+                    catch_block
+                        .iter()
+                        .map(|s| s.js_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
         }
     }
 }
@@ -3080,7 +3045,7 @@ impl JsIf {
                         // else { expr }
                         _ => {
                             if let Some(assignment) = assignment {
-                                let is_error = match **else_ {
+                                let is_error = match &**else_ {
                                     JsExpr::ThrowError(_) => true,
                                     _ => false,
                                 };
@@ -3342,8 +3307,8 @@ fn handle_fn_body_stmt(i: usize, stmt: &JsStmt, len: usize) -> String {
         JsStmt::ClassStatic(_) => stmt.js_string(),
         JsStmt::Raw(_) => stmt.js_string(),
         JsStmt::ScopeBlock(_) => stmt.js_string(),
-        JsStmt::TryBlock(_) => stmt.js_string(),
-        JsStmt::CatchBlock(_, _) => stmt.js_string(),
+        // JsStmt::TryBlock(_) => stmt.js_string(),
+        // JsStmt::CatchBlock(_, _) => stmt.js_string(),
         JsStmt::Comment(_) => stmt.js_string(),
     }
 }
@@ -3416,8 +3381,8 @@ pub enum JsStmt {
     Import(Option<String>, Vec<String>, Vec<String>),
     Function(JsFn),
     ScopeBlock(Vec<JsStmt>),
-    TryBlock(Vec<JsStmt>),
-    CatchBlock(String, Vec<JsStmt>),
+    // TryBlock(Vec<JsStmt>),
+    // CatchBlock(String, Vec<JsStmt>),
     Raw(String),
     /// Unlike the other variants this *only* has meaning for the parsing/transpiling, and isn't output (except maybe comments for debugging?)
     ///
@@ -3437,8 +3402,8 @@ impl JsStmt {
             JsStmt::Import(_, _, _) => todo!(),
             JsStmt::Function(js_fn) => js_fn.public,
             JsStmt::ScopeBlock(_) => todo!(),
-            JsStmt::TryBlock(_) => todo!(),
-            JsStmt::CatchBlock(_, _) => todo!(),
+            // JsStmt::TryBlock(_) => todo!(),
+            // JsStmt::CatchBlock(_, _) => todo!(),
             JsStmt::Raw(_) => todo!(),
             JsStmt::Comment(_) => todo!(),
         }
@@ -3559,27 +3524,6 @@ impl JsStmt {
                         .join("\n")
                 )
             }
-            JsStmt::TryBlock(try_block) => {
-                format!(
-                    "try {{\n{}\n}}",
-                    try_block
-                        .iter()
-                        .map(|s| s.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            }
-            JsStmt::CatchBlock(err_var_name, catch_block) => {
-                format!(
-                    "catch ({}) {{\n{}\n}}",
-                    err_var_name,
-                    catch_block
-                        .iter()
-                        .map(|s| s.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
             JsStmt::Comment(text) => format!("// {text}"),
         }
     }
@@ -3602,13 +3546,10 @@ fn parse_fn_body_stmts(
                             if semi.is_some() {
                                 handle_stmt(stmt, global_data, current_module)
                             } else {
-                                let condition = Box::new(JsExpr::Field(
-                                    Box::new(JsExpr::Paren(Box::new(handle_expr(
-                                        &*expr_if.cond,
-                                        global_data,
-                                        current_module,
-                                    )))),
-                                    "jsBoolean".to_string(),
+                                let condition = Box::new(handle_expr(
+                                    &*expr_if.cond,
+                                    global_data,
+                                    current_module,
                                 ));
                                 JsStmt::Expr(
                                     JsExpr::If(JsIf {
@@ -3715,6 +3656,175 @@ fn should_copy_expr_unary(expr: &Expr, global_data: &GlobalData) -> bool {
         }
         _ => false,
     }
+}
+
+// TODO might want to split this up so that in some cases we can return JsStmt and JsExpr in others
+fn handle_expr_and_stmt_macro(
+    mac: &Macro,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> JsExpr {
+    let path_segs = mac
+        .path
+        .segments
+        .iter()
+        .map(|seg| seg.ident.to_string())
+        .collect::<Vec<_>>();
+    if path_segs.len() == 1 {
+        if path_segs[0] == "vec" {
+            let input = mac.tokens.clone().to_string();
+            let expr_array = syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
+            let expr_vec = expr_array
+                .elems
+                .iter()
+                .map(|elem| handle_expr(elem, global_data, current_module))
+                .collect::<Vec<_>>();
+            return JsExpr::Array(expr_vec);
+        }
+        if path_segs[0] == "panic" {
+            let input = mac.tokens.clone().to_string();
+            // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
+            return JsExpr::ThrowError(input);
+        }
+        if path_segs[0] == "try_" {
+            let input = mac.tokens.clone().to_string();
+            let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
+            let stmt_vec = try_block
+                .stmts
+                .iter()
+                .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                .collect::<Vec<_>>();
+            return JsExpr::TryBlock(stmt_vec);
+        }
+        if path_segs[0] == "catch" {
+            let input = mac.tokens.clone().to_string();
+            let mut parts = input.split(",");
+            let err_var_name = parts.next().unwrap();
+            let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
+                .unwrap()
+                .to_string();
+            let _err_var_type = parts.next().unwrap();
+            let catch_block = parts.collect::<String>();
+            let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
+            let stmt_vec = catch_block
+                .stmts
+                .into_iter()
+                .map(|stmt| handle_stmt(&stmt, global_data, current_module));
+            let stmt_vec = stmt_vec.collect::<Vec<_>>();
+            return JsExpr::CatchBlock(err_var_name, stmt_vec);
+        }
+        if path_segs[0] == "assert" {
+            let input = mac.tokens.clone().to_string();
+            let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
+
+            // TODO
+            let bool_is_mut = false;
+            let condition_js = if bool_is_mut {
+                JsExpr::Field(
+                    Box::new(JsExpr::Paren(Box::new(handle_expr(
+                        &condition_expr,
+                        global_data,
+                        current_module,
+                    )))),
+                    "jsBoolean".to_string(),
+                )
+            } else {
+                handle_expr(&condition_expr, global_data, current_module)
+            };
+
+            return JsExpr::MethodCall(
+                Box::new(JsExpr::Path(vec!["console".to_string()])),
+                "assert".to_string(),
+                vec![condition_js],
+            );
+        }
+        if path_segs[0] == "assert_eq" {
+            let input = mac.tokens.clone().to_string();
+            let mut parts = input.split(",");
+
+            let lhs = parts.next().unwrap();
+            let syn_lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
+            let lhs = handle_expr(&syn_lhs, global_data, current_module);
+
+            let rhs = parts.next().unwrap();
+            let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
+            let rhs = handle_expr(&rhs, global_data, current_module);
+
+            // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+            // Check if we have primatives so can use === otherwise use .eq()
+            let (lhs_is_mut, lhs_is_mut_ref, lhs_is_primative) = match syn_lhs {
+                Expr::Path(expr_path) => {
+                    if expr_path.path.segments.len() == 1 {
+                        let var_name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        global_data
+                            .scopes
+                            .iter()
+                            .rev()
+                            .find_map(|(vars, fns)| {
+                                vars.iter()
+                                    .rev()
+                                    .find(|scoped_var| scoped_var.name == var_name)
+                            })
+                            .map_or(
+                                (false, false, false),
+                                |ScopedVar {
+                                     name,
+                                     mut_,
+                                     mut_ref,
+                                     type_,
+                                 }| {
+                                    let is_primative = match type_ {
+                                        RustType::Unknown => {
+                                            global_data
+                                                .rust_prelude_types
+                                                .number_prototype_extensions = true;
+                                            global_data
+                                                .rust_prelude_types
+                                                .string_prototype_extensions = true;
+                                            false
+                                        }
+                                        RustType::Unit => true,
+                                        RustType::I32 => true,
+                                        RustType::F32 => true,
+                                        RustType::Bool => true,
+                                        RustType::String => true,
+                                        RustType::Struct(_) => false,
+                                        RustType::Enum(_) => false,
+                                    };
+                                    (*mut_, *mut_ref, is_primative)
+                                },
+                            )
+                    } else {
+                        (false, false, false)
+                    }
+                }
+                _ => (false, false, false),
+            };
+
+            let mut equality_check = if !lhs_is_primative || lhs_is_mut || lhs_is_mut_ref {
+                global_data.rust_prelude_types.number_prototype_extensions = true;
+                global_data.rust_prelude_types.string_prototype_extensions = true;
+                JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs])
+            } else {
+                JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs))
+            };
+
+            // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
+            let bool_is_mut = false;
+            if bool_is_mut {
+                equality_check = JsExpr::Field(
+                    Box::new(JsExpr::Paren(Box::new(equality_check))),
+                    "jsBoolean".to_string(),
+                );
+            }
+            return JsExpr::MethodCall(
+                Box::new(JsExpr::Path(vec!["console".to_string()])),
+                "assert".to_string(),
+                vec![equality_check],
+            );
+        }
+    }
+    todo!()
 }
 
 fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsExpr {
@@ -4085,14 +4195,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             JsExpr::If(JsIf {
                 assignment: None,
                 declare_var: false,
-                condition: Box::new(JsExpr::Field(
-                    Box::new(JsExpr::Paren(Box::new(handle_expr(
-                        &*expr_if.cond,
-                        global_data,
-                        current_module,
-                    )))),
-                    "jsBoolean".to_string(),
-                )),
+                condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module)),
                 succeed: expr_if
                     .then_branch
                     .stmts
@@ -4119,21 +4222,23 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         }
         Expr::Lit(expr_lit) => match &expr_lit.lit {
             Lit::Str(lit_str) => {
-                global_data.rust_prelude_types.string = true;
-                JsExpr::New(
-                    vec!["RustString".to_string()],
-                    vec![JsExpr::LitStr(lit_str.value())],
-                )
+                // global_data.rust_prelude_types.string = true;
+                // JsExpr::New(
+                //     vec!["RustString".to_string()],
+                //     vec![JsExpr::LitStr(lit_str.value())],
+                // )
+                JsExpr::LitStr(lit_str.value())
             }
             Lit::ByteStr(_) => todo!(),
             Lit::Byte(_) => todo!(),
             Lit::Char(_) => todo!(),
             Lit::Int(lit_int) => {
-                global_data.rust_prelude_types.integer = true;
-                JsExpr::New(
-                    vec!["RustInteger".to_string()],
-                    vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
-                )
+                // global_data.rust_prelude_types.integer = true;
+                // JsExpr::New(
+                //     vec!["RustInteger".to_string()],
+                //     vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
+                // )
+                JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())
             }
             Lit::Float(lit_float) => {
                 global_data.rust_prelude_types.float = true;
@@ -4143,11 +4248,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 )
             }
             Lit::Bool(lit_bool) => {
-                global_data.rust_prelude_types.bool = true;
-                JsExpr::New(
-                    vec!["RustBool".to_string()],
-                    vec![JsExpr::LitBool(lit_bool.value)],
-                )
+                // global_data.rust_prelude_types.bool = true;
+                // JsExpr::New(
+                //     vec!["RustBool".to_string()],
+                //     vec![JsExpr::LitBool(lit_bool.value)],
+                // )
+                JsExpr::LitBool(lit_bool.value)
             }
             Lit::Verbatim(_) => todo!(),
             _ => todo!(),
@@ -4162,113 +4268,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .collect::<Vec<_>>(),
         ),
         Expr::Macro(expr_macro) => {
-            // TODO share this code with Stmt::Macro
-            let path_segs = expr_macro
-                .mac
-                .path
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>();
-
-            // TODO update this to output Vec not []
-            if path_segs.len() == 1 {
-                if path_segs[0] == "vec" {
-                    let input = expr_macro.mac.tokens.clone().to_string();
-                    let expr_array =
-                        syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
-                    let expr_vec = expr_array
-                        .elems
-                        .iter()
-                        .map(|elem| handle_expr(elem, global_data, current_module))
-                        .collect::<Vec<_>>();
-                    return JsExpr::Array(expr_vec);
-                }
-            }
-
-            let stmt_macro = expr_macro;
-            let current_module_path = current_module;
-
-            if path_segs.len() == 1 {
-                if path_segs[0] == "panic" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
-                    return JsExpr::ThrowError(input);
-                }
-                // if path_segs[0] == "try_" {
-                //     let input = stmt_macro.mac.tokens.clone().to_string();
-                //     let try_block = syn::parse_str::<syn::Block>(&input).unwrap();
-                //     let stmt_vec = try_block
-                //         .stmts
-                //         .iter()
-                //         .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
-                //         .collect::<Vec<_>>();
-                //     return JsStmt::TryBlock(stmt_vec);
-                // }
-                // if path_segs[0] == "catch" {
-                //     let input = stmt_macro.mac.tokens.clone().to_string();
-                //     let mut parts = input.split(",");
-                //     let err_var_name = parts.next().unwrap();
-                //     let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
-                //         .unwrap()
-                //         .to_string();
-                //     let _err_var_type = parts.next().unwrap();
-                //     let catch_block = parts.collect::<String>();
-                //     let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
-                //     let stmt_vec = catch_block
-                //         .stmts
-                //         .into_iter()
-                //         .map(|stmt| handle_stmt(&stmt, global_data, current_module_path));
-                //     let stmt_vec = stmt_vec.collect::<Vec<_>>();
-                //     return JsStmt::CatchBlock(err_var_name, stmt_vec);
-                // }
-                if path_segs[0] == "assert" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
-                    let condition_js = JsExpr::Field(
-                        Box::new(JsExpr::Paren(Box::new(handle_expr(
-                            &condition_expr,
-                            global_data,
-                            current_module_path,
-                        )))),
-                        "jsBoolean".to_string(),
-                    );
-
-                    return JsExpr::MethodCall(
-                        Box::new(JsExpr::Path(vec!["console".to_string()])),
-                        "assert".to_string(),
-                        vec![condition_js],
-                    );
-                }
-                if path_segs[0] == "assert_eq" {
-                    let input = stmt_macro.mac.tokens.clone().to_string();
-                    let mut parts = input.split(",");
-
-                    let lhs = parts.next().unwrap();
-                    let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
-                    let lhs = handle_expr(&lhs, global_data, current_module_path);
-
-                    let rhs = parts.next().unwrap();
-                    let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
-                    let rhs = handle_expr(&rhs, global_data, current_module_path);
-
-                    // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
-                    let equality_check = JsExpr::Field(
-                        Box::new(JsExpr::Paren(Box::new(JsExpr::MethodCall(
-                            Box::new(lhs),
-                            "eq".to_string(),
-                            vec![rhs],
-                        )))),
-                        "jsBoolean".to_string(),
-                    );
-                    return JsExpr::MethodCall(
-                        Box::new(JsExpr::Path(vec!["console".to_string()])),
-                        "assert".to_string(),
-                        vec![equality_check],
-                    );
-                }
-            }
-            todo!()
+            handle_expr_and_stmt_macro(&expr_macro.mac, global_data, current_module)
         }
         Expr::Match(expr_match) => {
             handle_expr_match(expr_match, false, global_data, current_module)

@@ -39,52 +39,53 @@ async fn enum_match() {
         assert_eq!(match_result, 5);
     });
 
-    let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"class MyEnum {
-            static fooBarId = "FooBar";
-            static FooBar = new MyEnum("FooBar", null);
-            static barId = "Bar";
-            static bazId = "Baz";
-            constructor(id, data) {
-                this.id = id;
-                this.data = data;
+    let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        r#"
+            class MyEnum {
+                static fooBarId = "FooBar";
+                static FooBar = new MyEnum("FooBar", null);
+                static barId = "Bar";
+                static bazId = "Baz";
+                constructor(id, data) {
+                    this.id = id;
+                    this.data = data;
+                }
+                static Bar(data) {
+                    return new MyEnum("Bar", data);
+                }
+                static Baz(arg_0, arg_1) {
+                    return new MyEnum("Baz", [arg_0, arg_1]);
+                }
             }
-            static Bar(data) {
-                return new MyEnum("Bar", data);
+            var myData = MyEnum.FooBar;
+            var myData = MyEnum.Bar({
+                x: 4,
+                y: "Hello",
+            });
+            var myData = MyEnum.Baz("Hi", 5);
+            var matchResult;
+            if (myData.id === MyEnum.fooBarId) {
+                matchResult = 1;
+            } else if (myData.id === MyEnum.barId) {
+                var { x, y } = myData.data;
+                console.log(x);
+                console.log(y);
+                matchResult = x;
+            } else if (myData.id === MyEnum.bazId) {
+                var [text, num] = myData.data;
+                console.log(text);
+                console.log(num);
+                matchResult = num;
+            } else {
+                throw new Error("couldn't match enum variant");
             }
-            static Baz(arg_0, arg_1) {
-                return new MyEnum("Baz", [arg_0, arg_1]);
-            }
-        }
-        var myData = MyEnum.FooBar;
-        var myData = MyEnum.Bar({
-            x: new RustInteger(4),
-            y: new RustString("Hello"),
-        });
-        var myData = MyEnum.Baz(new RustString("Hi"), new RustInteger(5));
-        var matchResult;
-        if (myData.id === MyEnum.fooBarId) {
-            matchResult = new RustInteger(1);
-        } else if (myData.id === MyEnum.barId) {
-            var { x, y } = myData.data;
-            console.log(x);
-            console.log(y);
-            matchResult = x;
-        } else if (myData.id === MyEnum.bazId) {
-            var [text, num] = myData.data;
-            console.log(text);
-            console.log(num);
-            matchResult = num;
-        } else {
-            throw new Error("couldn't match enum variant");
-        }
-        console.assert(matchResult.eq(new RustInteger(5)).jsBoolean);
-        "#
-    );
-    assert_eq!(format_js(expected), actual);
+            console.assert(matchResult.eq(5));
+            "#
+    ));
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -142,12 +143,13 @@ async fn enum_methods() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-        var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"class Animal {
+        "var Some = Option.Some;",
+        "var None = Option.None;",
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        r#"
+        class Animal {
             static catId = "Cat";
             static Cat = new Animal("Cat", null);
             static dogId = "Dog";
@@ -165,7 +167,7 @@ async fn enum_methods() {
                 return new Animal("Baz", [arg_0, arg_1]);
             }
             static five() {
-                return new RustInteger(5);
+                return 5;
             }
             barY() {
                 var ifTempAssignment;
@@ -187,12 +189,12 @@ async fn enum_methods() {
             bazNum() {
                 var ifTempAssignment;
                 if (this.id === Animal.catId) {
-                    ifTempAssignment = new RustInteger(0);
+                    ifTempAssignment = 0;
                 } else if (this.id === Animal.dogId) {
-                    ifTempAssignment = new RustInteger(0);
+                    ifTempAssignment = 0;
                 } else if (this.id === Animal.barId) {
                     var { x, y } = this.data;
-                    ifTempAssignment = new RustInteger(0);
+                    ifTempAssignment = 0;
                 } else if (this.id === Animal.bazId) {
                     var [text, num] = this.data;
                     ifTempAssignment = num;
@@ -204,18 +206,18 @@ async fn enum_methods() {
         }
         
         var bar = Animal.Bar({
-            x: new RustInteger(1),
-            y: new RustString("hibar"),
+            x: 1,
+            y: "hibar",
         });
-        var baz = Animal.Baz(new RustString("hibaz"), new RustInteger(5));
+        var baz = Animal.Baz("hibaz", 5);
         var barY = bar.barY();
-        console.assert(barY.eq(Some(new RustString("hibar").toString())).jsBoolean);
+        console.assert(barY.eq(Some("hibar")));
         var barYTwo = baz.barY();
-        console.assert(barYTwo.eq(None).jsBoolean);
+        console.assert(barYTwo.eq(None));
         var bazNum = bar.bazNum();
-        console.assert(bazNum.eq(new RustInteger(0)).jsBoolean);
+        console.assert(bazNum.eq(0));
         var bazNum = baz.bazNum();
-        console.assert(bazNum.eq(new RustInteger(5)).jsBoolean);
+        console.assert(bazNum.eq(5));
         "#
     ));
     assert_eq!(expected, actual);

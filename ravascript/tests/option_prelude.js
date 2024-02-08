@@ -10,15 +10,15 @@ class Option {
         return new Option("Some", [arg_0]);
     }
     eq(other) {
-        return new RustBool(this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data));
+        return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data);
     }
     ne(other) {
-        return new RustBool(this.id !== other.id || this.data.ne(other.data));
+        return this.id !== other.id || this.data.ne(other.data);
     }
     isSomeAnd(f) {
         var ifTempAssignment;
         if (this.id === Option.noneId) {
-            ifTempAssignment = new RustBool(false);
+            ifTempAssignment = false;
         } else if (this.id === Option.someId) {
             var [x] = this.data;
             ifTempAssignment = f(x);

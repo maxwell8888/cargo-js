@@ -36,22 +36,22 @@ async fn if_let_some() {
         "var None = Option.None;",
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
-        r#"var counter = new RustInteger(0);
-        var someNum = Some(new RustInteger(5));
+        r#"var counter = 0;
+        var someNum = Some(5);
         if (someNum.id === Option.someId) {
             var [num] = someNum.data;
             counter += num;
         } else {
-            counter += new RustInteger(1);
+            counter += 1;
         }
-        console.assert(counter.eq(new RustInteger(5)));
+        console.assert(counter.eq(5));
         if (None.id === Option.someId) {
             var [num] = someNum.data;
             counter += num;
         } else {
-            counter += new RustInteger(1);
+            counter += 1;
         }
-        console.assert(counter.eq(new RustInteger(6)));
+        console.assert(counter.eq(6));
         "#
     );
 

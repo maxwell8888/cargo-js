@@ -41,36 +41,39 @@ async fn mutating_integers() {
         assert_eq!(orig_num, 3);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        // include_str!("rust_bool_prelude.js"),
         r#"function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.derefAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            console.assert(num.eq(0));
+            num.derefAssign(1);
+            console.assert(num.eq(1));
             return num;
         }
         var origNum = new RustInteger(0);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        console.assert(origNum.eq(0));
         {
             var result = addOne(origNum);
-            console.assert(result.eq(new RustInteger(1)).jsBoolean);
+            console.assert(result.eq(1));
             var resultCopy = result.copy();
-            console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
-            result.addAssign(new RustInteger(1));
-            console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
-            console.assert(result.eq(new RustInteger(2)).jsBoolean);
+            console.assert(resultCopy.eq(1));
+            result.addAssign(1);
+            console.assert(resultCopy.eq(1));
+            console.assert(result.eq(2));
             var six = new RustInteger(6);
             result = six;
-            console.assert(result.eq(new RustInteger(6)).jsBoolean);
+            console.assert(result.eq(6));
         }
-        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
-        origNum.addAssign(new RustInteger(1));
-        console.assert(origNum.eq(new RustInteger(3)).jsBoolean);
+        console.assert(origNum.eq(2));
+        origNum.addAssign(1);
+        console.assert(origNum.eq(3));
         "#
-    );
-
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 

@@ -83,9 +83,8 @@ async fn struct_and_impl_methods() {
         assert_eq!(thing.get_age(), 2);
     });
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        include_str!("string_prototype_extensions.js"),
+        include_str!("number_prototype_extensions.js"),
         r#"
         class MyStruct {
             constructor(age, name) {
@@ -113,12 +112,12 @@ async fn struct_and_impl_methods() {
             }
         }
 
-        var thing = MyStruct.new(new RustInteger(2), new RustString("Bruce"));
-        console.assert(thing.myMethod().eq(new RustString("Bruce")).jsBoolean);
-        console.assert(thing.myMethodWithArg(new RustInteger(2)).eq(new RustInteger(4)).jsBoolean);
-        console.assert(MyStruct.myAssociatedMethod(new RustInteger(2)).eq(new RustInteger(12)).jsBoolean);
-        console.assert(thing.withGeneric(new RustInteger(99)).eq(new RustInteger(2)).jsBoolean);
-        console.assert(thing.getAge().eq(new RustInteger(2)).jsBoolean);
+        var thing = MyStruct.new(2, "Bruce");
+        console.assert(thing.myMethod().eq("Bruce"));
+        console.assert(thing.myMethodWithArg(2).eq(4));
+        console.assert(MyStruct.myAssociatedMethod(2).eq(12));
+        console.assert(thing.withGeneric(99).eq(2));
+        console.assert(thing.getAge().eq(2));
         "#
     );
     assert_eq!(format_js(expected), actual);
