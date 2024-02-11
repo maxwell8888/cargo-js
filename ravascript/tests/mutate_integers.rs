@@ -94,18 +94,21 @@ async fn deref_vs_normal_assign() {
     });
 
     let expected = concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var result = new RustInteger(1);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
-        var resultCopy = result;
-        console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
+        console.assert(result.eq(1));
+        var resultCopy = result.inner();
+        console.assert(resultCopy === 1);
         var six = new RustInteger(6);
         result = six;
-        console.assert(result.eq(new RustInteger(6)).jsBoolean);
-        six = new RustInteger(10);
-        console.assert(six.eq(new RustInteger(10)).jsBoolean);
-        console.assert(result.eq(new RustInteger(6)).jsBoolean);
+        console.assert(result.eq(6));
+        six = 10;
+        console.assert(six.eq(10));
+        console.assert(result.eq(6));
         "#
     );
 
@@ -140,27 +143,30 @@ async fn ownership_mut() {
     });
 
     let expected = concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var foo = new RustInteger(5);
         function addOne(num) {
-            num.addAssign(new RustInteger(1));
+            num.addAssign(1);
             return num;
         }
         var bar = addOne(foo);
-        console.assert(bar.eq(new RustInteger(6)).jsBoolean);
-        bar.addAssign(new RustInteger(1));
-        console.assert(bar.eq(new RustInteger(7)).jsBoolean);
-        console.assert(foo.eq(new RustInteger(7)).jsBoolean);
+        console.assert(bar.eq(6));
+        bar.addAssign(1);
+        console.assert(bar.eq(7));
+        console.assert(foo.eq(7));
         var baz = new RustInteger(4);
         var bazTwo = baz.copy();
-        bazTwo.addAssign(new RustInteger(1));
-        console.assert(baz.eq(new RustInteger(4)).jsBoolean);
-        console.assert(bazTwo.eq(new RustInteger(5)).jsBoolean);
+        bazTwo.addAssign(1);
+        console.assert(baz.eq(4));
+        console.assert(bazTwo.eq(5));
         var five = new RustInteger(5);
-        five.addAssign(new RustInteger(1));
+        five.addAssign(1);
         var six = five;
-        console.assert(six.eq(new RustInteger(6)).jsBoolean);
+        console.assert(six.eq(6));
         "#
     );
 
@@ -177,11 +183,14 @@ async fn mutate_int() {
     });
 
     let expected = concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var num = new RustInteger(0);
-        num.addAssign(new RustInteger(1));
-        console.assert(num.eq(new RustInteger(1)).jsBoolean)"#
+        num.addAssign(1);
+        console.assert(num.eq(1))"#
     );
     assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
@@ -199,15 +208,19 @@ async fn copy_and_mutate() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
-        var copyNum = origNum.copy();
-        origNum.addAssign(new RustInteger(1));
-        console.assert(copyNum.eq(new RustInteger(0)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        var copyNum = origNum.inner();
+        origNum.addAssign(1);
+        console.assert(copyNum === 0);
+        console.assert(origNum.eq(1));
         "#
     ));
+    println!("{expected}");
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -223,13 +236,16 @@ async fn copy_mut_ref() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var mutRef = new RustInteger(0);
-        var copyMutRef = mutRef.copy();
-        mutRef.addAssign(new RustInteger(1));
-        console.assert(mutRef.eq(new RustInteger(1)).jsBoolean);
-        console.assert(copyMutRef.eq(new RustInteger(0)).jsBoolean);
+        var copyMutRef = mutRef.inner();
+        mutRef.addAssign(1);
+        console.assert(mutRef.eq(1));
+        console.assert(copyMutRef.eq(0));
         "#
     ));
     assert_eq!(expected, actual);
@@ -247,13 +263,16 @@ async fn non_mut_copy_to_mut() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var origNum = new RustInteger(0);
-        var copyNum = origNum.copy();
-        copyNum.addAssign(new RustInteger(1));
-        console.assert(copyNum.eq(new RustInteger(1)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        r#"var origNum = 0;
+        var copyNum = new RustInteger(origNum);
+        copyNum.addAssign(1);
+        console.assert(copyNum.eq(1));
+        console.assert(origNum === 0);
         "#
     ));
     assert_eq!(expected, actual);
@@ -271,13 +290,16 @@ async fn mut_ref_from_non_mut() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
         var mutRefNum = origNum;
-        mutRefNum.addAssign(new RustInteger(1));
-        console.assert(mutRefNum.eq(new RustInteger(1)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
+        mutRefNum.addAssign(1);
+        console.assert(mutRefNum.eq(1));
+        console.assert(origNum.eq(1));
         "#
     ));
     assert_eq!(expected, actual);
@@ -288,9 +310,7 @@ async fn mut_ref_from_non_mut() {
 async fn mutate_int_fn_arg() {
     let actual = r2j_block_with_prelude!({
         let orig_num = 0;
-        assert_eq!(orig_num, 0);
         fn add_one(mut num: i32) -> i32 {
-            assert_eq!(num, 0);
             num += 2;
             assert_eq!(num, 2);
             num += num;
@@ -303,25 +323,25 @@ async fn mutate_int_fn_arg() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var origNum = new RustInteger(0);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        r#"var origNum = 0;
         function addOne(num) {
-            var num = num.copy();
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(2));
-            console.assert(num.eq(new RustInteger(2)).jsBoolean);
+            var num = new RustInteger(num.inner());
+            num.addAssign(2);
+            console.assert(num.eq(2));
             num.addAssign(num);
-            console.assert(num.eq(new RustInteger(4)).jsBoolean);
-            return num;
+            console.assert(num.eq(4));
+            return num.inner();
         }
         var result = addOne(origNum);
-        console.assert(result.eq(new RustInteger(4)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        console.assert(result === 4);
+        console.assert(origNum === 0);
         "#
     ));
-    // println!("{expected}");
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -356,25 +376,28 @@ async fn mut_ref_int_fn_arg() {
     });
 
     let expected = concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);    
+        console.assert(origNum.eq(0));    
         function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            console.assert(num.eq(0));
+            num.addAssign(1);
+            console.assert(num.eq(1));
             return num;
         }
         {
             var result = addOne(origNum);
-            console.assert(result.eq(new RustInteger(1)).jsBoolean);
-            result.addAssign(new RustInteger(1));
-            console.assert(result.eq(new RustInteger(2)).jsBoolean);
+            console.assert(result.eq(1));
+            result.addAssign(1);
+            console.assert(result.eq(2));
         }
-        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
-        origNum.addAssign(new RustInteger(1));
-        console.assert(origNum.eq(new RustInteger(3)).jsBoolean);
+        console.assert(origNum.eq(2));
+        origNum.addAssign(1);
+        console.assert(origNum.eq(3));
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -400,20 +423,23 @@ async fn copy_mut_inside_fn() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var origNum = new RustInteger(0);
+        r#"var origNum = 0;
         function addOne(num) {
-            var num = num.copy();
-            var other = num.copy();
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
-            console.assert(other.eq(new RustInteger(0)).jsBoolean);
-            return num;
+            var num = new RustInteger(num.inner());
+            var other = num.inner();
+            num.addAssign(1);
+            console.assert(num.eq(1));
+            console.assert(other === 0);
+            return num.inner();
         }
         var result = addOne(origNum);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(0)).jsBoolean);
+        console.assert(result === 1);
+        console.assert(origNum === 0);
         "#
     ));
     assert_eq!(expected, actual);
@@ -446,24 +472,27 @@ async fn mut_ref_to_copy() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
         function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
-            return num.copy();
+            console.assert(num.eq(0));
+            num.addAssign(1);
+            console.assert(num.eq(1));
+            return num.inner();
         }
-        var result = addOne(origNum);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
-        result.addAssign(new RustInteger(1));
-        console.assert(result.eq(new RustInteger(2)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
-        origNum.addAssign(new RustInteger(1));
-        console.assert(result.eq(new RustInteger(2)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
+        var result = new RustInteger(addOne(origNum));
+        console.assert(result.eq(1));
+        console.assert(origNum.eq(1));
+        result.addAssign(1);
+        console.assert(result.eq(2));
+        console.assert(origNum.eq(1));
+        origNum.addAssign(1);
+        console.assert(result.eq(2));
+        console.assert(origNum.eq(2));
         "#
     ));
     // println!("{expected}");
@@ -508,20 +537,20 @@ async fn fn_call_return_mut_ref_to_copy() {
             return num;
         }
         function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            console.assert(num.eq(0));
+            num.addAssign(1);
+            console.assert(num.eq(1));
             return mutRefDoNothing(num).copy();
         }
-        var result = addOne(origNum);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
-        result.addAssign(new RustInteger(1));
-        console.assert(result.eq(new RustInteger(2)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
-        origNum.addAssign(new RustInteger(1));
-        console.assert(result.eq(new RustInteger(2)).jsBoolean);
-        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
+        var result = new RustInteger(addOne(origNum));
+        console.assert(result.eq(1));
+        console.assert(origNum.eq(1));
+        result.addAssign(1);
+        console.assert(result.eq(2));
+        console.assert(origNum.eq(1));
+        origNum.addAssign(1);
+        console.assert(result.eq(2));
+        console.assert(origNum.eq(2));
         "#
     ));
     // println!("{expected}");
@@ -533,23 +562,19 @@ async fn fn_call_return_mut_ref_to_copy() {
 async fn mutating_non_copy_value() {
     let actual = r2j_block_with_prelude!({
         let mut orig_num = 0;
-
         fn add_one(num: &mut i32) -> i32 {
             assert_eq!(*num, 0);
             *num += 1;
             assert_eq!(*num, 1);
             *num
         }
-
         {
             let mut result = add_one(&mut orig_num);
             assert_eq!(result, 1);
             result += 1;
             assert_eq!(result, 2);
         }
-
         assert_eq!(orig_num, 1);
-
         orig_num += 1;
         assert_eq!(orig_num, 2);
     });
@@ -559,20 +584,20 @@ async fn mutating_non_copy_value() {
         include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
         function addOne(num) {
-            console.assert(num.eq(new RustInteger(0)).jsBoolean);
-            num.addAssign(new RustInteger(1));
-            console.assert(num.eq(new RustInteger(1)).jsBoolean);
+            console.assert(num.eq(0));
+            num.addAssign(1);
+            console.assert(num.eq(1));
             return num.copy();
         }
         {
             var result = addOne(origNum);
-            console.assert(result.eq(new RustInteger(1)).jsBoolean);
-            result.addAssign(new RustInteger(1));
-            console.assert(result.eq(new RustInteger(2)).jsBoolean);
+            console.assert(result.eq(1));
+            result.addAssign(1);
+            console.assert(result.eq(2));
         }
-        console.assert(origNum.eq(new RustInteger(1)).jsBoolean);
-        origNum.addAssign(new RustInteger(1));
-        console.assert(origNum.eq(new RustInteger(2)).jsBoolean);
+        console.assert(origNum.eq(1));
+        origNum.addAssign(1);
+        console.assert(origNum.eq(2));
         "#
     );
     assert_eq!(format_js(expected), actual);

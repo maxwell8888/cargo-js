@@ -46,18 +46,18 @@ async fn impl_in_fn_scope() {
             }
 
             agePlusTen() {
-                return this.age.add(new RustInteger(10));
+                return this.age.add(10);
             }
             static greeting() {
-                return new RustString("Hello").toString();
+                return "Hello";
             }
             agePlusTwenty() {
-                return this.agePlusTen().add(new RustInteger(10));
+                return this.agePlusTen().add(10);
             }
         }
 
         var bob = new Person(30);
-        console.assert(Person.greeting().eq("Hello".toString()));
+        console.assert(Person.greeting().eq("Hello"));
         console.assert(bob.agePlusTen().eq(40));
         console.assert(bob.agePlusTwenty().eq(50));
         "#,

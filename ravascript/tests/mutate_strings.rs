@@ -43,205 +43,30 @@ async fn mutating_strings() {
         include_str!("rust_string_prelude.js"),
         include_str!("rust_bool_prelude.js"),
         r#"function addOne(text) {
-            console.assert(text.eq(new RustString("one")).jsBoolean);
-            text.derefAssign(new RustString("two").toString());
-            console.assert(text.eq(new RustString("two")).jsBoolean);
+            console.assert(text.eq("one"));
+            text.derefAssign("two");
+            console.assert(text.eq("two"));
             return text;
         }
-        var origText = new RustString("one").toString();
+        var origText = new RustString("one");
         {
             var result = addOne(origText);
-            console.assert(result.eq(new RustString("two")).jsBoolean);
+            console.assert(result.eq("two"));
             var resultCopy = result.clone();
-            console.assert(resultCopy.eq(new RustString("two")).jsBoolean);
-            result.addAssign(new RustString("three"));
-            console.assert(resultCopy.eq(new RustString("two")).jsBoolean);
-            console.assert(result.eq(new RustString("twothree")).jsBoolean);
-            var four = new RustString("four").toString();
+            console.assert(resultCopy.eq("two"));
+            result.addAssign("three");
+            console.assert(resultCopy.eq("two"));
+            console.assert(result.eq("twothree"));
+            var four = new RustString("four");
             result = four;
-            console.assert(result.eq(new RustString("four")).jsBoolean);
+            console.assert(result.eq("four"));
         }
-        console.assert(origText.eq(new RustString("twothree")).jsBoolean);
-        origText.pushStr(new RustString("four"));
-        console.assert(origText.eq(new RustString("twothreefour")).jsBoolean);
+        console.assert(origText.eq("twothree"));
+        origText.pushStr("four");
+        console.assert(origText.eq("twothreefour"));
         "#
     ));
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[tokio::test]
-async fn deref_vs_normal_assign() {
-    let actual = r2j_block_with_prelude!({
-        let mut result = &1;
-        assert_eq!(*result, 1);
-        let result_copy = *result;
-        assert_eq!(result_copy, 1);
-        let mut six = &6;
-        // TODO can't use six after this because it is single ownership, but try similar thing with &6 to understand *result = 1 vs result = &1
-        result = six;
-        assert_eq!(*result, 6);
-        six = &10;
-        assert_eq!(*six, 10);
-        assert_eq!(*result, 6);
-    });
-
-    let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var result = new RustInteger(1);
-        console.assert(result.eq(new RustInteger(1)).jsBoolean);
-        var resultCopy = result;
-        console.assert(resultCopy.eq(new RustInteger(1)).jsBoolean);
-        var six = new RustInteger(6);
-        result = six;
-        console.assert(result.eq(new RustInteger(6)).jsBoolean);
-        six = new RustInteger(10);
-        console.assert(six.eq(new RustInteger(10)).jsBoolean);
-        console.assert(result.eq(new RustInteger(6)).jsBoolean);
-        "#
-    );
-
-    assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[ignore]
-#[tokio::test]
-async fn ownership_copy_struct() {
-    let actual = r2j_block_with_prelude!({
-        struct Thing<'a> {
-            numy: &'a mut i32,
-        }
-        let mut valy = 5;
-        let mut cool = Thing { numy: &mut valy };
-        cool.numy = &mut 2;
-    });
-
-    let expected = concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var counter = new RustInteger(0);
-        var someNum = Some(new RustInteger(5));
-        if (someNum.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(5)).jsBoolean);
-        if (None.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(6)).jsBoolean);
-        "#
-    );
-
-    // assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[ignore]
-#[tokio::test]
-async fn ownership_mut() {
-    let actual = r2j_block_with_prelude!({
-        let mut foo = 5;
-        fn add_one(num: &mut i32) -> &mut i32 {
-            *num += 1;
-            num
-        }
-        let bar = add_one(&mut foo);
-        *bar += 1;
-        assert_eq!(*bar, 6);
-        assert_eq!(foo, 6);
-
-        let mut baz = 4;
-        let mut baz_two = baz;
-        baz_two += 1;
-        assert_eq!(baz, 5);
-        assert_eq!(baz_two, 5);
-
-        let five = &mut 5;
-        *five += 1;
-        let six = five;
-        assert_eq!(*six, 6);
-    });
-
-    let expected = concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var foo = new RustInteger(5);
-        function addOne(num) {
-            num.addAssign(new RustInteger(1));
-            return num;
-        }
-        var bar = addOne(foo);
-        bar.addAssign(new RustInteger(1));
-        console.assert(bar.eq(new RustInteger(6)));
-        console.assert(foo.eq(new RustInteger(6)));
-        var baz = new RustInteger(5);
-        var baz_two = baz;
-        baz_two.addAssign(new RustInteger(1));
-        console.assert(baz.eq(new RustInteger(5)));
-        console.assert(baz_two.eq(new RustInteger(5)));
-        var five = new RustInteger(5);
-        five.addAssign(new RustInteger(1));
-        var six = five;
-        console.assert(six.eq(new RustInteger(6)));
-        "#
-    );
-
-    // assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[ignore]
-#[tokio::test]
-async fn ownership_mut2() {
-    let actual = r2j_block_with_prelude!({
-        struct Thing<'a> {
-            numy: &'a mut i32,
-        }
-        let mut valy = 5;
-        let mut cool = Thing { numy: &mut valy };
-        cool.numy = &mut 2;
-    });
-
-    let expected = concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var counter = new RustInteger(0);
-        var someNum = Some(new RustInteger(5));
-        if (someNum.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(5)));
-        if (None.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(6)));
-        "#
-    );
-
-    // assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -27,8 +27,10 @@ impl<T: JsNumberTrait> RustInteger<T> {
     fn inner(&self) -> JsNumber<T> {
         self.js_number
     }
-    fn copy(&self) -> JsNumber<T> {
-        self.js_number
+    fn copy(&self) -> RustInteger<T> {
+        RustInteger {
+            js_number: self.js_number,
+        }
     }
     fn eq(&self, other: &RustInteger<T>) -> bool {
         self.js_number == other.inner()

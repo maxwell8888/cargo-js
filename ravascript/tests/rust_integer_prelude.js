@@ -7,7 +7,7 @@ class RustInteger {
         return this.jsNumber;
     }
     copy() {
-        return this.jsNumber;
+        return new RustInteger(this.jsNumber);
     }
     eq(other) {
         return this.jsNumber === other.inner();

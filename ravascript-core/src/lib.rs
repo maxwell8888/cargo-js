@@ -10,9 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, ExprBlock, ExprMatch, Fields, FnArg, ImplItem,
-    Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro,
-    Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprMatch, Fields, FnArg,
+    ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit,
+    Local, Macro, Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -364,44 +364,74 @@ fn handle_pat(pat: &Pat) -> LocalName {
 // In some cases we are only extracting the type, in others we have more info because we are extracting an existing variable or there is also info about the mutability, so wrap in this enum for convenience
 // TODO probably shouldn't be using ScopedVar though because we will never extract the name or `mut` here
 // TODO revisit if this enum is necessary or the best approach
+#[derive(Clone, Debug)]
 enum TypeOrVar {
     RustType(RustType),
     Var(ScopedVar),
     Unknown,
 }
-fn parse_type(type_: &Type) -> TypeOrVar {
+#[derive(Clone, Debug)]
+enum FnReturnType {
+    /// (&mut , Type)
+    RustType(bool, RustType),
+    Unknown,
+}
+fn parse_fn_input_or_return_type(type_: &Type) -> FnReturnType {
     match type_ {
-        Type::Array(_) => TypeOrVar::Unknown,
-        Type::BareFn(_) => TypeOrVar::Unknown,
-        Type::Group(_) => TypeOrVar::Unknown,
-        Type::ImplTrait(_) => TypeOrVar::Unknown,
-        Type::Infer(_) => TypeOrVar::Unknown,
-        Type::Macro(_) => TypeOrVar::Unknown,
-        Type::Never(_) => TypeOrVar::Unknown,
-        Type::Paren(_) => TypeOrVar::Unknown,
-        Type::Path(_) => TypeOrVar::Unknown,
-        Type::Ptr(_) => TypeOrVar::Unknown,
-        Type::Reference(type_reference) => {
-            let type_ = parse_type(&type_reference.elem);
-            let type_ = match type_ {
-                TypeOrVar::RustType(rust_type) => rust_type,
-                TypeOrVar::Var(_) => {
-                    todo!()
+        Type::Array(_) => todo!(),
+        Type::BareFn(_) => todo!(),
+        Type::Group(_) => todo!(),
+        Type::ImplTrait(_) => todo!(),
+        Type::Infer(_) => todo!(),
+        Type::Macro(_) => todo!(),
+        Type::Never(_) => todo!(),
+        Type::Paren(_) => todo!(),
+        Type::Path(type_path) => {
+            if type_path.path.segments.len() == 1 {
+                match type_path
+                    .path
+                    .segments
+                    .first()
+                    .unwrap()
+                    .ident
+                    .to_string()
+                    .as_str()
+                {
+                    "i32" => FnReturnType::RustType(false, RustType::I32),
+                    other => {
+                        dbg!(other);
+                        todo!()
+                    }
                 }
-                TypeOrVar::Unknown => RustType::Unknown,
-            };
-            TypeOrVar::Var(ScopedVar {
-                name: "donotuse".to_string(),
-                mut_: false,
-                mut_ref: type_reference.mutability.is_some(),
-                type_,
-            })
+            } else {
+                todo!()
+            }
         }
-        Type::Slice(_) => TypeOrVar::Unknown,
-        Type::TraitObject(_) => TypeOrVar::Unknown,
-        Type::Tuple(_) => TypeOrVar::Unknown,
-        Type::Verbatim(_) => TypeOrVar::Unknown,
-        _ => TypeOrVar::Unknown,
+        Type::Ptr(_) => todo!(),
+        Type::Reference(type_reference) => {
+            // let type_ = parse_type(&type_reference.elem);
+            // let type_ = match type_ {
+            //     TypeOrVar::RustType(rust_type) => rust_type,
+            //     TypeOrVar::Unknown => RustType::Unknown,
+            // };
+            // TypeOrVar::Var(ScopedVar {
+            //     name: "donotuse".to_string(),
+            //     mut_: false,
+            //     mut_ref: type_reference.mutability.is_some(),
+            //     type_,
+            // })
+            match parse_fn_input_or_return_type(&type_reference.elem) {
+                FnReturnType::RustType(_, type_) => {
+                    FnReturnType::RustType(type_reference.mutability.is_some(), type_)
+                }
+                FnReturnType::Unknown => todo!(),
+            }
+        }
+        Type::Slice(_) => todo!(),
+        Type::TraitObject(_) => todo!(),
+        Type::Tuple(_) => todo!(),
+        Type::Verbatim(_) => todo!(),
+        _ => todo!(),
     }
 }
 
@@ -420,40 +450,90 @@ fn handle_local(
     //     Mut,
     // ),
 
-    // Check is rhs if &mut and if so remove &mut from expr
-    let (rhs_is_mut_ref, rhs_expr) = match &*local.init.as_ref().unwrap().expr {
-        Expr::Reference(expr_ref) => (expr_ref.mutability.is_some(), *expr_ref.expr.clone()),
-        _ => (false, *local.init.as_ref().unwrap().expr.clone()),
+    // Check if rhs is &mut or * and if so remove &mut or * from expr
+    let (rhs_takes_mut_ref, rhs_is_deref, rhs_expr) = match &*local.init.as_ref().unwrap().expr {
+        Expr::Reference(expr_ref) => (expr_ref.mutability.is_some(), false, *expr_ref.expr.clone()),
+        Expr::Unary(expr_unary) => match expr_unary.op {
+            UnOp::Deref(_) => (false, true, *expr_unary.expr.clone()),
+            _ => (false, false, *local.init.as_ref().unwrap().expr.clone()),
+        },
+        _ => (false, false, *local.init.as_ref().unwrap().expr.clone()),
     };
+
+    let rhs_is_fn_call = match &rhs_expr {
+        Expr::Call(expr_call) => {
+            let fn_name = match &*expr_call.func {
+                Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
+                    expr_path.path.segments.first().unwrap().ident.to_string()
+                }
+                _ => todo!(),
+            };
+            let type_ = global_data.scopes.iter().rev().find_map(|s| {
+                s.1.iter()
+                    .rev()
+                    .find(|f| f.sig.ident.to_string() == fn_name)
+                    .map(|f| match &f.sig.output {
+                        ReturnType::Default => todo!(),
+                        ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
+                    })
+            });
+            // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
+            type_
+        }
+        Expr::If(_) => todo!(),
+        Expr::Lit(_) => None,
+        Expr::Macro(_) => todo!(),
+        Expr::Match(_) => todo!(),
+        Expr::MethodCall(_) => todo!(),
+        Expr::Paren(_) => todo!(),
+        Expr::Path(expr_path) => {
+            // if expr_path.path.segments.len() == 1 {
+            //     global_data.scopes.last().unwrap().0.iter().rev().any(
+            //         |ScopedVar { name, mut_ref, .. }| {
+            //             let lookup_varname =
+            //                 expr_path.path.segments.first().unwrap().ident.to_string();
+            //             *name == lookup_varname && *mut_ref
+            //         },
+            //     )
+            // } else {
+            //     todo!()
+            // }
+            None
+        }
+        Expr::Reference(_) => todo!(),
+        Expr::Unary(_) => todo!(),
+        _ => {
+            dbg!(rhs_expr);
+            todo!()
+        }
+    };
+
     // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
     // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
     // determining types
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
-    let mut rhs = handle_expr(
-        &rhs_expr,
-        global_data,
-        current_module_path,
-    );
+    let mut rhs = handle_expr(&rhs_expr, global_data, current_module_path);
 
     // Add .copy() if rhs is a mut...
     // and rhs is `Copy`
-    let rhs_is_mut = global_data.scopes.last().unwrap().0.iter().rev().find(
-        |ScopedVar { name, mut_, .. }| {
-            *mut_
-                && match &*local.init.as_ref().unwrap().expr {
-                    Expr::Path(expr_path) => {
-                        if expr_path.path.segments.len() == 1 {
-                            expr_path.path.segments.first().unwrap().ident == name
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
+    // dbg!(&lhs);
+    // dbg!(&global_data.scopes);
+    let rhs_is_found_var = global_data.scopes.last().unwrap().0.iter().rev().find(
+        |ScopedVar { name, mut_, .. }| match &rhs_expr {
+            Expr::Path(expr_path) => {
+                if expr_path.path.segments.len() == 1 {
+                    expr_path.path.segments.first().unwrap().ident == name
+                } else {
+                    false
                 }
+            }
+            _ => false,
         },
     );
+
+    // dbg!(&rhs_is_found_var);
 
     // TODO
     // let rhs_is_deref_mut_ref = ...
@@ -462,23 +542,16 @@ fn handle_local(
         Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
         _ => false,
     };
-    let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
-        Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
-        _ => false,
-    };
+    // let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
+    //     Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
+    //     _ => false,
+    // };
 
-    // copy rhs if is mut and is a variable, which is being assigned
-    if let Some(rhs_is_mut) = rhs_is_mut {
-        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-
-    // Also copy if we are assigning *a variable* (not a literal) to a mutable variable (eg the rhs hand side is immutable so we didn't care about copying, but now that it is being assigned to another var, we need to copy to make sure that mutating the new var doesn't update the original var)
-    } else if lhs_is_mut && rhs_is_var {
-        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-    } else if should_copy_expr_unary(&*local.init.as_ref().unwrap().expr, global_data) {
-        rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
-    }
-
-    // Get var info
+    // Get var info: Expr -> TypeOrVar
+    // ie:
+    // Expr::Call -> TypeOrVar::Var(ScopedVar { name: "donotuse".to_string(), mut_: false, mut_ref: type_reference.mutability.is_some(), type_, })
+    // Expr::Lit -> TypeOrVar::RustType
+    // Expr::Path -> TypeOrVar::Var
     let type_or_var = match &rhs_expr {
         Expr::Array(_) => TypeOrVar::Unknown,
         Expr::Assign(_) => TypeOrVar::Unknown,
@@ -508,7 +581,12 @@ fn handle_local(
                                         ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
                                         ReturnType::Type(_, type_) => {
                                             // TODO handle other cases eg a tuple containing &mut
-                                            parse_type(&**type_)
+                                            match parse_fn_input_or_return_type(&**type_) {
+                                                FnReturnType::RustType(_, rust_type) => {
+                                                    TypeOrVar::RustType(rust_type)
+                                                }
+                                                FnReturnType::Unknown => TypeOrVar::Unknown,
+                                            }
                                         }
                                     }
                                 })
@@ -602,33 +680,6 @@ fn handle_local(
     //     _ => {}
     // }
 
-    // Record var info
-    match &local.pat {
-        Pat::Ident(pat_ident) => {
-            let mut scoped_var = ScopedVar {
-                name: pat_ident.ident.to_string(),
-                mut_: pat_ident.mutability.is_some(),
-                // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
-                mut_ref: rhs_is_mut_ref,
-                type_: RustType::Unknown,
-            };
-            match type_or_var {
-                TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
-                TypeOrVar::Var(found_var) => {
-                    scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
-                    scoped_var.type_ = found_var.type_;
-                }
-                TypeOrVar::Unknown => {}
-            };
-
-            // if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
-            //     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
-            // }
-            global_data.scopes.last_mut().unwrap().0.push(scoped_var);
-        }
-        _ => {}
-    }
-
     // match &lhs {
     //     LocalName::Single(var_name) => {
     //         if is_mut_ref || local.init.
@@ -641,9 +692,130 @@ fn handle_local(
 
     // dbg!(&lhs);
     // dbg!(&rhs);
-    // dbg!(&rhs_is_mut_ref);
-    // dbg!(&lhs_is_mut);
-    if rhs_is_mut_ref || lhs_is_mut {
+    // dbg!(&rhs_expr);
+    // dbg!(rhs_is_deref);
+    // dbg!(&rhs_is_fn_call);
+    // dbg!(rhs_is_found_var);
+    // dbg!(rhs_takes_mut_ref);
+    // dbg!(lhs_is_mut);
+
+    if !rhs_is_deref
+        && !rhs_takes_mut_ref
+        && rhs_is_fn_call.is_none()
+        && rhs_is_found_var.is_none()
+        && !lhs_is_mut
+    {
+        // normal primative copy ie `let num = 5; let num2 = num` - do nothing
+    } else if rhs_takes_mut_ref
+        && rhs_is_found_var
+            .map(|v| v.mut_ && !v.mut_ref)
+            .unwrap_or(false)
+        && !rhs_is_deref
+    {
+        // take mut ref of mut var ie `let mut num = 5; let num2 = &mut num` - do nothing
+    } else if rhs_is_deref && rhs_is_found_var.map(|v| v.mut_ref).unwrap_or(false) {
+        if lhs_is_mut {
+            {
+                let num = &mut 5; // or let mut num = &mut 5;
+                let mut copy = *num;
+            }
+            rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+        } else {
+            {
+                let num = &mut 5; // or let mut num = &mut 5;
+                let copy = *num;
+            }
+            rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+        }
+    }
+    // copy rhs if is mut and is a variable, which is being assigned
+    else if rhs_is_found_var
+        .map(|v| v.mut_ && !v.mut_ref)
+        .unwrap_or(false)
+    {
+        if lhs_is_mut {
+            {
+                let mut num = 5;
+                let mut copy = 5;
+            }
+            rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+        } else {
+            {
+                let mut num = 5;
+                let copy = 5;
+            }
+            rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+        }
+        // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
+    } else if let Some(rhs_is_fn_call) = rhs_is_fn_call {
+        if rhs_is_deref {
+            if lhs_is_mut {
+                // let mut copy = *some_fn();
+                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), vec![]);
+            } else {
+                // let copy = *some_fn();
+                rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+            }
+        } else {
+            match rhs_is_fn_call {
+                FnReturnType::RustType(mut_ref, rust_type) => {
+                    match rust_type {
+                        RustType::Unknown => todo!(),
+                        RustType::Unit => todo!(),
+                        RustType::I32 => {
+                            if mut_ref {
+                                // fn returns &mut i32
+                                if rhs_is_deref {
+                                    if lhs_is_mut {
+                                        // let mut copy = *some_fn() -> &mut i32;
+                                        rhs = JsExpr::MethodCall(
+                                            Box::new(rhs),
+                                            "copy".to_string(),
+                                            vec![],
+                                        );
+                                    } else {
+                                        // let copy = *some_fn() -> &mut i32;
+                                        rhs = JsExpr::MethodCall(
+                                            Box::new(rhs),
+                                            "inner".to_string(),
+                                            vec![],
+                                        );
+                                    }
+                                } else {
+                                    // lhs_is_mut is irrelevant
+                                    // let some_ref = some_fn() -> &mut i32;
+                                    // Do nothing because we are just assigning the mut ref to a new variable
+                                }
+                            } else {
+                                // fn returns i32
+                                if lhs_is_mut {
+                                    // let mut copy = some_fn() -> i32;
+                                    global_data.rust_prelude_types.integer = true;
+                                    rhs = JsExpr::New(vec!["RustInteger".to_string()], vec![rhs]);
+                                } else {
+                                    // let copy = some_fn() -> i32;
+                                    // do nothing
+                                }
+                            }
+                        }
+                        RustType::F32 => todo!(),
+                        RustType::Bool => todo!(),
+                        RustType::String => todo!(),
+                        RustType::Struct(_) => todo!(),
+                        RustType::Enum(_) => todo!(),
+                    }
+                }
+                FnReturnType::Unknown => todo!(),
+            }
+        }
+        // Creating a mut/&mut var for a literal eg `let num = &mut 5` or `let mut num = 5;`
+    } else if (rhs_takes_mut_ref || lhs_is_mut) && !rhs_is_deref && rhs_is_found_var.is_none() {
+        {
+            let num = &mut 5;
+            // or
+            let mut num = 5;
+        }
+
         match &rhs_expr {
             Expr::Lit(expr_lit) => match &expr_lit.lit {
                 Lit::Str(lit_str) => {
@@ -674,8 +846,91 @@ fn handle_local(
                 Lit::Verbatim(_) => {}
                 _ => {}
             },
+            // Expr::Path(_) => {
+            //     if let Some(rhs_is_found_var) = rhs_is_found_var {
+            //         if rhs_is_found_var.mut_ || rhs_is_found_var.mut_ref {
+            //             match rhs_is_found_var.type_ {
+
+            //             }
+            //         }
+            //     }
+            // }
             _ => {}
         }
+        // Creating a mut/&mut var for a var eg `let num2 = &mut num` or `let mut num2 = num;`
+    } else if ((lhs_is_mut && rhs_is_found_var.map(|v| !v.mut_ref).unwrap_or(false))
+        || (rhs_takes_mut_ref
+            && rhs_is_found_var
+                .map(|v| v.mut_ && !v.mut_ref)
+                .unwrap_or(false)))
+        && !rhs_is_deref
+    {
+        {
+            let num = 5;
+            let mut copy = num;
+        }
+        {
+            let mut num = 5;
+            let copy = &mut num;
+        }
+        dbg!("hero");
+        match rhs_is_found_var.unwrap().type_ {
+            RustType::Unknown => {}
+            RustType::Unit => {}
+            RustType::I32 => {
+                global_data.rust_prelude_types.integer = true;
+                rhs = JsExpr::New(vec!["RustInteger".to_string()], vec![rhs]);
+            }
+            RustType::F32 => {}
+            RustType::Bool => {
+                global_data.rust_prelude_types.bool = true;
+                rhs = JsExpr::New(vec!["RustBool".to_string()], vec![rhs])
+            }
+            RustType::String => {
+                global_data.rust_prelude_types.string = true;
+                rhs = JsExpr::New(vec!["RustString".to_string()], vec![rhs]);
+            }
+            RustType::Struct(_) => {}
+            RustType::Enum(_) => {}
+        }
+    } else {
+        dbg!(lhs);
+        dbg!(rhs);
+        dbg!(rhs_is_deref);
+        dbg!(rhs_is_fn_call);
+        dbg!(rhs_is_found_var);
+        dbg!(rhs_takes_mut_ref);
+        dbg!(lhs_is_mut);
+        dbg!(&global_data.scopes);
+        todo!()
+    }
+
+    // Record var info
+    match &local.pat {
+        Pat::Ident(pat_ident) => {
+            let mut scoped_var = ScopedVar {
+                name: pat_ident.ident.to_string(),
+                mut_: pat_ident.mutability.is_some(),
+                // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
+                mut_ref: rhs_takes_mut_ref
+                    || (rhs_is_found_var.map(|var| var.mut_ref).unwrap_or(false) && !rhs_is_deref),
+                type_: RustType::Unknown,
+            };
+            match type_or_var {
+                TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
+                TypeOrVar::Var(found_var) => {
+                    scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
+                    scoped_var.type_ = found_var.type_;
+                }
+                TypeOrVar::Unknown => {}
+            };
+
+            // if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
+            //     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
+            // }
+            global_data.scopes.last_mut().unwrap().0.push(scoped_var);
+        }
+        _ => {}
     }
 
     match rhs {
@@ -709,11 +964,11 @@ fn handle_stmt(
 ) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
-            //
             let mut js_expr = handle_expr(expr, global_data, current_module_path);
-            if should_copy_expr_unary(expr, global_data) {
-                js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
-            }
+            // copying etc should be handled in handle_expr, not here?
+            // if should_copy_expr_unary(expr, global_data) {
+            //     js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
+            // }
 
             JsStmt::Expr(js_expr, closing_semi.is_some())
         }
@@ -811,10 +1066,10 @@ fn handle_item_fn(
             FnArg::Receiver(_) => {}
             FnArg::Typed(pat_type) => match &*pat_type.pat {
                 Pat::Ident(pat_ident) => {
-                    let mut_ref = match &*pat_type.ty {
-                        Type::Reference(type_reference) => type_reference.mutability.is_some(),
-                        _ => false,
-                    };
+                    // let mut_ref = match &*pat_type.ty {
+                    //     Type::Reference(type_reference) => type_reference.mutability.is_some(),
+                    //     _ => false,
+                    // };
 
                     // if pat_ident.mutability.is_some() || mut_ref {
                     //     global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
@@ -827,31 +1082,63 @@ fn handle_item_fn(
                     let mut scoped_var = ScopedVar {
                         name: pat_ident.ident.to_string(),
                         mut_: pat_ident.mutability.is_some(),
-                        mut_ref,
+                        mut_ref: false,
                         type_: RustType::Unknown,
                     };
-                    match parse_type(&*pat_type.ty) {
-                        TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
-                        TypeOrVar::Var(found_var) => {
-                            scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
-                            scoped_var.type_ = found_var.type_;
+                    let input_type = parse_fn_input_or_return_type(&*pat_type.ty);
+                    match &input_type {
+                        // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
+                        // TypeOrVar::Var(found_var) => {
+                        //     scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
+                        //     scoped_var.type_ = found_var.type_;
+                        // }
+                        // TypeOrVar::Unknown => {}
+                        FnReturnType::RustType(mut_ref, rust_type) => {
+                            scoped_var.mut_ref = *mut_ref;
+                            scoped_var.type_ = rust_type.clone();
                         }
-                        TypeOrVar::Unknown => {}
+                        FnReturnType::Unknown => {}
                     }
+                    // record add var to scope
                     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
 
-                    // record var name if mut or &mut
+                    // and input like `mut num: i32` must be converted to `RustInteger`
                     if pat_ident.mutability.is_some() {
                         copy_stmts.push(JsStmt::Local(JsLocal {
                             public: false,
                             export: false,
                             type_: LocalType::Var,
                             lhs: LocalName::Single(pat_ident.ident.to_string()),
-                            value: JsExpr::MethodCall(
-                                Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
-                                "copy".to_string(),
-                                Vec::new(),
-                            ),
+                            // value: JsExpr::MethodCall(
+                            //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
+                            //     "copy".to_string(),
+                            //     Vec::new(),
+                            // ),
+                            value: match &input_type {
+                                FnReturnType::RustType(_, rust_type) => match rust_type {
+                                    RustType::Unknown => todo!(),
+                                    RustType::Unit => todo!(),
+                                    RustType::I32 => {
+                                        global_data.rust_prelude_types.integer = true;
+                                        JsExpr::New(
+                                            vec!["RustInteger".to_string()],
+                                            vec![JsExpr::MethodCall(
+                                                Box::new(JsExpr::Path(vec![pat_ident
+                                                    .ident
+                                                    .to_string()])),
+                                                "inner".to_string(),
+                                                Vec::new(),
+                                            )],
+                                        )
+                                    }
+                                    RustType::F32 => todo!(),
+                                    RustType::Bool => todo!(),
+                                    RustType::String => todo!(),
+                                    RustType::Struct(_) => todo!(),
+                                    RustType::Enum(_) => todo!(),
+                                },
+                                FnReturnType::Unknown => todo!(),
+                            },
                         }))
                     }
                 }
@@ -863,13 +1150,22 @@ fn handle_item_fn(
     let stmt = if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
-        copy_stmts.extend(
-            item_fn
-                .block
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module)),
+        // If we are returning a type which is *not* &mut, then we need to `.copy()` or `.inner()` if the value being returned is mut (if the value is &mut, the compiler will have ensured there is a deref, so we will have already added a `.copy()` or `.inner()`).
+        let returns_non_mut_ref_val = match &item_fn.sig.output {
+            ReturnType::Default => false,
+            ReturnType::Type(_, type_) => match &**type_ {
+                Type::Reference(_) => false,
+                _ => true,
+            },
+        };
+        // dbg!(&item_fn.block.stmts);
+        let body_stmts = parse_fn_body_stmts(
+            returns_non_mut_ref_val,
+            &item_fn.block.stmts,
+            global_data,
+            current_module,
         );
+        copy_stmts.extend(body_stmts);
         let iife = item_fn.sig.ident == "main";
         let js_fn = JsFn {
             iife,
@@ -1256,8 +1552,19 @@ fn handle_item_impl(
                         .into_iter()
                         .map(|stmt| stmt)
                         .collect::<Vec<_>>();
-                    let body_stmts =
-                        parse_fn_body_stmts(&body_stmts, global_data, current_module_path);
+                    let returns_non_mut_ref_val = match &item_impl_fn.sig.output {
+                        ReturnType::Default => false,
+                        ReturnType::Type(_, type_) => match &**type_ {
+                            Type::Reference(_) => false,
+                            _ => true,
+                        },
+                    };
+                    let body_stmts = parse_fn_body_stmts(
+                        returns_non_mut_ref_val,
+                        &body_stmts,
+                        global_data,
+                        current_module_path,
+                    );
                     Some(body_stmts)
                 };
                 if let Some(body_stmts) = body_stmts {
@@ -3318,8 +3625,9 @@ impl JsFn {
         let body_stmts = self
             .body_stmts
             .iter()
-            .enumerate()
-            .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, self.body_stmts.len()))
+            // .enumerate()
+            // .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, self.body_stmts.len()))
+            .map(|stmt| stmt.js_string())
             .collect::<Vec<_>>()
             .join("\n");
         let fn_string = format!(
@@ -3530,6 +3838,7 @@ impl JsStmt {
 }
 
 fn parse_fn_body_stmts(
+    returns_non_mut_ref_val: bool,
     stmts: &Vec<Stmt>,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
@@ -3593,7 +3902,96 @@ fn parse_fn_body_stmts(
                                 )
                             }
                         }
-                        _ => handle_stmt(stmt, global_data, current_module),
+                        Expr::Path(expr_path)
+                            if returns_non_mut_ref_val
+                                && expr_path.path.segments.len() == 1
+                                && semi.is_none() =>
+                        {
+                            let var_name =
+                                expr_path.path.segments.first().unwrap().ident.to_string();
+                            let var_info = global_data
+                                .scopes
+                                .iter()
+                                .rev()
+                                .find_map(|s| s.0.iter().rev().find(|v| v.name == var_name))
+                                .unwrap();
+                            let mut js_var = JsExpr::Path(vec![var_name]);
+                            if var_info.mut_ {
+                                js_var = JsExpr::MethodCall(
+                                    Box::new(js_var),
+                                    "inner".to_string(),
+                                    vec![],
+                                )
+                            }
+                            JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                        }
+                        Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
+                            // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
+                            // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
+                            match &*expr_unary.expr {
+                                Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
+                                    let var_name =
+                                        expr_path.path.segments.first().unwrap().ident.to_string();
+                                    let mut js_var = JsExpr::Path(vec![var_name.clone()]);
+
+                                    let var_info = global_data
+                                        .scopes
+                                        .iter()
+                                        .rev()
+                                        .find_map(|s| s.0.iter().rev().find(|v| v.name == var_name))
+                                        .unwrap();
+                                    dbg!(&var_info);
+
+                                    match var_info.type_ {
+                                        RustType::Unknown => todo!(),
+                                        RustType::Unit => todo!(),
+                                        RustType::I32
+                                        | RustType::F32
+                                        | RustType::Bool
+                                        | RustType::String => {
+                                            js_var = JsExpr::MethodCall(
+                                                Box::new(js_var),
+                                                "inner".to_string(),
+                                                vec![],
+                                            )
+                                        }
+                                        RustType::Struct(_) | RustType::Enum(_) => {
+                                            js_var = JsExpr::MethodCall(
+                                                Box::new(js_var),
+                                                "copy".to_string(),
+                                                vec![],
+                                            )
+                                        }
+                                    }
+
+                                    JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                                }
+                                other => {
+                                    dbg!(other);
+                                    todo!()
+                                }
+                            }
+                        }
+                        _ => {
+                            if semi.is_some() {
+                                handle_stmt(stmt, global_data, current_module)
+                            } else {
+                                match &expr {
+                                    Expr::Unary(_) => {
+                                        dbg!(expr);
+                                    }
+                                    _ => {}
+                                }
+                                JsStmt::Expr(
+                                    JsExpr::Return(Box::new(handle_expr(
+                                        expr,
+                                        global_data,
+                                        current_module,
+                                    ))),
+                                    true,
+                                )
+                            }
+                        }
                     },
                     _ => handle_stmt(stmt, global_data, current_module),
                 }
@@ -3602,60 +4000,6 @@ fn parse_fn_body_stmts(
             }
         })
         .collect::<Vec<_>>()
-}
-
-/// Like handle_expr() but will wrap the result in a `.copy()` if a Expr::Unary for certain cases
-///
-/// TODO why
-fn should_copy_expr_unary(expr: &Expr, global_data: &GlobalData) -> bool {
-    // NOTE be careful not to call handle_expr() for any expression that might be Expr::Unary to avoid an infinite loop
-    match expr {
-        Expr::Unary(expr_unary) => {
-            // let copy_stmt = JsStmt::Expr(
-            //     JsExpr::MethodCall(
-            //         Box::new(handle_expr(
-            //             &*expr_unary.expr,
-            //             global_data,
-            //             current_module,
-            //         )),
-            //         "copy".to_string(),
-            //         Vec::new(),
-            //     ),
-            //     false,
-            // );
-            match expr_unary.op {
-                UnOp::Deref(_) => match &*expr_unary.expr {
-                    Expr::Call(expr_call) => {
-                        // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
-                        true
-                    }
-                    Expr::If(_) => todo!(),
-                    Expr::Macro(_) => todo!(),
-                    Expr::Match(_) => todo!(),
-                    Expr::MethodCall(_) => todo!(),
-                    Expr::Paren(_) => todo!(),
-                    Expr::Path(expr_path) => {
-                        if expr_path.path.segments.len() == 1 {
-                            global_data.scopes.last().unwrap().0.iter().rev().any(
-                                |ScopedVar { name, mut_ref, .. }| {
-                                    let lookup_varname =
-                                        expr_path.path.segments.first().unwrap().ident.to_string();
-                                    *name == lookup_varname && *mut_ref
-                                },
-                            )
-                        } else {
-                            todo!()
-                        }
-                    }
-                    Expr::Reference(_) => todo!(),
-                    Expr::Unary(_) => todo!(),
-                    _ => todo!(),
-                },
-                _ => todo!(),
-            }
-        }
-        _ => false,
-    }
 }
 
 // TODO might want to split this up so that in some cases we can return JsStmt and JsExpr in others
@@ -3827,6 +4171,353 @@ fn handle_expr_and_stmt_macro(
     todo!()
 }
 
+fn handle_expr_assign(
+    expr_assign: &ExprAssign,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> JsExpr {
+    let mut lhs = handle_expr(&*expr_assign.left, global_data, current_module);
+    let mut rhs = handle_expr(&*expr_assign.right, global_data, current_module);
+
+    let (rhs_takes_mut_ref, rhs_is_deref, rhs_expr) = match &*expr_assign.right {
+        Expr::Reference(expr_ref) => (expr_ref.mutability.is_some(), false, *expr_ref.expr.clone()),
+        Expr::Unary(expr_unary) => match expr_unary.op {
+            UnOp::Deref(_) => (false, true, *expr_unary.expr.clone()),
+            _ => (false, false, *expr_assign.right.clone()),
+        },
+        _ => (false, false, *expr_assign.right.clone()),
+    };
+
+    let rhs_is_fn_call = match &rhs_expr {
+        Expr::Call(expr_call) => {
+            // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
+            true
+        }
+        Expr::If(_) => todo!(),
+        Expr::Macro(_) => todo!(),
+        Expr::Match(_) => todo!(),
+        Expr::MethodCall(_) => todo!(),
+        Expr::Paren(_) => todo!(),
+        Expr::Path(expr_path) => {
+            // if expr_path.path.segments.len() == 1 {
+            //     global_data.scopes.last().unwrap().0.iter().rev().any(
+            //         |ScopedVar { name, mut_ref, .. }| {
+            //             let lookup_varname =
+            //                 expr_path.path.segments.first().unwrap().ident.to_string();
+            //             *name == lookup_varname && *mut_ref
+            //         },
+            //     )
+            // } else {
+            //     todo!()
+            // }
+            false
+        }
+        Expr::Reference(_) => todo!(),
+        Expr::Unary(_) => todo!(),
+        _ => todo!(),
+    };
+
+    // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
+    // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
+    // determining types
+    // easy: fn calls, method calls, fields,
+    // hard: if expression, parens, block, if let, match, method call
+
+    let mut rhs = handle_expr(&rhs_expr, global_data, current_module);
+
+    // Add .copy() if rhs is a mut...
+    // and rhs is `Copy`
+    dbg!(&lhs);
+    dbg!(&global_data.scopes);
+    let rhs_is_found_var = global_data.scopes.last().unwrap().0.iter().rev().find(
+        |ScopedVar { name, mut_, .. }| match &rhs_expr {
+            Expr::Path(expr_path) => {
+                if expr_path.path.segments.len() == 1 {
+                    expr_path.path.segments.first().unwrap().ident == name
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        },
+    );
+
+    dbg!(&rhs_is_found_var);
+
+    // TODO
+    // let rhs_is_deref_mut_ref = ...
+
+    // let lhs_is_mut = match &local.pat {
+    //     Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+    //     _ => false,
+    // };
+    // let rhs_is_var = match &*local.init.as_ref().unwrap().expr {
+    //     Expr::Path(expr_path) => expr_path.path.segments.len() == 1,
+    //     _ => false,
+    // };
+
+    // Get var info
+    let type_or_var = match &rhs_expr {
+        Expr::Array(_) => TypeOrVar::Unknown,
+        Expr::Assign(_) => TypeOrVar::Unknown,
+        Expr::Async(_) => TypeOrVar::Unknown,
+        Expr::Await(_) => TypeOrVar::Unknown,
+        Expr::Binary(_) => TypeOrVar::Unknown,
+        Expr::Block(_) => TypeOrVar::Unknown,
+        Expr::Break(_) => TypeOrVar::Unknown,
+        Expr::Call(expr_call) => {
+            match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    if expr_path.path.segments.len() == 1 {
+                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
+                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        global_data
+                            .scopes
+                            .iter()
+                            .rev()
+                            .find_map(|(vars, item_fns)| {
+                                let item_fn = item_fns
+                                    .iter()
+                                    .rev()
+                                    .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
+                                item_fn.map(|item_fn| {
+                                    // We found a fn so try and parse it's return type
+                                    match &item_fn.sig.output {
+                                        ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
+                                        ReturnType::Type(_, type_) => {
+                                            // TODO handle other cases eg a tuple containing &mut
+                                            match parse_fn_input_or_return_type(&**type_) {
+                                                FnReturnType::RustType(_, rust_type) => {
+                                                    TypeOrVar::RustType(rust_type)
+                                                }
+                                                FnReturnType::Unknown => TypeOrVar::Unknown,
+                                            }
+                                        }
+                                    }
+                                })
+                            })
+                            .unwrap_or(TypeOrVar::Unknown)
+                    } else {
+                        TypeOrVar::Unknown
+                    }
+                }
+                _ => TypeOrVar::Unknown,
+            }
+        }
+        Expr::Cast(_) => TypeOrVar::Unknown,
+        Expr::Closure(_) => TypeOrVar::Unknown,
+        Expr::Const(_) => TypeOrVar::Unknown,
+        Expr::Continue(_) => TypeOrVar::Unknown,
+        Expr::Field(_) => TypeOrVar::Unknown,
+        Expr::ForLoop(_) => TypeOrVar::Unknown,
+        Expr::Group(_) => TypeOrVar::Unknown,
+        Expr::If(_) => TypeOrVar::Unknown,
+        Expr::Index(_) => TypeOrVar::Unknown,
+        Expr::Infer(_) => TypeOrVar::Unknown,
+        Expr::Let(_) => TypeOrVar::Unknown,
+        Expr::Lit(expr_lit) => {
+            match expr_lit.lit {
+                Lit::Str(_) => TypeOrVar::RustType(RustType::String),
+                Lit::ByteStr(_) => TypeOrVar::Unknown,
+                Lit::Byte(_) => TypeOrVar::Unknown,
+                Lit::Char(_) => TypeOrVar::Unknown,
+                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
+                Lit::Int(_) => TypeOrVar::RustType(RustType::I32),
+                Lit::Float(_) => TypeOrVar::RustType(RustType::F32),
+                Lit::Bool(_) => TypeOrVar::RustType(RustType::Bool),
+                Lit::Verbatim(_) => TypeOrVar::Unknown,
+                _ => TypeOrVar::Unknown,
+            }
+        }
+        Expr::Loop(_) => TypeOrVar::Unknown,
+        Expr::Macro(_) => TypeOrVar::Unknown,
+        Expr::Match(_) => TypeOrVar::Unknown,
+        Expr::MethodCall(_) => TypeOrVar::Unknown,
+        Expr::Paren(_) => TypeOrVar::Unknown,
+        Expr::Path(expr_path) => {
+            if expr_path.path.segments.len() == 1 {
+                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
+                    vars.iter().rev().find(|var| {
+                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        var.name == name
+                    })
+                }) {
+                    TypeOrVar::Var(var.clone())
+                } else {
+                    TypeOrVar::Unknown
+                }
+            } else {
+                TypeOrVar::Unknown
+            }
+        }
+        Expr::Range(_) => TypeOrVar::Unknown,
+        Expr::Reference(_) => TypeOrVar::Unknown,
+        Expr::Repeat(_) => TypeOrVar::Unknown,
+        Expr::Return(_) => TypeOrVar::Unknown,
+        Expr::Struct(_) => TypeOrVar::Unknown,
+        Expr::Try(_) => TypeOrVar::Unknown,
+        Expr::TryBlock(_) => TypeOrVar::Unknown,
+        Expr::Tuple(_) => TypeOrVar::Unknown,
+        Expr::Unary(_) => TypeOrVar::Unknown,
+        Expr::Unsafe(_) => TypeOrVar::Unknown,
+        Expr::Verbatim(_) => TypeOrVar::Unknown,
+        Expr::While(_) => TypeOrVar::Unknown,
+        Expr::Yield(_) => TypeOrVar::Unknown,
+        _ => TypeOrVar::Unknown,
+    };
+
+    // rhs is a fn call that returns a &mut
+    // TODO only handles fns defined in scope, not at top level
+    // let fn_call_mut_ref = match &*local.init.as_ref().unwrap().expr {};
+
+    // Record name if creating a mut or &mut variable
+    // match &local.pat {
+    //     Pat::Ident(pat_ident) => {
+    //         if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
+    //             global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
+    //                 name: pat_ident.ident.to_string(),
+    //                 mut_: pat_ident.mutability.is_some(),
+    //                 mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
+    //                 type_: rust_type,
+    //             });
+    //         }
+    //     }
+    //     _ => {}
+    // }
+
+    // match &lhs {
+    //     LocalName::Single(var_name) => {
+    //         if is_mut_ref || local.init.
+    //         global_data.vars_in_scope.push((var_name, ))
+    //     },
+    //     // TODO handle_pat needs to capture whether destructured variables are mut
+    //     LocalName::DestructureObject(_) => {}
+    //     LocalName::DestructureArray(_) => {}
+    // }
+
+    // dbg!(&lhs);
+    // dbg!(&rhs);
+    // dbg!(&rhs_is_mut_ref);
+    dbg!(&rhs_expr);
+
+    if rhs_is_deref && rhs_is_found_var.map(|v| v.mut_ref).unwrap_or(false) {
+        {
+            let num = &mut 5; // or let mut num = &mut 5;
+            let mut copy = 5;
+            copy = *num;
+            // TODO handle:
+            let five = &mut &mut 5;
+            let mut copy = &mut 5;
+            copy = *five;
+        }
+        rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+    }
+    // copy rhs if is mut and is a variable, which is being assigned
+    else if rhs_is_found_var
+        .map(|v| v.mut_ && !v.mut_ref)
+        .unwrap_or(false)
+    {
+        // NOTE if !v.mut_ then we just have `var num = 5; copy = num;` which behaves as expected and doesn't need any wrapper
+        {
+            let mut num = 5;
+            let mut copy = 5;
+            copy = num;
+        }
+        rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+    } else if rhs_is_deref && rhs_is_fn_call {
+        // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
+        // copy = *some_fn();
+        rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
+    } else if rhs_takes_mut_ref {
+        {
+            let mut num = &mut 0;
+            let mut orig = 5;
+
+            num = &mut 5;
+            // or
+            num = &mut orig;
+        }
+        // TODO handle rhs not being a var or literal, eg fn call etc
+        if let Some(rhs_is_found_var) = rhs_is_found_var {
+            match rhs_is_found_var.type_ {
+                RustType::Unknown => {}
+                RustType::Unit => {}
+                RustType::I32 => {
+                    global_data.rust_prelude_types.integer = true;
+                    rhs = JsExpr::New(vec!["RustInteger".to_string()], vec![rhs]);
+                }
+                RustType::F32 => todo!(),
+                RustType::Bool => {
+                    global_data.rust_prelude_types.bool = true;
+                    rhs = JsExpr::New(vec!["RustBool".to_string()], vec![rhs])
+                }
+                RustType::String => {
+                    global_data.rust_prelude_types.string = true;
+                    rhs = JsExpr::New(vec!["RustString".to_string()], vec![rhs]);
+                }
+                RustType::Struct(_) => {}
+                RustType::Enum(_) => {}
+            }
+        } else {
+            match &rhs_expr {
+                Expr::Lit(expr_lit) => match &expr_lit.lit {
+                    Lit::Str(lit_str) => {
+                        global_data.rust_prelude_types.string = true;
+                        rhs = JsExpr::New(
+                            vec!["RustString".to_string()],
+                            vec![JsExpr::LitStr(lit_str.value())],
+                        );
+                    }
+                    Lit::ByteStr(_) => {}
+                    Lit::Byte(_) => {}
+                    Lit::Char(_) => {}
+                    Lit::Int(lit_int) => {
+                        global_data.rust_prelude_types.integer = true;
+                        rhs = JsExpr::New(
+                            vec!["RustInteger".to_string()],
+                            vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
+                        );
+                    }
+                    Lit::Float(_) => {}
+                    Lit::Bool(lit_bool) => {
+                        global_data.rust_prelude_types.bool = true;
+                        rhs = JsExpr::New(
+                            vec!["RustBool".to_string()],
+                            vec![JsExpr::LitBool(lit_bool.value)],
+                        )
+                    }
+                    Lit::Verbatim(_) => {}
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    } else {
+        todo!()
+    }
+
+    // TODO check *lhs as part of the above control flow
+    // Check if lhs is a deref, in which case replace assignment with `.derefAssign()`
+    match &*expr_assign.left {
+        Expr::Unary(expr_unary) => match &expr_unary.op {
+            UnOp::Deref(_) => {
+                return JsExpr::MethodCall(
+                    Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+                    "derefAssign".to_string(),
+                    vec![rhs],
+                );
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+
+    JsExpr::Assignment(
+        Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+        Box::new(rhs),
+    )
+}
+
 fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsExpr {
     match expr {
         Expr::Array(expr_array) => JsExpr::Array(
@@ -3836,32 +4527,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 .map(|elem| handle_expr(elem, global_data, current_module))
                 .collect::<Vec<_>>(),
         ),
-        Expr::Assign(expr_assign) => {
-            let mut rhs = handle_expr(&*expr_assign.right, global_data, current_module);
-            if should_copy_expr_unary(&*expr_assign.right, global_data) {
-                rhs = JsExpr::MethodCall(Box::new(rhs), "copy".to_string(), Vec::new());
-            }
-
-            // Check if lhs is a deref, in which case replace assignment with `.derefAssign()`
-            match &*expr_assign.left {
-                Expr::Unary(expr_unary) => match &expr_unary.op {
-                    UnOp::Deref(_) => {
-                        return JsExpr::MethodCall(
-                            Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
-                            "derefAssign".to_string(),
-                            vec![rhs],
-                        );
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-
-            JsExpr::Assignment(
-                Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
-                Box::new(rhs),
-            )
-        }
+        Expr::Assign(expr_assign) => handle_expr_assign(expr_assign, global_data, current_module),
         Expr::Async(_) => todo!(),
         Expr::Await(expr_await) => JsExpr::Await(Box::new(handle_expr(
             &*expr_await.base,
@@ -4139,10 +4805,10 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
 
             let body = match &*expr_closure.body {
                 Expr::Block(expr_block) => {
-                    parse_fn_body_stmts(&expr_block.block.stmts, global_data, current_module)
+                    parse_fn_body_stmts(false, &expr_block.block.stmts, global_data, current_module)
                 }
                 Expr::Async(expr_async) => {
-                    parse_fn_body_stmts(&expr_async.block.stmts, global_data, current_module)
+                    parse_fn_body_stmts(false, &expr_async.block.stmts, global_data, current_module)
                 }
                 Expr::Match(expr_match) => {
                     vec![JsStmt::Expr(

@@ -144,14 +144,14 @@ async fn impl_in_fn_scope() {
     let expected = r#"
     class Cool {
         whatever() {
-            return new RustInteger(5);
+            return 5;
         }
     }
-    if (new RustBool(false).jsBoolean) {
+    if (false) {
         function inner() {}
     }
     var cool = new Cool();
-    console.assert(cool.whatever().eq(new RustInteger(5)).jsBoolean);
+    console.assert(cool.whatever().eq(5));
     "#;
     assert_eq!(format_js(expected), actual);
 }
@@ -185,14 +185,14 @@ async fn tuple_struct() {
                 return this[0];
             }
             otherNumber() {
-                return new RustInteger(4);
+                return 4;
             }
         }
         
-        var cool = new Cool(new RustInteger(5));
-        console.assert(cool[0].eq(new RustInteger(5)).jsBoolean);
-        console.assert(cool.getInner().eq(new RustInteger(5)).jsBoolean);
-        console.assert(cool.otherNumber().eq(new RustInteger(4)).jsBoolean);
+        var cool = new Cool(5);
+        console.assert(cool[0].eq(5));
+        console.assert(cool.getInner().eq(5));
+        console.assert(cool.otherNumber().eq(4));
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -250,10 +250,10 @@ async fn tuple_struct_multiple_fields() {
         }
 
         var cool = new Cool(new RustInteger(5), new RustString("hi").toString(), new RustBool(true), new RustInteger(4));
-        console.assert(cool[0].eq(new RustInteger(5)).jsBoolean);
-        console.assert(cool[1].eq(new RustString("hi").toString()).jsBoolean);
-        console.assert(cool[2].eq(new RustBool(true)).jsBoolean);
-        console.assert(cool[3].eq(new RustInteger(4)).jsBoolean);
+        console.assert(cool[0].eq(5));
+        console.assert(cool[1].eq("hi"));
+        console.assert(cool[2].eq(true));
+        console.assert(cool[3].eq(4));
         "#
     );
     assert_eq!(format_js(expected), actual);
