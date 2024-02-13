@@ -530,8 +530,11 @@ async fn fn_call_return_mut_ref_to_copy() {
     });
 
     let expected = format_js(concat!(
+        include_str!("string_prototype_extensions.js"),
+        "\n",
+        include_str!("number_prototype_extensions.js"),
+        "\n",
         include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"var origNum = new RustInteger(0);
         function mutRefDoNothing(num) {
             return num;

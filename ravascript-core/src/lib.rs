@@ -370,13 +370,13 @@ enum TypeOrVar {
     Var(ScopedVar),
     Unknown,
 }
-#[derive(Clone, Debug)]
-enum FnReturnType {
-    /// (&mut , Type)
-    RustType(bool, RustType),
-    Unknown,
-}
-fn parse_fn_input_or_return_type(type_: &Type) -> FnReturnType {
+// #[derive(Clone, Debug)]
+// enum FnReturnType {
+//     /// (&mut , Type)
+//     RustType(bool, RustType),
+//     Unknown,
+// }
+fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
@@ -397,7 +397,7 @@ fn parse_fn_input_or_return_type(type_: &Type) -> FnReturnType {
                     .to_string()
                     .as_str()
                 {
-                    "i32" => FnReturnType::RustType(false, RustType::I32),
+                    "i32" => RustType::I32,
                     other => {
                         dbg!(other);
                         todo!()
@@ -420,12 +420,11 @@ fn parse_fn_input_or_return_type(type_: &Type) -> FnReturnType {
             //     mut_ref: type_reference.mutability.is_some(),
             //     type_,
             // })
-            match parse_fn_input_or_return_type(&type_reference.elem) {
-                FnReturnType::RustType(_, type_) => {
-                    FnReturnType::RustType(type_reference.mutability.is_some(), type_)
-                }
-                FnReturnType::Unknown => todo!(),
+            let mut type_ = parse_fn_input_or_return_type(&type_reference.elem);
+            if type_reference.mutability.is_some() {
+                type_ = RustType::MutRef(Box::new(type_));
             }
+            type_
         }
         Type::Slice(_) => todo!(),
         Type::TraitObject(_) => todo!(),
@@ -514,7 +513,7 @@ fn handle_local(
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
-    let mut rhs = handle_expr(&rhs_expr, global_data, current_module_path);
+    let (mut rhs, rhs_type) = handle_expr(&rhs_expr, global_data, current_module_path);
 
     // Add .copy() if rhs is a mut...
     // and rhs is `Copy`
@@ -581,12 +580,9 @@ fn handle_local(
                                         ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
                                         ReturnType::Type(_, type_) => {
                                             // TODO handle other cases eg a tuple containing &mut
-                                            match parse_fn_input_or_return_type(&**type_) {
-                                                FnReturnType::RustType(_, rust_type) => {
-                                                    TypeOrVar::RustType(rust_type)
-                                                }
-                                                FnReturnType::Unknown => TypeOrVar::Unknown,
-                                            }
+                                            TypeOrVar::RustType(parse_fn_input_or_return_type(
+                                                &**type_,
+                                            ))
                                         }
                                     }
                                 })
@@ -758,44 +754,59 @@ fn handle_local(
             }
         } else {
             match rhs_is_fn_call {
-                FnReturnType::RustType(mut_ref, rust_type) => {
-                    match rust_type {
+                RustType::Todo => todo!(),
+                RustType::Unit => todo!(),
+                RustType::I32 => {
+                    // fn returns i32
+                    if lhs_is_mut {
+                        // let mut copy = some_fn() -> i32;
+                        global_data.rust_prelude_types.integer = true;
+                        rhs = JsExpr::New(vec!["RustInteger".to_string()], vec![rhs]);
+                    } else {
+                        // let copy = some_fn() -> i32;
+                        // do nothing
+                    }
+                }
+                RustType::F32 => todo!(),
+                RustType::Bool => todo!(),
+                RustType::String => todo!(),
+                RustType::Struct(_) => todo!(),
+                RustType::Enum(_) => todo!(),
+                RustType::NotAllowed => todo!(),
+                RustType::Unknown => todo!(),
+                RustType::Never => todo!(),
+                RustType::Vec(_) => todo!(),
+                RustType::Array(_) => todo!(),
+                RustType::Tuple(_) => todo!(),
+                RustType::MutRef(rust_type) => {
+                    match &*rust_type {
+                        RustType::NotAllowed => todo!(),
                         RustType::Unknown => todo!(),
+                        RustType::Todo => todo!(),
                         RustType::Unit => todo!(),
+                        RustType::Never => todo!(),
                         RustType::I32 => {
-                            if mut_ref {
-                                // fn returns &mut i32
-                                if rhs_is_deref {
-                                    if lhs_is_mut {
-                                        // let mut copy = *some_fn() -> &mut i32;
-                                        rhs = JsExpr::MethodCall(
-                                            Box::new(rhs),
-                                            "copy".to_string(),
-                                            vec![],
-                                        );
-                                    } else {
-                                        // let copy = *some_fn() -> &mut i32;
-                                        rhs = JsExpr::MethodCall(
-                                            Box::new(rhs),
-                                            "inner".to_string(),
-                                            vec![],
-                                        );
-                                    }
+                            // fn returns &mut i32
+                            if rhs_is_deref {
+                                if lhs_is_mut {
+                                    // let mut copy = *some_fn() -> &mut i32;
+                                    rhs = JsExpr::MethodCall(
+                                        Box::new(rhs),
+                                        "copy".to_string(),
+                                        vec![],
+                                    );
                                 } else {
-                                    // lhs_is_mut is irrelevant
-                                    // let some_ref = some_fn() -> &mut i32;
-                                    // Do nothing because we are just assigning the mut ref to a new variable
+                                    // let copy = *some_fn() -> &mut i32;
+                                    rhs = JsExpr::MethodCall(
+                                        Box::new(rhs),
+                                        "inner".to_string(),
+                                        vec![],
+                                    );
                                 }
                             } else {
-                                // fn returns i32
-                                if lhs_is_mut {
-                                    // let mut copy = some_fn() -> i32;
-                                    global_data.rust_prelude_types.integer = true;
-                                    rhs = JsExpr::New(vec!["RustInteger".to_string()], vec![rhs]);
-                                } else {
-                                    // let copy = some_fn() -> i32;
-                                    // do nothing
-                                }
+                                // lhs_is_mut is irrelevant
+                                // let some_ref = some_fn() -> &mut i32;
+                                // Do nothing because we are just assigning the mut ref to a new variable
                             }
                         }
                         RustType::F32 => todo!(),
@@ -803,9 +814,12 @@ fn handle_local(
                         RustType::String => todo!(),
                         RustType::Struct(_) => todo!(),
                         RustType::Enum(_) => todo!(),
+                        RustType::Vec(_) => todo!(),
+                        RustType::Array(_) => todo!(),
+                        RustType::Tuple(_) => todo!(),
+                        RustType::MutRef(_) => todo!(),
                     }
                 }
-                FnReturnType::Unknown => todo!(),
             }
         }
         // Creating a mut/&mut var for a literal eg `let num = &mut 5` or `let mut num = 5;`
@@ -875,7 +889,7 @@ fn handle_local(
         }
         dbg!("hero");
         match rhs_is_found_var.unwrap().type_ {
-            RustType::Unknown => {}
+            RustType::Todo => {}
             RustType::Unit => {}
             RustType::I32 => {
                 global_data.rust_prelude_types.integer = true;
@@ -892,6 +906,13 @@ fn handle_local(
             }
             RustType::Struct(_) => {}
             RustType::Enum(_) => {}
+            RustType::NotAllowed => {}
+            RustType::Unknown => {}
+            RustType::Never => {}
+            RustType::Vec(_) => {}
+            RustType::Array(_) => {}
+            RustType::Tuple(_) => {}
+            RustType::MutRef(_) => {}
         }
     } else {
         dbg!(lhs);
@@ -914,7 +935,7 @@ fn handle_local(
                 // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
                 mut_ref: rhs_takes_mut_ref
                     || (rhs_is_found_var.map(|var| var.mut_ref).unwrap_or(false) && !rhs_is_deref),
-                type_: RustType::Unknown,
+                type_: RustType::Todo,
             };
             match type_or_var {
                 TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
@@ -964,7 +985,7 @@ fn handle_stmt(
 ) -> JsStmt {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
-            let mut js_expr = handle_expr(expr, global_data, current_module_path);
+            let (mut js_expr, _type) = handle_expr(expr, global_data, current_module_path);
             // copying etc should be handled in handle_expr, not here?
             // if should_copy_expr_unary(expr, global_data) {
             //     js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
@@ -1006,7 +1027,7 @@ fn handle_stmt(
             _ => todo!(),
         },
         Stmt::Macro(stmt_macro) => JsStmt::Expr(
-            handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path),
+            handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
             stmt_macro.semi_token.is_some(),
         ),
     }
@@ -1083,7 +1104,7 @@ fn handle_item_fn(
                         name: pat_ident.ident.to_string(),
                         mut_: pat_ident.mutability.is_some(),
                         mut_ref: false,
-                        type_: RustType::Unknown,
+                        type_: RustType::Todo,
                     };
                     let input_type = parse_fn_input_or_return_type(&*pat_type.ty);
                     match &input_type {
@@ -1093,11 +1114,52 @@ fn handle_item_fn(
                         //     scoped_var.type_ = found_var.type_;
                         // }
                         // TypeOrVar::Unknown => {}
-                        FnReturnType::RustType(mut_ref, rust_type) => {
-                            scoped_var.mut_ref = *mut_ref;
-                            scoped_var.type_ = rust_type.clone();
+
+                        // FnReturnType::RustType(mut_ref, rust_type) => {
+                        //     scoped_var.mut_ref = *mut_ref;
+                        //     scoped_var.type_ = rust_type.clone();
+                        // }
+                        // FnReturnType::Unknown => {}
+                        RustType::NotAllowed => todo!(),
+                        RustType::Unknown => {}
+                        RustType::Todo => todo!(),
+                        RustType::Unit => {
+                            scoped_var.type_ = input_type.clone();
                         }
-                        FnReturnType::Unknown => {}
+                        RustType::Never => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::I32 => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::F32 => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Bool => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::String => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Struct(_) => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Enum(_) => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Vec(_) => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Array(_) => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::Tuple(_) => {
+                            scoped_var.type_ = input_type.clone();
+                        }
+                        RustType::MutRef(rust_type) => {
+                            scoped_var.mut_ref = true;
+                            scoped_var.type_ = *rust_type.clone();
+                        }
                     }
                     // record add var to scope
                     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
@@ -1115,29 +1177,33 @@ fn handle_item_fn(
                             //     Vec::new(),
                             // ),
                             value: match &input_type {
-                                FnReturnType::RustType(_, rust_type) => match rust_type {
-                                    RustType::Unknown => todo!(),
-                                    RustType::Unit => todo!(),
-                                    RustType::I32 => {
-                                        global_data.rust_prelude_types.integer = true;
-                                        JsExpr::New(
-                                            vec!["RustInteger".to_string()],
-                                            vec![JsExpr::MethodCall(
-                                                Box::new(JsExpr::Path(vec![pat_ident
-                                                    .ident
-                                                    .to_string()])),
-                                                "inner".to_string(),
-                                                Vec::new(),
-                                            )],
-                                        )
-                                    }
-                                    RustType::F32 => todo!(),
-                                    RustType::Bool => todo!(),
-                                    RustType::String => todo!(),
-                                    RustType::Struct(_) => todo!(),
-                                    RustType::Enum(_) => todo!(),
-                                },
-                                FnReturnType::Unknown => todo!(),
+                                RustType::Todo => todo!(),
+                                RustType::Unit => todo!(),
+                                RustType::I32 => {
+                                    global_data.rust_prelude_types.integer = true;
+                                    JsExpr::New(
+                                        vec!["RustInteger".to_string()],
+                                        vec![JsExpr::MethodCall(
+                                            Box::new(JsExpr::Path(vec![pat_ident
+                                                .ident
+                                                .to_string()])),
+                                            "inner".to_string(),
+                                            Vec::new(),
+                                        )],
+                                    )
+                                }
+                                RustType::F32 => todo!(),
+                                RustType::Bool => todo!(),
+                                RustType::String => todo!(),
+                                RustType::Struct(_) => todo!(),
+                                RustType::Enum(_) => todo!(),
+                                RustType::NotAllowed => todo!(),
+                                RustType::Unknown => todo!(),
+                                RustType::Never => todo!(),
+                                RustType::Vec(_) => todo!(),
+                                RustType::Array(_) => todo!(),
+                                RustType::Tuple(_) => todo!(),
+                                RustType::MutRef(_) => todo!(),
                             },
                         }))
                     }
@@ -1159,7 +1225,7 @@ fn handle_item_fn(
             },
         };
         // dbg!(&item_fn.block.stmts);
-        let body_stmts = parse_fn_body_stmts(
+        let (body_stmts, return_type) = parse_fn_body_stmts(
             returns_non_mut_ref_val,
             &item_fn.block.stmts,
             global_data,
@@ -1466,7 +1532,8 @@ fn handle_item_impl(
                             &impl_item_const.expr,
                             global_data,
                             &current_module_path,
-                        ),
+                        )
+                        .0,
                     }),
                 })
             }
@@ -1564,7 +1631,8 @@ fn handle_item_impl(
                         &body_stmts,
                         global_data,
                         current_module_path,
-                    );
+                    )
+                    .0;
                     Some(body_stmts)
                 };
                 if let Some(body_stmts) = body_stmts {
@@ -1751,7 +1819,7 @@ fn handle_item(
                 },
                 type_: LocalType::Var,
                 lhs: LocalName::Single(name),
-                value: handle_expr(&*item_const.expr, global_data, current_module_path),
+                value: handle_expr(&*item_const.expr, global_data, current_module_path).0,
             });
             js_stmts.push(local_stmt);
         }
@@ -2082,8 +2150,16 @@ struct Duplicate {
 
 #[derive(Debug, Clone)]
 enum RustType {
+    /// For cases/expressions we know cannot return a type, eg `break`
+    NotAllowed,
+    /// Can't be known at this point in analysis, eg the type is inferred somewhere else in the code
     Unknown,
+    /// Needs implementing
+    Todo,
+    /// ()
     Unit,
+    /// !
+    Never,
     I32,
     F32,
     Bool,
@@ -2092,6 +2168,11 @@ enum RustType {
     Struct(String),
     /// (name)  
     Enum(String),
+    Vec(Box<RustType>),
+    Array(Box<RustType>),
+    Tuple(Vec<RustType>),
+    /// &mut T
+    MutRef(Box<RustType>),
 }
 
 #[derive(Debug, Clone)]
@@ -3842,8 +3923,9 @@ fn parse_fn_body_stmts(
     stmts: &Vec<Stmt>,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
-) -> Vec<JsStmt> {
-    stmts
+) -> (Vec<JsStmt>, RustType) {
+    let mut return_type = RustType::Unknown;
+    let js_stmts = stmts
         .iter()
         .enumerate()
         .map(|(i, stmt)| {
@@ -3853,13 +3935,12 @@ fn parse_fn_body_stmts(
                     Stmt::Expr(expr, semi) => match expr {
                         Expr::If(expr_if) => {
                             if semi.is_some() {
+                                return_type = RustType::Unit;
                                 handle_stmt(stmt, global_data, current_module)
                             } else {
-                                let condition = Box::new(handle_expr(
-                                    &*expr_if.cond,
-                                    global_data,
-                                    current_module,
-                                ));
+                                let condition = Box::new(
+                                    handle_expr(&*expr_if.cond, global_data, current_module).0,
+                                );
                                 JsStmt::Expr(
                                     JsExpr::If(JsIf {
                                         assignment: Some(LocalName::Single(
@@ -3876,11 +3957,9 @@ fn parse_fn_body_stmts(
                                             })
                                             .collect::<Vec<_>>(),
                                         fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
-                                            Box::new(handle_expr(
-                                                &*expr,
-                                                global_data,
-                                                current_module,
-                                            ))
+                                            Box::new(
+                                                handle_expr(&*expr, global_data, current_module).0,
+                                            )
                                         }),
                                     }),
                                     false,
@@ -3897,7 +3976,8 @@ fn parse_fn_body_stmts(
                                         true,
                                         global_data,
                                         current_module,
-                                    ),
+                                    )
+                                    .0,
                                     false,
                                 )
                             }
@@ -3928,52 +4008,115 @@ fn parse_fn_body_stmts(
                         Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
                             // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
                             // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
-                            match &*expr_unary.expr {
-                                Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-                                    let var_name =
-                                        expr_path.path.segments.first().unwrap().ident.to_string();
-                                    let mut js_var = JsExpr::Path(vec![var_name.clone()]);
+                            // The problem is we need to know `returns_non_mut_ref_val`?
+                            // match &*expr_unary.expr {
+                            //     Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
+                            //         let var_name =
+                            //             expr_path.path.segments.first().unwrap().ident.to_string();
+                            //         let mut js_var = JsExpr::Path(vec![var_name.clone()]);
 
-                                    let var_info = global_data
-                                        .scopes
-                                        .iter()
-                                        .rev()
-                                        .find_map(|s| s.0.iter().rev().find(|v| v.name == var_name))
-                                        .unwrap();
-                                    dbg!(&var_info);
+                            //         let var_info = global_data
+                            //             .scopes
+                            //             .iter()
+                            //             .rev()
+                            //             .find_map(|s| s.0.iter().rev().find(|v| v.name == var_name))
+                            //             .unwrap();
 
-                                    match var_info.type_ {
-                                        RustType::Unknown => todo!(),
-                                        RustType::Unit => todo!(),
-                                        RustType::I32
-                                        | RustType::F32
-                                        | RustType::Bool
-                                        | RustType::String => {
-                                            js_var = JsExpr::MethodCall(
-                                                Box::new(js_var),
-                                                "inner".to_string(),
-                                                vec![],
-                                            )
-                                        }
-                                        RustType::Struct(_) | RustType::Enum(_) => {
-                                            js_var = JsExpr::MethodCall(
-                                                Box::new(js_var),
-                                                "copy".to_string(),
-                                                vec![],
-                                            )
-                                        }
-                                    }
+                            //         match var_info.type_ {
+                            //             RustType::Todo => todo!(),
+                            //             RustType::Unit => todo!(),
+                            //             RustType::I32
+                            //             | RustType::F32
+                            //             | RustType::Bool
+                            //             | RustType::String => {
+                            //                 js_var = JsExpr::MethodCall(
+                            //                     Box::new(js_var),
+                            //                     "inner".to_string(),
+                            //                     vec![],
+                            //                 )
+                            //             }
+                            //             RustType::Struct(_) | RustType::Enum(_) => {
+                            //                 js_var = JsExpr::MethodCall(
+                            //                     Box::new(js_var),
+                            //                     "copy".to_string(),
+                            //                     vec![],
+                            //                 )
+                            //             }
+                            //             RustType::NotAllowed => todo!(),
+                            //             RustType::Unknown => todo!(),
+                            //             RustType::Never => todo!(),
+                            //             RustType::Vec(_) => todo!(),
+                            //             RustType::Array(_) => todo!(),
+                            //             RustType::Tuple(_) => todo!(),
+                            //             RustType::MutRef(_) => todo!(),
+                            //         }
 
-                                    JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
-                                }
-                                other => {
-                                    dbg!(other);
-                                    todo!()
-                                }
-                            }
+                            //         JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                            //     }
+                            //     Expr::Call(expr_call) => {
+                            //         // get fn_item from scope, extract return type, then apply inner or copy accordingly
+                            //         let path = match &*expr_call.func {
+                            //             Expr::Path(expr_path)
+                            //                 if expr_path.path.segments.len() == 1 =>
+                            //             {
+                            //                 expr_path
+                            //                     .path
+                            //                     .segments
+                            //                     .first()
+                            //                     .unwrap()
+                            //                     .ident
+                            //                     .to_string()
+                            //             }
+                            //             _ => todo!(),
+                            //         };
+                            //         let item_fn = global_data.scopes.iter().rev().find_map(|s| {
+                            //             s.1.iter().rev().find(|f| f.sig.ident.to_string() == path)
+                            //         });
+                            //         let type_or_var = item_fn
+                            //             .map(|f| match &f.sig.output {
+                            //                 ReturnType::Default => RustType::Unit,
+                            //                 ReturnType::Type(_, type_) => {
+                            //                     parse_fn_input_or_return_type(&**type_)
+                            //                 }
+                            //             })
+                            //             .unwrap();
+
+                            //         // TODO handle different cases other than foo() eg foo(bar) etc
+                            //         let mut js_expr =
+                            //             JsExpr::FnCall(Box::new(JsExpr::Path(vec![path])), vec![]);
+                            //         match type_or_var {
+                            //             RustType::NotAllowed => todo!(),
+                            //             RustType::Unknown => todo!(),
+                            //             RustType::Todo => todo!(),
+                            //             RustType::Unit => todo!(),
+                            //             RustType::Never => todo!(),
+                            //             RustType::I32 => todo!(),
+                            //             RustType::F32 => todo!(),
+                            //             RustType::Bool => todo!(),
+                            //             RustType::String => todo!(),
+                            //             RustType::Struct(_) => todo!(),
+                            //             RustType::Enum(_) => todo!(),
+                            //             RustType::Vec(_) => todo!(),
+                            //             RustType::Array(_) => todo!(),
+                            //             RustType::Tuple(_) => todo!(),
+                            //             RustType::MutRef(_) => todo!(),
+                            //         }
+
+                            //         JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                            //     }
+                            //     other => {
+                            //         dbg!(other);
+                            //         todo!()
+                            //     }
+                            // }
+                            let (expr, type_) =
+                                handle_expr(&*expr_unary.expr, global_data, current_module);
+                            return_type = type_;
+                            JsStmt::Expr(expr, false)
                         }
                         _ => {
                             if semi.is_some() {
+                                return_type = RustType::Unit;
                                 handle_stmt(stmt, global_data, current_module)
                             } else {
                                 match &expr {
@@ -3983,11 +4126,10 @@ fn parse_fn_body_stmts(
                                     _ => {}
                                 }
                                 JsStmt::Expr(
-                                    JsExpr::Return(Box::new(handle_expr(
-                                        expr,
-                                        global_data,
-                                        current_module,
-                                    ))),
+                                    JsExpr::Return(Box::new(
+                                        handle_expr(expr, global_data, current_module).0,
+                                    )),
+                                    // TODO is this correct?
                                     true,
                                 )
                             }
@@ -3999,7 +4141,8 @@ fn parse_fn_body_stmts(
                 handle_stmt(stmt, global_data, current_module)
             }
         })
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+    (js_stmts, return_type)
 }
 
 // TODO might want to split this up so that in some cases we can return JsStmt and JsExpr in others
@@ -4007,7 +4150,7 @@ fn handle_expr_and_stmt_macro(
     mac: &Macro,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
-) -> JsExpr {
+) -> (JsExpr, RustType) {
     let path_segs = mac
         .path
         .segments
@@ -4018,17 +4161,23 @@ fn handle_expr_and_stmt_macro(
         if path_segs[0] == "vec" {
             let input = mac.tokens.clone().to_string();
             let expr_array = syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
+            let vec_type = if let Some(elem) = expr_array.elems.first() {
+                // IMPORTANT need to be careful about calling handle_expr an element twice like here in case information is added to global_data.scope twice, or similar problems? duplicates shouldn't cause problems for scope data?
+                handle_expr(elem, global_data, current_module).1
+            } else {
+                RustType::Unknown
+            };
             let expr_vec = expr_array
                 .elems
                 .iter()
-                .map(|elem| handle_expr(elem, global_data, current_module))
+                .map(|elem| handle_expr(elem, global_data, current_module).0)
                 .collect::<Vec<_>>();
-            return JsExpr::Array(expr_vec);
+            return (JsExpr::Array(expr_vec), RustType::Array(Box::new(vec_type)));
         }
         if path_segs[0] == "panic" {
             let input = mac.tokens.clone().to_string();
             // TODO use a custom error so it isn't inadvertently caught by other JS code in the app?
-            return JsExpr::ThrowError(input);
+            return (JsExpr::ThrowError(input), RustType::Never);
         }
         if path_segs[0] == "try_" {
             let input = mac.tokens.clone().to_string();
@@ -4038,7 +4187,7 @@ fn handle_expr_and_stmt_macro(
                 .iter()
                 .map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .collect::<Vec<_>>();
-            return JsExpr::TryBlock(stmt_vec);
+            return (JsExpr::TryBlock(stmt_vec), RustType::Unit);
         }
         if path_segs[0] == "catch" {
             let input = mac.tokens.clone().to_string();
@@ -4055,7 +4204,7 @@ fn handle_expr_and_stmt_macro(
                 .into_iter()
                 .map(|stmt| handle_stmt(&stmt, global_data, current_module));
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
-            return JsExpr::CatchBlock(err_var_name, stmt_vec);
+            return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType::Unit);
         }
         if path_segs[0] == "assert" {
             let input = mac.tokens.clone().to_string();
@@ -4065,21 +4214,22 @@ fn handle_expr_and_stmt_macro(
             let bool_is_mut = false;
             let condition_js = if bool_is_mut {
                 JsExpr::Field(
-                    Box::new(JsExpr::Paren(Box::new(handle_expr(
-                        &condition_expr,
-                        global_data,
-                        current_module,
-                    )))),
+                    Box::new(JsExpr::Paren(Box::new(
+                        handle_expr(&condition_expr, global_data, current_module).0,
+                    ))),
                     "jsBoolean".to_string(),
                 )
             } else {
-                handle_expr(&condition_expr, global_data, current_module)
+                handle_expr(&condition_expr, global_data, current_module).0
             };
 
-            return JsExpr::MethodCall(
-                Box::new(JsExpr::Path(vec!["console".to_string()])),
-                "assert".to_string(),
-                vec![condition_js],
+            return (
+                JsExpr::MethodCall(
+                    Box::new(JsExpr::Path(vec!["console".to_string()])),
+                    "assert".to_string(),
+                    vec![condition_js],
+                ),
+                RustType::Unit,
             );
         }
         if path_segs[0] == "assert_eq" {
@@ -4118,7 +4268,7 @@ fn handle_expr_and_stmt_macro(
                                      type_,
                                  }| {
                                     let is_primative = match type_ {
-                                        RustType::Unknown => {
+                                        RustType::Todo => {
                                             global_data
                                                 .rust_prelude_types
                                                 .number_prototype_extensions = true;
@@ -4134,6 +4284,13 @@ fn handle_expr_and_stmt_macro(
                                         RustType::String => true,
                                         RustType::Struct(_) => false,
                                         RustType::Enum(_) => false,
+                                        RustType::NotAllowed => false,
+                                        RustType::Unknown => false,
+                                        RustType::Never => false,
+                                        RustType::Vec(_) => false,
+                                        RustType::Array(_) => false,
+                                        RustType::Tuple(_) => false,
+                                        RustType::MutRef(_) => false,
                                     };
                                     (*mut_, *mut_ref, is_primative)
                                 },
@@ -4148,9 +4305,9 @@ fn handle_expr_and_stmt_macro(
             let mut equality_check = if !lhs_is_primative || lhs_is_mut || lhs_is_mut_ref {
                 global_data.rust_prelude_types.number_prototype_extensions = true;
                 global_data.rust_prelude_types.string_prototype_extensions = true;
-                JsExpr::MethodCall(Box::new(lhs), "eq".to_string(), vec![rhs])
+                JsExpr::MethodCall(Box::new(lhs.0), "eq".to_string(), vec![rhs.0])
             } else {
-                JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs))
+                JsExpr::Binary(Box::new(lhs.0), JsOp::Eq, Box::new(rhs.0))
             };
 
             // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
@@ -4161,10 +4318,13 @@ fn handle_expr_and_stmt_macro(
                     "jsBoolean".to_string(),
                 );
             }
-            return JsExpr::MethodCall(
-                Box::new(JsExpr::Path(vec!["console".to_string()])),
-                "assert".to_string(),
-                vec![equality_check],
+            return (
+                JsExpr::MethodCall(
+                    Box::new(JsExpr::Path(vec!["console".to_string()])),
+                    "assert".to_string(),
+                    vec![equality_check],
+                ),
+                RustType::Unit,
             );
         }
     }
@@ -4223,7 +4383,7 @@ fn handle_expr_assign(
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
-    let mut rhs = handle_expr(&rhs_expr, global_data, current_module);
+    let (mut rhs, rhs_type) = handle_expr(&rhs_expr, global_data, current_module);
 
     // Add .copy() if rhs is a mut...
     // and rhs is `Copy`
@@ -4286,12 +4446,9 @@ fn handle_expr_assign(
                                         ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
                                         ReturnType::Type(_, type_) => {
                                             // TODO handle other cases eg a tuple containing &mut
-                                            match parse_fn_input_or_return_type(&**type_) {
-                                                FnReturnType::RustType(_, rust_type) => {
-                                                    TypeOrVar::RustType(rust_type)
-                                                }
-                                                FnReturnType::Unknown => TypeOrVar::Unknown,
-                                            }
+                                            TypeOrVar::RustType(parse_fn_input_or_return_type(
+                                                &**type_,
+                                            ))
                                         }
                                     }
                                 })
@@ -4440,7 +4597,7 @@ fn handle_expr_assign(
         // TODO handle rhs not being a var or literal, eg fn call etc
         if let Some(rhs_is_found_var) = rhs_is_found_var {
             match rhs_is_found_var.type_ {
-                RustType::Unknown => {}
+                RustType::Todo => {}
                 RustType::Unit => {}
                 RustType::I32 => {
                     global_data.rust_prelude_types.integer = true;
@@ -4457,6 +4614,13 @@ fn handle_expr_assign(
                 }
                 RustType::Struct(_) => {}
                 RustType::Enum(_) => {}
+                RustType::NotAllowed => {}
+                RustType::Unknown => {}
+                RustType::Never => {}
+                RustType::Vec(_) => {}
+                RustType::Array(_) => {}
+                RustType::Tuple(_) => {}
+                RustType::MutRef(_) => {}
             }
         } else {
             match &rhs_expr {
@@ -4502,7 +4666,7 @@ fn handle_expr_assign(
         Expr::Unary(expr_unary) => match &expr_unary.op {
             UnOp::Deref(_) => {
                 return JsExpr::MethodCall(
-                    Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+                    Box::new(handle_expr(&*expr_assign.left, global_data, current_module).0),
                     "derefAssign".to_string(),
                     vec![rhs],
                 );
@@ -4513,55 +4677,108 @@ fn handle_expr_assign(
     }
 
     JsExpr::Assignment(
-        Box::new(handle_expr(&*expr_assign.left, global_data, current_module)),
+        Box::new(handle_expr(&*expr_assign.left, global_data, current_module).0),
         Box::new(rhs),
     )
 }
 
-fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<String>) -> JsExpr {
+/// -> (JsExpr, return type)
+fn handle_expr(
+    expr: &Expr,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> (JsExpr, RustType) {
     match expr {
-        Expr::Array(expr_array) => JsExpr::Array(
-            expr_array
-                .elems
-                .iter()
-                .map(|elem| handle_expr(elem, global_data, current_module))
-                .collect::<Vec<_>>(),
-        ),
-        Expr::Assign(expr_assign) => handle_expr_assign(expr_assign, global_data, current_module),
-        Expr::Async(_) => todo!(),
-        Expr::Await(expr_await) => JsExpr::Await(Box::new(handle_expr(
-            &*expr_await.base,
-            global_data,
-            current_module,
-        ))),
-        Expr::Binary(expr_binary) => {
-            // TODO hack to not convert === to .eq() when comparing JS primitives
-            let primitive = match &*expr_binary.left {
-                Expr::Field(expr_field) => match &expr_field.member {
-                    Member::Named(ident) => {
-                        ident == "js_number" || ident == "js_string" || ident == "js_bool"
-                    }
-                    Member::Unnamed(_) => false,
-                },
-                _ => false,
-            };
-            if primitive {
-                return JsExpr::Binary(
-                    Box::new(handle_expr(&*expr_binary.left, global_data, current_module)),
-                    JsOp::from_binop(expr_binary.op),
-                    Box::new(handle_expr(
-                        &*expr_binary.right,
-                        global_data,
-                        current_module,
-                    )),
-                );
-            }
+        Expr::Array(expr_array) => {
+            // TODO how to handle `let a: [i32, 0] = [];`? or other cases where there is no elements and the type is inferred from elsewhere
 
-            let lhs = Box::new(JsExpr::Paren(Box::new(handle_expr(
-                &*expr_binary.left,
-                global_data,
-                current_module,
-            ))));
+            let type_ = if expr_array.elems.len() > 0 {
+                handle_expr(
+                    expr_array.elems.first().unwrap(),
+                    global_data,
+                    current_module,
+                )
+                .1
+            } else {
+                RustType::Todo
+            };
+            (
+                JsExpr::Array(
+                    expr_array
+                        .elems
+                        .iter()
+                        .map(|elem| handle_expr(elem, global_data, current_module).0)
+                        .collect::<Vec<_>>(),
+                ),
+                type_,
+            )
+        }
+        Expr::Assign(expr_assign) => (
+            handle_expr_assign(expr_assign, global_data, current_module),
+            RustType::Unit,
+        ),
+        Expr::Async(_) => todo!(),
+        Expr::Await(expr_await) => {
+            let js_expr = handle_expr(&*expr_await.base, global_data, current_module);
+            (JsExpr::Await(Box::new(js_expr.0)), js_expr.1)
+        }
+        Expr::Binary(expr_binary) => {
+            // // TODO hack to not convert === to .eq() when comparing JS primitives
+            // let primitive = match &*expr_binary.left {
+            //     Expr::Field(expr_field) => match &expr_field.member {
+            //         Member::Named(ident) => {
+            //             ident == "js_number" || ident == "js_string" || ident == "js_bool"
+            //         }
+            //         Member::Unnamed(_) => false,
+            //     },
+            //     _ => false,
+            // };
+
+            // if primitive {
+            //     return (JsExpr::Binary(
+            //         Box::new(handle_expr(&*expr_binary.left, global_data, current_module).0),
+            //         JsOp::from_binop(expr_binary.op),
+            //         Box::new(handle_expr(
+            //             &*expr_binary.right,
+            //             global_data,
+            //             current_module,
+            //         ).0),
+            //     ), RustType::Unknown);
+            // }
+
+            let (lhs_expr, lhs_type) = handle_expr(&*expr_binary.left, global_data, current_module);
+            let lhs = Box::new(JsExpr::Paren(Box::new(lhs_expr)));
+
+            // TODO need to check for `impl Add for Foo`
+            let type_ = match expr_binary.op {
+                BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_) | BinOp::Div(_) | BinOp::Rem(_) => {
+                    lhs_type
+                }
+                BinOp::And(_) | BinOp::Or(_) => RustType::Bool,
+                BinOp::BitXor(_) => todo!(),
+                BinOp::BitAnd(_) => todo!(),
+                BinOp::BitOr(_) => todo!(),
+                BinOp::Shl(_) => todo!(),
+                BinOp::Shr(_) => todo!(),
+                BinOp::Eq(_)
+                | BinOp::Lt(_)
+                | BinOp::Le(_)
+                | BinOp::Ne(_)
+                | BinOp::Ge(_)
+                | BinOp::Gt(_) => RustType::Bool,
+                BinOp::AddAssign(_)
+                | BinOp::SubAssign(_)
+                | BinOp::MulAssign(_)
+                | BinOp::DivAssign(_)
+                | BinOp::RemAssign(_) => RustType::Unit,
+                BinOp::BitXorAssign(_) => todo!(),
+                BinOp::BitAndAssign(_) => todo!(),
+                BinOp::BitOrAssign(_) => todo!(),
+                BinOp::ShlAssign(_) => todo!(),
+                BinOp::ShrAssign(_) => todo!(),
+                _ => todo!(),
+            };
+
             let method_name = match expr_binary.op {
                 BinOp::Add(_) => "add",
                 BinOp::Sub(_) => "sub",
@@ -4593,18 +4810,28 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 BinOp::ShrAssign(_) => todo!(),
                 _ => todo!(),
             };
-            let rhs = handle_expr(&*expr_binary.right, global_data, current_module);
-            JsExpr::MethodCall(lhs, camel(method_name), vec![rhs])
+            let (rhs_expr, _rhs_type) =
+                handle_expr(&*expr_binary.right, global_data, current_module);
+            (
+                JsExpr::MethodCall(lhs, camel(method_name), vec![rhs_expr]),
+                type_,
+            )
         }
-        Expr::Block(expr_block) => JsExpr::Block(
-            expr_block
-                .block
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
-        ),
-        Expr::Break(_) => JsExpr::Break,
+        Expr::Block(expr_block) => {
+            // TODO block needs to use something like parse_fn_body to be able to return the type
+            (
+                JsExpr::Block(
+                    expr_block
+                        .block
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                        .collect::<Vec<_>>(),
+                ),
+                RustType::Todo,
+            )
+        }
+        Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
         Expr::Call(expr_call) => {
             let js_primitive = match &*expr_call.func {
                 Expr::Path(expr_path) => {
@@ -4624,7 +4851,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
             let args = expr_call
                 .args
                 .iter()
-                .map(|arg| handle_expr(arg, global_data, current_module))
+                .map(|arg| handle_expr(arg, global_data, current_module).0)
                 .collect::<Vec<_>>();
 
             // handle tuple structs
@@ -4644,7 +4871,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                         && name != "Ok"
                         && name != "Err"
                     {
-                        return JsExpr::New(path, args);
+                        return (JsExpr::New(path, args), RustType::Todo);
                     }
                 }
                 _ => {}
@@ -4672,52 +4899,103 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
 
                     if segments.last().unwrap() == "fetch2" {
                         // TODO improve this code
-                        JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args)
+                        (
+                            JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args),
+                            RustType::Todo,
+                        )
                     } else if segments.last().unwrap() == "stringify" {
-                        JsExpr::FnCall(
-                            Box::new(JsExpr::Path(vec![
-                                "JSON".to_string(),
-                                "stringify".to_string(),
-                            ])),
-                            args,
+                        (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Path(vec![
+                                    "JSON".to_string(),
+                                    "stringify".to_string(),
+                                ])),
+                                args,
+                            ),
+                            RustType::Todo,
                         )
                     } else if segments.len() == 2 && segments[0] == "Json" && segments[1] == "parse"
                     {
-                        JsExpr::FnCall(
-                            Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
-                            args,
+                        (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Path(vec![
+                                    "JSON".to_string(),
+                                    "parse".to_string(),
+                                ])),
+                                args,
+                            ),
+                            RustType::Todo,
                         )
                     } else if segments.len() == 2
                         && segments[0] == "Date"
                         && segments[1] == "from_iso_string"
                     {
-                        JsExpr::New(vec!["Date".to_string()], args)
+                        (JsExpr::New(vec!["Date".to_string()], args), RustType::Todo)
                     } else if segments.len() == 2
                         && segments[0] == "Document"
                         && segments[1] == "query_selector_body"
                     {
-                        JsExpr::FnCall(
-                            Box::new(JsExpr::Path(vec![
-                                "document".to_string(),
-                                "querySelector".to_string(),
-                            ])),
-                            vec![JsExpr::LitStr("body".to_string())],
+                        (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Path(vec![
+                                    "document".to_string(),
+                                    "querySelector".to_string(),
+                                ])),
+                                vec![JsExpr::LitStr("body".to_string())],
+                            ),
+                            RustType::Todo,
                         )
                     } else if segments.len() == 2
                         && segments[0] == "Document"
                         && segments[1] == "create_element_div"
                     {
-                        JsExpr::FnCall(
-                            Box::new(JsExpr::Path(vec![
-                                "document".to_string(),
-                                "createElement".to_string(),
-                            ])),
-                            vec![JsExpr::LitStr("div".to_string())],
+                        (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Path(vec![
+                                    "document".to_string(),
+                                    "createElement".to_string(),
+                                ])),
+                                vec![JsExpr::LitStr("div".to_string())],
+                            ),
+                            RustType::Todo,
                         )
                     } else {
-                        JsExpr::FnCall(
-                            Box::new(handle_expr(&*expr_call.func, global_data, current_module)),
-                            args,
+                        // if a simple fn call, look up the return type
+                        let type_ = if expr_path.path.segments.len() == 1 {
+                            let item_fn = global_data
+                                .scopes
+                                .iter()
+                                .rev()
+                                .find_map(|s| {
+                                    s.1.iter().rev().find(|f| {
+                                        f.sig.ident.to_string()
+                                            == expr_path
+                                                .path
+                                                .segments
+                                                .first()
+                                                .unwrap()
+                                                .ident
+                                                .to_string()
+                                    })
+                                })
+                                .unwrap();
+                            match &item_fn.sig.output {
+                                ReturnType::Default => todo!(),
+                                ReturnType::Type(_, type_) => {
+                                    parse_fn_input_or_return_type(&*type_)
+                                }
+                            }
+                        } else {
+                            RustType::Todo
+                        };
+                        (
+                            JsExpr::FnCall(
+                                Box::new(
+                                    handle_expr(&*expr_call.func, global_data, current_module).0,
+                                ),
+                                args,
+                            ),
+                            RustType::Todo,
                         )
                     }
                 }
@@ -4744,9 +5022,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 // {
                 //     args.into_iter().next().unwrap()
                 // }
-                _ => JsExpr::FnCall(
-                    Box::new(handle_expr(&*expr_call.func, global_data, current_module)),
-                    args,
+                _ => (
+                    JsExpr::FnCall(
+                        Box::new(handle_expr(&*expr_call.func, global_data, current_module).0),
+                        args,
+                    ),
+                    RustType::Todo,
                 ),
             }
         }
@@ -4803,7 +5084,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 })
                 .collect::<Vec<_>>();
 
-            let body = match &*expr_closure.body {
+            let (body_stmts, return_type) = match &*expr_closure.body {
                 Expr::Block(expr_block) => {
                     parse_fn_body_stmts(false, &expr_block.block.stmts, global_data, current_module)
                 }
@@ -4811,46 +5092,66 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     parse_fn_body_stmts(false, &expr_async.block.stmts, global_data, current_module)
                 }
                 Expr::Match(expr_match) => {
-                    vec![JsStmt::Expr(
-                        handle_expr_match(expr_match, true, global_data, current_module),
-                        false,
-                    )]
+                    let (expr, type_) =
+                        handle_expr_match(expr_match, true, global_data, current_module);
+                    (vec![JsStmt::Expr(expr, false)], type_)
                 }
-                other => vec![JsStmt::Expr(
-                    handle_expr(other, global_data, current_module),
-                    false,
-                )],
+                other => {
+                    let (expr, type_) = handle_expr(other, global_data, current_module);
+                    (vec![JsStmt::Expr(expr, false)], type_)
+                }
             };
 
-            JsExpr::ArrowFn(async_, block, inputs, body)
+            (
+                JsExpr::ArrowFn(async_, block, inputs, body_stmts),
+                return_type,
+            )
         }
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
         Expr::Field(expr_field) => {
-            let base = Box::new(handle_expr(&*expr_field.base, global_data, current_module));
+            let (base_expr, base_type) =
+                handle_expr(&*expr_field.base, global_data, current_module);
+            // TODO for a field, the type must be a struct or tuple, so look it up and get the type of the field
             match &expr_field.member {
-                Member::Named(ident) => JsExpr::Field(base, camel(ident)),
-                Member::Unnamed(index) => {
-                    JsExpr::Index(base, Box::new(JsExpr::LitInt(index.index as i32)))
+                Member::Named(ident) => {
+                    // TODO look up struct
+                    // global_data.scopes...
+                    (
+                        JsExpr::Field(Box::new(base_expr), camel(ident)),
+                        RustType::Todo,
+                    )
                 }
+                Member::Unnamed(index) => match base_type {
+                    RustType::Tuple(tuple_types) => {
+                        let type_ = tuple_types[index.index as usize].clone();
+                        (
+                            JsExpr::Index(
+                                Box::new(base_expr),
+                                Box::new(JsExpr::LitInt(index.index as i32)),
+                            ),
+                            type_,
+                        )
+                    }
+                    _ => todo!(),
+                },
             }
         }
-        Expr::ForLoop(expr_for_loop) => JsExpr::ForLoop(
-            match &*expr_for_loop.pat {
-                Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                _ => todo!(),
-            },
-            Box::new(handle_expr(
-                &*expr_for_loop.expr,
-                global_data,
-                current_module,
-            )),
-            expr_for_loop
-                .body
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(&stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
+        Expr::ForLoop(expr_for_loop) => (
+            JsExpr::ForLoop(
+                match &*expr_for_loop.pat {
+                    Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+                    _ => todo!(),
+                },
+                Box::new(handle_expr(&*expr_for_loop.expr, global_data, current_module).0),
+                expr_for_loop
+                    .body
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(&stmt, global_data, current_module))
+                    .collect::<Vec<_>>(),
+            ),
+            RustType::Unit,
         ),
         Expr::Group(_) => todo!(),
         Expr::If(expr_if) => {
@@ -4858,29 +5159,61 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 Expr::Let(_) => todo!(),
                 _ => {}
             }
-            JsExpr::If(JsIf {
-                assignment: None,
-                declare_var: false,
-                condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module)),
-                succeed: expr_if
-                    .then_branch
-                    .stmts
-                    .iter()
-                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                    .collect::<Vec<_>>(),
-                fail: expr_if
-                    .else_branch
-                    .as_ref()
-                    .map(|(_, expr)| Box::new(handle_expr(&*expr, global_data, current_module))),
-            })
+            // TODO handle same as expr::block
+            (
+                JsExpr::If(JsIf {
+                    assignment: None,
+                    declare_var: false,
+                    condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module).0),
+                    succeed: expr_if
+                        .then_branch
+                        .stmts
+                        .iter()
+                        .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                        .collect::<Vec<_>>(),
+                    fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
+                        Box::new(handle_expr(&*expr, global_data, current_module).0)
+                    }),
+                }),
+                RustType::Todo,
+            )
         }
-        Expr::Index(expr_index) => JsExpr::Index(
-            Box::new(handle_expr(&*expr_index.expr, global_data, current_module)),
-            Box::new(JsExpr::Field(
-                Box::new(handle_expr(&*expr_index.index, global_data, current_module)),
-                "jsNumber".to_string(),
-            )),
-        ),
+        Expr::Index(expr_index) => {
+            let (expr, type_) = handle_expr(&*expr_index.expr, global_data, current_module);
+            // NOTE `Index` is a trait that can be implemented for any non primitive type (I think?), so need to look up the `Index` impl of the base expr's type to find what the `Output` type is
+            // TODO we can use square bracket array[] indexing for arrays, but for other types which don't get transpiled to an array, we need to use `.index(i)` instead
+            // "only traits defined in the current crate can be implemented for primitive types"
+            // "only traits defined in the current crate can be implemented for arbitrary types"
+            // "define and implement a trait or new type instead"
+            let (rust_type, use_square_brackets) = match type_ {
+                RustType::NotAllowed => todo!(),
+                RustType::Todo => todo!(),
+                RustType::Unit => todo!(),
+                RustType::I32 => todo!(),
+                RustType::F32 => todo!(),
+                RustType::Bool => todo!(),
+                RustType::String => todo!(),
+                RustType::Struct(_) => todo!(),
+                RustType::Enum(_) => todo!(),
+                RustType::Vec(rust_type) => (*rust_type, true),
+                RustType::Array(rust_type) => (*rust_type, true),
+                RustType::Tuple(_) => todo!(),
+                RustType::MutRef(_) => todo!(),
+                RustType::Unknown => todo!(),
+                RustType::Never => todo!(),
+            };
+            (
+                JsExpr::Index(
+                    Box::new(expr),
+                    Box::new(JsExpr::Field(
+                        Box::new(handle_expr(&*expr_index.index, global_data, current_module).0),
+                        // TODO types other than numbers can be used as indexes, also should be able to use .valueof to avoid needing to call .jsNumber
+                        "jsNumber".to_string(),
+                    )),
+                ),
+                rust_type,
+            )
+        }
         Expr::Infer(_) => todo!(),
         Expr::Let(expr_let) => {
             dbg!(expr_let);
@@ -4893,7 +5226,7 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 //     vec!["RustString".to_string()],
                 //     vec![JsExpr::LitStr(lit_str.value())],
                 // )
-                JsExpr::LitStr(lit_str.value())
+                (JsExpr::LitStr(lit_str.value()), RustType::String)
             }
             Lit::ByteStr(_) => todo!(),
             Lit::Byte(_) => todo!(),
@@ -4904,13 +5237,19 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 //     vec!["RustInteger".to_string()],
                 //     vec![JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())],
                 // )
-                JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap())
+                (
+                    JsExpr::LitInt(lit_int.base10_parse::<i32>().unwrap()),
+                    RustType::I32,
+                )
             }
             Lit::Float(lit_float) => {
                 global_data.rust_prelude_types.float = true;
-                JsExpr::New(
-                    vec!["RustFloat".to_string()],
-                    vec![JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())],
+                (
+                    JsExpr::New(
+                        vec!["RustFloat".to_string()],
+                        vec![JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())],
+                    ),
+                    RustType::F32,
                 )
             }
             Lit::Bool(lit_bool) => {
@@ -4919,19 +5258,22 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 //     vec!["RustBool".to_string()],
                 //     vec![JsExpr::LitBool(lit_bool.value)],
                 // )
-                JsExpr::LitBool(lit_bool.value)
+                (JsExpr::LitBool(lit_bool.value), RustType::Bool)
             }
             Lit::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Expr::Loop(expr_loop) => JsExpr::While(
-            Box::new(JsExpr::LitBool(true)),
-            expr_loop
-                .body
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
+        Expr::Loop(expr_loop) => (
+            JsExpr::While(
+                Box::new(JsExpr::LitBool(true)),
+                expr_loop
+                    .body
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                    .collect::<Vec<_>>(),
+            ),
+            RustType::Never,
         ),
         Expr::Macro(expr_macro) => {
             handle_expr_and_stmt_macro(&expr_macro.mac, global_data, current_module)
@@ -4941,11 +5283,12 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         }
         Expr::MethodCall(expr_method_call) => {
             let mut method_name = expr_method_call.method.to_string();
-            let receiver = handle_expr(&*expr_method_call.receiver, global_data, current_module);
+            let (receiver, receiver_type) =
+                handle_expr(&*expr_method_call.receiver, global_data, current_module);
 
             if let JsExpr::LitStr(_) = receiver {
                 if method_name == "to_string" {
-                    return receiver;
+                    return (receiver, RustType::String);
                 }
             }
             if let JsExpr::Path(path) = &receiver {
@@ -4953,31 +5296,34 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     if path[0] == "JSON" && path[1] == "parse" {
                         // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
                         let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
-                        return JsExpr::FnCall(
-                            Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
-                                iife: false,
-                                public: false,
-                                export: false,
-                                async_: false,
-                                is_method: false,
-                                name: "jsonParse".to_string(),
-                                input_names: vec!["text".to_string()],
-                                body_stmts: vec![JsStmt::Raw(body)],
-                            })))),
-                            expr_method_call
-                                .args
-                                .iter()
-                                .map(|arg| handle_expr(arg, global_data, current_module))
-                                .collect::<Vec<_>>(),
+                        return (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    async_: false,
+                                    is_method: false,
+                                    name: "jsonParse".to_string(),
+                                    input_names: vec!["text".to_string()],
+                                    body_stmts: vec![JsStmt::Raw(body)],
+                                })))),
+                                expr_method_call
+                                    .args
+                                    .iter()
+                                    .map(|arg| handle_expr(arg, global_data, current_module).0)
+                                    .collect::<Vec<_>>(),
+                            ),
+                            RustType::Todo,
                         );
                     }
                 }
             }
             if method_name == "iter" {
-                return receiver;
+                return (receiver, RustType::Todo);
             }
             if method_name == "collect" {
-                return receiver;
+                return (receiver, RustType::Todo);
             }
             if method_name.len() > 3 && &method_name[0..3] == "js_" {
                 method_name = method_name[3..].to_string();
@@ -4998,23 +5344,28 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 method_name = "add_event_listener".to_string();
             }
             if method_name == "length" {
-                return JsExpr::Field(Box::new(receiver), "length".to_string());
+                return (
+                    JsExpr::Field(Box::new(receiver), "length".to_string()),
+                    RustType::I32,
+                );
             }
-            JsExpr::MethodCall(
-                Box::new(receiver),
-                camel(method_name),
-                expr_method_call
-                    .args
-                    .iter()
-                    .map(|arg| handle_expr(arg, global_data, current_module))
-                    .collect::<Vec<_>>(),
+            (
+                JsExpr::MethodCall(
+                    Box::new(receiver),
+                    camel(method_name),
+                    expr_method_call
+                        .args
+                        .iter()
+                        .map(|arg| handle_expr(arg, global_data, current_module).0)
+                        .collect::<Vec<_>>(),
+                ),
+                RustType::Todo,
             )
         }
-        Expr::Paren(expr_paren) => JsExpr::Paren(Box::new(handle_expr(
-            &*expr_paren.expr,
-            global_data,
-            current_module,
-        ))),
+        Expr::Paren(expr_paren) => {
+            let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
+            (JsExpr::Paren(Box::new(expr)), type_)
+        }
         Expr::Path(expr_path) => {
             let mut segs = expr_path
                 .path
@@ -5051,7 +5402,10 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 }
             }
             if global_data.snippet {
-                return JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>());
+                return (
+                    JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>()),
+                    RustType::Todo,
+                );
             }
 
             // So we have a path like foo::bar::baz()
@@ -5318,7 +5672,20 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                 }
             }
 
-            JsExpr::Path(segs)
+            // get type
+            let type_ = if segs.len() == 1 {
+                global_data
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find_map(|s| s.0.iter().rev().find(|v| v.name == segs[0]))
+                    .unwrap()
+                    .type_
+                    .clone()
+            } else {
+                RustType::Todo
+            };
+            (JsExpr::Path(segs), type_)
         }
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
@@ -5328,22 +5695,24 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         Expr::Return(expr_return) => {
             if let Some(expr) = &expr_return.expr {
                 // If return is the deref of a &mut, then `.copy()` it
-                let js_expr = match &**expr {
+                let (js_expr, type_) = match &**expr {
                     Expr::Unary(expr_unary) => match expr_unary.op {
-                        UnOp::Deref(_) => JsExpr::MethodCall(
-                            Box::new(handle_expr(expr, global_data, current_module)),
-                            "copy".to_string(),
-                            Vec::new(),
-                        ),
+                        UnOp::Deref(_) => {
+                            let (expr, type_) = handle_expr(expr, global_data, current_module);
+                            (
+                                JsExpr::MethodCall(Box::new(expr), "copy".to_string(), Vec::new()),
+                                type_,
+                            )
+                        }
                         _ => handle_expr(expr, global_data, current_module),
                     },
                     _ => handle_expr(expr, global_data, current_module),
                 };
 
-                JsExpr::Return(Box::new(js_expr))
+                (JsExpr::Return(Box::new(js_expr)), type_)
             } else {
                 // TODO surely an empty in Rust should also be an empty return in JS?
-                JsExpr::Return(Box::new(JsExpr::Vanish))
+                (JsExpr::Return(Box::new(JsExpr::Vanish)), RustType::Todo)
             }
         }
         Expr::Struct(expr_struct) => {
@@ -5363,17 +5732,20 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                                 Member::Named(ident) => ident.to_string(),
                                 Member::Unnamed(_) => todo!(),
                             },
-                            Box::new(handle_expr(&field.expr, global_data, current_module)),
+                            Box::new(handle_expr(&field.expr, global_data, current_module).0),
                         )
                     })
                     .collect::<Vec<_>>(),
             );
             if segs.len() == 2 {
-                JsExpr::FnCall(Box::new(JsExpr::Path(segs)), vec![obj])
+                (
+                    JsExpr::FnCall(Box::new(JsExpr::Path(segs)), vec![obj]),
+                    RustType::Todo,
+                )
             } else {
                 let struct_name = segs.first().unwrap().clone();
                 if struct_name == "FetchOptions" || struct_name == "SseOptions" {
-                    obj
+                    (obj, RustType::Todo)
                 } else {
                     // TODO we are assuming all other struct literals are inside ::new() so can be disappeared because the JsClass will write the constructor body
                     // JsExpr::Vanish
@@ -5381,10 +5753,10 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
                     let args = expr_struct
                         .fields
                         .iter()
-                        .map(|field| handle_expr(&field.expr, global_data, current_module))
+                        .map(|field| handle_expr(&field.expr, global_data, current_module).0)
                         .collect::<Vec<_>>();
 
-                    JsExpr::New(vec![struct_name], args)
+                    (JsExpr::New(vec![struct_name], args), RustType::Todo)
                 }
             }
         }
@@ -5393,28 +5765,31 @@ fn handle_expr(expr: &Expr, global_data: &mut GlobalData, current_module: &Vec<S
         Expr::Tuple(_) => todo!(),
         Expr::Unary(expr_unary) => match expr_unary.op {
             UnOp::Deref(_) => handle_expr(&*expr_unary.expr, global_data, current_module),
-            UnOp::Not(_) => JsExpr::Not(Box::new(handle_expr(
-                &*expr_unary.expr,
-                global_data,
-                current_module,
-            ))),
-            UnOp::Neg(_) => JsExpr::Minus(Box::new(handle_expr(
-                &*expr_unary.expr,
-                global_data,
-                current_module,
-            ))),
+            UnOp::Not(_) => (
+                JsExpr::Not(Box::new(
+                    handle_expr(&*expr_unary.expr, global_data, current_module).0,
+                )),
+                RustType::Bool,
+            ),
+            UnOp::Neg(_) => {
+                let (expr, type_) = handle_expr(&*expr_unary.expr, global_data, current_module);
+                (JsExpr::Minus(Box::new(expr)), type_)
+            }
             _ => todo!(),
         },
         Expr::Unsafe(_) => todo!(),
         Expr::Verbatim(_) => todo!(),
-        Expr::While(expr_while) => JsExpr::While(
-            Box::new(handle_expr(&*expr_while.cond, global_data, current_module)),
-            expr_while
-                .body
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>(),
+        Expr::While(expr_while) => (
+            JsExpr::While(
+                Box::new(handle_expr(&*expr_while.cond, global_data, current_module).0),
+                expr_while
+                    .body
+                    .stmts
+                    .iter()
+                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                    .collect::<Vec<_>>(),
+            ),
+            RustType::Unit,
         ),
         Expr::Yield(_) => todo!(),
         _ => todo!(),
@@ -5473,7 +5848,7 @@ fn handle_match_pat(
                 type_: LocalType::Var,
                 lhs: LocalName::DestructureObject(DestructureObject(names)),
                 value: JsExpr::Field(
-                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module)),
+                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
                     "data".to_string(),
                 ),
             });
@@ -5498,7 +5873,7 @@ fn handle_match_pat(
                 type_: LocalType::Var,
                 lhs: LocalName::DestructureArray(names),
                 value: JsExpr::Field(
-                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module)),
+                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
                     "data".to_string(),
                 ),
             });
@@ -5524,7 +5899,7 @@ fn handle_expr_match(
     is_returned: bool,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
-) -> JsExpr {
+) -> (JsExpr, RustType) {
     // (assignment, condition, succeed, fail)
     // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
 
@@ -5559,7 +5934,7 @@ fn handle_expr_match(
                     .collect::<Vec<_>>(),
                 other_expr => {
                     vec![JsStmt::Expr(
-                        handle_expr(other_expr, global_data, current_module),
+                        handle_expr(other_expr, global_data, current_module).0,
                         false,
                     )]
                 }
@@ -5573,7 +5948,7 @@ fn handle_expr_match(
                 declare_var: is_returned,
                 condition: Box::new(JsExpr::Binary(
                     Box::new(JsExpr::Field(
-                        Box::new(handle_expr(&*expr_match.expr, global_data, current_module)),
+                        Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
                         "id".to_string(),
                     )),
                     JsOp::Eq,
@@ -5589,7 +5964,7 @@ fn handle_expr_match(
     //     dbg!(arm);
     // }
     // todo!()
-    if_expr
+    (if_expr, RustType::Todo)
 }
 
 pub fn generate_js_from_module(js: impl ToString) -> String {
