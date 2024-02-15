@@ -10,9 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprMatch, Fields, FnArg,
-    ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit,
-    Local, Macro, Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall, ExprMatch,
+    ExprPath, Fields, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
+    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type,
+    UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -1499,7 +1500,7 @@ fn handle_item_impl(
 
     // for the current block/list of stmts, store impl items in a Vec along with the class name
     // After
-    let class_name = match &*item_impl.self_ty {
+    let impl_item_target = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
         _ => todo!(),
     };
@@ -1509,7 +1510,7 @@ fn handle_item_impl(
             todo!()
         }
         global_data.default_trait_impls_class_mapping.push((
-            class_name.clone(),
+            impl_item_target.clone(),
             trait_.1.segments.first().unwrap().ident.to_string(),
         ));
     }
@@ -1521,7 +1522,7 @@ fn handle_item_impl(
                 // impl_item_const
                 impl_stmts.push(ImplItemTemp {
                     // class_name: impl_item_const.ident.to_string(),
-                    class_name: class_name.clone(),
+                    class_name: impl_item_target.clone(),
                     module_path: current_module_path.clone(),
                     item_stmt: JsImplItem::ClassStatic(JsLocal {
                         public: false,
@@ -1563,7 +1564,8 @@ fn handle_item_impl(
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
-                let body_stmts = if class_name == "RustBool" && item_impl_fn.sig.ident == "bool_and"
+                let body_stmts = if impl_item_target == "RustBool"
+                    && item_impl_fn.sig.ident == "bool_and"
                 {
                     Some(vec![JsStmt::Raw(
                         "this.jsBoolean && other.jsBoolean".to_string(),
@@ -1571,44 +1573,51 @@ fn handle_item_impl(
                     // fn add_assign(&mut self, other: RustInteger<T>) {
                     //     self.js_number.0 += other.js_number.0;
                     // }
-                } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "add_assign" {
+                } else if impl_item_target == "RustInteger"
+                    && item_impl_fn.sig.ident == "add_assign"
+                {
                     Some(vec![JsStmt::Raw(
                         "this.jsNumber += other.inner()".to_string(),
                     )])
-                } else if class_name == "RustInteger" && item_impl_fn.sig.ident == "deref_assign" {
+                } else if impl_item_target == "RustInteger"
+                    && item_impl_fn.sig.ident == "deref_assign"
+                {
                     Some(vec![JsStmt::Raw(
                         "this.jsNumber = other.inner()".to_string(),
                     )])
-                } else if class_name == "RustString" && item_impl_fn.sig.ident == "add_assign" {
+                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "add_assign"
+                {
                     Some(vec![JsStmt::Raw(
                         "this.jsString += other.inner()".to_string(),
                     )])
-                } else if class_name == "RustString" && item_impl_fn.sig.ident == "push_str" {
+                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "push_str" {
                     Some(vec![JsStmt::Raw(
                         "this.jsString += other.jsString".to_string(),
                     )])
-                } else if class_name == "RustString" && item_impl_fn.sig.ident == "deref_assign" {
+                } else if impl_item_target == "RustString"
+                    && item_impl_fn.sig.ident == "deref_assign"
+                {
                     Some(vec![JsStmt::Raw(
                         "this.jsString = other.jsString".to_string(),
                     )])
-                } else if class_name == "Option" && item_impl_fn.sig.ident == "eq" {
+                } else if impl_item_target == "Option" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
                         "return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data)"
                             .to_string(),
                     )])
-                } else if class_name == "Option" && item_impl_fn.sig.ident == "ne" {
+                } else if impl_item_target == "Option" && item_impl_fn.sig.ident == "ne" {
                     Some(vec![JsStmt::Raw(
                         "return this.id !== other.id || this.data.ne(other.data)".to_string(),
                     )])
-                } else if class_name == "RustBool" && item_impl_fn.sig.ident == "eq" {
+                } else if impl_item_target == "RustBool" && item_impl_fn.sig.ident == "eq" {
                     Some(vec![JsStmt::Raw(
                         "return this.jsBoolean === other.jsBoolean".to_string(),
                     )])
-                } else if class_name == "RustBool" && item_impl_fn.sig.ident == "ne" {
+                } else if impl_item_target == "RustBool" && item_impl_fn.sig.ident == "ne" {
                     Some(vec![JsStmt::Raw(
                         "return this.jsBoolean !== other.jsBoolean".to_string(),
                     )])
-                } else if class_name == "RustString" && item_impl_fn.sig.ident == "clone" {
+                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "clone" {
                     Some(vec![JsStmt::Raw("return this.jsString".to_string())])
                 } else {
                     let n_stmts = item_impl_fn.block.stmts.len();
@@ -1626,6 +1635,30 @@ fn handle_item_impl(
                             _ => true,
                         },
                     };
+                    let type_ = item_impl_fn
+                        .sig
+                        .inputs
+                        .first()
+                        .and_then(|input| match input {
+                            FnArg::Receiver(reciever) => {
+                                // TODO need to lookup whether impl_item_target path is a struct of enum
+                                let is_struct = true;
+                                let mut type_ = if is_struct {
+                                    RustType::Struct(impl_item_target.clone())
+                                } else {
+                                    RustType::Enum(impl_item_target.clone())
+                                };
+                                if reciever.mutability.is_some() {
+                                    type_ = RustType::MutRef(Box::new(type_))
+                                }
+                                Some(type_)
+                            }
+                            FnArg::Typed(_) => None,
+                        });
+                    if let Some(type_) = &type_ {
+                        global_data.self_type.push(type_.clone());
+                    }
+
                     let body_stmts = parse_fn_body_stmts(
                         returns_non_mut_ref_val,
                         &body_stmts,
@@ -1633,16 +1666,19 @@ fn handle_item_impl(
                         current_module_path,
                     )
                     .0;
+                    if type_.is_some() {
+                        global_data.self_type.pop();
+                    }
                     Some(body_stmts)
                 };
                 if let Some(body_stmts) = body_stmts {
                     impl_stmts.push(
                         // item_impl_fn.sig.ident.to_string(),
                         ImplItemTemp {
-                            class_name: class_name.clone(),
+                            class_name: impl_item_target.clone(),
                             module_path: current_module_path.clone(),
                             item_stmt: JsImplItem::ClassMethod(
-                                class_name.clone(),
+                                impl_item_target.clone(),
                                 false,
                                 static_,
                                 JsFn {
@@ -2194,6 +2230,8 @@ struct GlobalData {
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     /// (variable, fns)
     scopes: Vec<(Vec<ScopedVar>, Vec<ItemFn>)>,
+    /// prior parsing the body of an impl method, we record the type of the item of which we are implementing, so we know what type self is
+    self_type: Vec<RustType>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
@@ -2213,6 +2251,7 @@ impl GlobalData {
             modules: Vec::new(),
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![(Vec::new(), Vec::new())],
+            self_type: Vec::new(),
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
@@ -2490,7 +2529,9 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
 
 fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<JsStmt> {
     let code = include_str!("rust_prelude/option.rs");
+    dbg!("hi");
     let modules = from_file(code, false);
+    dbg!("bye");
     assert_eq!(modules.len(), 1);
     let option_module = &modules[0];
 
@@ -4233,6 +4274,7 @@ fn handle_expr_and_stmt_macro(
             );
         }
         if path_segs[0] == "assert_eq" {
+            dbg!(&path_segs);
             let input = mac.tokens.clone().to_string();
             let mut parts = input.split(",");
 
@@ -4329,6 +4371,545 @@ fn handle_expr_and_stmt_macro(
         }
     }
     todo!()
+}
+
+fn handle_expr_call(
+    expr_call: &ExprCall,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> (JsExpr, RustType) {
+    let js_primitive = match &*expr_call.func {
+        Expr::Path(expr_path) => {
+            if expr_path.path.segments.len() == 1 {
+                let ident = &expr_path.path.segments.first().unwrap().ident;
+                ident == "JsNumber" || ident == "JsString" || ident == "JsBoolean"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    if js_primitive {
+        return handle_expr(expr_call.args.first().unwrap(), global_data, current_module);
+    }
+
+    let args = expr_call
+        .args
+        .iter()
+        .map(|arg| handle_expr(arg, global_data, current_module).0)
+        .collect::<Vec<_>>();
+
+    // handle tuple structs
+    match &*expr_call.func {
+        Expr::Path(expr_path) => {
+            let path = expr_path
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            let name = path.last().unwrap();
+            // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
+            if path.len() == 1
+                && name.chars().next().unwrap().is_ascii_uppercase()
+                && name != "Some"
+                && name != "Ok"
+                && name != "Err"
+            {
+                return (JsExpr::New(path, args), RustType::Todo);
+            }
+        }
+        _ => {}
+    }
+
+    match &*expr_call.func {
+        Expr::Path(expr_path) => {
+            let last = expr_path.path.segments.last().unwrap().ident.to_string();
+            if last == "Some" {
+                global_data.rust_prelude_types.option = true;
+                global_data.rust_prelude_types.some = true;
+            }
+        }
+        _ => {}
+    }
+
+    match &*expr_call.func {
+        Expr::Path(expr_path) => {
+            let segments = expr_path
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+
+            if segments.last().unwrap() == "fetch2" {
+                // TODO improve this code
+                (
+                    JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args),
+                    RustType::Todo,
+                )
+            } else if segments.last().unwrap() == "stringify" {
+                (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec![
+                            "JSON".to_string(),
+                            "stringify".to_string(),
+                        ])),
+                        args,
+                    ),
+                    RustType::Todo,
+                )
+            } else if segments.len() == 2 && segments[0] == "Json" && segments[1] == "parse" {
+                (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
+                        args,
+                    ),
+                    RustType::Todo,
+                )
+            } else if segments.len() == 2
+                && segments[0] == "Date"
+                && segments[1] == "from_iso_string"
+            {
+                (JsExpr::New(vec!["Date".to_string()], args), RustType::Todo)
+            } else if segments.len() == 2
+                && segments[0] == "Document"
+                && segments[1] == "query_selector_body"
+            {
+                (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec![
+                            "document".to_string(),
+                            "querySelector".to_string(),
+                        ])),
+                        vec![JsExpr::LitStr("body".to_string())],
+                    ),
+                    RustType::Todo,
+                )
+            } else if segments.len() == 2
+                && segments[0] == "Document"
+                && segments[1] == "create_element_div"
+            {
+                (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Path(vec![
+                            "document".to_string(),
+                            "createElement".to_string(),
+                        ])),
+                        vec![JsExpr::LitStr("div".to_string())],
+                    ),
+                    RustType::Todo,
+                )
+            } else {
+                // if a simple fn call, look up the return type
+                let type_ = if expr_path.path.segments.len() == 1 {
+                    let item_fn = global_data
+                        .scopes
+                        .iter()
+                        .rev()
+                        .find_map(|s| {
+                            s.1.iter().rev().find(|f| {
+                                f.sig.ident.to_string()
+                                    == expr_path.path.segments.first().unwrap().ident.to_string()
+                            })
+                        })
+                        .unwrap();
+                    match &item_fn.sig.output {
+                        ReturnType::Default => todo!(),
+                        ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
+                    }
+                } else {
+                    RustType::Todo
+                };
+                // let (expr, typey) = handle_expr(&*expr_call.func, global_data, current_module);
+                let (expr, typey) = handle_expr_path(expr_path, global_data, current_module, true);
+                (JsExpr::FnCall(Box::new(expr), args), typey)
+            }
+        }
+        // Expr::Path(expr_path)
+        //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
+        // {
+        //     // TODO improve this code
+        //     JsExpr::New(
+        //         expr_path
+        //             .path
+        //             .segments
+        //             .iter()
+        //             .take(expr_path.path.segments.len() - 1)
+        //             .map(|seg| seg.ident.to_string())
+        //             .collect::<Vec<_>>(),
+        //         args,
+        //     )
+        // }
+
+        // TODO Can we remove Some and just treat Some as any value vs None which is null?
+        // Expr::Path(expr_path)
+        //     if expr_path.path.segments.len() == 1
+        //         && expr_path.path.segments[0].ident.to_string() == "Some" =>
+        // {
+        //     args.into_iter().next().unwrap()
+        // }
+        _ => (
+            JsExpr::FnCall(
+                Box::new(handle_expr(&*expr_call.func, global_data, current_module).0),
+                args,
+            ),
+            RustType::Todo,
+        ),
+    }
+}
+/// is_call: is this path being called eg foo() or Foo()
+fn handle_expr_path(
+    expr_path: &ExprPath,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+    is_call: bool,
+) -> (JsExpr, RustType) {
+    let mut segs = expr_path
+        .path
+        .segments
+        .iter()
+        .map(|seg| {
+            let mut var_name = seg.ident.to_string();
+            if var_name == "Document" {
+                var_name = "document".to_string();
+            }
+            if var_name == "Console" {
+                var_name = "console".to_string();
+            }
+            // TODO be more targetted with this
+            if let Some(last_char) = var_name.chars().last() {
+                if last_char.is_digit(10) {
+                    var_name.pop().unwrap();
+                }
+            }
+            // case_convert(var_name)
+            var_name
+        })
+        .collect::<Vec<_>>();
+
+    if segs.len() == 1 {
+        // if segs[0] == "None" {
+        //     return JsExpr::Null;
+        // }
+        if segs[0] == "None" {
+            global_data.rust_prelude_types.option = true;
+            global_data.rust_prelude_types.none = true;
+        }
+        if segs[0] == "self" {
+            segs[0] = "this".to_string();
+        }
+    }
+    if global_data.snippet {
+        return (
+            JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>()),
+            RustType::Todo,
+        );
+    }
+
+    // So we have a path like foo::bar::baz()
+    // The algorithm for finding the full module path to the item is:
+    // Iif segs[0] is crate, super, or self, then jump to that module
+    // else
+    // Look to see if segs[0] is defined in any other the parent scopes
+    // else
+    // Look to see if segs[0] is defined at the module level
+    // else
+    // Look to see if segs[0] is a child module
+    // else
+    // Look to see if segs[0] is used
+
+    // TODO:
+    // handle mixed paths eg submodule -> use
+    // make sure `mod` being pub/private is taken into account - this would only be for use paths since mod is always public in the file it is called from (parent), so would happen in the `use` resolving step
+
+    // Take a path segs like foo::my_func(), and finds the absolute path to the item eg crate::bar::foo::my_func()
+    // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
+    fn get_path(
+        use_private_items: bool,
+        // So we know whether allow segs to simply be somthing in an outer scope
+        module_level_items_only: bool,
+        module: &ModuleData,
+        mut segs: Vec<String>,
+        global_data: &GlobalData,
+        current_module: &Vec<String>,
+        // Only used to determine if current module is
+        original_module: &Vec<String>,
+    ) -> Vec<String> {
+        // TODO All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...` I don't think there is any way to know whether the path leads a module which is a parent of (or is) the original module (ie so should be public), so we need to do this check. No - even if we access an item via `crate`, once we then visit a submodule, `use_private_items` get set to false, the problem is actually that sometimes we will want it to be true, when crate::submodule is actually a parent of the original module. So really we should just keep `is_parent_or_same_module` but a more efficient approach is to use `use_private_items` for crate, super, self, etc, then only calculate `is_parent_or_same_module` for submodule and pass as use_private_items
+        let is_parent_or_same_module = if original_module.len() >= current_module.len() {
+            current_module
+                .iter()
+                .enumerate()
+                .all(|(i, current_module)| current_module == &original_module[i])
+        } else {
+            false
+        };
+
+        let item_defined_in_module =
+            module.item_defined_in_module(use_private_items || is_parent_or_same_module, &segs[0]);
+
+        // Whilst the immediate child modules are public to all modules (not their items, but the module itself), we might not actually be accessing it directly from the parent eg `foo::bar::baz()` and `bar` is not `pub`
+        let path_starts_with_sub_module = module
+            .path_starts_with_sub_module(use_private_items || is_parent_or_same_module, &segs[0]);
+
+        // We are looking for the origin of some name so we want to compare that name with the item the use statement is importing
+        // If we have a match then use want to add the use path to the path of the current module, eg:
+        // current_module::crate::foo:item - we can overwrite the current module with "crate"
+        // current_module::super::foo:item - we can pop the last seg of the current module
+        // current_module::submodule::foo::item - add the submodule to the current module
+        // current_module::another_used_item::item - we need to get the path of this subsequent used item in the same way described here, so we are recursing, then return to the original use path and carry on adding the rest of the segments
+        let mut use_mappings = module.pub_use_mappings.iter();
+        let matched_use_mapping = if use_private_items || is_parent_or_same_module {
+            use_mappings
+                .chain(module.private_use_mappings.iter())
+                .find(|use_mapping| use_mapping.0 == segs[0])
+        } else {
+            use_mappings.find(|use_mapping| use_mapping.0 == segs[0])
+        };
+        // let path_starts_with_a_used_item_or_mod = module
+        //     .resolved_mappings
+        //     .iter()
+        //     .find(|use_mapping| use_mapping.0 == segs[0]);
+
+        // dbg!(&segs);
+        // dbg!(&module);
+        // dbg!(&current_module);
+        // dbg!(&use_private_items);
+        // dbg!(&module_level_items_only);
+        // dbg!(&module
+        //     .pub_submodules
+        //     .iter()
+        //     .chain(module.private_submodules.iter()));
+        // dbg!(module.private_definitions.contains(&segs[0]));
+        // println!("");
+        // dbg!(&module.resolved_mappings);
+        // dbg!(&segs[0]);
+
+        if item_defined_in_module {
+            // Path starts with an item defined in the module
+
+            // Check whether it is not globally unique and so has been namespaced
+            if let Some(dup) = global_data
+                .duplicates
+                .iter()
+                .find(|dup| dup.name == segs[0] && &dup.original_module_path == current_module)
+            {
+                segs[0] = dup
+                    .namespace
+                    .iter()
+                    .map(|seg| camel(seg))
+                    .collect::<Vec<_>>()
+                    .join("__");
+            }
+
+            // dbg!("item defined in module");
+
+            segs
+        } else if segs[0] == "super" {
+            // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
+            segs.remove(0);
+
+            let mut current_module = current_module.clone();
+            current_module.pop();
+
+            let module = global_data
+                .modules
+                .iter()
+                .find(|module| module.path == current_module)
+                .unwrap();
+
+            // dbg!("in super");
+            get_path(
+                true,
+                true,
+                module,
+                segs,
+                global_data,
+                &current_module,
+                original_module,
+            )
+        } else if segs[0] == "self" {
+            // NOTE private items are still accessible from the module via self
+            segs.remove(0);
+
+            // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
+            // TODO problem is that we are conflating `in_same_module` with pub/private
+            // dbg!("in self");
+            get_path(
+                true,
+                true,
+                module,
+                segs,
+                global_data,
+                &current_module,
+                original_module,
+            )
+        } else if segs[0] == "crate" {
+            let current_module = vec!["crate".to_string()];
+            let module = global_data
+                .modules
+                .iter()
+                .find(|module| module.path == current_module)
+                .unwrap();
+
+            // TODO descendants can access private items, so it depends whether the module trying to access the item is a descendant of the module it item is in, so need to keep track of the original call site?
+
+            // dbg!("in crate");
+            segs.remove(0);
+
+            // NOTE all modules are desecendants of crate so all items in crate are visible/public
+            get_path(
+                true,
+                true,
+                module,
+                segs,
+                global_data,
+                &current_module,
+                original_module,
+            )
+        } else if path_starts_with_sub_module {
+            // Path starts with a submodule of the current module
+            let mut submodule_path = current_module.clone();
+            submodule_path.push(segs[0].clone());
+
+            let submodule = global_data
+                .modules
+                .iter()
+                .find(|submodule| submodule.path == submodule_path)
+                .unwrap();
+
+            // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
+            segs.remove(0);
+
+            // dbg!("Path starts with a submodule of the current module");
+            get_path(
+                false,
+                true,
+                submodule,
+                segs,
+                global_data,
+                &submodule_path,
+                original_module,
+            )
+        } else if let Some(use_mapping) = matched_use_mapping {
+            let mut use_segs = use_mapping.1.clone();
+            use_segs.push(use_mapping.0.clone());
+            segs.remove(0);
+            use_segs.extend(segs);
+            let mut segs = get_path(
+                true,
+                true,
+                module,
+                use_segs,
+                global_data,
+                current_module,
+                original_module,
+            );
+
+            if let Some(dup) = global_data
+                .duplicates
+                .iter()
+                .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
+            {
+                // If the item has been namespaced, we need to replace it with the namespace
+                segs[0] = dup
+                    .namespace
+                    .iter()
+                    .map(|seg| camel(seg))
+                    .collect::<Vec<_>>()
+                    .join("__");
+                segs
+            } else {
+                // If the item has not been namespaced, we don't need to do anything
+                segs
+            }
+        } else if segs.len() == 1 && segs[0] == "this" {
+            // dbg!("in this");
+            segs
+        } else if use_private_items {
+            // If none of the above conditions are met then assume the path refers to an item/variable in an enclosing scope within this module, not at the top level of a module, so simply return the path
+            // dbg!("in private items");
+            segs
+        } else {
+            dbg!(module);
+            dbg!(current_module);
+            dbg!(segs);
+            panic!()
+        }
+    }
+
+    // dbg!(&global_data.modules);
+    // dbg!(&current_module);
+    let module = global_data
+        .modules
+        .iter()
+        .find(|module| &module.path == current_module)
+        .unwrap();
+
+    // let segs = get_path(true, module, segs, global_data, current_module)
+    //     .iter()
+    //     .map(|seg| case_convert(seg))
+    //     .collect::<Vec<_>>();
+
+    let mut segs = get_path(
+        true,
+        false,
+        module,
+        segs,
+        global_data,
+        current_module,
+        current_module,
+    );
+
+    // convert case of rest of path
+    for (i, seg) in segs.iter_mut().enumerate() {
+        if i == 0 && seg.contains("__") {
+            // namespaced item already case converted
+        } else {
+            *seg = case_convert(seg.clone())
+        }
+    }
+
+    // get type
+    let path_name = expr_path.path.segments.first().unwrap().ident.to_string();
+    dbg!(&segs[0]);
+    dbg!(&path_name);
+    dbg!(&expr_path);
+    dbg!(&is_call);
+    dbg!(&global_data.scopes);
+    let type_ = if segs.len() == 1 {
+        if is_call {
+            let item_fn = global_data
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|s| {
+                    s.1.iter()
+                        .rev()
+                        .find(|f| f.sig.ident == expr_path.path.segments.first().unwrap().ident)
+                })
+                .unwrap();
+            match &item_fn.sig.output {
+                ReturnType::Default => RustType::Unit,
+                ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
+            }
+        } else if path_name == "self" {
+            global_data.self_type.last().unwrap().clone()
+        } else {
+            global_data
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|s| s.0.iter().rev().find(|v| v.name == path_name))
+                .unwrap()
+                .type_
+                .clone()
+        }
+    } else {
+        RustType::Todo
+    };
+    (JsExpr::Path(segs), type_)
 }
 
 fn handle_expr_assign(
@@ -4832,205 +5413,7 @@ fn handle_expr(
             )
         }
         Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
-        Expr::Call(expr_call) => {
-            let js_primitive = match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    if expr_path.path.segments.len() == 1 {
-                        let ident = &expr_path.path.segments.first().unwrap().ident;
-                        ident == "JsNumber" || ident == "JsString" || ident == "JsBoolean"
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            };
-            if js_primitive {
-                return handle_expr(expr_call.args.first().unwrap(), global_data, current_module);
-            }
-
-            let args = expr_call
-                .args
-                .iter()
-                .map(|arg| handle_expr(arg, global_data, current_module).0)
-                .collect::<Vec<_>>();
-
-            // handle tuple structs
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    let path = expr_path
-                        .path
-                        .segments
-                        .iter()
-                        .map(|seg| seg.ident.to_string())
-                        .collect::<Vec<_>>();
-                    let name = path.last().unwrap();
-                    // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
-                    if path.len() == 1
-                        && name.chars().next().unwrap().is_ascii_uppercase()
-                        && name != "Some"
-                        && name != "Ok"
-                        && name != "Err"
-                    {
-                        return (JsExpr::New(path, args), RustType::Todo);
-                    }
-                }
-                _ => {}
-            }
-
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    let last = expr_path.path.segments.last().unwrap().ident.to_string();
-                    if last == "Some" {
-                        global_data.rust_prelude_types.option = true;
-                        global_data.rust_prelude_types.some = true;
-                    }
-                }
-                _ => {}
-            }
-
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    let segments = expr_path
-                        .path
-                        .segments
-                        .iter()
-                        .map(|seg| seg.ident.to_string())
-                        .collect::<Vec<_>>();
-
-                    if segments.last().unwrap() == "fetch2" {
-                        // TODO improve this code
-                        (
-                            JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args),
-                            RustType::Todo,
-                        )
-                    } else if segments.last().unwrap() == "stringify" {
-                        (
-                            JsExpr::FnCall(
-                                Box::new(JsExpr::Path(vec![
-                                    "JSON".to_string(),
-                                    "stringify".to_string(),
-                                ])),
-                                args,
-                            ),
-                            RustType::Todo,
-                        )
-                    } else if segments.len() == 2 && segments[0] == "Json" && segments[1] == "parse"
-                    {
-                        (
-                            JsExpr::FnCall(
-                                Box::new(JsExpr::Path(vec![
-                                    "JSON".to_string(),
-                                    "parse".to_string(),
-                                ])),
-                                args,
-                            ),
-                            RustType::Todo,
-                        )
-                    } else if segments.len() == 2
-                        && segments[0] == "Date"
-                        && segments[1] == "from_iso_string"
-                    {
-                        (JsExpr::New(vec!["Date".to_string()], args), RustType::Todo)
-                    } else if segments.len() == 2
-                        && segments[0] == "Document"
-                        && segments[1] == "query_selector_body"
-                    {
-                        (
-                            JsExpr::FnCall(
-                                Box::new(JsExpr::Path(vec![
-                                    "document".to_string(),
-                                    "querySelector".to_string(),
-                                ])),
-                                vec![JsExpr::LitStr("body".to_string())],
-                            ),
-                            RustType::Todo,
-                        )
-                    } else if segments.len() == 2
-                        && segments[0] == "Document"
-                        && segments[1] == "create_element_div"
-                    {
-                        (
-                            JsExpr::FnCall(
-                                Box::new(JsExpr::Path(vec![
-                                    "document".to_string(),
-                                    "createElement".to_string(),
-                                ])),
-                                vec![JsExpr::LitStr("div".to_string())],
-                            ),
-                            RustType::Todo,
-                        )
-                    } else {
-                        // if a simple fn call, look up the return type
-                        let type_ = if expr_path.path.segments.len() == 1 {
-                            let item_fn = global_data
-                                .scopes
-                                .iter()
-                                .rev()
-                                .find_map(|s| {
-                                    s.1.iter().rev().find(|f| {
-                                        f.sig.ident.to_string()
-                                            == expr_path
-                                                .path
-                                                .segments
-                                                .first()
-                                                .unwrap()
-                                                .ident
-                                                .to_string()
-                                    })
-                                })
-                                .unwrap();
-                            match &item_fn.sig.output {
-                                ReturnType::Default => todo!(),
-                                ReturnType::Type(_, type_) => {
-                                    parse_fn_input_or_return_type(&*type_)
-                                }
-                            }
-                        } else {
-                            RustType::Todo
-                        };
-                        (
-                            JsExpr::FnCall(
-                                Box::new(
-                                    handle_expr(&*expr_call.func, global_data, current_module).0,
-                                ),
-                                args,
-                            ),
-                            RustType::Todo,
-                        )
-                    }
-                }
-                // Expr::Path(expr_path)
-                //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
-                // {
-                //     // TODO improve this code
-                //     JsExpr::New(
-                //         expr_path
-                //             .path
-                //             .segments
-                //             .iter()
-                //             .take(expr_path.path.segments.len() - 1)
-                //             .map(|seg| seg.ident.to_string())
-                //             .collect::<Vec<_>>(),
-                //         args,
-                //     )
-                // }
-
-                // TODO Can we remove Some and just treat Some as any value vs None which is null?
-                // Expr::Path(expr_path)
-                //     if expr_path.path.segments.len() == 1
-                //         && expr_path.path.segments[0].ident.to_string() == "Some" =>
-                // {
-                //     args.into_iter().next().unwrap()
-                // }
-                _ => (
-                    JsExpr::FnCall(
-                        Box::new(handle_expr(&*expr_call.func, global_data, current_module).0),
-                        args,
-                    ),
-                    RustType::Todo,
-                ),
-            }
-        }
+        Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
         Expr::Cast(_) => todo!(),
         Expr::Closure(expr_closure) => {
             let async_ = match &*expr_closure.body {
@@ -5366,327 +5749,7 @@ fn handle_expr(
             let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
             (JsExpr::Paren(Box::new(expr)), type_)
         }
-        Expr::Path(expr_path) => {
-            let mut segs = expr_path
-                .path
-                .segments
-                .iter()
-                .map(|seg| {
-                    let mut var_name = seg.ident.to_string();
-                    if var_name == "Document" {
-                        var_name = "document".to_string();
-                    }
-                    if var_name == "Console" {
-                        var_name = "console".to_string();
-                    }
-                    // TODO be more targetted with this
-                    if let Some(last_char) = var_name.chars().last() {
-                        if last_char.is_digit(10) {
-                            var_name.pop().unwrap();
-                        }
-                    }
-                    // case_convert(var_name)
-                    var_name
-                })
-                .collect::<Vec<_>>();
-            if segs.len() == 1 {
-                // if segs[0] == "None" {
-                //     return JsExpr::Null;
-                // }
-                if segs[0] == "None" {
-                    global_data.rust_prelude_types.option = true;
-                    global_data.rust_prelude_types.none = true;
-                }
-                if segs[0] == "self" {
-                    segs[0] = "this".to_string();
-                }
-            }
-            if global_data.snippet {
-                return (
-                    JsExpr::Path(segs.iter().map(|seg| case_convert(seg)).collect::<Vec<_>>()),
-                    RustType::Todo,
-                );
-            }
-
-            // So we have a path like foo::bar::baz()
-            // The algorithm for finding the full module path to the item is:
-            // Iif segs[0] is crate, super, or self, then jump to that module
-            // else
-            // Look to see if segs[0] is defined in any other the parent scopes
-            // else
-            // Look to see if segs[0] is defined at the module level
-            // else
-            // Look to see if segs[0] is a child module
-            // else
-            // Look to see if segs[0] is used
-
-            // TODO:
-            // handle mixed paths eg submodule -> use
-            // make sure `mod` being pub/private is taken into account - this would only be for use paths since mod is always public in the file it is called from (parent), so would happen in the `use` resolving step
-
-            // Take a path segs like foo::my_func(), and finds the absolute path to the item eg crate::bar::foo::my_func()
-            // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
-            fn get_path(
-                use_private_items: bool,
-                // So we know whether allow segs to simply be somthing in an outer scope
-                module_level_items_only: bool,
-                module: &ModuleData,
-                mut segs: Vec<String>,
-                global_data: &GlobalData,
-                current_module: &Vec<String>,
-                // Only used to determine if current module is
-                original_module: &Vec<String>,
-            ) -> Vec<String> {
-                // TODO All parent modules are visible/public to their desecendants. When parents are accessed via `super`, it is easy the flag `use_private_items = true`. However when modules are accessed via `crate:: ...` I don't think there is any way to know whether the path leads a module which is a parent of (or is) the original module (ie so should be public), so we need to do this check. No - even if we access an item via `crate`, once we then visit a submodule, `use_private_items` get set to false, the problem is actually that sometimes we will want it to be true, when crate::submodule is actually a parent of the original module. So really we should just keep `is_parent_or_same_module` but a more efficient approach is to use `use_private_items` for crate, super, self, etc, then only calculate `is_parent_or_same_module` for submodule and pass as use_private_items
-                let is_parent_or_same_module = if original_module.len() >= current_module.len() {
-                    current_module
-                        .iter()
-                        .enumerate()
-                        .all(|(i, current_module)| current_module == &original_module[i])
-                } else {
-                    false
-                };
-
-                let item_defined_in_module = module.item_defined_in_module(
-                    use_private_items || is_parent_or_same_module,
-                    &segs[0],
-                );
-
-                // Whilst the immediate child modules are public to all modules (not their items, but the module itself), we might not actually be accessing it directly from the parent eg `foo::bar::baz()` and `bar` is not `pub`
-                let path_starts_with_sub_module = module.path_starts_with_sub_module(
-                    use_private_items || is_parent_or_same_module,
-                    &segs[0],
-                );
-
-                // We are looking for the origin of some name so we want to compare that name with the item the use statement is importing
-                // If we have a match then use want to add the use path to the path of the current module, eg:
-                // current_module::crate::foo:item - we can overwrite the current module with "crate"
-                // current_module::super::foo:item - we can pop the last seg of the current module
-                // current_module::submodule::foo::item - add the submodule to the current module
-                // current_module::another_used_item::item - we need to get the path of this subsequent used item in the same way described here, so we are recursing, then return to the original use path and carry on adding the rest of the segments
-                let mut use_mappings = module.pub_use_mappings.iter();
-                let matched_use_mapping = if use_private_items || is_parent_or_same_module {
-                    use_mappings
-                        .chain(module.private_use_mappings.iter())
-                        .find(|use_mapping| use_mapping.0 == segs[0])
-                } else {
-                    use_mappings.find(|use_mapping| use_mapping.0 == segs[0])
-                };
-                // let path_starts_with_a_used_item_or_mod = module
-                //     .resolved_mappings
-                //     .iter()
-                //     .find(|use_mapping| use_mapping.0 == segs[0]);
-
-                // dbg!(&segs);
-                // dbg!(&module);
-                // dbg!(&current_module);
-                // dbg!(&use_private_items);
-                // dbg!(&module_level_items_only);
-                // dbg!(&module
-                //     .pub_submodules
-                //     .iter()
-                //     .chain(module.private_submodules.iter()));
-                // dbg!(module.private_definitions.contains(&segs[0]));
-                // println!("");
-                // dbg!(&module.resolved_mappings);
-                // dbg!(&segs[0]);
-
-                if item_defined_in_module {
-                    // Path starts with an item defined in the module
-
-                    // Check whether it is not globally unique and so has been namespaced
-                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
-                        dup.name == segs[0] && &dup.original_module_path == current_module
-                    }) {
-                        segs[0] = dup
-                            .namespace
-                            .iter()
-                            .map(|seg| camel(seg))
-                            .collect::<Vec<_>>()
-                            .join("__");
-                    }
-
-                    // dbg!("item defined in module");
-
-                    segs
-                } else if segs[0] == "super" {
-                    // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
-                    segs.remove(0);
-
-                    let mut current_module = current_module.clone();
-                    current_module.pop();
-
-                    let module = global_data
-                        .modules
-                        .iter()
-                        .find(|module| module.path == current_module)
-                        .unwrap();
-
-                    // dbg!("in super");
-                    get_path(
-                        true,
-                        true,
-                        module,
-                        segs,
-                        global_data,
-                        &current_module,
-                        original_module,
-                    )
-                } else if segs[0] == "self" {
-                    // NOTE private items are still accessible from the module via self
-                    segs.remove(0);
-
-                    // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
-                    // TODO problem is that we are conflating `in_same_module` with pub/private
-                    // dbg!("in self");
-                    get_path(
-                        true,
-                        true,
-                        module,
-                        segs,
-                        global_data,
-                        &current_module,
-                        original_module,
-                    )
-                } else if segs[0] == "crate" {
-                    let current_module = vec!["crate".to_string()];
-                    let module = global_data
-                        .modules
-                        .iter()
-                        .find(|module| module.path == current_module)
-                        .unwrap();
-
-                    // TODO descendants can access private items, so it depends whether the module trying to access the item is a descendant of the module it item is in, so need to keep track of the original call site?
-
-                    // dbg!("in crate");
-                    segs.remove(0);
-
-                    // NOTE all modules are desecendants of crate so all items in crate are visible/public
-                    get_path(
-                        true,
-                        true,
-                        module,
-                        segs,
-                        global_data,
-                        &current_module,
-                        original_module,
-                    )
-                } else if path_starts_with_sub_module {
-                    // Path starts with a submodule of the current module
-                    let mut submodule_path = current_module.clone();
-                    submodule_path.push(segs[0].clone());
-
-                    let submodule = global_data
-                        .modules
-                        .iter()
-                        .find(|submodule| submodule.path == submodule_path)
-                        .unwrap();
-
-                    // If we are going to be looking within the submodule that the current path starts with, we should remove it from the path since get_path() doesn't expect paths to a module to start with their name since this is not valid Rust, and self must be used instead.
-                    segs.remove(0);
-
-                    // dbg!("Path starts with a submodule of the current module");
-                    get_path(
-                        false,
-                        true,
-                        submodule,
-                        segs,
-                        global_data,
-                        &submodule_path,
-                        original_module,
-                    )
-                } else if let Some(use_mapping) = matched_use_mapping {
-                    let mut use_segs = use_mapping.1.clone();
-                    use_segs.push(use_mapping.0.clone());
-                    segs.remove(0);
-                    use_segs.extend(segs);
-                    let mut segs = get_path(
-                        true,
-                        true,
-                        module,
-                        use_segs,
-                        global_data,
-                        current_module,
-                        original_module,
-                    );
-
-                    if let Some(dup) = global_data.duplicates.iter().find(|dup| {
-                        dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1
-                    }) {
-                        // If the item has been namespaced, we need to replace it with the namespace
-                        segs[0] = dup
-                            .namespace
-                            .iter()
-                            .map(|seg| camel(seg))
-                            .collect::<Vec<_>>()
-                            .join("__");
-                        segs
-                    } else {
-                        // If the item has not been namespaced, we don't need to do anything
-                        segs
-                    }
-                } else if segs.len() == 1 && segs[0] == "this" {
-                    // dbg!("in this");
-                    segs
-                } else if use_private_items {
-                    // If none of the above conditions are met then assume the path refers to an item/variable in an enclosing scope within this module, not at the top level of a module, so simply return the path
-                    // dbg!("in private items");
-                    segs
-                } else {
-                    dbg!(module);
-                    dbg!(current_module);
-                    dbg!(segs);
-                    panic!()
-                }
-            }
-
-            // dbg!(&global_data.modules);
-            // dbg!(&current_module);
-            let module = global_data
-                .modules
-                .iter()
-                .find(|module| &module.path == current_module)
-                .unwrap();
-
-            // let segs = get_path(true, module, segs, global_data, current_module)
-            //     .iter()
-            //     .map(|seg| case_convert(seg))
-            //     .collect::<Vec<_>>();
-
-            let mut segs = get_path(
-                true,
-                false,
-                module,
-                segs,
-                global_data,
-                current_module,
-                current_module,
-            );
-
-            // convert case of rest of path
-            for (i, seg) in segs.iter_mut().enumerate() {
-                if i == 0 && seg.contains("__") {
-                    // namespaced item already case converted
-                } else {
-                    *seg = case_convert(seg.clone())
-                }
-            }
-
-            // get type
-            let type_ = if segs.len() == 1 {
-                global_data
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find_map(|s| s.0.iter().rev().find(|v| v.name == segs[0]))
-                    .unwrap()
-                    .type_
-                    .clone()
-            } else {
-                RustType::Todo
-            };
-            (JsExpr::Path(segs), type_)
-        }
+        Expr::Path(expr_path) => handle_expr_path(expr_path, global_data, current_module, false),
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
             handle_expr(&*expr_reference.expr, global_data, current_module)
@@ -5798,19 +5861,19 @@ fn handle_expr(
 
 /// Get match pattern ident to be used as rhs of if conditions like `myData.id === MyEnum.fooId`, and start a body stmts Vec to with any pattern arg destructuring that might be necessary
 ///
-/// (rhs, start of body Vec)
+/// (rhs, assignments/destructuring at start of body Vec)
 fn handle_match_pat(
     arm_pat: &Pat,
     expr_match: &ExprMatch,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
-) -> (Vec<String>, Vec<JsStmt>) {
+) -> (Vec<String>, Vec<JsStmt>, Vec<ScopedVar>) {
     match arm_pat {
         Pat::Const(_) => todo!(),
         Pat::Ident(pat_ident) => {
             let empty_vec: Vec<JsStmt> = Vec::new();
             let ident = pat_ident.ident.to_string();
-            (vec![ident], empty_vec)
+            (vec![ident], empty_vec, Vec::new())
         }
         Pat::Lit(_) => todo!(),
         Pat::Macro(_) => todo!(),
@@ -5826,6 +5889,7 @@ fn handle_match_pat(
                     .map(|seg| seg.ident.to_string())
                     .collect::<Vec<_>>(),
                 empty_vec,
+                Vec::new(),
             )
         }
 
@@ -5839,6 +5903,23 @@ fn handle_match_pat(
                 .iter()
                 .map(|field| match &field.member {
                     Member::Named(ident) => DestructureValue::KeyName(ident.to_string()),
+                    Member::Unnamed(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+            let scoped_vars = pat_struct
+                .fields
+                .iter()
+                .map(|field| match &field.member {
+                    Member::Named(ident) => {
+                        ScopedVar {
+                            name: ident.to_string(),
+                            // TODO can't find the data for mutability on `field`
+                            mut_: false,
+                            mut_ref: false,
+                            // TODO a struct pattern in a match arm always implies an enum? if so, look
+                            type_: RustType::Todo,
+                        }
+                    }
                     Member::Unnamed(_) => todo!(),
                 })
                 .collect::<Vec<_>>();
@@ -5858,15 +5939,37 @@ fn handle_match_pat(
                 .iter()
                 .map(|seg| seg.ident.to_string())
                 .collect::<Vec<_>>();
-            (rhs, vec![stmt])
+            (rhs, vec![stmt], scoped_vars)
         }
         Pat::Tuple(_) => todo!(),
         Pat::TupleStruct(pat_tuple_struct) => {
+            dbg!("tupleduple");
             let names = pat_tuple_struct
                 .elems
                 .iter()
                 .map(|elem| handle_pat(elem))
                 .collect::<Vec<_>>();
+            let scoped_vars = pat_tuple_struct
+                .elems
+                .iter()
+                .map(|elem| {
+                    let name = match elem {
+                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                        // TODO handle len > 1
+                        // Pat::Path(pat_path) => {
+                        //     pat_path.path.segments.first().unwrap().ident.to_string()
+                        // }
+                        _ => todo!(),
+                    };
+                    ScopedVar {
+                        name,
+                        mut_: false,
+                        mut_ref: false,
+                        type_: RustType::Todo,
+                    }
+                })
+                .collect::<Vec<_>>();
+            dbg!(&names);
             let stmt = JsStmt::Local(JsLocal {
                 public: false,
                 export: false,
@@ -5877,6 +5980,7 @@ fn handle_match_pat(
                     "data".to_string(),
                 ),
             });
+            dbg!("confuse");
             (
                 pat_tuple_struct
                     .path
@@ -5885,6 +5989,7 @@ fn handle_match_pat(
                     .map(|seg| seg.ident.to_string())
                     .collect::<Vec<_>>(),
                 vec![stmt],
+                scoped_vars,
             )
         }
         Pat::Type(_) => todo!(),
@@ -5902,32 +6007,35 @@ fn handle_expr_match(
 ) -> (JsExpr, RustType) {
     // (assignment, condition, succeed, fail)
     // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
+    dbg!(&*expr_match);
 
     // Fold match arms into if else statements
     let if_expr = expr_match.arms.iter().rev().fold(
         JsExpr::ThrowError("couldn't match enum variant".to_string()),
         |acc, arm| {
-            let (mut rhs, mut body_data_destructure) =
+            let (mut cond_rhs, mut body_data_destructure, scoped_vars) =
                 handle_match_pat(&arm.pat, expr_match, global_data, current_module);
 
-            if rhs == ["Some"] || rhs == ["None"] {
-                rhs.insert(0, "Option".to_string());
+            if cond_rhs == ["Some"] || cond_rhs == ["None"] {
+                cond_rhs.insert(0, "Option".to_string());
             }
 
             // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
-            let index = rhs.len() - 1;
+            let index = cond_rhs.len() - 1;
             // dbg!(rhs);
             // todo!();
             // if rhs[0] == "Option" {
             //     rhs = rhs[1..].to_vec();
             // }
-            rhs[index] = format!("{}Id", camel(rhs[index].clone()));
+            cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
 
+            dbg!(&*arm.body);
+            global_data.scopes.push((scoped_vars, Vec::new()));
             let body = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                 Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
                 Expr::Block(expr_block) => expr_block
-                    .block
+                .block
                     .stmts
                     .iter()
                     .map(|stmt| handle_stmt(stmt, global_data, current_module))
@@ -5939,6 +6047,8 @@ fn handle_expr_match(
                     )]
                 }
             };
+            global_data.scopes.pop();
+            
             body_data_destructure.extend(body.into_iter());
             let body = body_data_destructure;
 
@@ -5952,7 +6062,7 @@ fn handle_expr_match(
                         "id".to_string(),
                     )),
                     JsOp::Eq,
-                    Box::new(JsExpr::Path(rhs)),
+                    Box::new(JsExpr::Path(cond_rhs)),
                 )),
                 succeed: body,
                 // TODO

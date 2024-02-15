@@ -14,27 +14,23 @@ pub use Option::*;
 
 #[allow(dead_code)]
 impl<T: PartialEq> Option<T> {
-    fn eq(&self, other: &Option<T>) -> RustBool {
+    fn eq(&self, other: &Option<T>) -> bool {
         // return new RustBool(this.id === other.id && this.data.eq(other.data));
         // This gets manually overriden
-        RustBool {
-            js_boolean: JsBoolean(match (self, other) {
-                (Some(a), Some(b)) => a == b,
-                (Some(_), None) => false,
-                (None, Some(_)) => false,
-                (None, None) => true,
-            }),
+        match (self, other) {
+            (Some(a), Some(b)) => a == b,
+            (Some(_), None) => false,
+            (None, Some(_)) => false,
+            (None, None) => true,
         }
     }
 
-    fn ne(&self, other: &Option<T>) -> RustBool {
-        RustBool {
-            js_boolean: JsBoolean(match (self, other) {
-                (Some(a), Some(b)) => a != b,
-                (Some(_), None) => true,
-                (None, Some(_)) => true,
-                (None, None) => false,
-            }),
+    fn ne(&self, other: &Option<T>) -> bool {
+        match (self, other) {
+            (Some(a), Some(b)) => a != b,
+            (Some(_), None) => true,
+            (None, Some(_)) => true,
+            (None, None) => false,
         }
     }
 
