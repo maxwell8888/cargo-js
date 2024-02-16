@@ -10,10 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{
-    parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall, ExprMatch,
-    ExprPath, Fields, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
-    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, ReturnType, Stmt, TraitItem, Type,
-    UnOp, UseTree, Visibility,
+    parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
+    ExprMatch, ExprPath, Fields, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod,
+    ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments,
+    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -1562,6 +1562,105 @@ fn handle_item_impl(
                     })
                     .collect::<Vec<_>>();
 
+                global_data.scopes.push((Vec::new(), Vec::new()));
+                let mut vars = Vec::new();
+                let mut fns = Vec::new();
+                // record var and fn inputs
+                for input in &item_impl_fn.sig.inputs {
+                    match input {
+                        FnArg::Receiver(_) => {}
+                        FnArg::Typed(pat_type) => {
+                            dbg!(pat_type);
+                            let ident = match &*pat_type.pat {
+                                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                _ => todo!(),
+                            };
+                            let return_type = match &*pat_type.ty {
+                                Type::Array(_) => todo!(),
+                                Type::BareFn(_) => todo!(),
+                                Type::Group(_) => todo!(),
+                                Type::ImplTrait(type_impl_trait) => {
+                                    // TODO handle len > 1
+                                    let bound = type_impl_trait.bounds.first().unwrap();
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            let seg = trait_bound.path.segments.first().unwrap();
+                                            match seg.arguments {
+                                                PathArguments::None => todo!(),
+                                                PathArguments::AngleBracketed(_) => todo!(),
+                                                PathArguments::Parenthesized(
+                                                    parenthesized_generic_arguments,
+                                                ) => match parenthesized_generic_arguments.output {
+                                                    ReturnType::Default => todo!(),
+                                                    ReturnType::Type(_, type_) => {
+                                                        parse_fn_input_or_return_type(type_)
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        TypeParamBound::Lifetime(_) => todo!(),
+                                        TypeParamBound::Verbatim(_) => todo!(),
+                                        _ => todo!(),
+                                    }
+                                }
+                                Type::Infer(_) => todo!(),
+                                Type::Macro(_) => todo!(),
+                                Type::Never(_) => todo!(),
+                                Type::Paren(_) => todo!(),
+                                Type::Path(_) => todo!(),
+                                Type::Ptr(_) => todo!(),
+                                Type::Reference(_) => todo!(),
+                                Type::Slice(_) => todo!(),
+                                Type::TraitObject(_) => todo!(),
+                                Type::Tuple(_) => todo!(),
+                                Type::Verbatim(_) => todo!(),
+                                _ => todo!(),
+                            };
+                            let fn_info = FnInfo { ident, return_type };
+                            fns.push(fn_info);
+
+                            // match &*pat_type.ty {
+                            //     Type::Array(_) => todo!(),
+                            //     Type::BareFn(_) => todo!(),
+                            //     Type::Group(_) => todo!(),
+                            //     Type::ImplTrait(_) => todo!(),
+                            //     Type::Infer(_) => todo!(),
+                            //     Type::Macro(_) => todo!(),
+                            //     Type::Never(_) => todo!(),
+                            //     Type::Paren(_) => todo!(),
+                            //     Type::Path(_) => todo!(),
+                            //     Type::Ptr(_) => todo!(),
+                            //     Type::Reference(_) => todo!(),
+                            //     Type::Slice(_) => todo!(),
+                            //     Type::TraitObject(_) => todo!(),
+                            //     Type::Tuple(_) => todo!(),
+                            //     Type::Verbatim(_) => todo!(),
+                            //     _ => todo!(),
+                            // }
+                            // match &*pat_type.pat {
+                            //     Pat::Const(_) => todo!(),
+                            //     Pat::Ident(_) => todo!(),
+                            //     Pat::Lit(_) => todo!(),
+                            //     Pat::Macro(_) => todo!(),
+                            //     Pat::Or(_) => todo!(),
+                            //     Pat::Paren(_) => todo!(),
+                            //     Pat::Path(_) => todo!(),
+                            //     Pat::Range(_) => todo!(),
+                            //     Pat::Reference(_) => todo!(),
+                            //     Pat::Rest(_) => todo!(),
+                            //     Pat::Slice(_) => todo!(),
+                            //     Pat::Struct(_) => todo!(),
+                            //     Pat::Tuple(_) => todo!(),
+                            //     Pat::TupleStruct(_) => todo!(),
+                            //     Pat::Type(_) => todo!(),
+                            //     Pat::Verbatim(_) => todo!(),
+                            //     Pat::Wild(_) => todo!(),
+                            //     _ => todo!(),
+                            // }
+                        }
+                    };
+                }
+
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
                 let body_stmts = if impl_item_target == "RustBool"
@@ -1635,7 +1734,7 @@ fn handle_item_impl(
                             _ => true,
                         },
                     };
-                    let type_ = item_impl_fn
+                    let self_type = item_impl_fn
                         .sig
                         .inputs
                         .first()
@@ -1655,7 +1754,7 @@ fn handle_item_impl(
                             }
                             FnArg::Typed(_) => None,
                         });
-                    if let Some(type_) = &type_ {
+                    if let Some(type_) = &self_type {
                         global_data.self_type.push(type_.clone());
                     }
 
@@ -1666,7 +1765,7 @@ fn handle_item_impl(
                         current_module_path,
                     )
                     .0;
-                    if type_.is_some() {
+                    if self_type.is_some() {
                         global_data.self_type.pop();
                     }
                     Some(body_stmts)
@@ -2221,6 +2320,12 @@ struct ScopedVar {
 }
 
 #[derive(Debug, Clone)]
+struct FnInfo {
+    ident: String,
+    return_type: RustType,
+}
+
+#[derive(Debug, Clone)]
 struct GlobalData {
     snippet: bool,
     crate_path: Option<PathBuf>,
@@ -2229,7 +2334,7 @@ struct GlobalData {
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     /// (variable, fns)
-    scopes: Vec<(Vec<ScopedVar>, Vec<ItemFn>)>,
+    scopes: Vec<(Vec<ScopedVar>, Vec<FnInfo>)>,
     /// prior parsing the body of an impl method, we record the type of the item of which we are implementing, so we know what type self is
     self_type: Vec<RustType>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
@@ -4378,6 +4483,7 @@ fn handle_expr_call(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> (JsExpr, RustType) {
+    dbg!(expr_call);
     let js_primitive = match &*expr_call.func {
         Expr::Path(expr_path) => {
             if expr_path.path.segments.len() == 1 {
@@ -4393,13 +4499,16 @@ fn handle_expr_call(
         return handle_expr(expr_call.args.first().unwrap(), global_data, current_module);
     }
 
+    dbg!("hi");
     let args = expr_call
         .args
         .iter()
         .map(|arg| handle_expr(arg, global_data, current_module).0)
         .collect::<Vec<_>>();
+    dbg!("bye");
+    dbg!(&args);
 
-    // handle tuple structs
+    // handle tuple structs Some, Ok, Err
     match &*expr_call.func {
         Expr::Path(expr_path) => {
             let path = expr_path
@@ -4422,6 +4531,7 @@ fn handle_expr_call(
         _ => {}
     }
 
+    // record if using Some/Option
     match &*expr_call.func {
         Expr::Path(expr_path) => {
             let last = expr_path.path.segments.last().unwrap().ident.to_string();
@@ -4502,6 +4612,8 @@ fn handle_expr_call(
                 )
             } else {
                 // if a simple fn call, look up the return type
+                dbg!(&global_data.scopes);
+                dbg!(expr_path.path.segments.first().unwrap().ident.to_string());
                 let type_ = if expr_path.path.segments.len() == 1 {
                     let item_fn = global_data
                         .scopes
@@ -6035,7 +6147,7 @@ fn handle_expr_match(
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                 Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
                 Expr::Block(expr_block) => expr_block
-                .block
+                    .block
                     .stmts
                     .iter()
                     .map(|stmt| handle_stmt(stmt, global_data, current_module))
@@ -6048,7 +6160,7 @@ fn handle_expr_match(
                 }
             };
             global_data.scopes.pop();
-            
+
             body_data_destructure.extend(body.into_iter());
             let body = body_data_destructure;
 
