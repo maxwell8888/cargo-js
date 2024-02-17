@@ -11,9 +11,9 @@ use std::{
 };
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprMatch, ExprPath, Fields, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod,
-    ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments,
-    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
+    ExprMatch, ExprPath, Fields, FnArg, GenericArgument, ImplItem, Item, ItemEnum, ItemFn,
+    ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat,
+    PathArguments, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -382,23 +382,66 @@ fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
         Type::Group(_) => todo!(),
-        Type::ImplTrait(_) => todo!(),
+        Type::ImplTrait(type_impl_trait) => {
+            // TODO handle len > 1
+            let bound = type_impl_trait.bounds.first().unwrap();
+            let return_type = match bound {
+                TypeParamBound::Trait(trait_bound) => {
+                    let seg = trait_bound.path.segments.first().unwrap();
+                    let ident = seg.ident;
+                    let is_fn = ident == "FnOnce"
+                    match &seg.arguments {
+                        PathArguments::None => todo!(),
+                        PathArguments::AngleBracketed(_) => todo!(),
+                        PathArguments::Parenthesized(parenthesized_generic_arguments) => {
+                            match &parenthesized_generic_arguments.output {
+                                ReturnType::Default => todo!(),
+                                ReturnType::Type(_, type_) => {
+                                    parse_fn_input_or_return_type(&*type_)
+                                }
+                            }
+                        }
+                    }
+                }
+                TypeParamBound::Lifetime(_) => todo!(),
+                TypeParamBound::Verbatim(_) => todo!(),
+                _ => todo!(),
+            };
+            RustType::Fn(Box::new(return_type))
+        }
         Type::Infer(_) => todo!(),
         Type::Macro(_) => todo!(),
         Type::Never(_) => todo!(),
         Type::Paren(_) => todo!(),
         Type::Path(type_path) => {
             if type_path.path.segments.len() == 1 {
-                match type_path
-                    .path
-                    .segments
-                    .first()
-                    .unwrap()
-                    .ident
-                    .to_string()
-                    .as_str()
-                {
+                let seg = type_path.path.segments.first().unwrap();
+                let seg_name = seg.ident.to_string();
+                let seg_name_str = seg_name.as_str();
+                match seg_name_str {
                     "i32" => RustType::I32,
+                    "bool" => RustType::Bool,
+                    // TODO for now we are assuming T is a generic but we really need to determine whether a (length = 1 ?) Path is a generic variable/argument by looking to see if there is an Item defined with that name, and if not we can infer it is a generic variable/argument
+                    "T" => RustType::Generic("T".to_string()),
+                    "Option" => {
+                        let generic_type = match &seg.arguments {
+                            PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                                match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                    GenericArgument::Lifetime(_) => todo!(),
+                                    GenericArgument::Type(type_) => {
+                                        parse_fn_input_or_return_type(type_)
+                                    }
+                                    GenericArgument::Const(_) => todo!(),
+                                    GenericArgument::AssocType(_) => todo!(),
+                                    GenericArgument::AssocConst(_) => todo!(),
+                                    GenericArgument::Constraint(_) => todo!(),
+                                    _ => todo!(),
+                                }
+                            }
+                            _ => todo!(),
+                        };
+                        RustType::Option(Box::new(generic_type))
+                    }
                     other => {
                         dbg!(other);
                         todo!()
@@ -435,6 +478,129 @@ fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
     }
 }
 
+fn get_type_from_expr(
+    expr: &Expr,
+
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+) -> RustType {
+    match expr {
+        Expr::Array(_) => RustType::Unknown,
+        Expr::Assign(_) => RustType::Unknown,
+        Expr::Async(_) => RustType::Unknown,
+        Expr::Await(_) => RustType::Unknown,
+        Expr::Binary(_) => RustType::Unknown,
+        Expr::Block(_) => RustType::Unknown,
+        Expr::Break(_) => RustType::Unknown,
+        Expr::Call(expr_call) => {
+            match &*expr_call.func {
+                Expr::Path(expr_path) => {
+                    if expr_path.path.segments.len() == 1 {
+                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
+                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        global_data
+                            .scopes
+                            .iter()
+                            .rev()
+                            .find_map(|(vars, item_fns)| {
+                                let item_fn = item_fns
+                                    .iter()
+                                    .rev()
+                                    .find(|item_fn| item_fn.ident == fn_name);
+                                item_fn.map(|item_fn| {
+                                    // We found a fn so try and parse it's return type
+                                    item_fn.return_type.clone()
+                                })
+                            })
+                            // .unwrap_or(TypeOrVar::Unknown)
+                            .unwrap_or(RustType::Unknown)
+                    } else {
+                        // TypeOrVar::Unknown
+                        RustType::Unknown
+                    }
+                }
+                // _ => TypeOrVar::Unknown,
+                _ => RustType::Unknown,
+            }
+        }
+        Expr::Cast(_) => RustType::Unknown,
+        Expr::Closure(_) => RustType::Unknown,
+        Expr::Const(_) => RustType::Unknown,
+        Expr::Continue(_) => RustType::Unknown,
+        Expr::Field(_) => RustType::Unknown,
+        Expr::ForLoop(_) => RustType::Unknown,
+        Expr::Group(_) => RustType::Unknown,
+        Expr::If(_) => RustType::Unknown,
+        Expr::Index(_) => RustType::Unknown,
+        Expr::Infer(_) => RustType::Unknown,
+        Expr::Let(_) => RustType::Unknown,
+        Expr::Lit(expr_lit) => {
+            match expr_lit.lit {
+                Lit::Str(_) => RustType::String,
+                Lit::ByteStr(_) => RustType::Todo,
+                Lit::Byte(_) => RustType::Todo,
+                Lit::Char(_) => RustType::Todo,
+                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
+                Lit::Int(_) => RustType::I32,
+                Lit::Float(_) => RustType::F32,
+                Lit::Bool(_) => RustType::Bool,
+                Lit::Verbatim(_) => RustType::Todo,
+                _ => RustType::Unknown,
+            }
+        }
+        Expr::Loop(_) => RustType::Unknown,
+        Expr::Macro(_) => RustType::Unknown,
+        Expr::Match(_) => RustType::Unknown,
+        Expr::MethodCall(_) => RustType::Unknown,
+        Expr::Paren(_) => RustType::Unknown,
+        Expr::Path(expr_path) => {
+            if expr_path.path.segments.len() == 1 {
+                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
+                    vars.iter().rev().find(|var| {
+                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        var.name == name
+                    })
+                }) {
+                    // TypeOrVar::Var(var.clone())
+                    var.type_.clone()
+                } else {
+                    RustType::Unknown
+                }
+            } else {
+                RustType::Unknown
+            }
+        }
+        Expr::Range(_) => RustType::Unknown,
+        Expr::Reference(_) => RustType::Unknown,
+        Expr::Repeat(_) => RustType::Unknown,
+        Expr::Return(_) => RustType::Unknown,
+        Expr::Struct(_) => RustType::Unknown,
+        Expr::Try(_) => RustType::Unknown,
+        Expr::TryBlock(_) => RustType::Unknown,
+        Expr::Tuple(_) => RustType::Unknown,
+        Expr::Unary(expr_unary) => {
+            let deref = match expr_unary.op {
+                UnOp::Deref(_) => true,
+                _ => false,
+            };
+            let mut rust_type =
+                get_type_from_expr(&*expr_unary.expr, global_data, current_module_path);
+            if deref {
+                match rust_type {
+                    RustType::MutRef(rust_type2) => rust_type = *rust_type2.clone(),
+                    _ => {}
+                }
+            }
+            rust_type
+        }
+        Expr::Unsafe(_) => RustType::Unknown,
+        Expr::Verbatim(_) => RustType::Unknown,
+        Expr::While(_) => RustType::Unknown,
+        Expr::Yield(_) => RustType::Unknown,
+        _ => RustType::Unknown,
+    }
+}
+
 fn handle_local(
     local: &Local,
     global_data: &mut GlobalData,
@@ -460,6 +626,7 @@ fn handle_local(
         _ => (false, false, *local.init.as_ref().unwrap().expr.clone()),
     };
 
+    // if rhs is fn call then get the return type of the fn
     let rhs_is_fn_call = match &rhs_expr {
         Expr::Call(expr_call) => {
             let fn_name = match &*expr_call.func {
@@ -471,11 +638,8 @@ fn handle_local(
             let type_ = global_data.scopes.iter().rev().find_map(|s| {
                 s.1.iter()
                     .rev()
-                    .find(|f| f.sig.ident.to_string() == fn_name)
-                    .map(|f| match &f.sig.output {
-                        ReturnType::Default => todo!(),
-                        ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
-                    })
+                    .find(|f| f.ident == fn_name)
+                    .map(|f| f.return_type.clone())
             });
             // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
             type_
@@ -520,8 +684,17 @@ fn handle_local(
     // and rhs is `Copy`
     // dbg!(&lhs);
     // dbg!(&global_data.scopes);
-    let rhs_is_found_var = global_data.scopes.last().unwrap().0.iter().rev().find(
-        |ScopedVar { name, mut_, .. }| match &rhs_expr {
+
+    // TODO avoid using cloned here
+    let rhs_is_found_var = global_data
+        .scopes
+        .last()
+        .unwrap()
+        .0
+        .iter()
+        .cloned()
+        .rev()
+        .find(|ScopedVar { name, mut_, .. }| match &rhs_expr {
             Expr::Path(expr_path) => {
                 if expr_path.path.segments.len() == 1 {
                     expr_path.path.segments.first().unwrap().ident == name
@@ -530,8 +703,7 @@ fn handle_local(
                 }
             }
             _ => false,
-        },
-    );
+        });
 
     // dbg!(&rhs_is_found_var);
 
@@ -552,111 +724,10 @@ fn handle_local(
     // Expr::Call -> TypeOrVar::Var(ScopedVar { name: "donotuse".to_string(), mut_: false, mut_ref: type_reference.mutability.is_some(), type_, })
     // Expr::Lit -> TypeOrVar::RustType
     // Expr::Path -> TypeOrVar::Var
-    let type_or_var = match &rhs_expr {
-        Expr::Array(_) => TypeOrVar::Unknown,
-        Expr::Assign(_) => TypeOrVar::Unknown,
-        Expr::Async(_) => TypeOrVar::Unknown,
-        Expr::Await(_) => TypeOrVar::Unknown,
-        Expr::Binary(_) => TypeOrVar::Unknown,
-        Expr::Block(_) => TypeOrVar::Unknown,
-        Expr::Break(_) => TypeOrVar::Unknown,
-        Expr::Call(expr_call) => {
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    if expr_path.path.segments.len() == 1 {
-                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
-                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        global_data
-                            .scopes
-                            .iter()
-                            .rev()
-                            .find_map(|(vars, item_fns)| {
-                                let item_fn = item_fns
-                                    .iter()
-                                    .rev()
-                                    .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
-                                item_fn.map(|item_fn| {
-                                    // We found a fn so try and parse it's return type
-                                    match &item_fn.sig.output {
-                                        ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
-                                        ReturnType::Type(_, type_) => {
-                                            // TODO handle other cases eg a tuple containing &mut
-                                            TypeOrVar::RustType(parse_fn_input_or_return_type(
-                                                &**type_,
-                                            ))
-                                        }
-                                    }
-                                })
-                            })
-                            .unwrap_or(TypeOrVar::Unknown)
-                    } else {
-                        TypeOrVar::Unknown
-                    }
-                }
-                _ => TypeOrVar::Unknown,
-            }
-        }
-        Expr::Cast(_) => TypeOrVar::Unknown,
-        Expr::Closure(_) => TypeOrVar::Unknown,
-        Expr::Const(_) => TypeOrVar::Unknown,
-        Expr::Continue(_) => TypeOrVar::Unknown,
-        Expr::Field(_) => TypeOrVar::Unknown,
-        Expr::ForLoop(_) => TypeOrVar::Unknown,
-        Expr::Group(_) => TypeOrVar::Unknown,
-        Expr::If(_) => TypeOrVar::Unknown,
-        Expr::Index(_) => TypeOrVar::Unknown,
-        Expr::Infer(_) => TypeOrVar::Unknown,
-        Expr::Let(_) => TypeOrVar::Unknown,
-        Expr::Lit(expr_lit) => {
-            match expr_lit.lit {
-                Lit::Str(_) => TypeOrVar::RustType(RustType::String),
-                Lit::ByteStr(_) => TypeOrVar::Unknown,
-                Lit::Byte(_) => TypeOrVar::Unknown,
-                Lit::Char(_) => TypeOrVar::Unknown,
-                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
-                Lit::Int(_) => TypeOrVar::RustType(RustType::I32),
-                Lit::Float(_) => TypeOrVar::RustType(RustType::F32),
-                Lit::Bool(_) => TypeOrVar::RustType(RustType::Bool),
-                Lit::Verbatim(_) => TypeOrVar::Unknown,
-                _ => TypeOrVar::Unknown,
-            }
-        }
-        Expr::Loop(_) => TypeOrVar::Unknown,
-        Expr::Macro(_) => TypeOrVar::Unknown,
-        Expr::Match(_) => TypeOrVar::Unknown,
-        Expr::MethodCall(_) => TypeOrVar::Unknown,
-        Expr::Paren(_) => TypeOrVar::Unknown,
-        Expr::Path(expr_path) => {
-            if expr_path.path.segments.len() == 1 {
-                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
-                    vars.iter().rev().find(|var| {
-                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        var.name == name
-                    })
-                }) {
-                    TypeOrVar::Var(var.clone())
-                } else {
-                    TypeOrVar::Unknown
-                }
-            } else {
-                TypeOrVar::Unknown
-            }
-        }
-        Expr::Range(_) => TypeOrVar::Unknown,
-        Expr::Reference(_) => TypeOrVar::Unknown,
-        Expr::Repeat(_) => TypeOrVar::Unknown,
-        Expr::Return(_) => TypeOrVar::Unknown,
-        Expr::Struct(_) => TypeOrVar::Unknown,
-        Expr::Try(_) => TypeOrVar::Unknown,
-        Expr::TryBlock(_) => TypeOrVar::Unknown,
-        Expr::Tuple(_) => TypeOrVar::Unknown,
-        Expr::Unary(_) => TypeOrVar::Unknown,
-        Expr::Unsafe(_) => TypeOrVar::Unknown,
-        Expr::Verbatim(_) => TypeOrVar::Unknown,
-        Expr::While(_) => TypeOrVar::Unknown,
-        Expr::Yield(_) => TypeOrVar::Unknown,
-        _ => TypeOrVar::Unknown,
-    };
+    let mut rhs_type = get_type_from_expr(&rhs_expr, global_data, current_module_path);
+    if rhs_takes_mut_ref {
+        rhs_type = RustType::MutRef(Box::new(rhs_type));
+    }
 
     // rhs is a fn call that returns a &mut
     // TODO only handles fns defined in scope, not at top level
@@ -705,12 +776,18 @@ fn handle_local(
         // normal primative copy ie `let num = 5; let num2 = num` - do nothing
     } else if rhs_takes_mut_ref
         && rhs_is_found_var
-            .map(|v| v.mut_ && !v.mut_ref)
+            .as_ref()
+            .map(|v| v.mut_ && !v.is_mut_ref())
             .unwrap_or(false)
         && !rhs_is_deref
     {
         // take mut ref of mut var ie `let mut num = 5; let num2 = &mut num` - do nothing
-    } else if rhs_is_deref && rhs_is_found_var.map(|v| v.mut_ref).unwrap_or(false) {
+    } else if rhs_is_deref
+        && rhs_is_found_var
+            .as_ref()
+            .map(|v| v.is_mut_ref())
+            .unwrap_or(false)
+    {
         if lhs_is_mut {
             {
                 let num = &mut 5; // or let mut num = &mut 5;
@@ -727,7 +804,8 @@ fn handle_local(
     }
     // copy rhs if is mut and is a variable, which is being assigned
     else if rhs_is_found_var
-        .map(|v| v.mut_ && !v.mut_ref)
+        .as_ref()
+        .map(|v| v.mut_ && !v.is_mut_ref())
         .unwrap_or(false)
     {
         if lhs_is_mut {
@@ -819,8 +897,16 @@ fn handle_local(
                         RustType::Array(_) => todo!(),
                         RustType::Tuple(_) => todo!(),
                         RustType::MutRef(_) => todo!(),
+                        RustType::Fn(_) => todo!(),
+                        RustType::Option(_) => todo!(),
+                        RustType::Result(_) => todo!(),
+                        RustType::Generic(_) => todo!(),
                     }
                 }
+                RustType::Fn(_) => todo!(),
+                RustType::Option(_) => todo!(),
+                RustType::Result(_) => todo!(),
+                RustType::Generic(_) => todo!(),
             }
         }
         // Creating a mut/&mut var for a literal eg `let num = &mut 5` or `let mut num = 5;`
@@ -873,10 +959,15 @@ fn handle_local(
             _ => {}
         }
         // Creating a mut/&mut var for a var eg `let num2 = &mut num` or `let mut num2 = num;`
-    } else if ((lhs_is_mut && rhs_is_found_var.map(|v| !v.mut_ref).unwrap_or(false))
+    } else if ((lhs_is_mut
+        && rhs_is_found_var
+            .as_ref()
+            .map(|v| !v.is_mut_ref())
+            .unwrap_or(false))
         || (rhs_takes_mut_ref
             && rhs_is_found_var
-                .map(|v| v.mut_ && !v.mut_ref)
+                .as_ref()
+                .map(|v| v.mut_ && !v.is_mut_ref())
                 .unwrap_or(false)))
         && !rhs_is_deref
     {
@@ -914,6 +1005,10 @@ fn handle_local(
             RustType::Array(_) => {}
             RustType::Tuple(_) => {}
             RustType::MutRef(_) => {}
+            RustType::Fn(_) => {}
+            RustType::Option(_) => {}
+            RustType::Result(_) => {}
+            RustType::Generic(_) => {}
         }
     } else {
         dbg!(lhs);
@@ -934,18 +1029,26 @@ fn handle_local(
                 name: pat_ident.ident.to_string(),
                 mut_: pat_ident.mutability.is_some(),
                 // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
-                mut_ref: rhs_takes_mut_ref
-                    || (rhs_is_found_var.map(|var| var.mut_ref).unwrap_or(false) && !rhs_is_deref),
-                type_: RustType::Todo,
+                // mut_ref: rhs_takes_mut_ref
+                //     || (rhs_is_found_var.map(|var| var.mut_ref).unwrap_or(false) && !rhs_is_deref),
+                type_: rhs_type,
             };
-            match type_or_var {
-                TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
-                TypeOrVar::Var(found_var) => {
-                    scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
-                    scoped_var.type_ = found_var.type_;
-                }
-                TypeOrVar::Unknown => {}
-            };
+            // let mut scoped_var = ScopedVar {
+            //     name: pat_ident.ident.to_string(),
+            //     mut_: pat_ident.mutability.is_some(),
+            //     // mut_ref: rhs_is_mut_ref || fn_call_mut_ref,
+            //     mut_ref: rhs_takes_mut_ref
+            //         || (rhs_is_found_var.map(|var| var.mut_ref).unwrap_or(false) && !rhs_is_deref),
+            //     type_: rhs_type_or_var,
+            // };
+            // match rhs_type_or_var {
+            // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
+            // TypeOrVar::Var(found_var) => {
+            //     scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
+            //     scoped_var.type_ = found_var.type_;
+            // }
+            // TypeOrVar::Unknown => {}
+            // };
 
             // if rhs_is_mut_ref || pat_ident.mutability.is_some() || fn_call_mut_ref {
             //     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
@@ -1039,7 +1142,7 @@ fn handle_item_fn(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
-    let mut name = item_fn.sig.ident.to_string();
+    let name = item_fn.sig.ident.to_string();
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -1056,27 +1159,28 @@ fn handle_item_fn(
         false
     };
 
-    if let Some(dup) = duplicates
+    let js_name = if let Some(dup) = duplicates
         .iter()
         .find(|dup| dup.name == name && &dup.original_module_path == current_module)
     {
-        name = dup
-            .namespace
+        dup.namespace
             .iter()
             .map(|seg| camel(seg))
             .collect::<Vec<_>>()
-            .join("__");
+            .join("__")
     } else {
-        name = camel(name);
-    }
+        camel(name.clone())
+    };
 
     // Record this fn in the *parent* scope
-    global_data
-        .scopes
-        .last_mut()
-        .unwrap()
-        .1
-        .push(item_fn.clone());
+    let fn_info = FnInfo {
+        ident: name,
+        return_type: match &item_fn.sig.output {
+            ReturnType::Default => RustType::Unit,
+            ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
+        },
+    };
+    global_data.scopes.last_mut().unwrap().1.push(fn_info);
 
     // Create new scope for fn vars
     global_data.scopes.push((Vec::new(), Vec::new()));
@@ -1104,7 +1208,6 @@ fn handle_item_fn(
                     let mut scoped_var = ScopedVar {
                         name: pat_ident.ident.to_string(),
                         mut_: pat_ident.mutability.is_some(),
-                        mut_ref: false,
                         type_: RustType::Todo,
                     };
                     let input_type = parse_fn_input_or_return_type(&*pat_type.ty);
@@ -1158,14 +1261,17 @@ fn handle_item_fn(
                             scoped_var.type_ = input_type.clone();
                         }
                         RustType::MutRef(rust_type) => {
-                            scoped_var.mut_ref = true;
-                            scoped_var.type_ = *rust_type.clone();
+                            scoped_var.type_ = RustType::MutRef(rust_type.clone());
                         }
+                        RustType::Fn(_) => todo!(),
+                        RustType::Option(_) => todo!(),
+                        RustType::Result(_) => todo!(),
+                        RustType::Generic(_) => todo!(),
                     }
                     // record add var to scope
                     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
 
-                    // and input like `mut num: i32` must be converted to `RustInteger`
+                    // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
                     if pat_ident.mutability.is_some() {
                         copy_stmts.push(JsStmt::Local(JsLocal {
                             public: false,
@@ -1205,6 +1311,10 @@ fn handle_item_fn(
                                 RustType::Array(_) => todo!(),
                                 RustType::Tuple(_) => todo!(),
                                 RustType::MutRef(_) => todo!(),
+                                RustType::Fn(_) => todo!(),
+                                RustType::Option(_) => todo!(),
+                                RustType::Result(_) => todo!(),
+                                RustType::Generic(_) => todo!(),
                             },
                         }))
                     }
@@ -1245,7 +1355,7 @@ fn handle_item_fn(
             export: false,
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
-            name,
+            name: js_name,
             input_names: item_fn
                 .sig
                 .inputs
@@ -1562,104 +1672,33 @@ fn handle_item_impl(
                     })
                     .collect::<Vec<_>>();
 
-                global_data.scopes.push((Vec::new(), Vec::new()));
                 let mut vars = Vec::new();
-                let mut fns = Vec::new();
+                // let mut fns = Vec::new();
                 // record var and fn inputs
                 for input in &item_impl_fn.sig.inputs {
                     match input {
                         FnArg::Receiver(_) => {}
                         FnArg::Typed(pat_type) => {
                             dbg!(pat_type);
-                            let ident = match &*pat_type.pat {
-                                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                                _ => todo!(),
-                            };
-                            let return_type = match &*pat_type.ty {
-                                Type::Array(_) => todo!(),
-                                Type::BareFn(_) => todo!(),
-                                Type::Group(_) => todo!(),
-                                Type::ImplTrait(type_impl_trait) => {
-                                    // TODO handle len > 1
-                                    let bound = type_impl_trait.bounds.first().unwrap();
-                                    match bound {
-                                        TypeParamBound::Trait(trait_bound) => {
-                                            let seg = trait_bound.path.segments.first().unwrap();
-                                            match seg.arguments {
-                                                PathArguments::None => todo!(),
-                                                PathArguments::AngleBracketed(_) => todo!(),
-                                                PathArguments::Parenthesized(
-                                                    parenthesized_generic_arguments,
-                                                ) => match parenthesized_generic_arguments.output {
-                                                    ReturnType::Default => todo!(),
-                                                    ReturnType::Type(_, type_) => {
-                                                        parse_fn_input_or_return_type(type_)
-                                                    }
-                                                },
-                                            }
-                                        }
-                                        TypeParamBound::Lifetime(_) => todo!(),
-                                        TypeParamBound::Verbatim(_) => todo!(),
-                                        _ => todo!(),
-                                    }
+                            let (ident, mut_) = match &*pat_type.pat {
+                                Pat::Ident(pat_ident) => {
+                                    (pat_ident.ident.to_string(), pat_ident.mutability.is_some())
                                 }
-                                Type::Infer(_) => todo!(),
-                                Type::Macro(_) => todo!(),
-                                Type::Never(_) => todo!(),
-                                Type::Paren(_) => todo!(),
-                                Type::Path(_) => todo!(),
-                                Type::Ptr(_) => todo!(),
-                                Type::Reference(_) => todo!(),
-                                Type::Slice(_) => todo!(),
-                                Type::TraitObject(_) => todo!(),
-                                Type::Tuple(_) => todo!(),
-                                Type::Verbatim(_) => todo!(),
                                 _ => todo!(),
                             };
-                            let fn_info = FnInfo { ident, return_type };
-                            fns.push(fn_info);
-
-                            // match &*pat_type.ty {
-                            //     Type::Array(_) => todo!(),
-                            //     Type::BareFn(_) => todo!(),
-                            //     Type::Group(_) => todo!(),
-                            //     Type::ImplTrait(_) => todo!(),
-                            //     Type::Infer(_) => todo!(),
-                            //     Type::Macro(_) => todo!(),
-                            //     Type::Never(_) => todo!(),
-                            //     Type::Paren(_) => todo!(),
-                            //     Type::Path(_) => todo!(),
-                            //     Type::Ptr(_) => todo!(),
-                            //     Type::Reference(_) => todo!(),
-                            //     Type::Slice(_) => todo!(),
-                            //     Type::TraitObject(_) => todo!(),
-                            //     Type::Tuple(_) => todo!(),
-                            //     Type::Verbatim(_) => todo!(),
-                            //     _ => todo!(),
-                            // }
-                            // match &*pat_type.pat {
-                            //     Pat::Const(_) => todo!(),
-                            //     Pat::Ident(_) => todo!(),
-                            //     Pat::Lit(_) => todo!(),
-                            //     Pat::Macro(_) => todo!(),
-                            //     Pat::Or(_) => todo!(),
-                            //     Pat::Paren(_) => todo!(),
-                            //     Pat::Path(_) => todo!(),
-                            //     Pat::Range(_) => todo!(),
-                            //     Pat::Reference(_) => todo!(),
-                            //     Pat::Rest(_) => todo!(),
-                            //     Pat::Slice(_) => todo!(),
-                            //     Pat::Struct(_) => todo!(),
-                            //     Pat::Tuple(_) => todo!(),
-                            //     Pat::TupleStruct(_) => todo!(),
-                            //     Pat::Type(_) => todo!(),
-                            //     Pat::Verbatim(_) => todo!(),
-                            //     Pat::Wild(_) => todo!(),
-                            //     _ => todo!(),
-                            // }
+                            dbg!(&*pat_type.ty);
+                            let rust_type = parse_fn_input_or_return_type(&*pat_type.ty);
+                            dbg!(input);
+                            let scoped_var = ScopedVar {
+                                name: ident,
+                                mut_,
+                                type_: rust_type,
+                            };
+                            vars.push(scoped_var);
                         }
                     };
                 }
+                global_data.scopes.push((vars, Vec::new()));
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
@@ -2295,10 +2334,16 @@ enum RustType {
     Unit,
     /// !
     Never,
+    /// (name)
+    Generic(String),
     I32,
     F32,
     Bool,
     String,
+    /// (generic)
+    Option(Box<RustType>),
+    /// (generic)
+    Result(Box<RustType>),
     /// (name)
     Struct(String),
     /// (name)  
@@ -2306,17 +2351,28 @@ enum RustType {
     Vec(Box<RustType>),
     Array(Box<RustType>),
     Tuple(Vec<RustType>),
-    /// &mut T
+    /// (&mut T)
     MutRef(Box<RustType>),
+    /// (return type)
+    Fn(Box<RustType>),
 }
 
 #[derive(Debug, Clone)]
 struct ScopedVar {
     name: String,
     mut_: bool,
-    mut_ref: bool,
+    // TODO don't need this because it is part of the type and is record by the `type_` field
+    // mut_ref: bool,
     // TODO
     type_: RustType,
+}
+impl ScopedVar {
+    fn is_mut_ref(&self) -> bool {
+        match self.type_ {
+            RustType::MutRef(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2324,6 +2380,12 @@ struct FnInfo {
     ident: String,
     return_type: RustType,
 }
+
+// #[derive(Debug, Clone)]
+// pub enum VarOrFnInfo {
+//     ScopedVar(ScopedVar),
+//     FnInfo(FnInfo)
+// }
 
 #[derive(Debug, Clone)]
 struct GlobalData {
@@ -2333,8 +2395,10 @@ struct GlobalData {
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
+    // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
     /// (variable, fns)
     scopes: Vec<(Vec<ScopedVar>, Vec<FnInfo>)>,
+    // scopes: Vec<Vec<ScopedVar>>,
     /// prior parsing the body of an impl method, we record the type of the item of which we are implementing, so we know what type self is
     self_type: Vec<RustType>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
@@ -4406,42 +4470,42 @@ fn handle_expr_and_stmt_macro(
                                     .rev()
                                     .find(|scoped_var| scoped_var.name == var_name)
                             })
-                            .map_or(
-                                (false, false, false),
-                                |ScopedVar {
-                                     name,
-                                     mut_,
-                                     mut_ref,
-                                     type_,
-                                 }| {
-                                    let is_primative = match type_ {
-                                        RustType::Todo => {
-                                            global_data
-                                                .rust_prelude_types
-                                                .number_prototype_extensions = true;
-                                            global_data
-                                                .rust_prelude_types
-                                                .string_prototype_extensions = true;
-                                            false
-                                        }
-                                        RustType::Unit => true,
-                                        RustType::I32 => true,
-                                        RustType::F32 => true,
-                                        RustType::Bool => true,
-                                        RustType::String => true,
-                                        RustType::Struct(_) => false,
-                                        RustType::Enum(_) => false,
-                                        RustType::NotAllowed => false,
-                                        RustType::Unknown => false,
-                                        RustType::Never => false,
-                                        RustType::Vec(_) => false,
-                                        RustType::Array(_) => false,
-                                        RustType::Tuple(_) => false,
-                                        RustType::MutRef(_) => false,
-                                    };
-                                    (*mut_, *mut_ref, is_primative)
-                                },
-                            )
+                            .map_or((false, false, false), |ScopedVar { name, mut_, type_ }| {
+                                let is_primative = match type_ {
+                                    RustType::Todo => {
+                                        global_data
+                                            .rust_prelude_types
+                                            .number_prototype_extensions = true;
+                                        global_data
+                                            .rust_prelude_types
+                                            .string_prototype_extensions = true;
+                                        false
+                                    }
+                                    RustType::Unit => true,
+                                    RustType::I32 => true,
+                                    RustType::F32 => true,
+                                    RustType::Bool => true,
+                                    RustType::String => true,
+                                    RustType::Struct(_) => false,
+                                    RustType::Enum(_) => false,
+                                    RustType::NotAllowed => false,
+                                    RustType::Unknown => false,
+                                    RustType::Never => false,
+                                    RustType::Vec(_) => false,
+                                    RustType::Array(_) => false,
+                                    RustType::Tuple(_) => false,
+                                    RustType::MutRef(_) => false,
+                                    RustType::Fn(_) => false,
+                                    RustType::Option(_) => false,
+                                    RustType::Result(_) => false,
+                                    RustType::Generic(_) => false,
+                                };
+                                let mut_ref = match type_ {
+                                    RustType::MutRef(_) => true,
+                                    _ => false,
+                                };
+                                (*mut_, mut_ref, is_primative)
+                            })
                     } else {
                         (false, false, false)
                     }
@@ -4543,6 +4607,7 @@ fn handle_expr_call(
         _ => {}
     }
 
+    // parse fn call
     match &*expr_call.func {
         Expr::Path(expr_path) => {
             let segments = expr_path
@@ -4614,28 +4679,36 @@ fn handle_expr_call(
                 // if a simple fn call, look up the return type
                 dbg!(&global_data.scopes);
                 dbg!(expr_path.path.segments.first().unwrap().ident.to_string());
-                let type_ = if expr_path.path.segments.len() == 1 {
-                    let item_fn = global_data
-                        .scopes
-                        .iter()
-                        .rev()
-                        .find_map(|s| {
-                            s.1.iter().rev().find(|f| {
-                                f.sig.ident.to_string()
-                                    == expr_path.path.segments.first().unwrap().ident.to_string()
-                            })
-                        })
-                        .unwrap();
-                    match &item_fn.sig.output {
-                        ReturnType::Default => todo!(),
-                        ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
-                    }
-                } else {
-                    RustType::Todo
-                };
+                // let type_ = if expr_path.path.segments.len() == 1 {
+                //     let item_fn = global_data
+                //         .scopes
+                //         .iter()
+                //         .rev()
+                //         .find_map(|s| {
+                //             s.1.iter().rev().find(|f| {
+                //                 f.ident
+                //                     == expr_path.path.segments.first().unwrap().ident.to_string()
+                //             })
+                //         })
+                //         .unwrap();
+                //     item_fn.return_type.clone()
+                // } else {
+                //     RustType::Todo
+                // };
                 // let (expr, typey) = handle_expr(&*expr_call.func, global_data, current_module);
-                let (expr, typey) = handle_expr_path(expr_path, global_data, current_module, true);
-                (JsExpr::FnCall(Box::new(expr), args), typey)
+                dbg!(&expr_path);
+                let (expr, mut rust_type) =
+                    handle_expr_path(expr_path, global_data, current_module);
+                dbg!(&expr);
+                dbg!(&rust_type);
+                rust_type = match rust_type {
+                    RustType::Fn(return_type) => *return_type,
+                    _ => {
+                        dbg!(rust_type);
+                        todo!()
+                    }
+                };
+                (JsExpr::FnCall(Box::new(expr), args), rust_type)
             }
         }
         // Expr::Path(expr_path)
@@ -4675,7 +4748,7 @@ fn handle_expr_path(
     expr_path: &ExprPath,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
-    is_call: bool,
+    // is_call: bool,
 ) -> (JsExpr, RustType) {
     let mut segs = expr_path
         .path
@@ -4988,35 +5061,33 @@ fn handle_expr_path(
     dbg!(&segs[0]);
     dbg!(&path_name);
     dbg!(&expr_path);
-    dbg!(&is_call);
+    // dbg!(&is_call);
     dbg!(&global_data.scopes);
     let type_ = if segs.len() == 1 {
-        if is_call {
-            let item_fn = global_data
-                .scopes
-                .iter()
-                .rev()
-                .find_map(|s| {
-                    s.1.iter()
-                        .rev()
-                        .find(|f| f.sig.ident == expr_path.path.segments.first().unwrap().ident)
-                })
-                .unwrap();
-            match &item_fn.sig.output {
-                ReturnType::Default => RustType::Unit,
-                ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
-            }
-        } else if path_name == "self" {
+        let var_type = global_data
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.0.iter().rev().find(|v| v.name == path_name));
+
+        // get type for self
+        if path_name == "self" {
             global_data.self_type.last().unwrap().clone()
+            // get type for vars
+        } else if let Some(var_type) = var_type {
+            var_type.type_.clone()
+            // get return type for fns
         } else {
-            global_data
-                .scopes
-                .iter()
-                .rev()
-                .find_map(|s| s.0.iter().rev().find(|v| v.name == path_name))
-                .unwrap()
-                .type_
-                .clone()
+            RustType::Fn(Box::new(
+                global_data
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find_map(|s| s.1.iter().rev().find(|f| f.ident == path_name))
+                    .unwrap()
+                    .return_type
+                    .clone(),
+            ))
         }
     } else {
         RustType::Todo
@@ -5110,111 +5181,7 @@ fn handle_expr_assign(
     // };
 
     // Get var info
-    let type_or_var = match &rhs_expr {
-        Expr::Array(_) => TypeOrVar::Unknown,
-        Expr::Assign(_) => TypeOrVar::Unknown,
-        Expr::Async(_) => TypeOrVar::Unknown,
-        Expr::Await(_) => TypeOrVar::Unknown,
-        Expr::Binary(_) => TypeOrVar::Unknown,
-        Expr::Block(_) => TypeOrVar::Unknown,
-        Expr::Break(_) => TypeOrVar::Unknown,
-        Expr::Call(expr_call) => {
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    if expr_path.path.segments.len() == 1 {
-                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
-                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        global_data
-                            .scopes
-                            .iter()
-                            .rev()
-                            .find_map(|(vars, item_fns)| {
-                                let item_fn = item_fns
-                                    .iter()
-                                    .rev()
-                                    .find(|item_fn| item_fn.sig.ident.to_string() == fn_name);
-                                item_fn.map(|item_fn| {
-                                    // We found a fn so try and parse it's return type
-                                    match &item_fn.sig.output {
-                                        ReturnType::Default => TypeOrVar::RustType(RustType::Unit),
-                                        ReturnType::Type(_, type_) => {
-                                            // TODO handle other cases eg a tuple containing &mut
-                                            TypeOrVar::RustType(parse_fn_input_or_return_type(
-                                                &**type_,
-                                            ))
-                                        }
-                                    }
-                                })
-                            })
-                            .unwrap_or(TypeOrVar::Unknown)
-                    } else {
-                        TypeOrVar::Unknown
-                    }
-                }
-                _ => TypeOrVar::Unknown,
-            }
-        }
-        Expr::Cast(_) => TypeOrVar::Unknown,
-        Expr::Closure(_) => TypeOrVar::Unknown,
-        Expr::Const(_) => TypeOrVar::Unknown,
-        Expr::Continue(_) => TypeOrVar::Unknown,
-        Expr::Field(_) => TypeOrVar::Unknown,
-        Expr::ForLoop(_) => TypeOrVar::Unknown,
-        Expr::Group(_) => TypeOrVar::Unknown,
-        Expr::If(_) => TypeOrVar::Unknown,
-        Expr::Index(_) => TypeOrVar::Unknown,
-        Expr::Infer(_) => TypeOrVar::Unknown,
-        Expr::Let(_) => TypeOrVar::Unknown,
-        Expr::Lit(expr_lit) => {
-            match expr_lit.lit {
-                Lit::Str(_) => TypeOrVar::RustType(RustType::String),
-                Lit::ByteStr(_) => TypeOrVar::Unknown,
-                Lit::Byte(_) => TypeOrVar::Unknown,
-                Lit::Char(_) => TypeOrVar::Unknown,
-                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
-                Lit::Int(_) => TypeOrVar::RustType(RustType::I32),
-                Lit::Float(_) => TypeOrVar::RustType(RustType::F32),
-                Lit::Bool(_) => TypeOrVar::RustType(RustType::Bool),
-                Lit::Verbatim(_) => TypeOrVar::Unknown,
-                _ => TypeOrVar::Unknown,
-            }
-        }
-        Expr::Loop(_) => TypeOrVar::Unknown,
-        Expr::Macro(_) => TypeOrVar::Unknown,
-        Expr::Match(_) => TypeOrVar::Unknown,
-        Expr::MethodCall(_) => TypeOrVar::Unknown,
-        Expr::Paren(_) => TypeOrVar::Unknown,
-        Expr::Path(expr_path) => {
-            if expr_path.path.segments.len() == 1 {
-                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
-                    vars.iter().rev().find(|var| {
-                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        var.name == name
-                    })
-                }) {
-                    TypeOrVar::Var(var.clone())
-                } else {
-                    TypeOrVar::Unknown
-                }
-            } else {
-                TypeOrVar::Unknown
-            }
-        }
-        Expr::Range(_) => TypeOrVar::Unknown,
-        Expr::Reference(_) => TypeOrVar::Unknown,
-        Expr::Repeat(_) => TypeOrVar::Unknown,
-        Expr::Return(_) => TypeOrVar::Unknown,
-        Expr::Struct(_) => TypeOrVar::Unknown,
-        Expr::Try(_) => TypeOrVar::Unknown,
-        Expr::TryBlock(_) => TypeOrVar::Unknown,
-        Expr::Tuple(_) => TypeOrVar::Unknown,
-        Expr::Unary(_) => TypeOrVar::Unknown,
-        Expr::Unsafe(_) => TypeOrVar::Unknown,
-        Expr::Verbatim(_) => TypeOrVar::Unknown,
-        Expr::While(_) => TypeOrVar::Unknown,
-        Expr::Yield(_) => TypeOrVar::Unknown,
-        _ => TypeOrVar::Unknown,
-    };
+    // let type_or_var = get_type_from_expr(&rhs_expr, global_data, current_module);
 
     // rhs is a fn call that returns a &mut
     // TODO only handles fns defined in scope, not at top level
@@ -5250,7 +5217,7 @@ fn handle_expr_assign(
     // dbg!(&rhs_is_mut_ref);
     dbg!(&rhs_expr);
 
-    if rhs_is_deref && rhs_is_found_var.map(|v| v.mut_ref).unwrap_or(false) {
+    if rhs_is_deref && rhs_is_found_var.map(|v| v.is_mut_ref()).unwrap_or(false) {
         {
             let num = &mut 5; // or let mut num = &mut 5;
             let mut copy = 5;
@@ -5264,7 +5231,7 @@ fn handle_expr_assign(
     }
     // copy rhs if is mut and is a variable, which is being assigned
     else if rhs_is_found_var
-        .map(|v| v.mut_ && !v.mut_ref)
+        .map(|v| v.mut_ && !v.is_mut_ref())
         .unwrap_or(false)
     {
         // NOTE if !v.mut_ then we just have `var num = 5; copy = num;` which behaves as expected and doesn't need any wrapper
@@ -5314,6 +5281,10 @@ fn handle_expr_assign(
                 RustType::Array(_) => {}
                 RustType::Tuple(_) => {}
                 RustType::MutRef(_) => {}
+                RustType::Fn(_) => {}
+                RustType::Option(_) => {}
+                RustType::Result(_) => {}
+                RustType::Generic(_) => {}
             }
         } else {
             match &rhs_expr {
@@ -5696,6 +5667,10 @@ fn handle_expr(
                 RustType::MutRef(_) => todo!(),
                 RustType::Unknown => todo!(),
                 RustType::Never => todo!(),
+                RustType::Fn(_) => todo!(),
+                RustType::Option(_) => todo!(),
+                RustType::Result(_) => todo!(),
+                RustType::Generic(_) => todo!(),
             };
             (
                 JsExpr::Index(
@@ -5861,7 +5836,7 @@ fn handle_expr(
             let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
             (JsExpr::Paren(Box::new(expr)), type_)
         }
-        Expr::Path(expr_path) => handle_expr_path(expr_path, global_data, current_module, false),
+        Expr::Path(expr_path) => handle_expr_path(expr_path, global_data, current_module),
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
             handle_expr(&*expr_reference.expr, global_data, current_module)
@@ -6027,8 +6002,8 @@ fn handle_match_pat(
                             name: ident.to_string(),
                             // TODO can't find the data for mutability on `field`
                             mut_: false,
-                            mut_ref: false,
-                            // TODO a struct pattern in a match arm always implies an enum? if so, look
+                            // mut_ref: false,
+                            // TODO a struct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
                             type_: RustType::Todo,
                         }
                     }
@@ -6076,7 +6051,7 @@ fn handle_match_pat(
                     ScopedVar {
                         name,
                         mut_: false,
-                        mut_ref: false,
+                        // mut_ref: false,
                         type_: RustType::Todo,
                     }
                 })
