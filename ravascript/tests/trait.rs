@@ -65,3 +65,64 @@ async fn impl_in_fn_scope() {
     assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[tokio::test]
+async fn impl_with_generic_arguments() {
+    let actual = r2j_block_with_prelude!({
+        pub enum Double<T: PartialEq> {
+            One(T),
+            Two,
+        }
+        impl<T: PartialEq> Double<T> {
+            pub fn foo<F>(self, f: F) -> T
+            where
+                F: FnOnce() -> T,
+            {
+                match self {
+                    Double::One(x) => x,
+                    Double::Two => f(),
+                }
+            }
+
+            // pub fn map<U: PartialEq, F>(self, f: F) -> Option<U>
+            // where
+            //     F: FnOnce(T) -> U,
+            // {
+            //     match self {
+            //         Some(x) => Some(f(x)),
+            //         None => None,
+            //     }
+            // }
+        }
+    });
+    let expected = concat!(
+        include_str!("rust_integer_prelude.js"),
+        include_str!("rust_string_prelude.js"),
+        include_str!("rust_bool_prelude.js"),
+        r#"
+        class Person {
+            constructor(age) {
+                this.age = age;
+            }
+
+            agePlusTen() {
+                return this.age.add(10);
+            }
+            static greeting() {
+                return "Hello";
+            }
+            agePlusTwenty() {
+                return this.agePlusTen().add(10);
+            }
+        }
+
+        var bob = new Person(30);
+        console.assert(Person.greeting().eq("Hello"));
+        console.assert(bob.agePlusTen().eq(40));
+        console.assert(bob.agePlusTwenty().eq(50));
+        "#,
+    );
+    assert!(false);
+    assert_eq!(format_js(expected), actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}

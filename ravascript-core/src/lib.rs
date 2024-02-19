@@ -11,9 +11,10 @@ use std::{
 };
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprMatch, ExprPath, Fields, FnArg, GenericArgument, ImplItem, Item, ItemEnum, ItemFn,
-    ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat,
-    PathArguments, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
+    ExprMatch, ExprPath, Fields, FnArg, GenericArgument, GenericParam, ImplItem, Item, ItemEnum,
+    ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta,
+    Pat, PathArguments, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree,
+    Visibility, WherePredicate,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -377,37 +378,51 @@ enum TypeOrVar {
 //     RustType(bool, RustType),
 //     Unknown,
 // }
-fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
+
+/// If TypeParamBound is a fn type, return it's return type otherwise return RustType::ImplTrait
+fn get_return_type_of_type_param_bound(
+    type_param_bound: &TypeParamBound,
+    generics: &Vec<MyGeneric>,
+) -> RustType {
+    match type_param_bound {
+        TypeParamBound::Trait(trait_bound) => {
+            let seg = trait_bound.path.segments.first().unwrap();
+            let ident = &seg.ident;
+            // TODO currently only handling fn cases like `impl FnOnce(T) -> bool`
+            let is_fn = ident == "Fn" || ident == "FnMut" || ident == "FnOnce";
+            if is_fn {
+                let return_type = match &seg.arguments {
+                    PathArguments::None => todo!(),
+                    PathArguments::AngleBracketed(_) => todo!(),
+                    PathArguments::Parenthesized(parenthesized_generic_arguments) => {
+                        match &parenthesized_generic_arguments.output {
+                            ReturnType::Default => todo!(),
+                            ReturnType::Type(_, type_) => {
+                                parse_fn_input_or_return_type(&*type_, generics)
+                            }
+                        }
+                    }
+                };
+                RustType::Fn(Box::new(return_type))
+            } else {
+                RustType::ImplTrait
+            }
+        }
+        TypeParamBound::Lifetime(_) => todo!(),
+        TypeParamBound::Verbatim(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
+fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
         Type::Group(_) => todo!(),
         Type::ImplTrait(type_impl_trait) => {
             // TODO handle len > 1
-            let bound = type_impl_trait.bounds.first().unwrap();
-            let return_type = match bound {
-                TypeParamBound::Trait(trait_bound) => {
-                    let seg = trait_bound.path.segments.first().unwrap();
-                    let ident = seg.ident;
-                    let is_fn = ident == "FnOnce"
-                    match &seg.arguments {
-                        PathArguments::None => todo!(),
-                        PathArguments::AngleBracketed(_) => todo!(),
-                        PathArguments::Parenthesized(parenthesized_generic_arguments) => {
-                            match &parenthesized_generic_arguments.output {
-                                ReturnType::Default => todo!(),
-                                ReturnType::Type(_, type_) => {
-                                    parse_fn_input_or_return_type(&*type_)
-                                }
-                            }
-                        }
-                    }
-                }
-                TypeParamBound::Lifetime(_) => todo!(),
-                TypeParamBound::Verbatim(_) => todo!(),
-                _ => todo!(),
-            };
-            RustType::Fn(Box::new(return_type))
+            let type_param_bound = type_impl_trait.bounds.first().unwrap();
+            get_return_type_of_type_param_bound(type_param_bound, generics)
         }
         Type::Infer(_) => todo!(),
         Type::Macro(_) => todo!(),
@@ -418,18 +433,41 @@ fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
                 let seg = type_path.path.segments.first().unwrap();
                 let seg_name = seg.ident.to_string();
                 let seg_name_str = seg_name.as_str();
+
+                dbg!(&generics);
+                // Look to see if name is a generic which has been declared
+                let generic = generics
+                    .iter()
+                    .rev()
+                    .find(|generic| generic.name == seg_name_str);
+                if let Some(generic) = generic {
+                    return generic.type_.clone();
+                }
+
+                // For fns:
+                // the names of generics should be stored on FnInfo
+                // Sometimes we can work out what the type of a generic is, eg it impls Fn in which case we only care about the return type, but mostly the generic will just be eg T, maybe with some trait bound, but that doesn't help us determine what the actual type is. We need to record where the generic type is inferred from, eg:
+                // 1. the generic is used as the type for an input: easy, just check the type of the thing that eventually gets passed as an arg
+                // 2. the generic is used as the return type: redundant, we don't need to know the type since we already determine the return type from the body
+
+                // For structs
+                // Can always be inferred from the arguments used to construct the struct?
+
+                // For impl blocks
+
                 match seg_name_str {
                     "i32" => RustType::I32,
                     "bool" => RustType::Bool,
-                    // TODO for now we are assuming T is a generic but we really need to determine whether a (length = 1 ?) Path is a generic variable/argument by looking to see if there is an Item defined with that name, and if not we can infer it is a generic variable/argument
+                    // TODO for now we are assuming T is a generic but we really need to determine whether a (length = 1 ?) Path is a generic variable/argument by looking to see if there is an Item defined with that name, and if not we can infer it is a generic variable/argument - NO - any generic used will have been declared in the parent item eg `fn foo<Bar>()` so we only need to keep track of which generics are available in which scopes.
                     "T" => RustType::Generic("T".to_string()),
+                    "str" => RustType::String,
                     "Option" => {
                         let generic_type = match &seg.arguments {
                             PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
                                 match angle_bracketed_generic_arguments.args.first().unwrap() {
                                     GenericArgument::Lifetime(_) => todo!(),
                                     GenericArgument::Type(type_) => {
-                                        parse_fn_input_or_return_type(type_)
+                                        parse_fn_input_or_return_type(type_, generics)
                                     }
                                     GenericArgument::Const(_) => todo!(),
                                     GenericArgument::AssocType(_) => todo!(),
@@ -464,7 +502,7 @@ fn parse_fn_input_or_return_type(type_: &Type) -> RustType {
             //     mut_ref: type_reference.mutability.is_some(),
             //     type_,
             // })
-            let mut type_ = parse_fn_input_or_return_type(&type_reference.elem);
+            let mut type_ = parse_fn_input_or_return_type(&type_reference.elem, generics);
             if type_reference.mutability.is_some() {
                 type_ = RustType::MutRef(Box::new(type_));
             }
@@ -502,7 +540,7 @@ fn get_type_from_expr(
                             .scopes
                             .iter()
                             .rev()
-                            .find_map(|(vars, item_fns)| {
+                            .find_map(|(vars, item_fns, generics)| {
                                 let item_fn = item_fns
                                     .iter()
                                     .rev()
@@ -555,12 +593,19 @@ fn get_type_from_expr(
         Expr::Paren(_) => RustType::Unknown,
         Expr::Path(expr_path) => {
             if expr_path.path.segments.len() == 1 {
-                if let Some(var) = global_data.scopes.iter().rev().find_map(|(vars, _fns)| {
-                    vars.iter().rev().find(|var| {
-                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        var.name == name
-                    })
-                }) {
+                if let Some(var) =
+                    global_data
+                        .scopes
+                        .iter()
+                        .rev()
+                        .find_map(|(vars, _fns, _generics)| {
+                            vars.iter().rev().find(|var| {
+                                let name =
+                                    expr_path.path.segments.first().unwrap().ident.to_string();
+                                var.name == name
+                            })
+                        })
+                {
                     // TypeOrVar::Var(var.clone())
                     var.type_.clone()
                 } else {
@@ -901,12 +946,14 @@ fn handle_local(
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
                         RustType::Generic(_) => todo!(),
+                        RustType::ImplTrait => todo!(),
                     }
                 }
                 RustType::Fn(_) => todo!(),
                 RustType::Option(_) => todo!(),
                 RustType::Result(_) => todo!(),
                 RustType::Generic(_) => todo!(),
+                RustType::ImplTrait => todo!(),
             }
         }
         // Creating a mut/&mut var for a literal eg `let num = &mut 5` or `let mut num = 5;`
@@ -1009,6 +1056,7 @@ fn handle_local(
             RustType::Option(_) => {}
             RustType::Result(_) => {}
             RustType::Generic(_) => {}
+            RustType::ImplTrait => {}
         }
     } else {
         dbg!(lhs);
@@ -1177,13 +1225,15 @@ fn handle_item_fn(
         ident: name,
         return_type: match &item_fn.sig.output {
             ReturnType::Default => RustType::Unit,
-            ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_),
+            ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_, &Vec::new()),
         },
     };
     global_data.scopes.last_mut().unwrap().1.push(fn_info);
 
     // Create new scope for fn vars
-    global_data.scopes.push((Vec::new(), Vec::new()));
+    global_data
+        .scopes
+        .push((Vec::new(), Vec::new(), Vec::new()));
 
     // record which vars are mut and/or &mut
     let mut copy_stmts = Vec::new();
@@ -1210,7 +1260,7 @@ fn handle_item_fn(
                         mut_: pat_ident.mutability.is_some(),
                         type_: RustType::Todo,
                     };
-                    let input_type = parse_fn_input_or_return_type(&*pat_type.ty);
+                    let input_type = parse_fn_input_or_return_type(&*pat_type.ty, &Vec::new());
                     match &input_type {
                         // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
                         // TypeOrVar::Var(found_var) => {
@@ -1267,6 +1317,7 @@ fn handle_item_fn(
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
                         RustType::Generic(_) => todo!(),
+                        RustType::ImplTrait => todo!(),
                     }
                     // record add var to scope
                     global_data.scopes.last_mut().unwrap().0.push(scoped_var);
@@ -1315,6 +1366,7 @@ fn handle_item_fn(
                                 RustType::Option(_) => todo!(),
                                 RustType::Result(_) => todo!(),
                                 RustType::Generic(_) => todo!(),
+                                RustType::ImplTrait => todo!(),
                             },
                         }))
                     }
@@ -1657,6 +1709,8 @@ fn handle_item_impl(
                 } else {
                     true
                 };
+
+                dbg!(item_impl_fn);
                 // let private = !export;
                 let input_names = item_impl_fn
                     .clone()
@@ -1671,6 +1725,84 @@ fn handle_item_impl(
                         },
                     })
                     .collect::<Vec<_>>();
+
+                // Get where generics
+                let mut generics = item_impl_fn
+                    .sig
+                    .generics
+                    .params
+                    .iter()
+                    .map(|generic_param| match generic_param {
+                        GenericParam::Lifetime(_) => todo!(),
+                        GenericParam::Type(type_param) => {
+                            let name = type_param.ident.to_string();
+                            let type_ = type_param
+                                .bounds
+                                .first()
+                                .map(|type_param_bound| {
+                                    match get_return_type_of_type_param_bound(
+                                        type_param_bound,
+                                        &Vec::new(),
+                                    ) {
+                                        RustType::ImplTrait => RustType::Generic(name.clone()),
+                                        RustType::Generic(_) => todo!(),
+                                        RustType::Fn(return_type) => RustType::Fn(return_type),
+                                        _ => todo!(),
+                                    }
+                                })
+                                .unwrap_or(RustType::Generic(name.clone()));
+                            MyGeneric { name, type_ }
+                        }
+                        GenericParam::Const(_) => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+                dbg!(&generics);
+
+                // update generics with any `impl Fn... -> ...` types defined in where clauses
+                let where_clause = &item_impl_fn.sig.generics.where_clause;
+                if let Some(where_clause) = where_clause {
+                    for where_predicate in &where_clause.predicates {
+                        match where_predicate {
+                            WherePredicate::Lifetime(_) => todo!(),
+                            WherePredicate::Type(predicate_type) => {
+                                let name = match &predicate_type.bounded_ty {
+                                    Type::Path(type_path) => {
+                                        type_path.path.segments.first().unwrap().ident.to_string()
+                                    }
+                                    _ => todo!(),
+                                };
+                                let type_param_bound = predicate_type.bounds.first().unwrap();
+                                let type_ = get_return_type_of_type_param_bound(
+                                    type_param_bound,
+                                    &generics,
+                                );
+                                // MyGeneric { name, type_ }
+                                let generic = generics
+                                    .iter_mut()
+                                    .find(|my_generic| my_generic.name == name)
+                                    .unwrap();
+                                generic.type_ = type_;
+                            }
+                            _ => todo!(),
+                        }
+                    }
+                }
+                // let where_generics = item_impl_fn
+                //     .sig
+                //     .generics
+                //     .where_clause
+                //     .as_ref()
+                //     .map(|where_clause| {
+                //         where_clause
+                //             .predicates
+                //             .iter()
+                //             .map(|where_predicate| )
+                //             .collect::<Vec<_>>()
+                //     })
+                //     .unwrap_or(Vec::new());
+                // dbg!(&where_generics);
+                // generics.extend(where_generics);
+                dbg!(&generics);
 
                 let mut vars = Vec::new();
                 // let mut fns = Vec::new();
@@ -1687,7 +1819,7 @@ fn handle_item_impl(
                                 _ => todo!(),
                             };
                             dbg!(&*pat_type.ty);
-                            let rust_type = parse_fn_input_or_return_type(&*pat_type.ty);
+                            let rust_type = parse_fn_input_or_return_type(&*pat_type.ty, &generics);
                             dbg!(input);
                             let scoped_var = ScopedVar {
                                 name: ident,
@@ -1698,7 +1830,8 @@ fn handle_item_impl(
                         }
                     };
                 }
-                global_data.scopes.push((vars, Vec::new()));
+                global_data.scopes.push((vars, Vec::new(), generics));
+                dbg!(&global_data.scopes);
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
@@ -1833,6 +1966,7 @@ fn handle_item_impl(
                         },
                     );
                 }
+                global_data.scopes.pop();
             }
             ImplItem::Type(_) => todo!(),
             ImplItem::Macro(_) => todo!(),
@@ -2334,6 +2468,8 @@ enum RustType {
     Unit,
     /// !
     Never,
+    /// Shouldn't be used, just used to represent some like the `ToString` in `T: ToString` which should subsequently get ignored and eventually just returned as `RustType::Generic("T")`
+    ImplTrait,
     /// (name)
     Generic(String),
     I32,
@@ -2381,6 +2517,12 @@ struct FnInfo {
     return_type: RustType,
 }
 
+#[derive(Debug, Clone)]
+struct MyGeneric {
+    name: String,
+    type_: RustType,
+}
+
 // #[derive(Debug, Clone)]
 // pub enum VarOrFnInfo {
 //     ScopedVar(ScopedVar),
@@ -2396,8 +2538,8 @@ struct GlobalData {
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
-    /// (variable, fns)
-    scopes: Vec<(Vec<ScopedVar>, Vec<FnInfo>)>,
+    /// (variable, fns, generics)
+    scopes: Vec<(Vec<ScopedVar>, Vec<FnInfo>, Vec<MyGeneric>)>,
     // scopes: Vec<Vec<ScopedVar>>,
     /// prior parsing the body of an impl method, we record the type of the item of which we are implementing, so we know what type self is
     self_type: Vec<RustType>,
@@ -2419,7 +2561,7 @@ impl GlobalData {
             crate_path,
             modules: Vec::new(),
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
-            scopes: vec![(Vec::new(), Vec::new())],
+            scopes: vec![(Vec::new(), Vec::new(), Vec::new())],
             self_type: Vec::new(),
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
@@ -4465,7 +4607,7 @@ fn handle_expr_and_stmt_macro(
                             .scopes
                             .iter()
                             .rev()
-                            .find_map(|(vars, fns)| {
+                            .find_map(|(vars, fns, _generics)| {
                                 vars.iter()
                                     .rev()
                                     .find(|scoped_var| scoped_var.name == var_name)
@@ -4499,6 +4641,7 @@ fn handle_expr_and_stmt_macro(
                                     RustType::Option(_) => false,
                                     RustType::Result(_) => false,
                                     RustType::Generic(_) => false,
+                                    RustType::ImplTrait => false,
                                 };
                                 let mut_ref = match type_ {
                                     RustType::MutRef(_) => true,
@@ -5069,25 +5212,41 @@ fn handle_expr_path(
             .iter()
             .rev()
             .find_map(|s| s.0.iter().rev().find(|v| v.name == path_name));
+        let fn_type = global_data
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.1.iter().rev().find(|f| f.ident == path_name));
 
-        // get type for self
+        // TODO populate this based on what is actually defined in the code
+
+        let item_types = vec![
+            ("None", RustType::Enum("Option".to_string())),
+            ("Some", RustType::Enum("Option".to_string())),
+        ];
+        let item_type = item_types
+            .iter()
+            .find(|(name, rust_type)| name == &path_name);
+
+        // IMPORTANT TODO below is incorrect, it looks through *all* vars, *then*, *all* fns. Needs to look through vars for top scope, fns for that scope, then look through the next scope, etc.
         if path_name == "self" {
+            // get type for self
             global_data.self_type.last().unwrap().clone()
-            // get type for vars
         } else if let Some(var_type) = var_type {
+            // get type for vars
             var_type.type_.clone()
+        } else if let Some(fn_type) = fn_type {
             // get return type for fns
+            dbg!("get return type for fns");
+            dbg!(&global_data.scopes);
+            dbg!(&path_name);
+            RustType::Fn(Box::new(fn_type.return_type.clone()))
+        } else if let Some((_name, rust_type)) = item_type {
+            // get type of items... TODO just enums for now?
+            rust_type.clone()
         } else {
-            RustType::Fn(Box::new(
-                global_data
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find_map(|s| s.1.iter().rev().find(|f| f.ident == path_name))
-                    .unwrap()
-                    .return_type
-                    .clone(),
-            ))
+            //
+            todo!()
         }
     } else {
         RustType::Todo
@@ -5285,6 +5444,7 @@ fn handle_expr_assign(
                 RustType::Option(_) => {}
                 RustType::Result(_) => {}
                 RustType::Generic(_) => {}
+                RustType::ImplTrait => {}
             }
         } else {
             match &rhs_expr {
@@ -5671,6 +5831,7 @@ fn handle_expr(
                 RustType::Option(_) => todo!(),
                 RustType::Result(_) => todo!(),
                 RustType::Generic(_) => todo!(),
+                RustType::ImplTrait => todo!(),
             };
             (
                 JsExpr::Index(
@@ -6117,7 +6278,9 @@ fn handle_expr_match(
             cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
 
             dbg!(&*arm.body);
-            global_data.scopes.push((scoped_vars, Vec::new()));
+            global_data
+                .scopes
+                .push((scoped_vars, Vec::new(), Vec::new()));
             let body = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                 Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
