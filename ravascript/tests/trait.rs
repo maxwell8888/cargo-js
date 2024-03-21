@@ -94,35 +94,53 @@ async fn impl_with_generic_arguments() {
             //     }
             // }
         }
+
+        let one = Double::One(5);
+        let two: Double<i32> = Double::Two;
+        let one_result = one.foo(|| 4);
+        let two_result = two.foo(|| 4);
+        assert_eq!(one_result, 5);
+        assert_eq!(two_result, 4);
     });
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        // include_str!("rust_integer_prelude.js"),
+        // include_str!("rust_string_prelude.js"),
+        // include_str!("rust_bool_prelude.js"),
         r#"
-        class Person {
-            constructor(age) {
-                this.age = age;
+        class Double {
+            static TwoId = "Two";
+            static Two = new Double("Two", null);
+            static OneId = "One";
+            constructor(id, data) {
+                this.id = id;
+                this.data = data;
             }
-
-            agePlusTen() {
-                return this.age.add(10);
+            static One(arg_0, arg_1) {
+                return new Double("One", [arg_0, arg_1]);
             }
-            static greeting() {
-                return "Hello";
-            }
-            agePlusTwenty() {
-                return this.agePlusTen().add(10);
+            foo(f) {
+                var ifTempAssignment;
+                if (this.id === Double.OneId) {
+                    var [text, num] = this.data;
+                    ifTempAssignment = num;
+                } else if (this.id === Double.TwoId) {
+                    ifTempAssignment = f();
+                } else {
+                    throw new Error("couldn't match enum variant");
+                }
+                return ifTempAssignment;
             }
         }
 
-        var bob = new Person(30);
-        console.assert(Person.greeting().eq("Hello"));
-        console.assert(bob.agePlusTen().eq(40));
-        console.assert(bob.agePlusTwenty().eq(50));
+        const one = Double.One(5);
+        const two = Double.Two();
+        const oneResult = one.foo(() => 4);
+        const twoResult = two.foo(() => 4);
+        console.assert(oneResult === 5);
+        console.assert(twoResult === 4);
         "#,
     );
-    assert!(false);
+    // assert!(false);
     assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
