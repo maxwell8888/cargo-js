@@ -384,6 +384,8 @@ enum TypeOrVar {
 fn get_return_type_of_type_param_bound(
     type_param_bound: &TypeParamBound,
     generics: &Vec<MyGeneric>,
+    current_module: &Vec<String>,
+    global_data: &GlobalData,
 ) -> RustType {
     match type_param_bound {
         TypeParamBound::Trait(trait_bound) => {
@@ -398,9 +400,12 @@ fn get_return_type_of_type_param_bound(
                     PathArguments::Parenthesized(parenthesized_generic_arguments) => {
                         match &parenthesized_generic_arguments.output {
                             ReturnType::Default => todo!(),
-                            ReturnType::Type(_, type_) => {
-                                parse_fn_input_or_return_type(&*type_, generics)
-                            }
+                            ReturnType::Type(_, type_) => parse_fn_input_or_return_type(
+                                &*type_,
+                                generics,
+                                current_module,
+                                global_data,
+                            ),
                         }
                     }
                 };
@@ -415,7 +420,13 @@ fn get_return_type_of_type_param_bound(
     }
 }
 
-fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> RustType {
+fn parse_fn_input_or_return_type(
+    type_: &Type,
+    generics: &Vec<MyGeneric>,
+    // TODO should just store the current module in GlobalData to save having to pass this around everywhere
+    current_module: &Vec<String>,
+    global_data: &GlobalData,
+) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
@@ -423,7 +434,12 @@ fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> Rus
         Type::ImplTrait(type_impl_trait) => {
             // TODO handle len > 1
             let type_param_bound = type_impl_trait.bounds.first().unwrap();
-            get_return_type_of_type_param_bound(type_param_bound, generics)
+            get_return_type_of_type_param_bound(
+                type_param_bound,
+                generics,
+                current_module,
+                global_data,
+            )
         }
         Type::Infer(_) => todo!(),
         Type::Macro(_) => todo!(),
@@ -470,9 +486,12 @@ fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> Rus
                             PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
                                 match angle_bracketed_generic_arguments.args.first().unwrap() {
                                     GenericArgument::Lifetime(_) => todo!(),
-                                    GenericArgument::Type(type_) => {
-                                        parse_fn_input_or_return_type(type_, generics)
-                                    }
+                                    GenericArgument::Type(type_) => parse_fn_input_or_return_type(
+                                        type_,
+                                        generics,
+                                        current_module,
+                                        global_data,
+                                    ),
                                     GenericArgument::Const(_) => todo!(),
                                     GenericArgument::AssocType(_) => todo!(),
                                     GenericArgument::AssocConst(_) => todo!(),
@@ -484,13 +503,18 @@ fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> Rus
                         };
                         RustType::Option(Box::new(generic_type))
                     }
-                    "RustInteger" => RustType::Struct("RustInteger".to_string(), Vec::new()),
-                    "RustFloat" => RustType::Struct("RustFloat".to_string(), Vec::new()),
-                    "RustString" => RustType::Struct("RustString".to_string(), Vec::new()),
-                    "RustBool" => RustType::Struct("RustBool".to_string(), Vec::new()),
-                    other => {
-                        dbg!(other);
-                        todo!()
+                    // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
+                    // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
+                    // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
+                    // "RustBool" => RustType::Struct(StructOrEnum { ident: "RustBool".to_string(), members: (), generics: (), syn_object: () }),
+                    struct_or_enum_name => {
+                        let se = global_data
+                            .lookup_struct_or_enum(struct_or_enum_name.to_string(), current_module)
+                            .unwrap();
+                        match se.syn_object {
+                            StructOrEnumSynObject::Struct(_) => RustType::Struct(se),
+                            StructOrEnumSynObject::Enum(_) => RustType::Enum(se),
+                        }
                     }
                 }
             } else {
@@ -510,7 +534,12 @@ fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> Rus
             //     mut_ref: type_reference.mutability.is_some(),
             //     type_,
             // })
-            let mut type_ = parse_fn_input_or_return_type(&type_reference.elem, generics);
+            let mut type_ = parse_fn_input_or_return_type(
+                &type_reference.elem,
+                generics,
+                current_module,
+                global_data,
+            );
             if type_reference.mutability.is_some() {
                 type_ = RustType::MutRef(Box::new(type_));
             }
@@ -524,129 +553,129 @@ fn parse_fn_input_or_return_type(type_: &Type, generics: &Vec<MyGeneric>) -> Rus
     }
 }
 
-fn get_type_from_expr(
-    expr: &Expr,
+// fn get_type_from_expr(
+//     expr: &Expr,
 
-    global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
-) -> RustType {
-    match expr {
-        Expr::Array(_) => RustType::Unknown,
-        Expr::Assign(_) => RustType::Unknown,
-        Expr::Async(_) => RustType::Unknown,
-        Expr::Await(_) => RustType::Unknown,
-        Expr::Binary(_) => RustType::Unknown,
-        Expr::Block(_) => RustType::Unknown,
-        Expr::Break(_) => RustType::Unknown,
-        Expr::Call(expr_call) => {
-            match &*expr_call.func {
-                Expr::Path(expr_path) => {
-                    if expr_path.path.segments.len() == 1 {
-                        // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
-                        let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        global_data
-                            .scopes
-                            .iter()
-                            .rev()
-                            .find_map(|scope| {
-                                let item_fn = scope
-                                    .fns
-                                    .iter()
-                                    .rev()
-                                    .find(|item_fn| item_fn.ident == fn_name);
-                                item_fn.map(|item_fn| {
-                                    // We found a fn so try and parse it's return type
-                                    item_fn.return_type.clone()
-                                })
-                            })
-                            // .unwrap_or(TypeOrVar::Unknown)
-                            .unwrap_or(RustType::Unknown)
-                    } else {
-                        // TypeOrVar::Unknown
-                        RustType::Unknown
-                    }
-                }
-                // _ => TypeOrVar::Unknown,
-                _ => RustType::Unknown,
-            }
-        }
-        Expr::Cast(_) => RustType::Unknown,
-        Expr::Closure(_) => RustType::Unknown,
-        Expr::Const(_) => RustType::Unknown,
-        Expr::Continue(_) => RustType::Unknown,
-        Expr::Field(_) => RustType::Unknown,
-        Expr::ForLoop(_) => RustType::Unknown,
-        Expr::Group(_) => RustType::Unknown,
-        Expr::If(_) => RustType::Unknown,
-        Expr::Index(_) => RustType::Unknown,
-        Expr::Infer(_) => RustType::Unknown,
-        Expr::Let(_) => RustType::Unknown,
-        Expr::Lit(expr_lit) => {
-            match expr_lit.lit {
-                Lit::Str(_) => RustType::String,
-                Lit::ByteStr(_) => RustType::Todo,
-                Lit::Byte(_) => RustType::Todo,
-                Lit::Char(_) => RustType::Todo,
-                // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
-                Lit::Int(_) => RustType::I32,
-                Lit::Float(_) => RustType::F32,
-                Lit::Bool(_) => RustType::Bool,
-                Lit::Verbatim(_) => RustType::Todo,
-                _ => RustType::Unknown,
-            }
-        }
-        Expr::Loop(_) => RustType::Unknown,
-        Expr::Macro(_) => RustType::Unknown,
-        Expr::Match(_) => RustType::Unknown,
-        Expr::MethodCall(_) => RustType::Unknown,
-        Expr::Paren(_) => RustType::Unknown,
-        Expr::Path(expr_path) => {
-            if expr_path.path.segments.len() == 1 {
-                if let Some(var) = global_data.scopes.iter().rev().find_map(|scope| {
-                    scope.variables.iter().rev().find(|var| {
-                        let name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        var.name == name
-                    })
-                }) {
-                    // TypeOrVar::Var(var.clone())
-                    var.type_.clone()
-                } else {
-                    RustType::Unknown
-                }
-            } else {
-                RustType::Unknown
-            }
-        }
-        Expr::Range(_) => RustType::Unknown,
-        Expr::Reference(_) => RustType::Unknown,
-        Expr::Repeat(_) => RustType::Unknown,
-        Expr::Return(_) => RustType::Unknown,
-        Expr::Struct(_) => RustType::Unknown,
-        Expr::Try(_) => RustType::Unknown,
-        Expr::TryBlock(_) => RustType::Unknown,
-        Expr::Tuple(_) => RustType::Unknown,
-        Expr::Unary(expr_unary) => {
-            let deref = match expr_unary.op {
-                UnOp::Deref(_) => true,
-                _ => false,
-            };
-            let mut rust_type =
-                get_type_from_expr(&*expr_unary.expr, global_data, current_module_path);
-            if deref {
-                match rust_type {
-                    RustType::MutRef(rust_type2) => rust_type = *rust_type2.clone(),
-                    _ => {}
-                }
-            }
-            rust_type
-        }
-        Expr::Unsafe(_) => RustType::Unknown,
-        Expr::Verbatim(_) => RustType::Unknown,
-        Expr::While(_) => RustType::Unknown,
-        Expr::Yield(_) => RustType::Unknown,
-        _ => RustType::Unknown,
-    }
-}
+//     global_data: &mut GlobalData,
+//     current_module_path: &Vec<String>,
+// ) -> RustType {
+//     match expr {
+//         Expr::Array(_) => RustType::Unknown,
+//         Expr::Assign(_) => RustType::Unknown,
+//         Expr::Async(_) => RustType::Unknown,
+//         Expr::Await(_) => RustType::Unknown,
+//         Expr::Binary(_) => RustType::Unknown,
+//         Expr::Block(_) => RustType::Unknown,
+//         Expr::Break(_) => RustType::Unknown,
+//         Expr::Call(expr_call) => {
+//             match &*expr_call.func {
+//                 Expr::Path(expr_path) => {
+//                     if expr_path.path.segments.len() == 1 {
+//                         // If rhs is a single path fn call, look up the fn name in scopes to find it's return type
+//                         let fn_name = expr_path.path.segments.first().unwrap().ident.to_string();
+//                         global_data
+//                             .scopes
+//                             .iter()
+//                             .rev()
+//                             .find_map(|scope| {
+//                                 let item_fn = scope
+//                                     .fns
+//                                     .iter()
+//                                     .rev()
+//                                     .find(|item_fn| item_fn.ident == fn_name);
+//                                 item_fn.map(|item_fn| {
+//                                     // We found a fn so try and parse it's return type
+//                                     item_fn.return_type.clone()
+//                                 })
+//                             })
+//                             // .unwrap_or(TypeOrVar::Unknown)
+//                             .unwrap_or(RustType::Unknown)
+//                     } else {
+//                         // TypeOrVar::Unknown
+//                         RustType::Unknown
+//                     }
+//                 }
+//                 // _ => TypeOrVar::Unknown,
+//                 _ => RustType::Unknown,
+//             }
+//         }
+//         Expr::Cast(_) => RustType::Unknown,
+//         Expr::Closure(_) => RustType::Unknown,
+//         Expr::Const(_) => RustType::Unknown,
+//         Expr::Continue(_) => RustType::Unknown,
+//         Expr::Field(_) => RustType::Unknown,
+//         Expr::ForLoop(_) => RustType::Unknown,
+//         Expr::Group(_) => RustType::Unknown,
+//         Expr::If(_) => RustType::Unknown,
+//         Expr::Index(_) => RustType::Unknown,
+//         Expr::Infer(_) => RustType::Unknown,
+//         Expr::Let(_) => RustType::Unknown,
+//         Expr::Lit(expr_lit) => {
+//             match expr_lit.lit {
+//                 Lit::Str(_) => RustType::String,
+//                 Lit::ByteStr(_) => RustType::Todo,
+//                 Lit::Byte(_) => RustType::Todo,
+//                 Lit::Char(_) => RustType::Todo,
+//                 // TODO need to know exact int type to know: 1. which Trait impl to use 2. whether to parse to JS BigInt
+//                 Lit::Int(_) => RustType::I32,
+//                 Lit::Float(_) => RustType::F32,
+//                 Lit::Bool(_) => RustType::Bool,
+//                 Lit::Verbatim(_) => RustType::Todo,
+//                 _ => RustType::Unknown,
+//             }
+//         }
+//         Expr::Loop(_) => RustType::Unknown,
+//         Expr::Macro(_) => RustType::Unknown,
+//         Expr::Match(_) => RustType::Unknown,
+//         Expr::MethodCall(_) => RustType::Unknown,
+//         Expr::Paren(_) => RustType::Unknown,
+//         Expr::Path(expr_path) => {
+//             if expr_path.path.segments.len() == 1 {
+//                 if let Some(var) = global_data.scopes.iter().rev().find_map(|scope| {
+//                     scope.variables.iter().rev().find(|var| {
+//                         let name = expr_path.path.segments.first().unwrap().ident.to_string();
+//                         var.name == name
+//                     })
+//                 }) {
+//                     // TypeOrVar::Var(var.clone())
+//                     var.type_.clone()
+//                 } else {
+//                     RustType::Unknown
+//                 }
+//             } else {
+//                 RustType::Unknown
+//             }
+//         }
+//         Expr::Range(_) => RustType::Unknown,
+//         Expr::Reference(_) => RustType::Unknown,
+//         Expr::Repeat(_) => RustType::Unknown,
+//         Expr::Return(_) => RustType::Unknown,
+//         Expr::Struct(_) => RustType::Unknown,
+//         Expr::Try(_) => RustType::Unknown,
+//         Expr::TryBlock(_) => RustType::Unknown,
+//         Expr::Tuple(_) => RustType::Unknown,
+//         Expr::Unary(expr_unary) => {
+//             let deref = match expr_unary.op {
+//                 UnOp::Deref(_) => true,
+//                 _ => false,
+//             };
+//             let mut rust_type =
+//                 get_type_from_expr(&*expr_unary.expr, global_data, current_module_path);
+//             if deref {
+//                 match rust_type {
+//                     RustType::MutRef(rust_type2) => rust_type = *rust_type2.clone(),
+//                     _ => {}
+//                 }
+//             }
+//             rust_type
+//         }
+//         Expr::Unsafe(_) => RustType::Unknown,
+//         Expr::Verbatim(_) => RustType::Unknown,
+//         Expr::While(_) => RustType::Unknown,
+//         Expr::Yield(_) => RustType::Unknown,
+//         _ => RustType::Unknown,
+//     }
+// }
 
 fn handle_local(
     local: &Local,
@@ -712,7 +741,7 @@ fn handle_local(
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
-    let (mut rhs, rhs_type) = handle_expr(&rhs_expr, global_data, current_module_path);
+    let (mut rhs, mut rhs_type) = handle_expr(&rhs_expr, global_data, current_module_path);
 
     // Add .copy() if rhs is a mut...
     // and rhs is `Copy`
@@ -758,7 +787,8 @@ fn handle_local(
     // Expr::Call -> TypeOrVar::Var(ScopedVar { name: "donotuse".to_string(), mut_: false, mut_ref: type_reference.mutability.is_some(), type_, })
     // Expr::Lit -> TypeOrVar::RustType
     // Expr::Path -> TypeOrVar::Var
-    let mut rhs_type = get_type_from_expr(&rhs_expr, global_data, current_module_path);
+    // let mut rhs_type = get_type_from_expr(&rhs_expr, global_data, current_module_path);
+    // TODO the RustType::MutRef should be added by hande_expr(), not here
     if rhs_takes_mut_ref {
         rhs_type = RustType::MutRef(Box::new(rhs_type));
     }
@@ -803,7 +833,7 @@ fn handle_local(
 
     if !rhs_is_deref
         && !rhs_takes_mut_ref
-        && rhs_is_call.is_none()
+        && !rhs_is_call
         && rhs_is_found_var.is_none()
         && !lhs_is_mut
     {
@@ -856,7 +886,7 @@ fn handle_local(
             rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
         }
         // TODO for now just assume that any call being dereferenced returns a &mut and should be `.copy()`d. I don't think this will cause any incorrect behavior, only unnecessary copying, eg where the return is `&i32` not `&mut i32`
-    } else if let Some(rhs_is_fn_call) = rhs_is_call {
+    } else if rhs_is_call {
         if rhs_is_deref {
             if lhs_is_mut {
                 // let mut copy = *some_fn();
@@ -866,7 +896,7 @@ fn handle_local(
                 rhs = JsExpr::MethodCall(Box::new(rhs), "inner".to_string(), vec![]);
             }
         } else {
-            match rhs_is_fn_call {
+            match rhs_type {
                 RustType::Todo => todo!(),
                 RustType::Unit => todo!(),
                 RustType::I32 => {
@@ -883,8 +913,8 @@ fn handle_local(
                 RustType::F32 => todo!(),
                 RustType::Bool => todo!(),
                 RustType::String => todo!(),
-                RustType::Struct(_, _) => todo!(),
-                RustType::Enum(_, _) => {}
+                RustType::Struct(_) => todo!(),
+                RustType::Enum(_) => {}
                 RustType::NotAllowed => todo!(),
                 RustType::Unknown => todo!(),
                 RustType::Never => todo!(),
@@ -925,8 +955,8 @@ fn handle_local(
                         RustType::F32 => todo!(),
                         RustType::Bool => todo!(),
                         RustType::String => todo!(),
-                        RustType::Struct(_, _) => todo!(),
-                        RustType::Enum(_, _) => todo!(),
+                        RustType::Struct(_) => todo!(),
+                        RustType::Enum(_) => todo!(),
                         RustType::Vec(_) => todo!(),
                         RustType::Array(_) => todo!(),
                         RustType::Tuple(_) => todo!(),
@@ -1032,8 +1062,8 @@ fn handle_local(
                 global_data.rust_prelude_types.string = true;
                 rhs = JsExpr::New(vec!["RustString".to_string()], vec![rhs]);
             }
-            RustType::Struct(_, _) => {}
-            RustType::Enum(_, _) => {}
+            RustType::Struct(_) => {}
+            RustType::Enum(_) => {}
             RustType::NotAllowed => {}
             RustType::Unknown => {}
             RustType::Never => {}
@@ -1215,11 +1245,13 @@ fn handle_item_fn(
     };
 
     // Record this fn in the *parent* scope
-    let fn_info = MemberInfo {
+    let fn_info = FnInfo {
         ident: name,
         return_type: match &item_fn.sig.output {
             ReturnType::Default => RustType::Unit,
-            ReturnType::Type(_, type_) => parse_fn_input_or_return_type(&*type_, &Vec::new()),
+            ReturnType::Type(_, type_) => {
+                parse_fn_input_or_return_type(&*type_, &Vec::new(), current_module, &global_data)
+            }
         },
     };
     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
@@ -1252,7 +1284,12 @@ fn handle_item_fn(
                         mut_: pat_ident.mutability.is_some(),
                         type_: RustType::Todo,
                     };
-                    let input_type = parse_fn_input_or_return_type(&*pat_type.ty, &Vec::new());
+                    let input_type = parse_fn_input_or_return_type(
+                        &*pat_type.ty,
+                        &Vec::new(),
+                        current_module,
+                        &global_data,
+                    );
                     match &input_type {
                         // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
                         // TypeOrVar::Var(found_var) => {
@@ -1287,10 +1324,10 @@ fn handle_item_fn(
                         RustType::String => {
                             scoped_var.type_ = input_type.clone();
                         }
-                        RustType::Struct(_, _) => {
+                        RustType::Struct(_) => {
                             scoped_var.type_ = input_type.clone();
                         }
-                        RustType::Enum(_, _) => {
+                        RustType::Enum(_) => {
                             scoped_var.type_ = input_type.clone();
                         }
                         RustType::Vec(_) => {
@@ -1350,8 +1387,8 @@ fn handle_item_fn(
                                 RustType::F32 => todo!(),
                                 RustType::Bool => todo!(),
                                 RustType::String => todo!(),
-                                RustType::Struct(_, _) => todo!(),
-                                RustType::Enum(_, _) => todo!(),
+                                RustType::Struct(_) => todo!(),
+                                RustType::Enum(_) => todo!(),
                                 RustType::NotAllowed => todo!(),
                                 RustType::Unknown => todo!(),
                                 RustType::Never => todo!(),
@@ -1464,14 +1501,33 @@ fn handle_item_enum(
             GenericParam::Const(_) => todo!(),
         })
         .collect::<Vec<_>>();
-    let return_type_for_scope = RustType::Enum(item_enum.ident.to_string(), generics);
+    let return_type_for_scope = RustType::Enum(StructOrEnum {
+        ident: item_enum.ident.to_string(),
+        members: item_enum
+            .variants
+            .iter()
+            .map(|v| MemberInfo {
+                ident: v.ident.to_string(),
+                return_type: MemberType::Self_,
+            })
+            .collect::<Vec<_>>(),
+        generics,
+        syn_object: StructOrEnumSynObject::Enum(item_enum.clone()),
+    });
+
+    // TODO this is self referential... how to handle this?
+    // We *shouldn't* be storing *resolved* generics (only unresolved generic names) in the list of struct/enum *items*. We *should* be storing resolved generics in the copies of the struct/enum we return from expressions, and possibly store as vars.
+    // For the latter, where we want to store the return type of each "member" ie fields and methods, we can either:
+    // Go through the members and resolve/update any generics used each time we get generic information (ie method input of item instantiation)
+    // Not store the members and just look up methods etc on the syn object/value each time we want to eg check if a path is referrring to an associated fn??? (NOTE the main reason we started storing members in the first place is to store info about members defined impl blocks, but again could just store the syn object) I think just storing the syn objects initially is a good idea until I am clear what info is actually needed.
+    // But all we are going to be doing with the syn objects is getting the return type and if there are generics, look to see if any of them have been resolved in `.generics` and we could do the same thing for `MemberInfo`?
 
     let members_for_scope = item_enum
         .variants
         .iter()
         .map(|v| MemberInfo {
             ident: v.ident.to_string(),
-            return_type: return_type_for_scope.clone(),
+            return_type: MemberType::Self_,
         })
         .collect::<Vec<_>>();
     global_data_scope.structs_enums.push(StructOrEnum {
@@ -1483,7 +1539,10 @@ fn handle_item_enum(
             .iter()
             .map(|p| match p {
                 GenericParam::Lifetime(_) => todo!(),
-                GenericParam::Type(type_param) => type_param.ident.to_string(),
+                GenericParam::Type(type_param) => RustTypeGeneric {
+                    name: type_param.ident.to_string(),
+                    type_: RustTypeGenericType::Unknown,
+                },
                 GenericParam::Const(_) => todo!(),
             })
             .collect::<Vec<_>>(),
@@ -1743,8 +1802,14 @@ fn handle_item_impl(
 
     // for the current block/list of stmts, store impl items in a Vec along with the class name
     // After
-    let impl_item_target = match &*item_impl.self_ty {
-        Type::Path(type_path) => type_path.path.segments.first().unwrap().ident.to_string(),
+    let impl_item_target_name = match &*item_impl.self_ty {
+        Type::Path(type_path) => {
+            if type_path.path.segments.len() == 1 {
+                type_path.path.segments.first().unwrap().ident.to_string()
+            } else {
+                todo!()
+            }
+        }
         _ => todo!(),
     };
 
@@ -1753,10 +1818,21 @@ fn handle_item_impl(
             todo!()
         }
         global_data.default_trait_impls_class_mapping.push((
-            impl_item_target.clone(),
+            impl_item_target_name.clone(),
             trait_.1.segments.first().unwrap().ident.to_string(),
         ));
     }
+
+    // Get type of impl target
+    let target_item = global_data
+        .lookup_struct_or_enum(impl_item_target_name, current_module_path)
+        .unwrap();
+    let target_rust_type = match &target_item.syn_object {
+        StructOrEnumSynObject::Struct(_) => RustType::Struct(target_item),
+        StructOrEnumSynObject::Enum(_) => RustType::Enum(target_item),
+    };
+
+    global_data.impl_block_target_type.push(target_rust_type);
 
     let mut impl_stmts = Vec::new();
     for impl_item in &item_impl.items {
@@ -1765,7 +1841,7 @@ fn handle_item_impl(
                 // impl_item_const
                 impl_stmts.push(ImplItemTemp {
                     // class_name: impl_item_const.ident.to_string(),
-                    class_name: impl_item_target.clone(),
+                    class_name: impl_item_target_name.clone(),
                     module_path: current_module_path.clone(),
                     item_stmt: JsImplItem::ClassStatic(JsLocal {
                         public: false,
@@ -1779,7 +1855,12 @@ fn handle_item_impl(
                         )
                         .0,
                     }),
-                    return_type: parse_fn_input_or_return_type(&impl_item_const.ty, &Vec::new()),
+                    return_type: parse_fn_input_or_return_type(
+                        &impl_item_const.ty,
+                        &Vec::new(),
+                        current_module_path,
+                        &global_data,
+                    ),
                     item_name: impl_item_const.ident.to_string(),
                 })
             }
@@ -1822,6 +1903,8 @@ fn handle_item_impl(
                                     match get_return_type_of_type_param_bound(
                                         type_param_bound,
                                         &Vec::new(),
+                                        current_module_path,
+                                        &global_data,
                                     ) {
                                         RustType::ImplTrait => RustType::Generic(RustTypeGeneric {
                                             name: name.clone(),
@@ -1860,6 +1943,8 @@ fn handle_item_impl(
                                 let type_ = get_return_type_of_type_param_bound(
                                     type_param_bound,
                                     &generics,
+                                    current_module_path,
+                                    &global_data,
                                 );
                                 // MyGeneric { name, type_ }
                                 let generic = generics
@@ -1894,7 +1979,19 @@ fn handle_item_impl(
                 // record var and fn inputs
                 for input in &item_impl_fn.sig.inputs {
                     match input {
-                        FnArg::Receiver(_) => {}
+                        FnArg::Receiver(receiver) => {
+                            let scoped_var = ScopedVar {
+                                name: impl_item_target_name,
+                                // TODO how do we know if we have `foo(mut self)`?
+                                mut_: false,
+                                type_: if receiver.mutability.is_some() {
+                                    RustType::MutRef(Box::new(target_rust_type))
+                                } else {
+                                    target_rust_type
+                                },
+                            };
+                            vars.push(scoped_var);
+                        }
                         FnArg::Typed(pat_type) => {
                             dbg!(pat_type);
                             let (ident, mut_) = match &*pat_type.pat {
@@ -1904,7 +2001,12 @@ fn handle_item_impl(
                                 _ => todo!(),
                             };
                             dbg!(&*pat_type.ty);
-                            let rust_type = parse_fn_input_or_return_type(&*pat_type.ty, &generics);
+                            let rust_type = parse_fn_input_or_return_type(
+                                &*pat_type.ty,
+                                &generics,
+                                current_module_path,
+                                &global_data,
+                            );
                             dbg!(input);
                             let scoped_var = ScopedVar {
                                 name: ident,
@@ -1926,7 +2028,7 @@ fn handle_item_impl(
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
 
-                let body_stmts = if impl_item_target == "RustBool"
+                let body_stmts = if impl_item_target_name == "RustBool"
                     && item_impl_fn.sig.ident == "bool_and"
                 {
                     Some((
@@ -1937,63 +2039,67 @@ fn handle_item_impl(
                     // fn add_assign(&mut self, other: RustInteger<T>) {
                     //     self.js_number.0 += other.js_number.0;
                     // }
-                } else if impl_item_target == "RustInteger"
+                } else if impl_item_target_name == "RustInteger"
                     && item_impl_fn.sig.ident == "add_assign"
                 {
                     Some((
                         vec![JsStmt::Raw("this.jsNumber += other.inner()".to_string())],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustInteger"
+                } else if impl_item_target_name == "RustInteger"
                     && item_impl_fn.sig.ident == "deref_assign"
                 {
                     Some((
                         vec![JsStmt::Raw("this.jsNumber = other.inner()".to_string())],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "add_assign"
+                } else if impl_item_target_name == "RustString"
+                    && item_impl_fn.sig.ident == "add_assign"
                 {
                     Some((
                         vec![JsStmt::Raw("this.jsString += other.inner()".to_string())],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "push_str" {
+                } else if impl_item_target_name == "RustString"
+                    && item_impl_fn.sig.ident == "push_str"
+                {
                     Some((
                         vec![JsStmt::Raw("this.jsString += other.jsString".to_string())],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustString"
+                } else if impl_item_target_name == "RustString"
                     && item_impl_fn.sig.ident == "deref_assign"
                 {
                     Some((
                         vec![JsStmt::Raw("this.jsString = other.jsString".to_string())],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "Option" && item_impl_fn.sig.ident == "eq" {
+                } else if impl_item_target_name == "Option" && item_impl_fn.sig.ident == "eq" {
                     let s = "return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data)";
                     Some((vec![JsStmt::Raw(s.to_string())], RustType::Todo))
-                } else if impl_item_target == "Option" && item_impl_fn.sig.ident == "ne" {
+                } else if impl_item_target_name == "Option" && item_impl_fn.sig.ident == "ne" {
                     Some((
                         vec![JsStmt::Raw(
                             "return this.id !== other.id || this.data.ne(other.data)".to_string(),
                         )],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustBool" && item_impl_fn.sig.ident == "eq" {
+                } else if impl_item_target_name == "RustBool" && item_impl_fn.sig.ident == "eq" {
                     Some((
                         vec![JsStmt::Raw(
                             "return this.jsBoolean === other.jsBoolean".to_string(),
                         )],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustBool" && item_impl_fn.sig.ident == "ne" {
+                } else if impl_item_target_name == "RustBool" && item_impl_fn.sig.ident == "ne" {
                     Some((
                         vec![JsStmt::Raw(
                             "return this.jsBoolean !== other.jsBoolean".to_string(),
                         )],
                         RustType::Todo,
                     ))
-                } else if impl_item_target == "RustString" && item_impl_fn.sig.ident == "clone" {
+                } else if impl_item_target_name == "RustString" && item_impl_fn.sig.ident == "clone"
+                {
                     Some((
                         vec![JsStmt::Raw("return this.jsString".to_string())],
                         RustType::Todo,
@@ -2014,50 +2120,45 @@ fn handle_item_impl(
                             _ => true,
                         },
                     };
-                    let self_type = item_impl_fn
-                        .sig
-                        .inputs
-                        .first()
-                        .and_then(|input| match input {
-                            FnArg::Receiver(reciever) => {
-                                // TODO need to lookup whether impl_item_target path is a struct of enum
-                                let is_struct = true;
-                                let name = impl_item_target.clone();
-                                let mut type_ = if is_struct {
-                                    RustType::Struct(name, Vec::new())
-                                } else {
-                                    RustType::Enum(name, Vec::new())
-                                };
-                                if reciever.mutability.is_some() {
-                                    type_ = RustType::MutRef(Box::new(type_))
-                                }
-                                Some(type_)
-                            }
-                            FnArg::Typed(_) => None,
-                        });
-                    if let Some(type_) = &self_type {
-                        global_data.self_type.push(type_.clone());
-                    }
 
+                    // so this is just used for the inital/one off analysis of the impl method, and when actually going through the code from main, we will store a self var in the scope like the other vars????
+                    // We are adding other input vars to the scope further up the code, why not just add self to those vars? By definition, if there is self we are dealing with a method on an *instance* of a struct/enum, so *if the instance item is generic* we need to either:
+                    // 1. generate a new method for for whatever the concrete type of the generic is for this particular instance (assuming it is known by this point)
+                    // 2. use the same method for the different generic concrete types, and make sure any interaction with a generic type is generalisable, ie use .eq() in place of ===, etc.
+                    // I think we want to use 2. in all cases  except where we have T::associated_fn() because then we need to replace this with the actual Foo::associated_fn() or whatever.
+                    // Ok but how do we get the type of self, so that we can use it in the fn, eg `self.some_field_with_type_we_want_to_know` or to return from the method... bearing in mind that (for types with generics) we won't know the type (well we'll know the type just not any resolved generics) until the method is called like `instance.the_method()`, so it seems like this is something we can just handle in `handle_expr_method_call`, since that is the point we will have:
+                    // 1. the most recent resolved Self type
+                    // 2. the args of the method to see if they can be used to resolved any generics
+                    // So I think for now we can just record RustType::InstanceSelf as the return type? It doesn't need a type because only the arguments can help narrow the type, and we will handle that in handle_expr_method_call
+                    //
+                    // Need to consider situation where we eg return a &self or &mut self to a var, then later interaction with that var determine some generics, in which case do we need to also update the generics on the original var?
+                    //
+                    // Given signatures like `pub fn map<U, F>(self, f: F) -> Option<U>`, What do we need to store in MemberInfo to be able to know that the return type is Option<U> where U is the return type of the closure argument?
+                    //
+                    // Remember method can return Foo<T> or just T, or Foo<U> (ie Some(5).map(...))
+                    //
+                    // NOTE there is a difference between returning self or &self or &mut self, and some other instance that also has type Self, but is not actually self
+                    //
+                    // What about `let foo: Foo<i32> = foo_maker.method(5)` or something?
+                    //
+                    
                     let body_stmts = parse_fn_body_stmts(
                         returns_non_mut_ref_val,
                         &body_stmts,
                         global_data,
                         current_module_path,
                     );
-                    if self_type.is_some() {
-                        global_data.self_type.pop();
-                    }
+                
                     Some(body_stmts)
                 };
                 if let Some((body_stmts, return_type)) = body_stmts {
                     impl_stmts.push(
                         // item_impl_fn.sig.ident.to_string(),
                         ImplItemTemp {
-                            class_name: impl_item_target.clone(),
+                            class_name: impl_item_target_name.clone(),
                             module_path: current_module_path.clone(),
                             item_stmt: JsImplItem::ClassMethod(
-                                impl_item_target.clone(),
+                                impl_item_target_name.clone(),
                                 false,
                                 static_,
                                 JsFn {
@@ -2112,6 +2213,8 @@ fn handle_item_impl(
     //     }
     // }
 
+    global_data.impl_block_target_type.pop();
+
     // Find the possible item/struct this impl targets and add the impl stmts to it in that case
     if let Some(struct_or_enum) =
         global_data
@@ -2123,7 +2226,7 @@ fn handle_item_impl(
                     .structs_enums
                     .iter_mut()
                     .rev()
-                    .find(|struct_enum| struct_enum.ident == impl_item_target)
+                    .find(|struct_enum| struct_enum.ident == impl_item_target_name)
             })
     {
         struct_or_enum
@@ -2608,7 +2711,7 @@ struct ModuleData {
     ///
     /// (<name>, <module path>)
     fn_info: Vec<(String, Vec<String>)>,
-    structs_and_enums: Vec<StructOrEnum>,
+    structs_and_enums: Vec<StructOrEnumItem>,
 }
 impl ModuleData {
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
@@ -2692,12 +2795,9 @@ enum RustType {
     Option(Box<RustType>),
     /// (generic)
     Result(Box<RustType>),
-    /// (name, generics) TODO do we need the names of the generics too? probably
-    /// 
     /// Need to remember that because StructOrEnum can have generics that have been resolved to concrete types, it means we are using RustType to record the type of both the single defined item that gets recorded in scopes modules/structs and enums, but also instances of the item, stored the in variables vec of the scope
     Struct(StructOrEnum),
-    /// (name, generics)
-    Enum(String, Vec<RustTypeGeneric>),
+    Enum(StructOrEnum),
     Vec(Box<RustType>),
     Array(Box<RustType>),
     Tuple(Vec<RustType>),
@@ -2757,15 +2857,112 @@ enum StructOrEnumSynObject {
     Enum(ItemEnum),
 }
 
+/// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
+#[derive(Debug, Clone)]
+struct StructOrEnumItem {
+    ident: String,
+    members: Vec<MemberInfo>,
+    // members: Vec<ImplItem>,
+    // TODO do we need to know eg bounds for each generic?
+    generics: Vec<String>,
+    syn_object: StructOrEnumSynObject,
+}
+
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
 // generic could be determined by: input for enum variant, input to method, field value of struct constructor.
 #[derive(Debug, Clone)]
 struct StructOrEnum {
     ident: String,
-    /// so this includes methods, fields, enum variants, etc, basically anything that can come after . or :: so we (might) get a different type from the "parent"
+    /// so this includes methods, fields, enum variants, etc, basically anything that can come after . or :: so we will usually get a different type from the "parent"
+    ///
+    /// When look up return type of a member and the return type is Self, then need to return this StructOrEnum, as a RustType, possibly first updating the generics based on eg the types used in the args of the assignment variable's type.
+    ///
+    /// NOTE we might have nested generics so need to be careful to keep them separate and not flatten them so they can be resolved later?
+    /// like `let var = Foo<Bar<Baz<Option(i32)>>> = Foo::new()`?????
     members: Vec<MemberInfo>,
+    // members: Vec<ImplItem>,
     generics: Vec<RustTypeGeneric>,
     syn_object: StructOrEnumSynObject,
+}
+impl StructOrEnum {
+    /// Update generics based on types of args
+    ///
+    /// For all the generics of the struct/enum...
+    /// ...for enum check if any of the arguments to any of the variants are the generic type...
+    /// ...(if) we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+    fn update_generics(&mut self, method_name: &String, args: &Vec<(JsExpr, RustType)>) {
+        let mut possibly_resolved_generics = Vec::new();
+        for generic in self.generics {
+            match self.syn_object {
+                StructOrEnumSynObject::Struct(_) => todo!(),
+                StructOrEnumSynObject::Enum(item_enum) => {
+                    // ...for enum check if any of the arguments to any of the variants are the generic type...
+                    for v in &item_enum.variants {
+                        if v.ident == method_name {
+                            match &v.fields {
+                                Fields::Named(fields_named) => {
+                                    for (i, field) in fields_named.named.iter().enumerate() {
+                                        match &field.ty {
+                                            Type::Path(type_path) => {
+                                                if type_path.path.segments.first().unwrap().ident
+                                                    == generic.name
+                                                {
+                                                    // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+                                                    let (_js_expr, rust_type) = args[i];
+                                                    possibly_resolved_generics.push(
+                                                        RustTypeGeneric {
+                                                            name: generic.name.clone(),
+                                                            type_: RustTypeGenericType::RustType(
+                                                                Box::new(rust_type),
+                                                            ),
+                                                        },
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                            Type::Verbatim(_) => todo!(),
+                                            _ => todo!(),
+                                        }
+                                    }
+                                }
+                                Fields::Unnamed(fields_unnamed) => {
+                                    for (i, field) in fields_unnamed.unnamed.iter().enumerate() {
+                                        match &field.ty {
+                                            Type::Path(type_path) => {
+                                                if type_path.path.segments.first().unwrap().ident
+                                                    == generic.name
+                                                {
+                                                    // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+                                                    let (_js_expr, rust_type) = args[i];
+                                                    possibly_resolved_generics.push(
+                                                        RustTypeGeneric {
+                                                            name: generic.name.clone(),
+                                                            type_: RustTypeGenericType::RustType(
+                                                                Box::new(rust_type),
+                                                            ),
+                                                        },
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                            Type::Verbatim(_) => todo!(),
+                                            _ => todo!(),
+                                        }
+                                    }
+                                }
+                                Fields::Unit => todo!(),
+                            }
+                        }
+                    }
+                }
+            }
+            possibly_resolved_generics.push(RustTypeGeneric {
+                name: generic.name.clone(),
+                type_: RustTypeGenericType::Unknown,
+            });
+        }
+        self.generics = possibly_resolved_generics;
+    }
 }
 
 /// Similar to ImplItemTemp but with less info (might turn out that we need to add more) because we are only using it for scoped items
@@ -2776,11 +2973,26 @@ struct StructOrEnum {
 //     return_type: RustType,
 // }
 
-/// Not just for fns, methods, can also be an enum variant with no inputs
+#[derive(Debug, Clone)]
+enum MemberType {
+    Self_,
+    Other(RustType),
+}
+
+/// Not just for methods, can also be an enum variant with no inputs
+#[derive(Debug, Clone)]
+struct FnInfo {
+    ident: String,
+    return_type: RustType,
+    // TODO optionally add enum for Field, AssociatedFn, Method, etc
+}
+
+/// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 struct MemberInfo {
     ident: String,
-    return_type: RustType,
+    return_type: MemberType,
+    // TODO optionally add enum for Field, AssociatedFn, Method, etc
 }
 
 #[derive(Debug, Clone)]
@@ -2802,10 +3014,10 @@ struct MyGeneric {
 #[derive(Debug, Default, Clone)]
 struct GlobalDataScope {
     variables: Vec<ScopedVar>,
-    fns: Vec<MemberInfo>,
+    fns: Vec<FnInfo>,
     generics: Vec<MyGeneric>,
     // Need to keep track of where the generic is used, eg input to enum variant, input to method, result of some fn call in the body, etc so that when eg we have Foo::Bar(T) getting instantiated with `let foo = Foo::Bar(5)`, we know to then update the type of T to be i32
-    structs_enums: Vec<StructOrEnum>,
+    structs_enums: Vec<StructOrEnumItem>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
     look_in_outer_scope: bool,
 }
@@ -2823,8 +3035,10 @@ struct GlobalData {
     // TODO combine this with impl_items
     // struct_or_enum_methods: Vec<StructOrEnumMethods>,
     // scopes: Vec<Vec<ScopedVar>>,
-    /// prior parsing the body of an impl method, we record the type of the item of which we are implementing, so we know what type self is
-    self_type: Vec<RustType>,
+    /// (the purpose originally was for self not Self... which is not needed, but Self is neccessary) the purpose of this is for storing the type of `Self` *not* `self`, eg if a impl fn body contains `let foo: Self = Self {};`, we will want to know what Self is so we know the types of `foo.some_field` etc
+    /// 
+    /// We have a Vec in case there is an impl block nested inside an impl block?
+    impl_block_target_type: Vec<RustType>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
@@ -2845,7 +3059,7 @@ impl GlobalData {
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope::default()],
             // struct_or_enum_methods: Vec::new(),
-            self_type: Vec::new(),
+            impl_block_target_type: Vec::new(),
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
@@ -2853,6 +3067,31 @@ impl GlobalData {
             impl_items: Vec::new(),
             duplicates,
             transpiled_modules: Vec::new(),
+        }
+    }
+
+    fn lookup_struct_or_enum(
+        &self,
+        name: String,
+        current_module: &Vec<String>,
+    ) -> Option<StructOrEnum> {
+        let scoped_struct_or_enum = self
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.structs_enums.iter().rev().find(|se| se.ident == name));
+        let module = self
+            .modules
+            .iter()
+            .find(|m| &m.path == current_module)
+            .unwrap();
+        let module_struct_or_enum = module.structs_and_enums.iter().find(|se| se.ident == name);
+        if let Some(se) = scoped_struct_or_enum {
+            Some(se.clone())
+        } else if let Some(se) = module_struct_or_enum {
+            Some(se.clone())
+        } else {
+            None
         }
     }
 }
@@ -4915,8 +5154,8 @@ fn handle_expr_and_stmt_macro(
                                     RustType::F32 => true,
                                     RustType::Bool => true,
                                     RustType::String => true,
-                                    RustType::Struct(_, _) => false,
-                                    RustType::Enum(_, _) => false,
+                                    RustType::Struct(_) => false,
+                                    RustType::Enum(_) => false,
                                     RustType::NotAllowed => false,
                                     RustType::Unknown => false,
                                     RustType::Never => false,
@@ -4970,83 +5209,6 @@ fn handle_expr_and_stmt_macro(
         }
     }
     todo!()
-}
-
-/// For all the generics of the struct/enum...
-/// ...for enum check if any of the arguments to any of the variants are the generic type...
-/// ...(if) we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-fn attempt_to_determine_generic_types(
-    se: &StructOrEnum,
-    method_name: &String,
-    args: &Vec<(JsExpr, RustType)>,
-) -> Vec<RustTypeGeneric> {
-    let mut possibly_resolved_generics = Vec::new();
-    for generic in &se.generics {
-        match &se.syn_object {
-            StructOrEnumSynObject::Struct(_) => todo!(),
-            StructOrEnumSynObject::Enum(item_enum) => {
-                // ...for enum check if any of the arguments to any of the variants are the generic type...
-                for v in &item_enum.variants {
-                    if v.ident == method_name {
-                        match &v.fields {
-                            Fields::Named(fields_named) => {
-                                for (i, field) in fields_named.named.iter().enumerate() {
-                                    match &field.ty {
-                                        Type::Path(type_path) => {
-                                            if type_path.path.segments.first().unwrap().ident
-                                                == generic
-                                            {
-                                                // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-                                                let (_js_expr, rust_type) = args[i];
-                                                possibly_resolved_generics.push(RustTypeGeneric {
-                                                    name: generic.clone(),
-                                                    type_: RustTypeGenericType::RustType(Box::new(
-                                                        rust_type,
-                                                    )),
-                                                });
-                                                continue;
-                                            }
-                                        }
-                                        Type::Verbatim(_) => todo!(),
-                                        _ => todo!(),
-                                    }
-                                }
-                            }
-                            Fields::Unnamed(fields_unnamed) => {
-                                for (i, field) in fields_unnamed.unnamed.iter().enumerate() {
-                                    match &field.ty {
-                                        Type::Path(type_path) => {
-                                            if type_path.path.segments.first().unwrap().ident
-                                                == generic
-                                            {
-                                                // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-                                                let (_js_expr, rust_type) = args[i];
-                                                possibly_resolved_generics.push(RustTypeGeneric {
-                                                    name: generic.clone(),
-                                                    type_: RustTypeGenericType::RustType(Box::new(
-                                                        rust_type,
-                                                    )),
-                                                });
-                                                continue;
-                                            }
-                                        }
-                                        Type::Verbatim(_) => todo!(),
-                                        _ => todo!(),
-                                    }
-                                }
-                            }
-                            Fields::Unit => todo!(),
-                        }
-                    }
-                }
-            }
-        }
-        possibly_resolved_generics.push(RustTypeGeneric {
-            name: generic.clone(),
-            type_: RustTypeGenericType::Unknown,
-        });
-    }
-    possibly_resolved_generics
 }
 
 fn handle_expr_call(
@@ -5140,47 +5302,39 @@ fn handle_expr_call(
                 type_.unwrap()
             } else if expr_path.path.segments.len() == 2 {
                 // Enum variant with argument(s) like `MyEnum::MyVariant(my_arg)`
+                // Could also be an associated fn?
                 // TODO could also be eg some_module::some_fn(), we want a general purpose way of looking up
                 // TODO how/can we get in-scope items from global_data? would also need item info like methods and their return signatures
-                let enum_name = expr_path.path.segments.first().unwrap().ident.to_string();
-                let method_name = expr_path.path.segments.last().unwrap().ident.to_string();
+                let first_part = expr_path.path.segments.first().unwrap().ident.to_string();
+                let second_part = expr_path.path.segments.last().unwrap().ident.to_string();
                 // TODO check this but I think it is fine to not be differentiating between structs and enums here
                 // there might be multiple impl blocks for the enum so we can't just use the first one that matches on name, we also need to check whether it contains the method
 
-                // Look for scoped structs and enums with names matching the first path segment
-                let struct_or_enum_methods = global_data
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find_map(|s| s.structs_enums.iter().find(|se| se.ident == enum_name))
-                    .cloned();
+                // TODO probably need to look up vars as well?
+                let se = global_data.lookup_struct_or_enum(first_part, current_module);
 
-                // Look for module level structs and enums
-                let module = global_data
-                    .modules
-                    .iter()
-                    .find(|module| &module.path == current_module);
-                let struct_or_enum = module
-                    .and_then(|m| m.structs_and_enums.iter().find(|se| se.ident == enum_name));
-                let module_level_method = struct_or_enum
-                    .and_then(|se| se.members.iter().find(|m| m.ident == method_name));
-
-                if let Some(se) = struct_or_enum_methods {
+                // Check if second_part is a "member" of any found item
+                if let Some(se) = se {
                     // Check if this path call determines a generic for the struct/enum
                     // For all the generics of the struct/enum...
                     let possibly_resolved_generics =
-                        attempt_to_determine_generic_types(&se, &method_name, &args);
+                        attempt_to_determine_generic_types(&se, &second_part, &args);
                     // NOTE variants and associated functions can have the same name but if you try to actually call the associated fn it will error saying you can't call a variant so even though it is technically aloud, in practice it is impossible to use so we don't need to worry about whether we have a variant or associated fn
 
-                    let member = se.members.iter().find(|f| f.ident == method_name).unwrap();
+                    let member = se
+                        .members
+                        .iter()
+                        .find(|impl_item| f.ident == second_part)
+                        .unwrap();
 
                     if possibly_resolved_generics.len() > 0 {
                         let updated_return_type = match &member.return_type {
                             RustType::Option(_) => todo!(),
                             RustType::Result(_) => todo!(),
-                            RustType::Struct(_, _) => todo!(),
-                            RustType::Enum(name, generics) => {
-                                RustType::Enum(name.clone(), possibly_resolved_generics)
+                            RustType::Struct(_) => todo!(),
+                            RustType::Enum(se) => {
+                                se.generics = possibly_resolved_generics;
+                                RustType::Enum(se)
                             }
                             RustType::Vec(_) => todo!(),
                             _ => todo!(),
@@ -5189,9 +5343,6 @@ fn handle_expr_call(
                     } else {
                         member.return_type.clone()
                     }
-                } else if let Some(m) = module_level_method {
-                    // TODO resolve generics in the same way as above
-                    m.return_type.clone()
                 } else {
                     dbg!(expr_call);
                     todo!()
@@ -5199,7 +5350,6 @@ fn handle_expr_call(
             } else {
                 todo!();
             };
-
 
             let (expr, rust_type) = handle_expr_path(expr_path, global_data, current_module);
             // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
@@ -5674,10 +5824,12 @@ fn handle_expr_path(
             .find(|(name, rust_type)| name == &path_name);
 
         // IMPORTANT TODO below is incorrect, it looks through *all* vars, *then*, *all* fns. Needs to look through vars for top scope, fns for that scope, then look through the next scope, etc.
-        if path_name == "self" {
-            // get type for self
-            global_data.self_type.last().unwrap().clone()
-        } else if let Some(var_type) = var_type {
+        // if path_name == "self" {
+        //     // get type for self
+        //     // Why can't self just be stored with all the other scoped vars???
+        //     global_data.self_type.last().unwrap().clone()
+        // } else
+        if let Some(var_type) = var_type {
             // get type for vars
             var_type.type_.clone()
         } else if let Some(fn_type) = fn_type {
