@@ -3564,11 +3564,19 @@ enum ItemDefinitions {
 //     return_type: RustType,
 // }
 
-#[derive(Debug, Clone)]
-struct RustImplItem {
-    ident: String,
-    return_type: RustType,
-}
+// #[derive(Debug, Clone)]
+// struct RustImplBlock {
+//     generics: Vec<String>,
+//     // Note this can a generic param
+//     target: RustType,
+//     items: Vec<RustImplItem>,
+// }
+
+// #[derive(Debug, Clone)]
+// struct RustImplItem {
+//     ident: String,
+//     return_type: RustType,
+// }
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
@@ -3645,13 +3653,23 @@ struct GlobalDataScope {
     generics: Vec<RustTypeParam>,
     // Need to keep track of where the generic is used, eg input to enum variant, input to method, result of some fn call in the body, etc so that when eg we have Foo::Bar(T) getting instantiated with `let foo = Foo::Bar(5)`, we know to then update the type of T to be i32
     item_definitons: Vec<ItemDefinition>,
-    /// TODO I think we want to hoist all scoped impl blocks to the module level, ie get them during the first pass? Well traits can't be hoisted because traits can shadow the names of existing traits in parents scopes, but if we try to impl a shadowed trait you get a "multiple applicable items in scope" error so I think hoisting impls is fine, and potentially necessary because you can use an impl'd method in a parent scope of the impl or even a different scope branch, ie rustc seems to hoist impl blocks, the only limitation is that the any impl'd trait and the target type are (of course) in scope of the impl block. NO - can't hoist `impl MyTrait` blocks because if there is multiple scoped `MyTrait`s (ie duplicate names), we won't know which `impl MyTrait` to use.
-    /// I think we need to treat Trait impls and non-trait impls separately, then we can do something like:
-    /// hoist non-trait impls (because impling the same *method* on the same type in different scopes (or anywhere in the module?) will cause a "duplicate definitions with name `MyType`" error)
-    /// hoist trait impls but only to the scope where the trait is defined, this way we know the impl'd trait methods will be stored and available in the scope after the trait is defined and ready to lookup when a trait method is called (so when a scoped trait is defined we need to look ahead for impl's of that trait) (also we are relying on trait methods being called after the trait is defined, which seems a reasonable limitation for MVP) (can't call methods on a type if they are impl'd in a child scope)
+    /// TODO I think we want to hoist all scoped impl blocks to the module level, ie get them during the first pass? Well traits can't be hoisted because traits can shadow the names of existing traits in parents scopes, but if we try to impl a shadowed trait you get a "multiple applicable items in scope" (I think this just means you need an explicit pah like <MyType as Trait1> or something ???) error so I think hoisting impls is fine, and potentially necessary because you can use an impl'd method in a parent scope of the impl or even a different scope branch, ie rustc seems to hoist impl blocks, the only limitation is that the any impl'd trait and the target type are (of course) in scope of the impl block. NO - can't hoist `impl MyTrait` blocks because if there is multiple scoped `MyTrait`s (ie duplicate names), we won't know which `impl MyTrait` to use.
+    /// 
+    /// 
+    /// I think the solution is as follows. First we need to consider normal impls separately to trait impls.
+    /// 1. Normal impls can be scoped and duplicated if the type they are implementing is duplicated/shadowed, so can't just hoist all of them to module level, so the impl blocks need to be scoped but we do need to hoist them to the same scope as the type definition, give the methods/items implemented can be used before the impl and in parent scopes
+    /// 2. Trait impls are different. For normal impls we cannot apply say `impl Foo { fn foo() {} }` multiple times for the same item/type, whereas for trait impls we can have duplicate, identical impls say `impl Bar for Foo { fn foo() {} }`, as long as we also have multiple `Bar`s, ie the trait is shadowed/duplicated. Also, we cannot call any methods unless the trait for which the method was implemented is in scope, so in this case we want to hoist the impl block to *either* the same scope as the trait or the same scope as the (concrete type implemented)
+    /// 3. For trait impls of generic types...
+    /// 
+    /// 
     /// Also need to consider scoped use stmts, which I don't know if the first pass handles?
+    /// 
+    /// If we tried to premptively add all impl items for each type, we would have to differentiate between say Foo<i32> and Foo<f32>, and so we would have to add records for every possible concrete type param. For this reason it is better to just store the impl blocks as is, with the trait and generic info eg `impl MyTrait for T` and then work out which impl blocks apply to which type/method as and when needed, ie we are looking up info on a method.
     /// (ident, type)
-    impl_blocks: Vec<(RustType, Vec<RustImplItem>)>,
+    // impl_blocks: Vec<(RustType, Vec<RustImplItem>)>,
+    // I think it is easier to just store the syn object because we need so much info, and I don't think we will be creating impl blocks manually so don't *need* our own type
+    // Also need to consider (possibly multiple) impls being defined in different modules to the target type
+    impl_blocks: Vec<ItemImpl>,
     // trait_definitons: Vec<RustTypeImplTrait>,
     trait_definitons: Vec<RustTraitDefinition>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
@@ -3691,10 +3709,11 @@ struct GlobalData {
     default_trait_impls_class_mapping: Vec<(String, String)>,
     /// For temporary storage of JS methods prior to adding to JS classes
     /// TODO doesn't seem like we are actually populating this even though it has been used for a while?
-    impl_items: Vec<ImplItemTemp>,
+    impl_items_for_js: Vec<ImplItemTemp>,
     /// For looking up return types of methods etc
-    /// TODO This needs populating on the "first pass" to ensure we can capture scoped impl blocks since their defined methods can be used in parent scopes, which would require some kind of look ahead
-    impl_items_for_types: Vec<(RustType, RustImplItem)>,
+    // impl_items_for_types: Vec<(RustType, RustImplItem)>,
+    // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
+    impl_blocks: Vec<ItemImpl>,
     duplicates: Vec<Duplicate>,
     transpiled_modules: Vec<JsModule>,
 }
@@ -3711,10 +3730,10 @@ impl GlobalData {
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
             default_trait_impls: Vec::new(),
-            impl_items: Vec::new(),
+            impl_items_for_js: Vec::new(),
             duplicates,
             transpiled_modules: Vec::new(),
-            impl_items_for_types: Vec::new(),
+            impl_blocks: Vec::new(),
         }
     }
 
@@ -4538,7 +4557,7 @@ pub fn process_items(
 
     update_classes(
         &mut global_data.transpiled_modules,
-        &global_data.impl_items,
+        &global_data.impl_items_for_js,
         &global_data.default_trait_impls_class_mapping,
         &global_data.default_trait_impls,
     );
@@ -7170,6 +7189,7 @@ fn get_path_without_namespacing(
     }
 }
 
+// return type for `handle_expr_path` because the path might not comprise a full expression/type, ie a tuple struct or enum variant that has args so requires being called
 pub enum PartialRustType {
     /// This is only used for tuple struct instantiation since normal struct instantiation are parsed to Expr::Struct and so can be directly evaluated to a struct instance, whereas a tuple struct instantiation is parsed as an ExprCall
     ///
@@ -7292,88 +7312,20 @@ fn handle_expr_path(
 
     assert!(segs_copy_item_path.len() <= 2);
 
+    let item_path_seg = segs_copy_item_path[0];
+
     // Split out item and any sub path eg for an enum variant, associated fn, etc
     let rust_type = if segs_copy_item_path.len() == 1 {
-        let item_path = segs_copy_item_path[0];
-
         // Look for scoped items
         let scoped_rust_type = global_data.scopes.iter().rev().find_map(|scope| {
-            let var = scope.variables.iter().find(|v| v.name == item_path.ident);
-            let func = scope.fns.iter().find(|f| f.ident == item_path.ident);
+            let var = scope.variables.iter().find(|v| v.name == item_path_seg.ident);
+            let func = scope.fns.iter().find(|f| f.ident == item_path_seg.ident);
             let item_def = scope
                 .item_definitons
                 .iter()
-                .find(|f| f.ident == item_path.ident);
+                .find(|f| f.ident == item_path_seg.ident);
 
-            if let Some(var) = var {
-                Some(PartialRustType::RustType(var.type_.clone()))
-            } else if let Some(fn_info) = func {
-                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
-                let fn_generics = if item_path.turbofish.len() > 0 {
-                    item_path
-                        .turbofish
-                        .iter()
-                        .enumerate()
-                        .map(|(i, g)| RustTypeParam {
-                            name: fn_info.generics[i].clone(),
-                            type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    fn_info
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam {
-                            name: g.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                Some(PartialRustType::RustType(RustType::Fn(
-                    fn_generics,
-                    None,
-                    item_path.ident.clone(),
-                )))
-            } else if let Some(item_def) = item_def {
-                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-                let item_generics = if item_path.turbofish.len() > 0 {
-                    item_path
-                        .turbofish
-                        .iter()
-                        .enumerate()
-                        .map(|(i, g)| RustTypeParam {
-                            name: item_def.generics[i].clone(),
-                            type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    item_def
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam {
-                            name: g.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                match item_def.struct_or_enum_info {
-                    StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
-                        // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
-                        Some(PartialRustType::TupleStructIdent(
-                            item_generics,
-                            None,
-                            item_path.ident.clone(),
-                        ))
-                    }
-                    StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
-                        // So we are assuming you can't have a path where the final segment is an enum ident
-                        panic!()
-                    }
-                }
-            } else {
-                dbg!(segs_copy);
-                todo!()
-            }
+            found_item_to_partial_rust_type(&item_path_seg, var, func, item_def, None)
         });
 
         // Look for module level items
@@ -7383,85 +7335,19 @@ fn handle_expr_path(
                 .iter()
                 .find(|m| &m.path == &segs_copy_module_path)
                 .unwrap();
-            let func = module
-                .fn_info
-                .iter()
-                .cloned()
-                .find(|se| se.ident == item_path.ident);
+            let func = module.fn_info.iter().find(|se| se.ident == item_path_seg.ident);
             let item_def = module
                 .item_definitons
                 .iter()
-                .cloned()
-                .find(|se| se.ident == item_path.ident);
+                .find(|se| se.ident == item_path_seg.ident);
 
-            // TODO deduplicate this section which is identical to the scoped items version except for passing Some(module path) to RustType instead of None
-            if let Some(fn_info) = func {
-                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
-                let fn_generics = if item_path.turbofish.len() > 0 {
-                    item_path
-                        .turbofish
-                        .iter()
-                        .enumerate()
-                        .map(|(i, g)| RustTypeParam {
-                            name: fn_info.generics[i].clone(),
-                            type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    fn_info
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam {
-                            name: g.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                Some(PartialRustType::RustType(RustType::Fn(
-                    fn_generics,
-                    Some(segs_copy_module_path.clone()),
-                    item_path.ident.clone(),
-                )))
-            } else if let Some(item_def) = item_def {
-                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-                let item_generics = if item_path.turbofish.len() > 0 {
-                    item_path
-                        .turbofish
-                        .iter()
-                        .enumerate()
-                        .map(|(i, g)| RustTypeParam {
-                            name: item_def.generics[i].clone(),
-                            type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    item_def
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam {
-                            name: g.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                match item_def.struct_or_enum_info {
-                    StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
-                        // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
-                        Some(PartialRustType::TupleStructIdent(
-                            item_generics,
-                            Some(segs_copy_module_path.clone()),
-                            item_path.ident.clone(),
-                        ))
-                    }
-                    StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
-                        // So we are assuming you can't have a path where the final segment is an enum ident
-                        panic!()
-                    }
-                }
-            } else {
-                dbg!(segs_copy);
-                todo!()
-            }
+            found_item_to_partial_rust_type(
+                &item_path_seg,
+                None,
+                func,
+                item_def,
+                Some(segs_copy_module_path.clone()),
+            )
         };
 
         if let Some(scoped_rust_type) = scoped_rust_type {
@@ -7474,6 +7360,213 @@ fn handle_expr_path(
             panic!()
         }
     } else if segs_copy_item_path.len() == 2 {
+        // NOTE if item part of the path is length = 2 then the first part must be a struct or enum
+        let sub_path = segs_copy_item_path[1];
+        // ie:
+        // Struct/Enum::associated_fn
+        // Struct/Enum::associated_const
+        // Enum::Variant
+        // Enum::Variant ()
+        // Enum::Variant {}
+
+        // Look for scoped items
+        let scoped_item = global_data.scopes.iter().rev().find_map(|scope| {
+            let var = scope.variables.iter().find(|v| v.name == item_path_seg.ident);
+            let func = scope.fns.iter().find(|f| f.ident == item_path_seg.ident);
+            assert!(var.is_none() && func.is_none());
+            scope
+                .item_definitons
+                .iter()
+                .find(|f| f.ident == item_path_seg.ident)
+
+            // found_item_with_subpath_to_partial_rust_type(&item_path, var, func, item_def, None)
+        });
+
+        // Look for module level items
+        let module_level_item = {
+            let module = global_data
+                .modules
+                .iter()
+                .find(|m| &m.path == &segs_copy_module_path)
+                .unwrap();
+            let func = module.fn_info.iter().find(|se| se.ident == item_path_seg.ident);
+            module
+                .item_definitons
+                .iter()
+                .find(|se| se.ident == item_path_seg.ident)
+
+            // found_item_to_partial_rust_type(
+            //     &item_path,
+            //     None,
+            //     func,
+            //     item_def,
+            //     Some(segs_copy_module_path.clone()),
+            // )
+        };
+
+        let item_def = if let Some(scoped_item) = scoped_item {
+            scoped_item
+        } else if let Some(module_level_item) = module_level_item {
+            module_level_item
+        } else {
+            panic!()
+        };
+
+        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
+        let item_generics = if item_path_seg.turbofish.len() > 0 {
+            item_path_seg
+                .turbofish
+                .iter()
+                .enumerate()
+                .map(|(i, g)| RustTypeParam {
+                    name: item_def.generics[i].clone(),
+                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            item_def
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>()
+        };
+        match item_def.struct_or_enum_info {
+            StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
+                // Look through all impl blocks which match item to find impl item which matches subpath name
+                // First we need to know which Traits are impl'd for the struct because we need to know it's "trait bounds" to know whether it matches eg:
+                // `impl<T: OtherTrait> MyTrait for T {}`
+                // Note this could be recursive, ie in the above example our type would impl both OtherTrait and MyTrait, but we need to first determine that it impls OtherTrait, and only then can we determine that it therefore also impls MyTrait. For example
+                // impl Trait1 for MyStruct
+                // impl<T: Trait1> Trait2 for T
+                // impl<T: Trait2> Trait3 for T
+                // impl<T: Trait3> Trait4 for T
+                // etc
+                // To know MyStruct impls Trait3 we have to already know it impls Trait2, which I think means every time we match a trait we must do at least 1 more pass to check if any other traits now match, and repeat this until no news traits are matched.
+                // Also note it doesn't work this out upfront eg in the first pass, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
+                let possible_scopes = global_data.scopes.iter().rev().take_while(|s| s.item_definitons.iter().any(|item_def| item_def.ident == item_path_seg.ident));
+
+                // (trait module path (None for scoped), trait name)
+                let mut found_traits :Vec<(Option<Vec<String>>, String)>= Vec::new();
+                let scoped_impld_traits = possible_scopes.clone().map(|scope| scope.impl_blocks.iter().filter(|impl_block| {
+                    // TODO this needs extending to handle matching any target type, rather than just user structs
+                    match &*impl_block.self_ty {
+                        Type::Array(_) => false,
+                        Type::BareFn(_) => false,
+                        Type::Group(_) => false,
+                        Type::ImplTrait(_) => false,
+                        Type::Infer(_) => false,
+                        Type::Macro(_) => false,
+                        Type::Never(_) => false,
+                        Type::Paren(_) => false,
+                        Type::Path(type_path) => {
+                            // Is target type a type param?
+                            let target_is_type_param = type_path.path.segments.len() == 1 &&
+                            impl_block.generics.params.iter().any(|generic_param| {
+                                match generic_param {
+                                    GenericParam::Type(type_param) => type_param.ident == type_path.path.segments.first().unwrap().ident,
+                                    _ => todo!(),
+                                }
+                            });
+
+
+                            if target_is_type_param {
+                                // Get bounds on trait
+                                let type_param_name = type_path.path.segments.first().unwrap().ident;
+                                // TODO handle where clause
+                                let type_param = impl_block.generics.params.iter().find_map(|generic_param| match generic_param{
+                                    GenericParam::Lifetime(_) => todo!(),
+                                    GenericParam::Type(type_param) => if type_param.ident == type_param_name { Some(type_param)} else {None},
+                                    GenericParam::Const(_) => todo!(),
+                                }).unwrap();
+
+                                // Does our struct impl these any of these traits?
+                                type_param.bounds.iter().any(|bound| {
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            // TODO we will end up calling this *alot* which means I think we want to preprocess the ItemImpl (impl block) so we can pre-resolve the paths for all the traits and trait bounds
+                                            // resolve trait bound module path, looking first in scopes, then in modules
+                                            let found_in_scope = trait_bound.path.segments.len() == 1 &&
+                                            global_data.scopes.iter().rev().any(|s| s.trait_definitons.iter().any(|trait_def| trait_def.name == trait_bound.path.segments.first().unwrap().ident));
+
+
+
+                                            let (trait_bound_module_path, trait_bound_item_path_seg) = if found_in_scope {
+                                                (None, trait_bound.path.segments.first().unwrap().ident.to_string())
+                                            } else {
+                                                let (trait_bound_module_path, trait_bound_item_path_seg) = get_path_without_namespacing(
+                                                    true,
+                                                    false,
+                                                    module,
+                                                    trait_bound.path.segments.iter().map(|seg| RustPathSegment { ident: seg.ident.to_string(), turbofish: Vec::new() }).collect::<Vec<_>>(),
+                                                    global_data,
+                                                    current_module,
+                                                    current_module,
+                                                );
+                                                assert!(trait_bound_item_path_seg.len() == 1);
+                                                (Some(trait_bound_module_path), trait_bound_item_path_seg.first().unwrap().ident)
+                                                }
+                                            ;
+                                            found_traits.contains(&(trait_bound_module_path, trait_bound_item_path_seg))
+                                        },
+                                        TypeParamBound::Lifetime(_) => false,
+                                        TypeParamBound::Verbatim(_) => false,
+                                        _ => false,
+                                    }
+                                });
+                            }
+
+
+
+                            // Resolve target type path
+                            let (module_path, item_path_seg) = get_path_without_namespacing(
+                                true,
+                                false,
+                                module,
+                                segs_copy,
+                                global_data,
+                                current_module,
+                                current_module,
+                            );
+                            // Target must be simply an item, not an enum variant, associated fn, or whatever, so length = 1
+                            assert!(segs_copy_item_path.len() == 1);
+
+                            // if both the module path and item name match
+                            type_path.path
+                        },
+                        Type::Ptr(_) => false,
+                        Type::Reference(_) => false,
+                        Type::Slice(_) => false,
+                        Type::TraitObject(_) => false,
+                        Type::Tuple(_) => false,
+                        Type::Verbatim(_) => false,
+                        _ => todo!(),
+                    }
+                }))
+
+                let impld_traits = 
+
+                global_data.scopes.first().unwrap()
+
+                // subpath is associated fn
+
+                // subpath is associated const
+
+                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
+                Some(PartialRustType::TupleStructIdent(
+                    item_generics,
+                    module_path,
+                    item_path_seg.ident.clone(),
+                ))
+            }
+            StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
+                // So we are assuming you can't have a path where the final segment is an enum ident
+                panic!()
+            }
+        }
+
         todo!()
     } else {
         // Not sure how an item can have a path with len 0 or greater than 2, panic if it happens so I can see this case
@@ -7540,6 +7633,85 @@ fn handle_expr_path(
     // };
     // (JsExpr::Path(segs), type_)
     (JsExpr::Path(segs), rust_type)
+}
+
+fn found_item_to_partial_rust_type(
+    item_path: &RustPathSegment,
+    var: Option<&ScopedVar>,
+    func: Option<&FnInfo>,
+    item_def: Option<&ItemDefinition>,
+    module_path: Option<Vec<String>>,
+) -> Option<PartialRustType> {
+    if let Some(var) = var {
+        // This branch is obviously only possible for scoped paths since we can't have module level vars
+        Some(PartialRustType::RustType(var.type_.clone()))
+    } else if let Some(fn_info) = func {
+        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
+        let fn_generics = if item_path.turbofish.len() > 0 {
+            item_path
+                .turbofish
+                .iter()
+                .enumerate()
+                .map(|(i, g)| RustTypeParam {
+                    name: fn_info.generics[i].clone(),
+                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            fn_info
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>()
+        };
+        Some(PartialRustType::RustType(RustType::Fn(
+            fn_generics,
+            module_path,
+            item_path.ident.clone(),
+        )))
+    } else if let Some(item_def) = item_def {
+        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
+        let item_generics = if item_path.turbofish.len() > 0 {
+            item_path
+                .turbofish
+                .iter()
+                .enumerate()
+                .map(|(i, g)| RustTypeParam {
+                    name: item_def.generics[i].clone(),
+                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            item_def
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>()
+        };
+        match item_def.struct_or_enum_info {
+            StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
+                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
+                Some(PartialRustType::TupleStructIdent(
+                    item_generics,
+                    module_path,
+                    item_path.ident.clone(),
+                ))
+            }
+            StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
+                // So we are assuming you can't have a path where the final segment is an enum ident
+                panic!()
+            }
+        }
+    } else {
+        // dbg!(segs_copy);
+        todo!()
+    }
 }
 
 fn handle_expr_assign(
