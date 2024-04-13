@@ -3564,19 +3564,28 @@ enum ItemDefinitions {
 //     return_type: RustType,
 // }
 
-// #[derive(Debug, Clone)]
-// struct RustImplBlock {
-//     generics: Vec<String>,
-//     // Note this can a generic param
-//     target: RustType,
-//     items: Vec<RustImplItem>,
-// }
+#[derive(Debug, Clone)]
+struct RustGeneric {
+    ident: String,
+    // (module path, trait name)
+    trait_bounds: Vec<(Option<Vec<String>>, String)>
+}
 
-// #[derive(Debug, Clone)]
-// struct RustImplItem {
-//     ident: String,
-//     return_type: RustType,
-// }
+#[derive(Debug, Clone)]
+struct RustImplBlock {
+    generics: Vec<RustGeneric>,
+    trait_: Option<(Option<Vec<String>>, String)>,
+    // Note this can a generic param
+    target: RustType,
+    items: Vec<RustImplItem>,
+}
+
+#[derive(Debug, Clone)]
+struct RustImplItem {
+    ident: String,
+    // return_type: RustType,
+    syn_object: ImplItem
+}
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
@@ -3669,7 +3678,8 @@ struct GlobalDataScope {
     // impl_blocks: Vec<(RustType, Vec<RustImplItem>)>,
     // I think it is easier to just store the syn object because we need so much info, and I don't think we will be creating impl blocks manually so don't *need* our own type
     // Also need to consider (possibly multiple) impls being defined in different modules to the target type
-    impl_blocks: Vec<ItemImpl>,
+    // impl_blocks: Vec<ItemImpl>,
+    impl_blocks: Vec<RustImplBlock>,
     // trait_definitons: Vec<RustTypeImplTrait>,
     trait_definitons: Vec<RustTraitDefinition>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
@@ -3713,7 +3723,8 @@ struct GlobalData {
     /// For looking up return types of methods etc
     // impl_items_for_types: Vec<(RustType, RustImplItem)>,
     // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
-    impl_blocks: Vec<ItemImpl>,
+    // impl_blocks: Vec<ItemImpl>,
+    impl_blocks: Vec<RustImplBlock>,
     duplicates: Vec<Duplicate>,
     transpiled_modules: Vec<JsModule>,
 }
@@ -7434,8 +7445,20 @@ fn handle_expr_path(
                 .collect::<Vec<_>>()
         };
         match item_def.struct_or_enum_info {
+            // Item is struct so we need to look up associated fn
             StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
                 // Look through all impl blocks which match item to find impl item which matches subpath name
+
+                // First look for method in direct (non-trait) impls
+                // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
+                let scoped_impl_method = global_data.scopes.iter().rev().find_map(|s| s.impl_blocks.iter().find(|impl_block| impl_block.trait_.is_none() && match impl_block.target {
+                    RustType::StructOrEnum(target_type_params, target_module_path, target_name) => {
+                        target_type_params.len() ==0 && item_def.ident == target_name && segs_copy_module_path == target_module_path
+                    },
+                    _ => false,
+                }))
+                
+                // Now look for method in trait impls
                 // First we need to know which Traits are impl'd for the struct because we need to know it's "trait bounds" to know whether it matches eg:
                 // `impl<T: OtherTrait> MyTrait for T {}`
                 // Note this could be recursive, ie in the above example our type would impl both OtherTrait and MyTrait, but we need to first determine that it impls OtherTrait, and only then can we determine that it therefore also impls MyTrait. For example
@@ -7446,105 +7469,59 @@ fn handle_expr_path(
                 // etc
                 // To know MyStruct impls Trait3 we have to already know it impls Trait2, which I think means every time we match a trait we must do at least 1 more pass to check if any other traits now match, and repeat this until no news traits are matched.
                 // Also note it doesn't work this out upfront eg in the first pass, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
-                let possible_scopes = global_data.scopes.iter().rev().take_while(|s| s.item_definitons.iter().any(|item_def| item_def.ident == item_path_seg.ident));
 
                 // (trait module path (None for scoped), trait name)
                 let mut found_traits :Vec<(Option<Vec<String>>, String)>= Vec::new();
-                let scoped_impld_traits = possible_scopes.clone().map(|scope| scope.impl_blocks.iter().filter(|impl_block| {
-                    // TODO this needs extending to handle matching any target type, rather than just user structs
-                    match &*impl_block.self_ty {
-                        Type::Array(_) => false,
-                        Type::BareFn(_) => false,
-                        Type::Group(_) => false,
-                        Type::ImplTrait(_) => false,
-                        Type::Infer(_) => false,
-                        Type::Macro(_) => false,
-                        Type::Never(_) => false,
-                        Type::Paren(_) => false,
-                        Type::Path(type_path) => {
-                            // Is target type a type param?
-                            let target_is_type_param = type_path.path.segments.len() == 1 &&
-                            impl_block.generics.params.iter().any(|generic_param| {
-                                match generic_param {
-                                    GenericParam::Type(type_param) => type_param.ident == type_path.path.segments.first().unwrap().ident,
-                                    _ => todo!(),
-                                }
-                            });
+
+                // Only need to look in the same or child scopes of the item definition since an impl on an item cannot be in a parent scope
+                let possible_scopes = global_data.scopes.iter().rev().take_while(|s| s.item_definitons.iter().any(|item_def| item_def.ident == item_path_seg.ident));
 
 
-                            if target_is_type_param {
-                                // Get bounds on trait
-                                let type_param_name = type_path.path.segments.first().unwrap().ident;
-                                // TODO handle where clause
-                                let type_param = impl_block.generics.params.iter().find_map(|generic_param| match generic_param{
-                                    GenericParam::Lifetime(_) => todo!(),
-                                    GenericParam::Type(type_param) => if type_param.ident == type_param_name { Some(type_param)} else {None},
-                                    GenericParam::Const(_) => todo!(),
-                                }).unwrap();
-
-                                // Does our struct impl these any of these traits?
-                                type_param.bounds.iter().any(|bound| {
-                                    match bound {
-                                        TypeParamBound::Trait(trait_bound) => {
-                                            // TODO we will end up calling this *alot* which means I think we want to preprocess the ItemImpl (impl block) so we can pre-resolve the paths for all the traits and trait bounds
-                                            // resolve trait bound module path, looking first in scopes, then in modules
-                                            let found_in_scope = trait_bound.path.segments.len() == 1 &&
-                                            global_data.scopes.iter().rev().any(|s| s.trait_definitons.iter().any(|trait_def| trait_def.name == trait_bound.path.segments.first().unwrap().ident));
-
-
-
-                                            let (trait_bound_module_path, trait_bound_item_path_seg) = if found_in_scope {
-                                                (None, trait_bound.path.segments.first().unwrap().ident.to_string())
-                                            } else {
-                                                let (trait_bound_module_path, trait_bound_item_path_seg) = get_path_without_namespacing(
-                                                    true,
-                                                    false,
-                                                    module,
-                                                    trait_bound.path.segments.iter().map(|seg| RustPathSegment { ident: seg.ident.to_string(), turbofish: Vec::new() }).collect::<Vec<_>>(),
-                                                    global_data,
-                                                    current_module,
-                                                    current_module,
-                                                );
-                                                assert!(trait_bound_item_path_seg.len() == 1);
-                                                (Some(trait_bound_module_path), trait_bound_item_path_seg.first().unwrap().ident)
-                                                }
-                                            ;
-                                            found_traits.contains(&(trait_bound_module_path, trait_bound_item_path_seg))
-                                        },
-                                        TypeParamBound::Lifetime(_) => false,
-                                        TypeParamBound::Verbatim(_) => false,
-                                        _ => false,
+                
+                for scope in possible_scopes.clone() {
+                    for impl_block in scope.impl_blocks {
+                        // TODO this needs extending to handle matching any target type, rather than just user structs
+                        match impl_block.target {
+                            RustType::TypeParam(rust_type_param) => {
+                                    // If the target is a type param then we must be implementing a trait
+                                    let rust_trait = impl_block.trait_.unwrap();
+                                
+                                    // Get bounds on type param
+                                    let type_param_bounds = impl_block.generics.iter().find(|generic| generic.ident == rust_type_param.name).unwrap().trait_bounds;
+    
+                                    // Does our struct impl all of these traits?
+                                    let struct_impls_all_bounds = type_param_bounds.iter().all(|type_param_bound| found_traits.contains(type_param_bound));
+                                    if struct_impls_all_bounds {
+                                        found_traits.push(rust_trait);
                                     }
-                                });
-                            }
 
+                                    
+                                
+                            },
+                            RustType::StructOrEnum(struct_type_params, struct_module_path, struct_name) => {
+                                // Get struct
 
+                                if let Some(impl_trait) = impl_block.trait_ {
+                                    // If the struct is generic, then either this impl block needs to target eg Foo<T> rather than Foo<i32>, else we need to know the concrete type for this particular instance of the struct so we can check
+                                    let target_is_generic = struct_type_params.iter().all(|param| match param.type_ {
+                                        RustTypeParamValue::Unresolved => false,
+                                        RustTypeParamValue::RustType(_) => true,
+                                    });
+                                    if target_is_generic {
+                                        found_traits.push(impl_trait);
+                                    } else {
 
-                            // Resolve target type path
-                            let (module_path, item_path_seg) = get_path_without_namespacing(
-                                true,
-                                false,
-                                module,
-                                segs_copy,
-                                global_data,
-                                current_module,
-                                current_module,
-                            );
-                            // Target must be simply an item, not an enum variant, associated fn, or whatever, so length = 1
-                            assert!(segs_copy_item_path.len() == 1);
-
-                            // if both the module path and item name match
-                            type_path.path
-                        },
-                        Type::Ptr(_) => false,
-                        Type::Reference(_) => false,
-                        Type::Slice(_) => false,
-                        Type::TraitObject(_) => false,
-                        Type::Tuple(_) => false,
-                        Type::Verbatim(_) => false,
-                        _ => todo!(),
+                                        // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
+                                        todo!()
+                                    }
+                                }
+                            },
+                            RustType::MutRef(_) => todo!(),
+                            RustType::Ref(_) => todo!(),
+                            _ => {},
+                        }
                     }
-                }))
+                }
 
                 let impld_traits = 
 
