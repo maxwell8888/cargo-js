@@ -7678,7 +7678,7 @@ fn handle_expr_path(
 
         // Use xor because we should not have both a scoped and module level impl method, only either or
         let impl_method = scoped_impl_method.xor(module_level_impl_method);
-        if let Some(impl_method) = impl_method {
+        let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
                 RustImplItemItem::Fn(fn_info) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
@@ -7705,22 +7705,22 @@ fn handle_expr_path(
                             .collect::<Vec<_>>()
                     };
 
-                    PartialRustType::RustType(RustType::Fn(
+                    Some(PartialRustType::RustType(RustType::Fn(
                         Some(item_generics),
                         fn_generics,
                         segs_copy_module_path,
                         RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
-                    ))
+                    )))
                 }
                 RustImplItemItem::Const => todo!(),
             }
         } else {
-            panic!()
-        }
+            None
+        };
 
         let enum_variant = match item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
-            StructOrEnumDefitionInfo::Struct(struct_definition_info) => None
+            StructOrEnumDefitionInfo::Struct(struct_definition_info) => None,
             StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
                 // Check if we have a variant of the enum
                 let enum_variant = enum_definition_info
@@ -7739,9 +7739,7 @@ fn handle_expr_path(
                         })
                         .collect::<Vec<_>>()
                 } else {
-                    // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-                    assert!(fn_info.generics.len() == 0);
-                    fn_info
+                    item_def
                         .generics
                         .iter()
                         .map(|g| RustTypeParam {
@@ -7750,13 +7748,40 @@ fn handle_expr_path(
                         })
                         .collect::<Vec<_>>()
                 };
-                // An enum variant instantiation cannot have turbofish on both the enum and the variant
 
-                    item_generics
-                enum_variant.map(|enum_variant| PartialRustType::EnumVariantIdent(item_generics, segs_copy_module_path, item_def.ident, sub_path.ident))
+                let mut enum_generics = Vec::new();
+                // An enum variant instantiation cannot have turbofish on both the enum and the variant
+                if item_path_seg.turbofish.len() > 0 {
+                    assert!(sub_path.turbofish.len() > 0);
+                    enum_generics = item_generics;
+                }
+                if sub_path.turbofish.len() > 0 {
+                    assert!(item_path_seg.turbofish.len() > 0);
+                    enum_generics = enum_variant_generics;
+                }
+                // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+                if item_def.generics.len() > 0 {
+                    assert!(enum_generics.len() > 0);
+                }
+
+                enum_variant.map(|enum_variant| {
+                    PartialRustType::EnumVariantIdent(
+                        enum_generics,
+                        segs_copy_module_path,
+                        item_def.ident,
+                        sub_path.ident,
+                    )
+                })
             }
+        };
+        // If you have an enum variant and associated fn with the same name, the code will compile, but if you try to access the fn you will just get the variant instead
+        if let Some(enum_variant) = enum_variant {
+            enum_variant
+        } else if let Some(impl_method) = impl_method {
+            impl_method
+        } else {
+            panic!()
         }
-        todo!()
     } else {
         // Not sure how an item can have a path with len 0 or greater than 2, panic if it happens so I can see this case
         todo!()
