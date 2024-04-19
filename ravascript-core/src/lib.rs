@@ -12,10 +12,10 @@ use std::{
 };
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprMatch, ExprPath, Fields, FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item,
-    ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member,
-    Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp,
-    UseTree, Visibility, WherePredicate,
+    ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam, ImplItem,
+    ImplItemFn, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit,
+    Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt, TraitItem, Type,
+    TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
 pub mod prelude;
 pub mod rust_prelude;
@@ -3305,6 +3305,20 @@ enum RustType {
     // I think we do need to copy the data into the InstanceType because for scoped items we might have a Foo which then gets defined again in a lower scope so if we just look it up to get member info we will find the wrong one and have nothing to pin it to differentiate with like module paths. Yes but we could also give the item definitions indexes or unique ids and then we only have to store those with the InstanceType... NOTE in an item definition, while that items type params won't be resolved, the other types it uses in it's definition might be eg `stuct Foo { bar: Bar<i32> }`
     ///
     /// TODO storing a module path doesn't make much sense if the struct/enum/fn is scoped? Could use an Option which is None if the item is scoped? For now just store the Vec as whatever the current module is (even though this could be confusing for a scoped item), because it doesn't really matter since we always look for scoped items first, and determining whether eg handle_item_fn is for a module level fn or scoped fn would require passing extra args... NO actually we need to know whether we are top level or in a scope because currently we are putting all fns handled with handle_item_fn into the current scope, even if they are top level... which of course should just be scope=0, but this is not a nice approach
+    /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition on the RustType as this seems to be hows Rust itself models where/how item are allowed to be used/instantiated. eg:
+    /// ```rust
+    /// struct AmIHoisted {
+    ///     ohno: String,
+    /// }
+    /// let cool = {
+    ///     struct AmIHoisted {
+    ///         ohno: i32,
+    ///     }
+    ///     let am_i_hoisted = AmIHoisted { ohno: 5 };
+    ///     am_i_hoisted
+    /// };
+    /// assert!(cool.ohno == 5);
+    /// ```
     ///
     /// (type params, module path, name)
     StructOrEnum(Vec<RustTypeParam>, Option<Vec<String>>, String),
@@ -3878,8 +3892,93 @@ impl GlobalData {
         }
     }
 
-    fn lookup_item_def_known_module_assert_not_func(&self, module_path: &Option<Vec<String>>, name: &String) -> ItemDefinition {
+    fn syn_type_to_rust_type_struct_or_enum(
+        &self,
+        current_module: &Vec<String>,
+        // generics: &Vec<RustTypeParam>,
+        syn_type: &Type,
+    ) -> (Vec<RustTypeParam>, Option<Vec<String>>, String) {
+        let type_path = match syn_type {
+            Type::Path(type_path) => {
+                type_path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|seg| {
+                        RustPathSegment {
+                            ident: seg.ident.to_string(),
+                            turbofish: match seg.arguments {
+                                PathArguments::None => Vec::new(),
+                                // TODO support nested turbofish types
+                                PathArguments::AngleBracketed(_) => todo!(),
+                                PathArguments::Parenthesized(_) => todo!(),
+                            },
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+            _ => todo!(),
+        };
 
+        // // Check if path is a type param
+        // if type_path.len() == 1 {
+        //     let is_type_param = generics.iter().map(|gen| gen.name).any(|gen_name| gen_name == type_path[0].ident);
+        //     if is_type_param {
+        //         return
+        //     }
+        // }
+
+        let scoped_item = self.scopes.iter().rev().find_map(|scope| {
+            scope
+                .item_definitons
+                .iter()
+                .find(|f| f.ident == type_path[0].ident)
+        });
+        // TODO can we not use get_path_without_namespacing() for everything?
+        let (item_def, module_path, item_path) = if let Some(scoped_item) = scoped_item {
+            assert!(type_path.len() == 1);
+            (scoped_item.clone(), None, type_path[0].ident)
+        } else {
+            let module = self
+                .modules
+                .iter()
+                .find(|m| &m.path == current_module)
+                .unwrap();
+            let (module_path, item_path) = get_path_without_namespacing(
+                true,
+                false,
+                module,
+                type_path,
+                self,
+                current_module,
+                current_module,
+            );
+            assert!(item_path.len() == 1);
+            let item_def = self.lookup_item_def_known_module_assert_not_func(
+                &Some(module_path),
+                &item_path[0].ident,
+            );
+            (item_def, Some(module_path), item_path[0].ident)
+        };
+        (
+            item_def
+                .generics
+                .iter()
+                .map(|gen| RustTypeParam {
+                    name: gen.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>(),
+            module_path,
+            item_path,
+        )
+    }
+
+    fn lookup_item_def_known_module_assert_not_func(
+        &self,
+        module_path: &Option<Vec<String>>,
+        name: &String,
+    ) -> ItemDefinition {
         if let Some(module_path) = module_path {
             let module = self
                 .modules
@@ -3887,37 +3986,29 @@ impl GlobalData {
                 .find(|m| &m.path == module_path)
                 .unwrap();
 
-            let func = module
-                .fn_info
-                .iter()
-                .find(|se| &se.ident == name);
+            let func = module.fn_info.iter().find(|se| &se.ident == name);
             assert!(func.is_none());
 
             module
                 .item_definitons
                 .iter()
                 .find(|se| &se.ident == name)
-                .unwrap().clone()
+                .unwrap()
+                .clone()
         } else {
             // Look for scoped items
-            self
-                .scopes
+            self.scopes
                 .iter()
                 .rev()
                 .find_map(|scope| {
-                    let var = scope
-                        .variables
-                        .iter()
-                        .find(|v| &v.name == name);
+                    let var = scope.variables.iter().find(|v| &v.name == name);
                     let func = scope.fns.iter().find(|f| &f.ident == name);
                     assert!(var.is_none() && func.is_none());
 
-                    scope
-                        .item_definitons
-                        .iter()
-                        .find(|f| &f.ident == name)
+                    scope.item_definitons.iter().find(|f| &f.ident == name)
                 })
-                .unwrap().clone()
+                .unwrap()
+                .clone()
         }
     }
 
@@ -4061,12 +4152,80 @@ impl GlobalData {
             .unwrap()
     }
 
-    fn lookup_method_or_associated_fn(&self, item_generics: &Vec<RustTypeParam>,
+    // This Doesn't/shouldn't look up methods as far as I can tell (methods are always handled directly in handle_expr_method_call) so rename
+    // fn lookup_method_or_associated_fn(
+    fn lookup_associated_fn(
+        &self,
+        item_generics: &Vec<RustTypeParam>,
         item_module_path: &Option<Vec<String>>,
-         sub_path: &RustPathSegment, item_path_seg: &RustPathSegment, item_def: &ItemDefinition) -> Option<PartialRustType> {
+        sub_path: &RustPathSegment,
+        item_path_seg: &String,
+        item_def: &ItemDefinition,
+        // ) -> Option<PartialRustType> {
+    ) -> Option<RustType> {
+        let impl_method = self.lookup_impl_item_item(
+            item_generics,
+            item_module_path,
+            sub_path,
+            item_path_seg,
+            item_def,
+        );
+        let impl_method = if let Some(impl_method) = impl_method {
+            match impl_method.item {
+                RustImplItemItem::Fn(fn_info) => {
+                    // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
+                    let fn_generics = if sub_path.turbofish.len() > 0 {
+                        sub_path
+                            .turbofish
+                            .iter()
+                            .enumerate()
+                            .map(|(i, g)| RustTypeParam {
+                                name: fn_info.generics[i].clone(),
+                                type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+                        assert!(fn_info.generics.len() == 0);
+                        fn_info
+                            .generics
+                            .iter()
+                            .map(|g| RustTypeParam {
+                                name: g.clone(),
+                                type_: RustTypeParamValue::Unresolved,
+                            })
+                            .collect::<Vec<_>>()
+                    };
 
-        
-
+                    // Some(PartialRustType::RustType(RustType::Fn(
+                    //     Some(item_generics.clone()),
+                    //     fn_generics,
+                    //     item_module_path.clone(),
+                    //     RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
+                    // )))
+                    Some(RustType::Fn(
+                        Some(item_generics.clone()),
+                        fn_generics,
+                        item_module_path.clone(),
+                        RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
+                    ))
+                }
+                RustImplItemItem::Const => todo!(),
+            }
+        } else {
+            None
+        };
+        impl_method
+    }
+    fn lookup_impl_item_item(
+        &self,
+        item_generics: &Vec<RustTypeParam>,
+        item_module_path: &Option<Vec<String>>,
+        sub_path: &RustPathSegment,
+        item_name: &String,
+        item_def: &ItemDefinition,
+        // ) -> Option<PartialRustType> {
+    ) -> Option<RustImplItem> {
         // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
 
         // Look for associated fn of item (struct or enum)
@@ -4075,14 +4234,9 @@ impl GlobalData {
 
         // First look for method in direct (non-trait) impls
         // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
-        let scoped_impls = self
-            .scopes
-            .iter()
-            .map(|s| s.impl_blocks.iter())
-            .flatten();
+        let scoped_impls = self.scopes.iter().map(|s| s.impl_blocks.iter()).flatten();
         let scoped_impl_method =
-            self
-                .impl_blocks
+            self.impl_blocks
                 .iter()
                 .chain(scoped_impls)
                 .find_map(|impl_block| {
@@ -4126,7 +4280,8 @@ impl GlobalData {
         let possible_scopes = self.scopes.iter().rev().take_while(|s| {
             s.item_definitons
                 .iter()
-                .any(|item_def| item_def.ident == item_path_seg.ident)
+                // .any(|item_def| item_def.ident == item_path_seg.ident)
+                .any(|item_def| &item_def.ident == item_name)
         });
         let mut all_impl_blocks = possible_scopes
             .map(|s| s.impl_blocks.iter().cloned())
@@ -4200,16 +4355,15 @@ impl GlobalData {
                     .filter(|trait_def| found_traits.contains(&(None, trait_def.name)))
             })
             .flatten();
-        let module_level_traits = self
-            .modules
-            .iter()
-            .map(|module| {
-                module
-                    .trait_definitons
-                    .iter()
-                    .filter(|trait_def| found_traits.contains(&(Some(module.path), trait_def.name)))
-            })
-            .flatten();
+        let module_level_traits =
+            self.modules
+                .iter()
+                .map(|module| {
+                    module.trait_definitons.iter().filter(|trait_def| {
+                        found_traits.contains(&(Some(module.path), trait_def.name))
+                    })
+                })
+                .flatten();
         // TODO add default impl items to traits
         // let default_trait_method = scoped_traits
         //     .chain(module_level_traits)
@@ -4246,45 +4400,6 @@ impl GlobalData {
 
         // Use xor because we should not have both a scoped and module level impl method, only either or
         let impl_method = scoped_impl_method.xor(module_level_impl_method);
-        let impl_method = if let Some(impl_method) = impl_method {
-            match impl_method.item {
-                RustImplItemItem::Fn(fn_info) => {
-                    // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
-                    let fn_generics = if sub_path.turbofish.len() > 0 {
-                        sub_path
-                            .turbofish
-                            .iter()
-                            .enumerate()
-                            .map(|(i, g)| RustTypeParam {
-                                name: fn_info.generics[i].clone(),
-                                type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                            })
-                            .collect::<Vec<_>>()
-                    } else {
-                        // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-                        assert!(fn_info.generics.len() == 0);
-                        fn_info
-                            .generics
-                            .iter()
-                            .map(|g| RustTypeParam {
-                                name: g.clone(),
-                                type_: RustTypeParamValue::Unresolved,
-                            })
-                            .collect::<Vec<_>>()
-                    };
-
-                    Some(PartialRustType::RustType(RustType::Fn(
-                        Some(item_generics.clone()),
-                        fn_generics,
-                        item_module_path.clone(),
-                        RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
-                    )))
-                }
-                RustImplItemItem::Const => todo!(),
-            }
-        } else {
-            None
-        };
         impl_method
     }
 }
@@ -6712,6 +6827,234 @@ fn handle_expr_and_stmt_macro(
     todo!()
 }
 
+fn handle_expr_method_call(
+    expr_method_call: &ExprMethodCall,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> (JsExpr, RustType) {
+    // TODO how/can we get in-scope items from global_data? would also need item info like methods and their return signatures
+    let var_name = match &*expr_method_call.receiver {
+        Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
+            expr_path.path.segments.first().unwrap().ident.to_string()
+        }
+        _ => todo!(),
+    };
+    let method_name = expr_method_call.method.to_string();
+
+    // // Look up types... should really be looking up item types when handling the receiver, and then at this stage we are just seeing if there are generics we can resolve with the argument types
+    // // Look up variable
+    // let scoped_var = global_data
+    //     .scopes
+    //     .iter()
+    //     .rev()
+    //     .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
+    //     .cloned();
+
+    // // Look for module level structs and enums
+    // let module = global_data
+    //     .modules
+    //     .iter()
+    //     .find(|module| &module.path == current_module);
+    // let struct_or_enum =
+    //     module.and_then(|m| m.item_definitons.iter().find(|se| se.ident == var_name));
+    // let module_level_method =
+    //     struct_or_enum.and_then(|se| se.members.iter().find(|m| m.ident == method_name));
+    // // End of type lookup
+
+    let mut method_name = expr_method_call.method.to_string();
+    let (receiver, receiver_type) =
+        handle_expr(&*expr_method_call.receiver, global_data, current_module);
+
+    // get method type
+    let method_return_type = match receiver_type {
+        RustType::NotAllowed => todo!(),
+        RustType::Unknown => todo!(),
+        RustType::Todo => todo!(),
+        RustType::ParentItem => todo!(),
+        RustType::Unit => todo!(),
+        RustType::Never => todo!(),
+        RustType::ImplTrait(_) => todo!(),
+        RustType::TypeParam(_) => todo!(),
+        RustType::I32 => todo!(),
+        RustType::F32 => todo!(),
+        RustType::Bool => todo!(),
+        RustType::String => todo!(),
+        RustType::Option(_) => todo!(),
+        RustType::Result(_) => todo!(),
+        RustType::StructOrEnum(item_type_params, item_module_path, item_name) => {
+            let item_def = global_data
+                .lookup_item_def_known_module_assert_not_func(&item_module_path, &item_name);
+
+            let method_turbofish_rust_types =
+                expr_method_call.turbofish.map_or(Vec::new(), |generics| {
+                    generics
+                        .args
+                        .iter()
+                        .map(|generic_arg| match generic_arg {
+                            GenericArgument::Lifetime(_) => todo!(),
+                            GenericArgument::Type(type_) => {
+                                let (type_params, module_path, name) = global_data
+                                    .syn_type_to_rust_type_struct_or_enum(current_module, type_);
+                                RustType::StructOrEnum(type_params, module_path, name)
+                            }
+                            GenericArgument::Const(_) => todo!(),
+                            GenericArgument::AssocType(_) => todo!(),
+                            GenericArgument::AssocConst(_) => todo!(),
+                            GenericArgument::Constraint(_) => todo!(),
+                            _ => todo!(),
+                        })
+                        .collect::<Vec<_>>()
+                });
+
+            let sub_path = RustPathSegment {
+                ident: method_name,
+                turbofish: method_turbofish_rust_types,
+            };
+
+            let impl_method = global_data
+                .lookup_impl_item_item(
+                    &item_type_params,
+                    &item_module_path,
+                    &sub_path,
+                    &item_name,
+                    &item_def,
+                )
+                .unwrap();
+
+            match impl_method.item {
+                RustImplItemItem::Fn(fn_info) => {
+                    // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
+                    match fn_info.return_type {
+                        RustType::NotAllowed => todo!(),
+                        RustType::Unknown => todo!(),
+                        RustType::Todo => todo!(),
+                        RustType::ParentItem => todo!(),
+                        RustType::Unit => todo!(),
+                        RustType::Never => todo!(),
+                        RustType::ImplTrait(_) => todo!(),
+                        RustType::TypeParam(_) => todo!(),
+                        RustType::I32 => todo!(),
+                        RustType::F32 => todo!(),
+                        RustType::Bool => todo!(),
+                        RustType::String => todo!(),
+                        RustType::Option(_) => todo!(),
+                        RustType::Result(_) => todo!(),
+                        RustType::StructOrEnum(type_params, module_path, name) => {
+                            // Return type generics are unresolved at this point
+                            assert!(type_params.iter().all(|tp| match tp.type_ {
+                                RustTypeParamValue::Unresolved => true,
+                                RustTypeParamValue::RustType(_) => false,
+                            }));
+
+                            // get all generic names for receiver item, the method's turbofish, and the methods arguments
+                            let all_types_params = item_type_params.iter().map(|itp| itp.name.clone()).chain(fn_info.generics)
+
+                            // So we have the *unresolved* RustType return type of the method call
+                            // If this type has any generics, we want to resolve them with the concrete type we already have from:
+                            // receiver item instance, the method's turbofish, and the methods arguments
+                            // So we need to take the return type def param names, see whether they belong to the item or method...
+                            // For the item and turbofish this is easy because it is clear what the type belong to, for method args, we need to check if there is any generic input types, (NO look to see if the generic name belongs to the item or method) *whose name matches a generic name in the return type*, and if it does just get the concrete type from the method arg and resolve the return type here.
+
+                            todo!()
+                        }
+                        RustType::Vec(_) => todo!(),
+                        RustType::Array(_) => todo!(),
+                        RustType::Tuple(_) => todo!(),
+                        RustType::UserType(_, _) => todo!(),
+                        RustType::MutRef(_) => todo!(),
+                        RustType::Ref(_) => todo!(),
+                        RustType::Fn(_, _, _, _) => todo!(),
+                    }
+                }
+                RustImplItemItem::Const => todo!(),
+            }
+        }
+        RustType::Vec(_) => todo!(),
+        RustType::Array(_) => todo!(),
+        RustType::Tuple(_) => todo!(),
+        RustType::UserType(_, _) => todo!(),
+        RustType::MutRef(_) => todo!(),
+        RustType::Ref(_) => todo!(),
+        RustType::Fn(_, _, _, _) => todo!(),
+    };
+
+    if let JsExpr::LitStr(_) = receiver {
+        if method_name == "to_string" {
+            return (receiver, RustType::String);
+        }
+    }
+    if let JsExpr::Path(path) = &receiver {
+        if path.len() == 2 {
+            if path[0] == "JSON" && path[1] == "parse" {
+                // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
+                let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
+                return (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
+                            iife: false,
+                            public: false,
+                            export: false,
+                            async_: false,
+                            is_method: false,
+                            name: "jsonParse".to_string(),
+                            input_names: vec!["text".to_string()],
+                            body_stmts: vec![JsStmt::Raw(body)],
+                        })))),
+                        expr_method_call
+                            .args
+                            .iter()
+                            .map(|arg| handle_expr(arg, global_data, current_module).0)
+                            .collect::<Vec<_>>(),
+                    ),
+                    RustType::Todo,
+                );
+            }
+        }
+    }
+    if method_name == "iter" {
+        return (receiver, RustType::Todo);
+    }
+    if method_name == "collect" {
+        return (receiver, RustType::Todo);
+    }
+    if method_name.len() > 3 && &method_name[0..3] == "js_" {
+        method_name = method_name[3..].to_string();
+    }
+    // if method_name == "is_some" {
+    //     return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
+    // }
+    // if method_name == "slice1" || method_name == "slice2" {
+    //     method_name = "slice".to_string();
+    // }
+    if let Some(last_char) = method_name.chars().last() {
+        if last_char.is_digit(10) {
+            method_name.pop().unwrap();
+            // method_name = method_name[..method_name.len() - 1].to_string();
+        }
+    }
+    if method_name == "add_event_listener_async" {
+        method_name = "add_event_listener".to_string();
+    }
+    if method_name == "length" {
+        return (
+            JsExpr::Field(Box::new(receiver), "length".to_string()),
+            RustType::I32,
+        );
+    }
+    (
+        JsExpr::MethodCall(
+            Box::new(receiver),
+            camel(method_name),
+            expr_method_call
+                .args
+                .iter()
+                .map(|arg| handle_expr(arg, global_data, current_module).0)
+                .collect::<Vec<_>>(),
+        ),
+        RustType::Todo,
+    )
+}
+
 fn handle_expr_call(
     expr_call: &ExprCall,
     global_data: &mut GlobalData,
@@ -7637,6 +7980,7 @@ fn handle_expr_path(
             .find(|f| f.ident == segs_copy[0].ident);
         var.is_some() || func.is_some() || item_def.is_some()
     });
+    // TODO can we not use get_path_without_namespacing() for everything?
     let (segs_copy_module_path, segs_copy_item_path) = if scoped_item {
         (None, segs_copy.clone())
     } else {
@@ -7726,7 +8070,10 @@ fn handle_expr_path(
         // Enum::Variant {}
 
         // Get struct/enum item definition
-        let item_def = global_data.lookup_item_def_known_module_assert_not_func(&segs_copy_module_path, &item_path_seg.ident);
+        let item_def = global_data.lookup_item_def_known_module_assert_not_func(
+            &segs_copy_module_path,
+            &item_path_seg.ident,
+        );
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
         let item_generics = if item_path_seg.turbofish.len() > 0 {
@@ -7751,7 +8098,16 @@ fn handle_expr_path(
                 })
                 .collect::<Vec<_>>()
         };
-        let impl_method = global_data.lookup_method_or_associated_fn(&item_generics, &segs_copy_module_path, &sub_path, &item_path_seg, &item_def);
+
+        // TODO don't like returning an Option here, should probably follow how rust does which I believe is to see if it is an enum variant first else it must be an associated fn, else panic
+        let impl_method = global_data.lookup_associated_fn(
+            &item_generics,
+            &segs_copy_module_path,
+            &sub_path,
+            &item_path_seg,
+            &item_def,
+        );
+        let impl_method = impl_method.map(|impl_method| PartialRustType::RustType(impl_method));
 
         let enum_variant = match item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
@@ -8654,172 +9010,7 @@ fn handle_expr(
             handle_expr_match(expr_match, false, global_data, current_module)
         }
         Expr::MethodCall(expr_method_call) => {
-            // TODO how/can we get in-scope items from global_data? would also need item info like methods and their return signatures
-            let var_name = match &*expr_method_call.receiver {
-                Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-                    expr_path.path.segments.first().unwrap().ident.to_string()
-                }
-                _ => todo!(),
-            };
-            let method_name = expr_method_call.method.to_string();
-
-            // // Look up types... should really be looking up item types when handling the receiver, and then at this stage we are just seeing if there are generics we can resolve with the argument types
-            // // Look up variable
-            // let scoped_var = global_data
-            //     .scopes
-            //     .iter()
-            //     .rev()
-            //     .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
-            //     .cloned();
-
-            // // Look for module level structs and enums
-            // let module = global_data
-            //     .modules
-            //     .iter()
-            //     .find(|module| &module.path == current_module);
-            // let struct_or_enum =
-            //     module.and_then(|m| m.item_definitons.iter().find(|se| se.ident == var_name));
-            // let module_level_method =
-            //     struct_or_enum.and_then(|se| se.members.iter().find(|m| m.ident == method_name));
-            // // End of type lookup
-
-            let mut method_name = expr_method_call.method.to_string();
-            let (receiver, receiver_type) =
-                handle_expr(&*expr_method_call.receiver, global_data, current_module);
-
-            // get method type
-            let method_type = match receiver_type {
-                RustType::NotAllowed => todo!(),
-                RustType::Unknown => todo!(),
-                RustType::Todo => todo!(),
-                RustType::ParentItem => todo!(),
-                RustType::Unit => todo!(),
-                RustType::Never => todo!(),
-                RustType::ImplTrait(_) => todo!(),
-                RustType::TypeParam(_) => todo!(),
-                RustType::I32 => todo!(),
-                RustType::F32 => todo!(),
-                RustType::Bool => todo!(),
-                RustType::String => todo!(),
-                RustType::Option(_) => todo!(),
-                RustType::Result(_) => todo!(),
-                RustType::StructOrEnum(type_params, module_path, name) => {
-                    let item_def = global_data.lookup_item_def_known_module_assert_not_func(&module_path, &name);
-                    // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-        let item_generics = if item_path_seg.turbofish.len() > 0 {
-            item_path_seg
-                .turbofish
-                .iter()
-                .enumerate()
-                .map(|(i, g)| RustTypeParam {
-                    name: item_def.generics[i].clone(),
-                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-            assert!(item_def.generics.len() == 0);
-            item_def
-                .generics
-                .iter()
-                .map(|g| RustTypeParam {
-                    name: g.clone(),
-                    type_: RustTypeParamValue::Unresolved,
-                })
-                .collect::<Vec<_>>()
-        };
-                    let impl_method = global_data.lookup_method_or_associated_fn(item_generics, item_module_path, sub_path, item_path_seg, &item_def)
-                    match item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(struct_def_info) => {
-                            struct_def_info.
-                        },
-                        StructOrEnumDefitionInfo::Enum(enum_def_info) => todo!(),
-                    }
-                },
-                RustType::Vec(_) => todo!(),
-                RustType::Array(_) => todo!(),
-                RustType::Tuple(_) => todo!(),
-                RustType::UserType(_, _) => todo!(),
-                RustType::MutRef(_) => todo!(),
-                RustType::Ref(_) => todo!(),
-                RustType::Fn(_, _, _, _) => todo!(),
-            };
-
-            if let JsExpr::LitStr(_) = receiver {
-                if method_name == "to_string" {
-                    return (receiver, RustType::String);
-                }
-            }
-            if let JsExpr::Path(path) = &receiver {
-                if path.len() == 2 {
-                    if path[0] == "JSON" && path[1] == "parse" {
-                        // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
-                        let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
-                        return (
-                            JsExpr::FnCall(
-                                Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    async_: false,
-                                    is_method: false,
-                                    name: "jsonParse".to_string(),
-                                    input_names: vec!["text".to_string()],
-                                    body_stmts: vec![JsStmt::Raw(body)],
-                                })))),
-                                expr_method_call
-                                    .args
-                                    .iter()
-                                    .map(|arg| handle_expr(arg, global_data, current_module).0)
-                                    .collect::<Vec<_>>(),
-                            ),
-                            RustType::Todo,
-                        );
-                    }
-                }
-            }
-            if method_name == "iter" {
-                return (receiver, RustType::Todo);
-            }
-            if method_name == "collect" {
-                return (receiver, RustType::Todo);
-            }
-            if method_name.len() > 3 && &method_name[0..3] == "js_" {
-                method_name = method_name[3..].to_string();
-            }
-            // if method_name == "is_some" {
-            //     return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
-            // }
-            // if method_name == "slice1" || method_name == "slice2" {
-            //     method_name = "slice".to_string();
-            // }
-            if let Some(last_char) = method_name.chars().last() {
-                if last_char.is_digit(10) {
-                    method_name.pop().unwrap();
-                    // method_name = method_name[..method_name.len() - 1].to_string();
-                }
-            }
-            if method_name == "add_event_listener_async" {
-                method_name = "add_event_listener".to_string();
-            }
-            if method_name == "length" {
-                return (
-                    JsExpr::Field(Box::new(receiver), "length".to_string()),
-                    RustType::I32,
-                );
-            }
-            (
-                JsExpr::MethodCall(
-                    Box::new(receiver),
-                    camel(method_name),
-                    expr_method_call
-                        .args
-                        .iter()
-                        .map(|arg| handle_expr(arg, global_data, current_module).0)
-                        .collect::<Vec<_>>(),
-                ),
-                RustType::Todo,
-            )
+            handle_expr_method_call(expr_method_call, global_data, current_module)
         }
         Expr::Paren(expr_paren) => {
             let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
