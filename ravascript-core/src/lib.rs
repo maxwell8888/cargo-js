@@ -6865,6 +6865,12 @@ fn handle_expr_method_call(
     let (receiver, receiver_type) =
         handle_expr(&*expr_method_call.receiver, global_data, current_module);
 
+    let (args_js_exprs, args_rust_types): (Vec<_>, Vec<_>) = expr_method_call
+        .args
+        .iter()
+        .map(|arg| handle_expr(arg, global_data, current_module))
+        .unzip();
+
     // get method type
     let method_return_type = match receiver_type {
         RustType::NotAllowed => todo!(),
@@ -6885,30 +6891,29 @@ fn handle_expr_method_call(
             let item_def = global_data
                 .lookup_item_def_known_module_assert_not_func(&item_module_path, &item_name);
 
-            let method_turbofish_rust_types =
-                expr_method_call.turbofish.map_or(Vec::new(), |generics| {
-                    generics
-                        .args
-                        .iter()
-                        .map(|generic_arg| match generic_arg {
-                            GenericArgument::Lifetime(_) => todo!(),
-                            GenericArgument::Type(type_) => {
-                                let (type_params, module_path, name) = global_data
-                                    .syn_type_to_rust_type_struct_or_enum(current_module, type_);
-                                RustType::StructOrEnum(type_params, module_path, name)
-                            }
-                            GenericArgument::Const(_) => todo!(),
-                            GenericArgument::AssocType(_) => todo!(),
-                            GenericArgument::AssocConst(_) => todo!(),
-                            GenericArgument::Constraint(_) => todo!(),
-                            _ => todo!(),
-                        })
-                        .collect::<Vec<_>>()
-                });
+            let method_turbofish_rust_types = expr_method_call.turbofish.map(|generics| {
+                generics
+                    .args
+                    .iter()
+                    .map(|generic_arg| match generic_arg {
+                        GenericArgument::Lifetime(_) => todo!(),
+                        GenericArgument::Type(type_) => {
+                            let (type_params, module_path, name) = global_data
+                                .syn_type_to_rust_type_struct_or_enum(current_module, type_);
+                            RustType::StructOrEnum(type_params, module_path, name)
+                        }
+                        GenericArgument::Const(_) => todo!(),
+                        GenericArgument::AssocType(_) => todo!(),
+                        GenericArgument::AssocConst(_) => todo!(),
+                        GenericArgument::Constraint(_) => todo!(),
+                        _ => todo!(),
+                    })
+                    .collect::<Vec<_>>()
+            });
 
             let sub_path = RustPathSegment {
                 ident: method_name,
-                turbofish: method_turbofish_rust_types,
+                turbofish: method_turbofish_rust_types.unwrap_or(Vec::new()),
             };
 
             let impl_method = global_data
@@ -6921,6 +6926,50 @@ fn handle_expr_method_call(
                 )
                 .unwrap();
 
+            fn method_return_type_generic_resolve_to_rust_type(
+                item_type_params: &Vec<RustTypeParam>,
+                rust_type_param: &RustTypeParam,
+                fn_info: &FnInfo,
+                method_turbofish_rust_types: &Option<Vec<RustType>>,
+                args_rust_types: &Vec<RustType>,
+            ) -> RustType {
+                // Is type param defined on item?
+                if let Some(item_type_param) = item_type_params
+                    .iter()
+                    .find(|item_type_param| item_type_param.name == rust_type_param.name)
+                {
+                    match item_type_param.type_ {
+                        RustTypeParamValue::Unresolved => todo!(),
+                        RustTypeParamValue::RustType(rust_type) => *rust_type,
+                    }
+                    // Is type param specified in  on method (and we have a method turbofish)?
+                } else if let Some(gen_index) =
+                    fn_info.generics.iter().position(|method_type_param| {
+                        method_type_param == &rust_type_param.name
+                            && method_turbofish_rust_types.is_some()
+                    })
+                {
+                    method_turbofish_rust_types.unwrap()[gen_index]
+
+                    // Is type param concrete value resolved by input argument?
+                } else if let Some(pos) =
+                    fn_info
+                        .inputs_types
+                        .iter()
+                        .position(|input_type| match input_type {
+                            RustType::TypeParam(input_rust_type_param) => {
+                                input_rust_type_param.name == rust_type_param.name
+                            }
+                            // TODO we might have input types like eg Foo<T>
+                            _ => false,
+                        })
+                {
+                    args_rust_types[pos]
+                } else {
+                    todo!()
+                }
+            }
+
             match impl_method.item {
                 RustImplItemItem::Fn(fn_info) => {
                     // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
@@ -6932,7 +6981,21 @@ fn handle_expr_method_call(
                         RustType::Unit => todo!(),
                         RustType::Never => todo!(),
                         RustType::ImplTrait(_) => todo!(),
-                        RustType::TypeParam(_) => todo!(),
+                        RustType::TypeParam(rust_type_param) => {
+                            // type param is unresolved at this point
+                            assert!(match rust_type_param.type_ {
+                                RustTypeParamValue::Unresolved => true,
+                                RustTypeParamValue::RustType(_) => false,
+                            });
+
+                            method_return_type_generic_resolve_to_rust_type(
+                                &item_type_params,
+                                &rust_type_param,
+                                &fn_info,
+                                &method_turbofish_rust_types,
+                                &args_rust_types,
+                            )
+                        }
                         RustType::I32 => todo!(),
                         RustType::F32 => todo!(),
                         RustType::Bool => todo!(),
@@ -6940,22 +7003,41 @@ fn handle_expr_method_call(
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
                         RustType::StructOrEnum(type_params, module_path, name) => {
-                            // Return type generics are unresolved at this point
-                            assert!(type_params.iter().all(|tp| match tp.type_ {
-                                RustTypeParamValue::Unresolved => true,
-                                RustTypeParamValue::RustType(_) => false,
-                            }));
-
-                            // get all generic names for receiver item, the method's turbofish, and the methods arguments
-                            let all_types_params = item_type_params.iter().map(|itp| itp.name.clone()).chain(fn_info.generics)
+                            // Return type generics are unresolved at this point - NO the return type might be eg `Foo<i32>` ie *resolved* generics.
+                            // assert!(type_params.iter().all(|tp| match tp.type_ {
+                            //     RustTypeParamValue::Unresolved => true,
+                            //     RustTypeParamValue::RustType(_) => false,
+                            // }));
 
                             // So we have the *unresolved* RustType return type of the method call
                             // If this type has any generics, we want to resolve them with the concrete type we already have from:
                             // receiver item instance, the method's turbofish, and the methods arguments
                             // So we need to take the return type def param names, see whether they belong to the item or method...
                             // For the item and turbofish this is easy because it is clear what the type belong to, for method args, we need to check if there is any generic input types, (NO look to see if the generic name belongs to the item or method) *whose name matches a generic name in the return type*, and if it does just get the concrete type from the method arg and resolve the return type here.
+                            let resolved_type_params = type_params
+                                .iter()
+                                .map(|tp| {
+                                    match tp.type_ {
+                                        RustTypeParamValue::Unresolved => {
+                                            let mut new_tp = tp.clone();
+                                            let rust_type = method_return_type_generic_resolve_to_rust_type(
+                                                &item_type_params,
+                                                tp,
+                                                &fn_info,
+                                                &method_turbofish_rust_types,
+                                                &args_rust_types,
+                                            );
+                                            new_tp.type_ =
+                                                RustTypeParamValue::RustType(Box::new(rust_type));
+                                            new_tp
+                                        }
+                                        // type param is already resolved so don't need to do anything
+                                        RustTypeParamValue::RustType(_) => tp.clone(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
 
-                            todo!()
+                            RustType::StructOrEnum(resolved_type_params, module_path, name)
                         }
                         RustType::Vec(_) => todo!(),
                         RustType::Array(_) => todo!(),
@@ -7042,16 +7124,8 @@ fn handle_expr_method_call(
         );
     }
     (
-        JsExpr::MethodCall(
-            Box::new(receiver),
-            camel(method_name),
-            expr_method_call
-                .args
-                .iter()
-                .map(|arg| handle_expr(arg, global_data, current_module).0)
-                .collect::<Vec<_>>(),
-        ),
-        RustType::Todo,
+        JsExpr::MethodCall(Box::new(receiver), camel(method_name), args_js_exprs),
+        method_return_type,
     )
 }
 
