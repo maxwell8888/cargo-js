@@ -1592,10 +1592,10 @@ fn handle_item_fn(
         ident: name,
         generics: type_params,
         inputs_types: inputs.clone(),
-        return_type: match item_fn.sig.output {
+        return_type: match &item_fn.sig.output {
             ReturnType::Default => RustType::Unit,
             ReturnType::Type(_, type_) => {
-                parse_fn_input_or_field(&type_, &rust_type_params, current_module, global_data)
+                parse_fn_input_or_field(type_, &rust_type_params, current_module, global_data)
             }
         },
     };
@@ -1901,7 +1901,7 @@ fn handle_item_enum(
                 .iter()
                 .map(|f| {
                     let input_type = RustType::Todo;
-                    match f.ident {
+                    match &f.ident {
                         Some(input_name) => EnumVariantInputsInfo::Named {
                             ident: input_name.to_string(),
                             input_type,
@@ -2666,8 +2666,6 @@ fn handle_item_struct(
     //     },
     // },
 
-    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
-    let global_data_scope = global_data.scopes.last_mut().unwrap();
     let generics = item_struct
         .generics
         .params
@@ -2696,7 +2694,7 @@ fn handle_item_struct(
                 .iter()
                 .map(|f| {
                     (
-                        f.ident.unwrap().to_string(),
+                        f.ident.as_ref().unwrap().to_string(),
                         parse_fn_input_or_field(
                             &f.ty,
                             &generics_type_params,
@@ -2723,6 +2721,9 @@ fn handle_item_struct(
                 .collect::<Vec<_>>(),
         )
     };
+
+    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
+    let global_data_scope = global_data.scopes.last_mut().unwrap();
 
     global_data_scope.item_definitons.push(ItemDefinition {
         ident: item_struct.ident.to_string(),
@@ -3508,7 +3509,7 @@ impl ItemDefinition {
             match &self.struct_or_enum_info {
                 StructOrEnumDefitionInfo::Struct(_) => todo!(),
                 StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-                    let item_enum = enum_def_info.syn_object;
+                    let item_enum = &enum_def_info.syn_object;
                     // ...for enum check if any of the arguments to any of the variants are the generic type...
                     for v in &item_enum.variants {
                         if v.ident == field_or_variant_name {
@@ -3862,7 +3863,7 @@ impl GlobalData {
 
     fn lookup_item_definition_known_module(
         &self,
-        name: String,
+        name: &String,
         module_path: &Option<Vec<String>>,
     ) -> ItemDefinition {
         if let Some(module_path) = module_path {
@@ -3875,7 +3876,7 @@ impl GlobalData {
                 .item_definitons
                 .iter()
                 .cloned()
-                .find(|se| se.ident == name)
+                .find(|se| &se.ident == name)
                 .unwrap()
         } else {
             self.scopes
@@ -3886,7 +3887,7 @@ impl GlobalData {
                         .iter()
                         .rev()
                         .cloned()
-                        .find(|se| se.ident == name)
+                        .find(|se| &se.ident == name)
                 })
                 .unwrap()
         }
@@ -3937,7 +3938,7 @@ impl GlobalData {
         // TODO can we not use get_path_without_namespacing() for everything?
         let (item_def, module_path, item_path) = if let Some(scoped_item) = scoped_item {
             assert!(type_path.len() == 1);
-            (scoped_item.clone(), None, type_path[0].ident)
+            (scoped_item.clone(), None, type_path[0].ident.clone())
         } else {
             let module = self
                 .modules
@@ -3955,10 +3956,14 @@ impl GlobalData {
             );
             assert!(item_path.len() == 1);
             let item_def = self.lookup_item_def_known_module_assert_not_func(
-                &Some(module_path),
+                &Some(module_path.clone()),
                 &item_path[0].ident,
             );
-            (item_def, Some(module_path), item_path[0].ident)
+            (
+                item_def,
+                Some(module_path.clone()),
+                item_path[0].ident.clone(),
+            )
         };
         (
             item_def
@@ -4032,6 +4037,7 @@ impl GlobalData {
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
+            dbg!(current_module_path);
             let current_module = self
                 .modules
                 .iter()
@@ -4143,9 +4149,9 @@ impl GlobalData {
         }
     }
 
-    fn get_module_mut(&self, module_path: &Vec<String>) -> &mut ModuleData {
+    fn get_module_mut(&mut self, module_path: &Vec<String>) -> &mut ModuleData {
         let module_path2 = &module_path[..(module_path.len() - 1)];
-        let name = module_path[module_path.len() - 1];
+        let name = module_path[module_path.len() - 1].clone();
         self.modules
             .iter_mut()
             .find(|m| m.path == module_path2 && m.name == name)
@@ -4207,7 +4213,10 @@ impl GlobalData {
                         Some(item_generics.clone()),
                         fn_generics,
                         item_module_path.clone(),
-                        RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
+                        RustTypeFnType::AssociatedFn(
+                            item_def.ident.clone(),
+                            sub_path.ident.clone(),
+                        ),
                     ))
                 }
                 RustImplItemItem::Const => todo!(),
@@ -4293,18 +4302,18 @@ impl GlobalData {
 
         // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
         while found_traits_previous.len() < found_traits.len() {
-            found_traits_previous = found_traits;
+            found_traits_previous = found_traits.clone();
             found_traits.clear();
 
-            for impl_block in all_impl_blocks {
+            for impl_block in &all_impl_blocks {
                 // TODO this needs extending to handle matching any target type, rather than just user structs
-                match impl_block.target {
+                match &impl_block.target {
                     RustType::TypeParam(rust_type_param) => {
                         // If the target is a type param then we must be implementing a trait
-                        let rust_trait = impl_block.trait_.unwrap();
+                        let rust_trait = impl_block.trait_.clone().unwrap();
 
                         // Get bounds on type param
-                        let type_param_bounds = impl_block
+                        let type_param_bounds = &impl_block
                             .generics
                             .iter()
                             .find(|generic| generic.ident == rust_type_param.name)
@@ -4317,11 +4326,11 @@ impl GlobalData {
                             .all(|type_param_bound| found_traits.contains(type_param_bound));
                         if struct_impls_all_bounds {
                             found_traits.push(rust_trait);
-                            matched_trait_impl_blocks.push(impl_block);
+                            matched_trait_impl_blocks.push(impl_block.clone());
                         }
                     }
                     RustType::StructOrEnum(struct_type_params, struct_module_path, struct_name) => {
-                        if let Some(impl_trait) = impl_block.trait_ {
+                        if let Some(impl_trait) = &impl_block.trait_ {
                             let types_match = struct_or_enum_types_match(
                                 &impl_block.target,
                                 &item_generics,
@@ -4330,8 +4339,8 @@ impl GlobalData {
                             );
 
                             if types_match {
-                                found_traits.push(impl_trait);
-                                matched_trait_impl_blocks.push(impl_block);
+                                found_traits.push(impl_trait.clone());
+                                matched_trait_impl_blocks.push(impl_block.clone());
                             }
                             // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
                         }
@@ -4352,18 +4361,18 @@ impl GlobalData {
             .map(|s| {
                 s.trait_definitons
                     .iter()
-                    .filter(|trait_def| found_traits.contains(&(None, trait_def.name)))
+                    .filter(|trait_def| found_traits.contains(&(None, trait_def.name.clone())))
             })
             .flatten();
-        let module_level_traits =
-            self.modules
-                .iter()
-                .map(|module| {
-                    module.trait_definitons.iter().filter(|trait_def| {
-                        found_traits.contains(&(Some(module.path), trait_def.name))
-                    })
+        let module_level_traits = self
+            .modules
+            .iter()
+            .map(|module| {
+                module.trait_definitons.iter().filter(|trait_def| {
+                    found_traits.contains(&(Some(module.path.clone()), trait_def.name.clone()))
                 })
-                .flatten();
+            })
+            .flatten();
         // TODO add default impl items to traits
         // let default_trait_method = scoped_traits
         //     .chain(module_level_traits)
@@ -6891,7 +6900,7 @@ fn handle_expr_method_call(
             let item_def = global_data
                 .lookup_item_def_known_module_assert_not_func(&item_module_path, &item_name);
 
-            let method_turbofish_rust_types = expr_method_call.turbofish.map(|generics| {
+            let method_turbofish_rust_types = expr_method_call.turbofish.as_ref().map(|generics| {
                 generics
                     .args
                     .iter()
@@ -6912,8 +6921,8 @@ fn handle_expr_method_call(
             });
 
             let sub_path = RustPathSegment {
-                ident: method_name,
-                turbofish: method_turbofish_rust_types.unwrap_or(Vec::new()),
+                ident: method_name.clone(),
+                turbofish: method_turbofish_rust_types.clone().unwrap_or(Vec::new()),
             };
 
             let impl_method = global_data
@@ -6938,9 +6947,9 @@ fn handle_expr_method_call(
                     .iter()
                     .find(|item_type_param| item_type_param.name == rust_type_param.name)
                 {
-                    match item_type_param.type_ {
+                    match &item_type_param.type_ {
                         RustTypeParamValue::Unresolved => todo!(),
-                        RustTypeParamValue::RustType(rust_type) => *rust_type,
+                        RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                     }
                     // Is type param specified in  on method (and we have a method turbofish)?
                 } else if let Some(gen_index) =
@@ -6949,7 +6958,7 @@ fn handle_expr_method_call(
                             && method_turbofish_rust_types.is_some()
                     })
                 {
-                    method_turbofish_rust_types.unwrap()[gen_index]
+                    method_turbofish_rust_types.as_ref().unwrap()[gen_index].clone()
 
                     // Is type param concrete value resolved by input argument?
                 } else if let Some(pos) =
@@ -6964,7 +6973,7 @@ fn handle_expr_method_call(
                             _ => false,
                         })
                 {
-                    args_rust_types[pos]
+                    args_rust_types[pos].clone()
                 } else {
                     todo!()
                 }
@@ -6973,7 +6982,7 @@ fn handle_expr_method_call(
             match impl_method.item {
                 RustImplItemItem::Fn(fn_info) => {
                     // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
-                    match fn_info.return_type {
+                    match &fn_info.return_type {
                         RustType::NotAllowed => todo!(),
                         RustType::Unknown => todo!(),
                         RustType::Todo => todo!(),
@@ -7020,13 +7029,14 @@ fn handle_expr_method_call(
                                     match tp.type_ {
                                         RustTypeParamValue::Unresolved => {
                                             let mut new_tp = tp.clone();
-                                            let rust_type = method_return_type_generic_resolve_to_rust_type(
-                                                &item_type_params,
-                                                tp,
-                                                &fn_info,
-                                                &method_turbofish_rust_types,
-                                                &args_rust_types,
-                                            );
+                                            let rust_type =
+                                                method_return_type_generic_resolve_to_rust_type(
+                                                    &item_type_params,
+                                                    tp,
+                                                    &fn_info,
+                                                    &method_turbofish_rust_types,
+                                                    &args_rust_types,
+                                                );
                                             new_tp.type_ =
                                                 RustTypeParamValue::RustType(Box::new(rust_type));
                                             new_tp
@@ -7037,7 +7047,11 @@ fn handle_expr_method_call(
                                 })
                                 .collect::<Vec<_>>();
 
-                            RustType::StructOrEnum(resolved_type_params, module_path, name)
+                            RustType::StructOrEnum(
+                                resolved_type_params,
+                                module_path.clone(),
+                                name.clone(),
+                            )
                         }
                         RustType::Vec(_) => todo!(),
                         RustType::Array(_) => todo!(),
@@ -7211,7 +7225,7 @@ fn handle_expr_call(
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
                 PartialRustType::TupleStructIdent(type_params, module_path, struct_name) => {
                     let item_def =
-                        global_data.lookup_item_definition_known_module(struct_name, &module_path);
+                        global_data.lookup_item_definition_known_module(&struct_name, &module_path);
 
                     let struct_def = match item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def) => struct_def,
@@ -7222,31 +7236,32 @@ fn handle_expr_call(
                     let updated_type_params = type_params
                         .iter()
                         .map(|tp| {
-                            let field_types = match struct_def.fields {
-                                StructFieldInfo::UnitStruct => return tp,
-                                StructFieldInfo::TupleStruct(field_types) => field_types,
+                            let field_types = match &struct_def.fields {
+                                StructFieldInfo::UnitStruct => return tp.clone(),
+                                StructFieldInfo::TupleStruct(field_types) => field_types.clone(),
                                 StructFieldInfo::RegularStruct(named_field_types) => {
                                     named_field_types
-                                        .into_iter()
+                                        .iter()
+                                        .cloned()
                                         .map(|(name, type_)| type_)
                                         .collect::<Vec<_>>()
                                 }
                             };
+                            let mut new_tp = tp.clone();
                             for (i, field_type) in field_types.iter().enumerate() {
                                 let matches_gen = match field_type {
                                     RustType::TypeParam(type_param) => type_param.name == tp.name,
                                     _ => false,
                                 };
                                 if matches_gen {
-                                    tp.type_ = RustTypeParamValue::RustType(Box::new(
+                                    new_tp.type_ = RustTypeParamValue::RustType(Box::new(
                                         args_rust_types[i].clone(),
                                     ));
-                                    return tp;
+                                    return new_tp;
                                 }
                             }
-                            tp
+                            tp.clone()
                         })
-                        .cloned()
                         .collect::<Vec<_>>();
 
                     RustType::StructOrEnum(updated_type_params, module_path, struct_name)
@@ -7258,7 +7273,7 @@ fn handle_expr_call(
                     variant_name,
                 ) => {
                     let item_def =
-                        global_data.lookup_item_definition_known_module(enum_name, &module_path);
+                        global_data.lookup_item_definition_known_module(&enum_name, &module_path);
 
                     let enum_def = match item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(_) => panic!(),
@@ -7284,15 +7299,16 @@ fn handle_expr_call(
                                     _ => false,
                                 };
                                 if matches_gen {
-                                    tp.type_ = RustTypeParamValue::RustType(Box::new(
-                                        args_rust_types[i].clone(),
-                                    ));
-                                    return tp;
+                                    return RustTypeParam {
+                                        name: tp.name.clone(),
+                                        type_: RustTypeParamValue::RustType(Box::new(
+                                            args_rust_types[i].clone(),
+                                        )),
+                                    };
                                 }
                             }
-                            tp
+                            tp.clone()
                         })
-                        .cloned()
                         .collect::<Vec<_>>();
 
                     RustType::StructOrEnum(updated_type_params, module_path, enum_name)
@@ -7332,7 +7348,7 @@ fn handle_expr_call(
                                 return_type: RustType,
                                 current_type_params: &Vec<RustTypeParam>,
                             ) -> RustType {
-                                match return_type {
+                                match &return_type {
                                     RustType::Unknown => todo!(),
                                     RustType::Todo => todo!(),
                                     RustType::ParentItem => todo!(),
@@ -7347,7 +7363,8 @@ fn handle_expr_call(
                                         let maybe_resolved_type = current_type_params
                                             .iter()
                                             .find(|tp| tp.name == rust_type_param.name)
-                                            .unwrap();
+                                            .unwrap()
+                                            .clone();
                                         match maybe_resolved_type.type_ {
                                             RustTypeParamValue::Unresolved => return_type,
                                             RustTypeParamValue::RustType(resolved_type) => {
@@ -7751,7 +7768,7 @@ fn get_path_without_namespacing(
     module: &ModuleData,
     // syn_path essentially mirrors segs so don't need segs
     // segs: Vec<String>,
-    segs: Vec<RustPathSegment>,
+    mut segs: Vec<RustPathSegment>,
     global_data: &GlobalData,
     current_module: &Vec<String>,
     // Only used to determine if current module is
@@ -7878,7 +7895,7 @@ fn get_path_without_namespacing(
     } else if let Some(use_mapping) = matched_use_mapping {
         let mut use_segs = use_mapping.1.clone();
         use_segs.push(use_mapping.0.clone());
-        let use_segs = use_segs
+        let mut use_segs = use_segs
             .into_iter()
             .map(|s| RustPathSegment {
                 ident: s,
@@ -8026,9 +8043,6 @@ fn handle_expr_path(
         }
     }
 
-    for x in expr_path.path.segments.into_iter() {
-        // x.
-    }
     // IMPORTANT TODO
     // What is all this doing? We just got the module path to an item using `get_path()` so we should be looking up the definition of found item and then if there is remaining segments in the expr_path after then item then determine if these are an enum variant or associated fn
     // What does get_path() return if the expr_path is just a scoped variable?
@@ -8072,7 +8086,7 @@ fn handle_expr_path(
 
     assert!(segs_copy_item_path.len() <= 2);
 
-    let item_path_seg = segs_copy_item_path[0];
+    let item_path_seg = &segs_copy_item_path[0];
 
     // Split out item and any sub path eg for an enum variant, associated fn, etc
     let rust_type = if segs_copy_item_path.len() == 1 {
@@ -8135,7 +8149,7 @@ fn handle_expr_path(
 
         // NOTE when specifying type params for enum instantiation with turbofish, we can use *either* `Enum::<usize>::Variant(5)` *or* `Enum::Variant::<usize>(5)`, however for associated fns we must use only use `Struct::<usize>::associated_fn()` for type params of the struct and `Struct::associated_fn::<usize>()` only for type params defined on the method itself.
 
-        let sub_path = segs_copy_item_path[1];
+        let sub_path = &segs_copy_item_path[1];
         // ie:
         // Struct/Enum::associated_fn
         // Struct/Enum::associated_const
@@ -8178,7 +8192,7 @@ fn handle_expr_path(
             &item_generics,
             &segs_copy_module_path,
             &sub_path,
-            &item_path_seg,
+            &item_path_seg.ident,
             &item_def,
         );
         let impl_method = impl_method.map(|impl_method| PartialRustType::RustType(impl_method));
@@ -8234,7 +8248,7 @@ fn handle_expr_path(
                         enum_generics,
                         segs_copy_module_path,
                         item_def.ident,
-                        sub_path.ident,
+                        sub_path.ident.clone(),
                     )
                 })
             }
@@ -8283,7 +8297,7 @@ fn struct_or_enum_types_match(
                 |(struct_type_param, impl_target_type_params)| {
                     // Check both param lists are ordered the same way (ie the names match)
                     assert!(struct_type_param.name == impl_target_type_params.name);
-                    match (struct_type_param.type_, impl_target_type_params.type_) {
+                    match (&struct_type_param.type_, &impl_target_type_params.type_) {
                         (RustTypeParamValue::Unresolved, RustTypeParamValue::Unresolved) => true,
                         (RustTypeParamValue::Unresolved, RustTypeParamValue::RustType(_)) => false,
                         (RustTypeParamValue::RustType(_), RustTypeParamValue::Unresolved) => true,
@@ -8292,7 +8306,7 @@ fn struct_or_enum_types_match(
                             RustTypeParamValue::RustType(impl_target_rust_type),
                         ) => {
                             // TODO We might have nested generics eg a Foo<Bar<Baz<etc>>> concrete type, so need recursively do this checking until we find a type which has no generics
-                            match (*struct_rust_type, *impl_target_rust_type) {
+                            match (&**struct_rust_type, &**impl_target_rust_type) {
                                 (RustType::NotAllowed, RustType::NotAllowed) => true,
                                 (RustType::Unknown, RustType::Unknown) => true,
                                 (RustType::Todo, RustType::Todo) => true,
@@ -8392,7 +8406,7 @@ fn found_item_to_partial_rust_type(
                 })
                 .collect::<Vec<_>>()
         };
-        match item_def.struct_or_enum_info {
+        match &item_def.struct_or_enum_info {
             StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
                 // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
                 PartialRustType::TupleStructIdent(
@@ -9090,7 +9104,16 @@ fn handle_expr(
             let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
             (JsExpr::Paren(Box::new(expr)), type_)
         }
-        Expr::Path(expr_path) => handle_expr_path(expr_path, global_data, current_module),
+        Expr::Path(expr_path) => {
+            let (js_expr, partial_rust_type) =
+                handle_expr_path(expr_path, global_data, current_module);
+            match partial_rust_type {
+                // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
+                PartialRustType::TupleStructIdent(_, _, _) => panic!(),
+                PartialRustType::EnumVariantIdent(_, _, _, _) => panic!(),
+                PartialRustType::RustType(rust_type) => (js_expr, rust_type),
+            }
+        }
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
             handle_expr(&*expr_reference.expr, global_data, current_module)
@@ -9378,6 +9401,7 @@ fn handle_expr_match(
                 item_definitons: Vec::new(),
                 look_in_outer_scope: true,
                 impl_blocks: Vec::new(),
+                trait_definitons: Vec::new(),
             });
             let body = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
