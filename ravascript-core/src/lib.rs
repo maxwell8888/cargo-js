@@ -17,6 +17,7 @@ use syn::{
     Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt, TraitItem, Type,
     TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
+use tracing::{debug, debug_span, span};
 pub mod prelude;
 pub mod rust_prelude;
 
@@ -617,6 +618,7 @@ fn parse_fn_input_or_field(
         Type::BareFn(_) => todo!(),
         Type::Group(_) => todo!(),
         Type::ImplTrait(type_impl_trait) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
             // TODO handle len > 1
             let type_param_bound = type_impl_trait.bounds.first().unwrap();
             // get_return_type_of_type_param_bound(
@@ -665,6 +667,7 @@ fn parse_fn_input_or_field(
         Type::Never(_) => todo!(),
         Type::Paren(_) => todo!(),
         Type::Path(type_path) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::Path");
             // eg:
             // Foo<i32>
             // Foo<T>
@@ -704,7 +707,6 @@ fn parse_fn_input_or_field(
                 // Can always be inferred from the arguments used to construct the struct?
 
                 // For impl blocks
-
                 match seg_name_str {
                     "i32" => RustType::I32,
                     "bool" => RustType::Bool,
@@ -738,8 +740,8 @@ fn parse_fn_input_or_field(
                     struct_or_enum_name => {
                         let (item_definition_module_path, item_definition) = global_data
                             .lookup_item_definition_any_module(
-                                &vec![struct_or_enum_name.to_string()],
                                 current_module,
+                                &vec![struct_or_enum_name.to_string()],
                             )
                             .unwrap();
                         // Look to see if any of the item's type params have been specified (they *must* have been specified, because you can't use a type without specifiying prodviding it's type params so they must either be concrete types, or use one of the parents params)
@@ -1520,6 +1522,7 @@ fn handle_item_fn(
     current_module: &Vec<String>,
 ) -> JsStmt {
     let name = item_fn.sig.ident.to_string();
+    debug!(name = ?name, "handle_item_fn");
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -1845,6 +1848,8 @@ fn handle_item_enum(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
+    let enum_name = item_enum.ident.to_string();
+    debug!(enum_name = ?enum_name, "handle_item_enum");
     // dbg!(item_enum.attrs);
 
     // let scope = global_data.scopes.last_mut().unwrap();
@@ -2141,6 +2146,11 @@ fn handle_item_impl(
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) {
+    let debug_self_type = match &*item_impl.self_ty {
+        Type::Path(type_path) => format!("{:?}", type_path.path.segments),
+        _ => format!("{:?}", item_impl.self_ty),
+    };
+    debug!(debug_self_type = ?debug_self_type, "handle_item_impl");
     // The rule seems to be the the enum/struct must be defined, or a use path to it must be defined, in either the same scope as the impl block (order of appearance does not matter) or in a surrounding scope, including the module top level.
 
     // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
@@ -2216,7 +2226,7 @@ fn handle_item_impl(
 
     // Get type of impl target
     let (target_item_module, target_item) = global_data
-        .lookup_item_definition_any_module(&impl_item_target_path, current_module_path)
+        .lookup_item_definition_any_module(current_module_path, &impl_item_target_path)
         .unwrap();
 
     if let Some(trait_) = &item_impl.trait_ {
@@ -2396,7 +2406,8 @@ fn handle_item_impl(
                         FnArg::Receiver(receiver) => {
                             let scoped_var = ScopedVar {
                                 // TODO IMPORTANT surely this should be `self`???
-                                name: target_item.ident.clone(),
+                                // name: target_item.ident.clone(),
+                                name: "self".to_string(),
                                 // TODO how do we know if we have `foo(mut self)`?
                                 mut_: false,
                                 type_: if receiver.mutability.is_some() {
@@ -2637,6 +2648,8 @@ fn handle_item_struct(
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) -> JsStmt {
+    let mut name = item_struct.ident.to_string();
+    debug!(name = ?name, "handle_item_struct");
     // Attribute {
     //     pound_token: Pound,
     //     style: AttrStyle::Outer,
@@ -2736,8 +2749,6 @@ fn handle_item_struct(
 
     let mut methods = Vec::new();
 
-    let mut name = item_struct.ident.to_string();
-
     // TODO deriving PartialEq for our Option causes a clash with the proper Option, so just manually add it for now
     // fn eq(&self, other: &Self) -> bool
     if name == "Option" {
@@ -2818,6 +2829,7 @@ fn handle_item(
     match item {
         Item::Const(item_const) => {
             let mut name = item_const.ident.to_string();
+            debug!(name = ?name, "handle_item_const");
             if let Some(dup) = global_data
                 .duplicates
                 .iter()
@@ -2862,82 +2874,12 @@ fn handle_item(
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => handle_item_impl(&item_impl, global_data, current_module_path),
         Item::Macro(_) => todo!(),
-        Item::Mod(item_mod) => {
-            // Notes
-            // The `self` keyword is only allowed as the first segment of a path
-            // The `crate` keyword is only allowed as the first segment of a path
-            // The `super` keyword is only allowed as *one* of the first segments of a path, before any named modules
-            // The `super` keyword can be used in multiple segments of a path
-            // self might not be that important but crate is and has similar requirements
-            // modules *cannot* access anything in their parent scope without explicitly using crate or super, therefore nesting the modules in JS is of no benefit
-            // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
-            // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
-
-            let current_module_name = current_module_path.last().unwrap().clone();
-            current_module_path.push(item_mod.ident.to_string());
-            let mut module_path_copy = current_module_path.clone();
-            // TODO get rid of this
-            if let Some(first) = module_path_copy.first() {
-                if first == "crate" {
-                    module_path_copy.remove(0);
-                }
-            }
-
-            let items = if let Some(content) = &item_mod.content {
-                // TODO how does `mod bar { mod foo; }` work?
-                content.1.clone()
-            } else {
-                if let Some(crate_path) = &global_data.crate_path {
-                    let mut file_path = crate_path.clone();
-                    file_path.push("src");
-                    if module_path_copy.is_empty() {
-                        file_path.push("main.rs");
-                    } else {
-                        let last = module_path_copy.last_mut().unwrap();
-                        last.push_str(".rs");
-                        file_path.extend(module_path_copy);
-                    }
-                    let code = fs::read_to_string(&file_path).unwrap();
-                    syn::parse_file(&code).unwrap().items
-                } else {
-                    panic!("not allowed `mod foo` outside of crate")
-                }
-            };
-
-            // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
-            // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
-
-            let current_module_path_copy = current_module_path.clone();
-            let mut js_stmt_submodule = JsModule {
-                public: match item_mod.vis {
-                    Visibility::Public(_) => true,
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => false,
-                },
-                name: camel(item_mod.ident),
-                module_path: current_module_path_copy.clone(),
-                stmts: Vec::new(),
-            };
-            // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
-
-            global_data.transpiled_modules.push(js_stmt_submodule);
-            let stmts = js_stmts_from_syn_items(
-                items,
-                true,
-                current_module_path,
-                global_data,
-                current_file_path,
-            );
-            let js_stmt_module = global_data
-                .transpiled_modules
-                .iter_mut()
-                .find(|tm| tm.module_path == current_module_path_copy)
-                .unwrap();
-            js_stmt_module.stmts = stmts;
-            current_module_path.pop();
-
-            // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
-        }
+        Item::Mod(item_mod) => handle_item_mod(
+            item_mod,
+            global_data,
+            current_module_path,
+            current_file_path,
+        ),
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = handle_item_struct(&item_struct, global_data, current_module_path);
@@ -2956,11 +2898,100 @@ fn handle_item(
     }
 }
 
+fn handle_item_mod(
+    item_mod: ItemMod,
+    global_data: &mut GlobalData,
+    // current_module_path: &Vec<String>,
+    current_module_path: &mut Vec<String>,
+    current_file_path: &mut Option<PathBuf>,
+) {
+    let mod_name = &item_mod.ident;
+    debug!(mod_name = ?mod_name, "handle_item_mod");
+    let span = debug_span!("handle_item_mod", current_module_path = ?current_module_path);
+    let _guard = span.enter();
+
+    // Notes
+    // The `self` keyword is only allowed as the first segment of a path
+    // The `crate` keyword is only allowed as the first segment of a path
+    // The `super` keyword is only allowed as *one* of the first segments of a path, before any named modules
+    // The `super` keyword can be used in multiple segments of a path
+    // self might not be that important but crate is and has similar requirements
+    // modules *cannot* access anything in their parent scope without explicitly using crate or super, therefore nesting the modules in JS is of no benefit
+    // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
+    // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
+
+    let current_module_name = current_module_path.last().unwrap().clone();
+    current_module_path.push(item_mod.ident.to_string());
+    let mut module_path_copy = current_module_path.clone();
+    // TODO get rid of this
+    if let Some(first) = module_path_copy.first() {
+        if first == "crate" {
+            module_path_copy.remove(0);
+        }
+    }
+
+    let items = if let Some(content) = &item_mod.content {
+        // TODO how does `mod bar { mod foo; }` work?
+        content.1.clone()
+    } else {
+        if let Some(crate_path) = &global_data.crate_path {
+            let mut file_path = crate_path.clone();
+            file_path.push("src");
+            if module_path_copy.is_empty() {
+                file_path.push("main.rs");
+            } else {
+                let last = module_path_copy.last_mut().unwrap();
+                last.push_str(".rs");
+                file_path.extend(module_path_copy);
+            }
+            let code = fs::read_to_string(&file_path).unwrap();
+            syn::parse_file(&code).unwrap().items
+        } else {
+            panic!("not allowed `mod foo` outside of crate")
+        }
+    };
+
+    // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
+    // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
+
+    let current_module_path_copy = current_module_path.clone();
+    let mut js_stmt_submodule = JsModule {
+        public: match item_mod.vis {
+            Visibility::Public(_) => true,
+            Visibility::Restricted(_) => todo!(),
+            Visibility::Inherited => false,
+        },
+        name: camel(item_mod.ident),
+        module_path: current_module_path_copy.clone(),
+        stmts: Vec::new(),
+    };
+    // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
+
+    global_data.transpiled_modules.push(js_stmt_submodule);
+    let stmts = js_stmts_from_syn_items(
+        items,
+        true,
+        current_module_path,
+        global_data,
+        current_file_path,
+    );
+    let js_stmt_module = global_data
+        .transpiled_modules
+        .iter_mut()
+        .find(|tm| tm.module_path == current_module_path_copy)
+        .unwrap();
+    js_stmt_module.stmts = stmts;
+    current_module_path.pop();
+
+    // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.
+}
+
 fn handle_item_trait(
     item_trait: &ItemTrait,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) {
+    debug!("handle_item_trait");
     for trait_item in &item_trait.items {
         match trait_item {
             TraitItem::Const(_) => todo!(),
@@ -3028,6 +3059,10 @@ fn js_stmts_from_syn_items(
     global_data: &mut GlobalData,
     current_file_path: &mut Option<PathBuf>,
 ) -> Vec<JsStmt> {
+    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module, current_file_path = ?current_file_path);
+    let _guard = span.enter();
+    debug!("js_stmts_from_syn_items");
+
     let mut js_stmts = Vec::new();
     // let mut modules = Vec::new();
     // TODO this should be optional/configurable, might not always want it
@@ -3945,7 +3980,7 @@ impl GlobalData {
                 .iter()
                 .find(|m| &m.path == current_module)
                 .unwrap();
-            let (module_path, item_path) = get_path_without_namespacing(
+            let (module_path, item_path, is_scoped) = get_path_without_namespacing(
                 true,
                 false,
                 module,
@@ -4037,13 +4072,13 @@ impl GlobalData {
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
-            dbg!(current_module_path);
+            debug!(lookup_item_definition_any_module = ?current_module_path);
             let current_module = self
                 .modules
                 .iter()
                 .find(|m| &m.path == current_module_path)
                 .unwrap();
-            let (item_module_path, item_path) = get_path_without_namespacing(
+            let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
                 true,
                 false,
                 current_module,
@@ -4117,7 +4152,7 @@ impl GlobalData {
                 .iter()
                 .find(|m| &m.path == current_module_path)
                 .unwrap();
-            let (item_module_path, item_path) = get_path_without_namespacing(
+            let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
                 true,
                 false,
                 current_module,
@@ -4150,11 +4185,9 @@ impl GlobalData {
     }
 
     fn get_module_mut(&mut self, module_path: &Vec<String>) -> &mut ModuleData {
-        let module_path2 = &module_path[..(module_path.len() - 1)];
-        let name = module_path[module_path.len() - 1].clone();
         self.modules
             .iter_mut()
-            .find(|m| m.path == module_path2 && m.name == name)
+            .find(|m| &m.path == module_path)
             .unwrap()
     }
 
@@ -7760,7 +7793,9 @@ pub struct RustPathSegment {
 }
 
 // TODO need to make sure this looks up traits as well as other items
-/// -> (current module, found item path)
+/// -> (current module (during recursion)/item module path (upon final return), found item path, is scoped item/var/func)
+///
+/// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
 fn get_path_without_namespacing(
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
@@ -7773,7 +7808,8 @@ fn get_path_without_namespacing(
     current_module: &Vec<String>,
     // Only used to determine if current module is
     original_module: &Vec<String>,
-) -> (Vec<String>, Vec<RustPathSegment>) {
+) -> (Vec<String>, Vec<RustPathSegment>, bool) {
+    debug!(segs = ?segs, "get_path_without_namespacing");
     let is_parent_or_same_module = if original_module.len() >= current_module.len() {
         current_module
             .iter()
@@ -7802,7 +7838,56 @@ fn get_path_without_namespacing(
         use_mappings.find(|use_mapping| use_mapping.0 == segs[0].ident)
     };
 
-    if item_defined_in_module {
+    let is_scoped = global_data.scopes.iter().rev().any(|scope| {
+        let is_func = scope.fns.iter().any(|func| func.ident == segs[0].ident);
+        let is_item_def = scope
+            .item_definitons
+            .iter()
+            .any(|item_def| item_def.ident == segs[0].ident);
+        // TODO IMPORTANT
+        // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped var with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
+        // eg this is aloud:
+        // use tracing;
+        // let tracing = "ohno";
+        // As far as I am aware the only common context in which a path might have length=1 is a use statement, which doesn't use this fn to resolve the path (though it probably should given we have to follow the same crate/self/super logic?) so for now just assume that if we match a scoped var name and the length is 1, then return the scoped var, even though technically it could be a module/item/fn eg this is valid: *NO* what about a simple `Foo {}` which is a path with length 1 where we could also have `let Foo = 5;`, which would make it impossible to decide which to return, eg module level struct (Some("crate"), ["Foo"]) vs scoped var (None, ["Foo"]).**
+        // struct foo {}
+        // fn main() {
+        //     let foo = 5;
+        // }
+        // For scoped modules/items/fns there is currently no difference anyway since we currently just return Vec<RustPathSegment> regardless.
+        // The main problem is the above example. However, the below is not valid which I believe demonstrates that it the ident must be unambigious if it can be used as eg a fn argument, and so it is indeed the context of where the path is being used eg `bar(foo);`, `let bar = foo;`, `foo {}`, etc which determines which thing to use. I think it will be non trivial to pass handle handle the different contexts to this fn.
+        // struct foo;
+        // fn main() {
+        //     let foo = 5;
+        // }
+        // ** The distinction is between where the site of the path expects a definition (eg fn input type) and instances (eg assign to a variable). A slight complication is that both of the below are valid, just not simultaneously, but it still means that a path passed the the rhs of an assignment could be and instance *or* a definition, so we need to look for other if one doesn't exist, **but *only* if we have `struct foo;` and not `struct foo {}` because for the latter we *are* allowed both idents in scope, so need to ensure we choose the scoped var, in this case. This is as apposed to say the type of a fn input where we can always be sure to not look for scoped vars, only any items/fns.
+        // let foo = 5;
+        // let which = foo;
+        // ...
+        // struct foo;
+        // let which = foo;
+        // So I think maybe the trick is to pass an argument to this fn to say wether we should be considering vars and follow these rules:
+        // 1. If including vars (eg simple 1-len path assignment) then look for a var first, else look for a struct, this way we will catch assigning `struct foo;` because a `foo` var can't exist in this case, and for `struct Foo {}` we will correctly pick the var first.
+        // 2. If not inlcluding vars we simply don't have to look for vars.
+        // Don't need both can just always do step 1?
+
+        // self could be and instance or module path ie `fn foo(&self) { self }` or `self::MyStruct`. I can't think of any situations where a module path can
+        let is_var = scope.variables.iter().any(|var| var.name == segs[0].ident) && segs.len() == 1;
+        is_func || is_item_def || is_var
+    });
+
+    dbg!(&global_data.scopes);
+
+    // TODO not sure why we need use_private_items here
+    // if use_private_items && is_scoped {
+    if is_scoped {
+        // Variables and scoped items
+        // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
+
+        // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
+        assert!(current_module == original_module);
+        (current_module.clone(), segs, true)
+    } else if item_defined_in_module {
         // if let Some(dup) = global_data
         //     .duplicates
         //     .iter()
@@ -7815,7 +7900,7 @@ fn get_path_without_namespacing(
         //         .collect::<Vec<_>>()
         //         .join("__");
         // }
-        (current_module.clone(), segs)
+        (current_module.clone(), segs, false)
     } else if segs[0].ident == "super" {
         // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
         segs.remove(0);
@@ -7932,12 +8017,6 @@ fn get_path_without_namespacing(
         }
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
-    } else if use_private_items {
-        // Variables and scoped items
-
-        // Since this is the path to a scoped item or var, the path must be length 1?
-        assert!(segs.len() == 1);
-        (current_module.clone(), segs)
     } else {
         dbg!(module);
         dbg!(current_module);
@@ -7972,6 +8051,13 @@ fn handle_expr_path(
     current_module: &Vec<String>,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
+    let path_idents = expr_path
+        .path
+        .segments
+        .iter()
+        .map(|seg| seg.ident.to_string())
+        .collect::<Vec<_>>();
+    debug!(expr_path = ?path_idents, "handle_expr_path");
     let mut segs = expr_path
         .path
         .segments
@@ -8021,7 +8107,7 @@ fn handle_expr_path(
     //     .map(|seg| case_convert(seg))
     //     .collect::<Vec<_>>();
 
-    let segs_copy = segs.clone();
+    // let segs_copy = segs.clone();
     // println!("before get_path: {:?}", &segs);
     let mut segs = get_path(
         true,
@@ -8034,6 +8120,7 @@ fn handle_expr_path(
     );
     // println!("after get_path: {:?}", &segs);
 
+    // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
     // convert case of rest of path
     for (i, seg) in segs.iter_mut().enumerate() {
         if i == 0 && seg.contains("__") {
@@ -8046,15 +8133,17 @@ fn handle_expr_path(
     // IMPORTANT TODO
     // What is all this doing? We just got the module path to an item using `get_path()` so we should be looking up the definition of found item and then if there is remaining segments in the expr_path after then item then determine if these are an enum variant or associated fn
     // What does get_path() return if the expr_path is just a scoped variable?
-    let segs_copy = segs_copy
-        .into_iter()
-        .map(|s| RustPathSegment {
-            ident: s,
+    let segs_copy = expr_path
+        .path
+        .segments
+        .iter()
+        .map(|seg| RustPathSegment {
+            ident: seg.ident.to_string(),
             turbofish: Vec::new(),
         })
         .collect::<Vec<_>>();
 
-    // TODO item could be a builtin like Some so need to either add handle that here or add Some etc to the item definitions
+    // TODO item could be a builtin like Some so need to either handle that here or add Some etc to the item definitions
     // Get item identifier (ie name of item and module path for non-scoped items)
     let scoped_item = global_data.scopes.iter().rev().any(|scope| {
         let var = scope
@@ -8068,28 +8157,28 @@ fn handle_expr_path(
             .find(|f| f.ident == segs_copy[0].ident);
         var.is_some() || func.is_some() || item_def.is_some()
     });
+
     // TODO can we not use get_path_without_namespacing() for everything?
-    let (segs_copy_module_path, segs_copy_item_path) = if scoped_item {
-        (None, segs_copy.clone())
-    } else {
-        let (segs_copy_module_path, segs_copy_item_path) = get_path_without_namespacing(
-            true,
-            false,
-            module,
-            segs_copy,
-            global_data,
-            current_module,
-            current_module,
-        );
-        (Some(segs_copy_module_path), segs_copy_item_path)
-    };
+    let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path_without_namespacing(
+        true,
+        false,
+        module,
+        segs_copy,
+        global_data,
+        current_module,
+        current_module,
+    );
+    let segs_copy_module_path = (!is_scoped).then_some(segs_copy_module_path);
 
     assert!(segs_copy_item_path.len() <= 2);
+    // debug!(segs_copy_module_path = ?segs_copy_module_path, segs_copy_item_path = ?segs_copy_item_path);
 
     let item_path_seg = &segs_copy_item_path[0];
 
+    dbg!(&segs_copy_module_path);
+    dbg!(&segs_copy_item_path);
     // Split out item and any sub path eg for an enum variant, associated fn, etc
-    let rust_type = if segs_copy_item_path.len() == 1 {
+    let partial_rust_type = if segs_copy_item_path.len() == 1 {
         if let Some(segs_copy_module_path) = segs_copy_module_path {
             // Look for module level items
             let module = global_data
@@ -8158,10 +8247,15 @@ fn handle_expr_path(
         // Enum::Variant {}
 
         // Get struct/enum item definition
+        dbg!("here");
+        use tracing;
+        let tracing = "ohno";
+        dbg!(tracing);
         let item_def = global_data.lookup_item_def_known_module_assert_not_func(
             &segs_copy_module_path,
             &item_path_seg.ident,
         );
+        dbg!("dealth");
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
         let item_generics = if item_path_seg.turbofish.len() > 0 {
@@ -8275,7 +8369,7 @@ fn handle_expr_path(
     // Algorithm:
     //
 
-    (JsExpr::Path(segs), rust_type)
+    (JsExpr::Path(segs), partial_rust_type)
 }
 
 /// For checking whether a struct item definition (possibly with resolved type params) matches the target type of a non-trait impl. Note this is not a simple equals since a Foo<i32> item matches a Foo<T> impl.
@@ -8353,6 +8447,7 @@ fn found_item_to_partial_rust_type(
     item_def: Option<&ItemDefinition>,
     module_path: Option<Vec<String>>,
 ) -> PartialRustType {
+    debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
     if let Some(var) = var {
         // This branch is obviously only possible for scoped paths since we can't have module level vars
         PartialRustType::RustType(var.type_.clone())
@@ -8692,6 +8787,7 @@ fn handle_expr(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> (JsExpr, RustType) {
+    debug!("handle_expr");
     match expr {
         Expr::Array(expr_array) => {
             // TODO how to handle `let a: [i32, 0] = [];`? or other cases where there is no elements and the type is inferred from elsewhere

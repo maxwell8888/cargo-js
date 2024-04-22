@@ -8,11 +8,32 @@ use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use tracing::{debug, info, trace};
+use tracing_subscriber::{fmt, EnvFilter};
 use utils::*;
+
+pub fn setup_tracing() {
+    if let Ok(level) = std::env::var("RUST_LOG") {
+        // Configure a custom event formatter
+        let format = fmt::format()
+            .with_level(false) // don't include levels in formatted output
+            .with_target(false) // don't include targets
+            .with_thread_ids(false) // include the thread ID of the current thread
+            .with_thread_names(false) // include the name of the current thread
+            .pretty(); // use the `Compact` formatting style.
+
+        tracing_subscriber::fmt()
+            .event_format(format)
+            .with_env_filter(EnvFilter::new(format!("ravascript={level}")))
+            .init();
+    }
+}
 
 // #[ignore]
 #[tokio::test]
 async fn it_transpiles_crate_directory() {
+    setup_tracing();
+
     let actual = from_crate("../for-testing".into(), false, false);
 
     let expected = r#"
