@@ -13,9 +13,9 @@ use std::{
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
     ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam, ImplItem,
-    ImplItemFn, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Lit,
-    Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt, TraitItem, Type,
-    TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
+    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait,
+    ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt,
+    TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
 use tracing::{debug, debug_span, span};
 pub mod prelude;
@@ -606,6 +606,7 @@ enum TypeOrVar {
 /// Remember this is only for definitions, but the types used *within* definitions can have resolved generics
 ///
 /// TODO also using this for return types in handle_item_fn and not sure if that is reasonable
+/// TODO handle types with len > 1
 fn parse_fn_input_or_field(
     type_: &Type,
     parent_item_definition_generics: &Vec<RustTypeParam>,
@@ -3182,6 +3183,8 @@ struct ModuleData {
     // fn_info: Vec<(String, Vec<String>)>,
     fn_info: Vec<FnInfo>,
     item_definitons: Vec<ItemDefinition>,
+    /// (name, syn const)
+    consts: Vec<(String, ItemConst)>,
     trait_definitons: Vec<RustTraitDefinition>,
 }
 impl ModuleData {
@@ -3981,6 +3984,7 @@ impl GlobalData {
                 .find(|m| &m.path == current_module)
                 .unwrap();
             let (module_path, item_path, is_scoped) = get_path_without_namespacing(
+                false,
                 true,
                 false,
                 module,
@@ -4079,6 +4083,7 @@ impl GlobalData {
                 .find(|m| &m.path == current_module_path)
                 .unwrap();
             let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
+                false,
                 true,
                 false,
                 current_module,
@@ -4153,6 +4158,7 @@ impl GlobalData {
                 .find(|m| &m.path == current_module_path)
                 .unwrap();
             let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
+                false,
                 true,
                 false,
                 current_module,
@@ -4558,10 +4564,13 @@ fn extract_data(
     //     .find(|module| module.path == *module_path)
     //     .unwrap();
     // let defined_names = &mut current_module_data.defined_names;
+
+    // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
     for item in items {
         match item {
             Item::Const(item_const) => {
-                names.push((module_path.clone(), item_const.ident.to_string()));
+                let const_name = item_const.ident.to_string();
+                names.push((module_path.clone(), const_name.clone()));
 
                 let current_module_data = modules
                     .iter_mut()
@@ -4576,9 +4585,13 @@ fn extract_data(
                         .private_definitions
                         .push(item_const.ident.to_string()),
                 }
+                current_module_data
+                    .consts
+                    .push((const_name, item_const.clone()));
             }
             Item::Enum(item_enum) => {
-                names.push((module_path.clone(), item_enum.ident.to_string()));
+                let enum_name = item_enum.ident.to_string();
+                names.push((module_path.clone(), enum_name.clone()));
 
                 let current_module_data = modules
                     .iter_mut()
@@ -4593,6 +4606,47 @@ fn extract_data(
                         .private_definitions
                         .push(item_enum.ident.to_string()),
                 }
+
+                // Make ItemDefinition
+                let members_for_scope = item_enum
+                    .variants
+                    .iter()
+                    .map(|v| EnumVariantInfo {
+                        ident: v.ident.to_string(),
+                        inputs: v
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                let input_type = RustType::Todo;
+                                match &f.ident {
+                                    Some(input_name) => EnumVariantInputsInfo::Named {
+                                        ident: input_name.to_string(),
+                                        input_type,
+                                    },
+                                    None => EnumVariantInputsInfo::Unnamed(input_type),
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                    .collect::<Vec<_>>();
+
+                current_module_data.item_definitons.push(ItemDefinition {
+                    ident: enum_name,
+                    generics: item_enum
+                        .generics
+                        .params
+                        .iter()
+                        .map(|p| match p {
+                            GenericParam::Lifetime(_) => todo!(),
+                            GenericParam::Type(type_param) => type_param.ident.to_string(),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>(),
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                        members: members_for_scope,
+                        syn_object: item_enum.clone(),
+                    }),
+                });
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
@@ -4680,7 +4734,8 @@ fn extract_data(
             }
             Item::Static(_) => todo!(),
             Item::Struct(item_struct) => {
-                names.push((module_path.clone(), item_struct.ident.to_string()));
+                let struct_name = item_struct.ident.to_string();
+                names.push((module_path.clone(), struct_name.clone()));
 
                 let current_module_data = modules
                     .iter_mut()
@@ -4695,6 +4750,72 @@ fn extract_data(
                         .private_definitions
                         .push(item_struct.ident.to_string()),
                 }
+
+                // Make ItemDefinition
+                let generics = item_struct
+                    .generics
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        GenericParam::Lifetime(_) => todo!(),
+                        GenericParam::Type(type_param) => type_param.ident.to_string(),
+                        GenericParam::Const(_) => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+
+                let generics_type_params = generics
+                    .iter()
+                    .map(|name| RustTypeParam {
+                        name: name.clone(),
+                        type_: RustTypeParamValue::Unresolved,
+                    })
+                    .collect::<Vec<_>>();
+
+                let fields = if item_struct.fields.len() == 0 {
+                    StructFieldInfo::UnitStruct
+                } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                    StructFieldInfo::RegularStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                (
+                                    f.ident.as_ref().unwrap().to_string(),
+                                    parse_fn_input_or_field(
+                                        &f.ty,
+                                        &generics_type_params,
+                                        current_module_path,
+                                        global_data,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    StructFieldInfo::TupleStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                parse_fn_input_or_field(
+                                    &f.ty,
+                                    &generics_type_params,
+                                    current_module_path,
+                                    global_data,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
+
+                current_module_data.item_definitons.push(ItemDefinition {
+                    ident: item_struct.ident.to_string(),
+                    generics,
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                        fields,
+                        syn_object: item_struct.clone(),
+                    }),
+                });
             }
             Item::Trait(item_trait) => {
                 names.push((module_path.clone(), item_trait.ident.to_string()));
@@ -4953,6 +5074,7 @@ pub fn process_items(
     });
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
+
     extract_data(
         &items,
         get_names_crate_path,
@@ -4960,6 +5082,12 @@ pub fn process_items(
         &mut names,
         &mut modules,
     );
+
+    // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
+    // 1. Only use syn for resolving types. Currently we use `get_path_without_namespacing()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
+    // 2. Do another pass. Leave the types empty in the definitions for `extract_data()` and then do another pass to populate them once we have all the item defs etc so `get_path_without_namespacing()` will work.
+    // NOTE `get_path_without_namespacing()` shouldn't need full `ItemDefinition`s etc, it should only need the names of each item in each module. Given having partially completed `ItemDefinition`s etc will be a pain without using Option<T> or something (eg FnInfo has `return_type: RustType`, though could just use eg RustType::Todo or something), maybe we should update `get_path_without_namespacing()` to only use eg ModuleData.pub_definitions instead of `ItemDefinition`s... NO:
+    // So `get_path_without_namespacing()` doesn't actually use `ItemDefinition`s etc, only ModuleData.pub_definitions etc
 
     // find duplicates
     // TODO account for local functions which shadow these names
@@ -7797,6 +7925,7 @@ pub struct RustPathSegment {
 ///
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
 fn get_path_without_namespacing(
+    look_for_scoped_vars: bool,
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
     module_level_items_only: bool,
@@ -7845,7 +7974,7 @@ fn get_path_without_namespacing(
             .iter()
             .any(|item_def| item_def.ident == segs[0].ident);
         // TODO IMPORTANT
-        // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped var with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
+        // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped *var* with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
         // eg this is aloud:
         // use tracing;
         // let tracing = "ohno";
@@ -7872,7 +8001,9 @@ fn get_path_without_namespacing(
         // Don't need both can just always do step 1?
 
         // self could be and instance or module path ie `fn foo(&self) { self }` or `self::MyStruct`. I can't think of any situations where a module path can
-        let is_var = scope.variables.iter().any(|var| var.name == segs[0].ident) && segs.len() == 1;
+        let is_var = scope.variables.iter().any(|var| var.name == segs[0].ident)
+            && segs.len() == 1
+            && look_for_scoped_vars;
         is_func || is_item_def || is_var
     });
 
@@ -7915,6 +8046,7 @@ fn get_path_without_namespacing(
             .unwrap();
 
         get_path_without_namespacing(
+            false,
             true,
             true,
             module,
@@ -7928,6 +8060,7 @@ fn get_path_without_namespacing(
         segs.remove(0);
 
         get_path_without_namespacing(
+            false,
             true,
             true,
             module,
@@ -7947,6 +8080,7 @@ fn get_path_without_namespacing(
         segs.remove(0);
 
         get_path_without_namespacing(
+            false,
             true,
             true,
             module,
@@ -7970,6 +8104,7 @@ fn get_path_without_namespacing(
 
         get_path_without_namespacing(
             false,
+            false,
             true,
             submodule,
             segs,
@@ -7990,6 +8125,7 @@ fn get_path_without_namespacing(
         segs.remove(0);
         use_segs.extend(segs);
         let mut result = get_path_without_namespacing(
+            false,
             true,
             true,
             module,
@@ -8160,6 +8296,8 @@ fn handle_expr_path(
 
     // TODO can we not use get_path_without_namespacing() for everything?
     let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path_without_namespacing(
+        // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+        true,
         true,
         false,
         module,
@@ -8195,6 +8333,8 @@ fn handle_expr_path(
                 .iter()
                 .find(|se| se.ident == item_path_seg.ident);
 
+            dbg!("arpy");
+            dbg!(module);
             found_item_to_partial_rust_type(
                 &item_path_seg,
                 None,
