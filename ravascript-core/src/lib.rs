@@ -851,6 +851,305 @@ fn parse_fn_input_or_field(
     }
 }
 
+/// Similar to parse_fn_input_or_field but for the extract_data_populate_item_definitions() pass before parsing, so only dealing with top level items, so don't need to check for scoped item definitions, also given we are popualting `.item_definitions()` etc, we need to avoid using these
+///
+/// Suitable for parsing: fn input types, fn return type, struct fields, enum variants with args
+///
+/// NOTE global data is required by get_path_without_namespacing which only uses pub_definitions etc, not `ItemDefintion`s
+fn parse_types_for_populate_item_definitions(
+    type_: &Type,
+    // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
+    root_parent_item_definition_generics: &Vec<String>,
+    // TODO should just store the current module in GlobalData to save having to pass this around everywhere
+    current_module: &Vec<String>,
+    global_data: &GlobalData,
+) -> RustType {
+    let current_module_data = global_data
+        .modules
+        .iter()
+        .find(|m| &m.path == current_module)
+        .unwrap();
+    match type_ {
+        Type::Array(_) => todo!(),
+        Type::BareFn(_) => todo!(),
+        Type::Group(_) => todo!(),
+        Type::ImplTrait(type_impl_trait) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
+            // TODO handle len > 1
+            // let type_param_bound = type_impl_trait.bounds.first().unwrap();
+            // get_return_type_of_type_param_bound(
+            //     type_param_bound,
+            //     parent_item_definition_generics,
+            //     current_module,
+            //     global_data,
+            // )
+            let bounds = type_impl_trait
+                .bounds
+                .iter()
+                .filter_map(|b| {
+                    match b {
+                        TypeParamBound::Trait(trait_bound) => {
+                            // TODO handle segment arguments because we might have eg `impl GenericFooTrait<Bar>`
+                            let trait_bound_path = trait_bound
+                                .path
+                                .segments
+                                .iter()
+                                .map(|seg| RustPathSegment {
+                                    ident: seg.ident.to_string(),
+                                    turbofish: match &seg.arguments {
+                                        PathArguments::None => Vec::new(),
+                                        PathArguments::AngleBracketed(args) => args
+                                            .args
+                                            .iter()
+                                            .map(|arg| match arg {
+                                                GenericArgument::Lifetime(_) => todo!(),
+                                                GenericArgument::Type(arg_type_) => {
+                                                    parse_types_for_populate_item_definitions(
+                                                        arg_type_,
+                                                        root_parent_item_definition_generics,
+                                                        current_module,
+                                                        global_data,
+                                                    )
+                                                }
+                                                GenericArgument::Const(_) => todo!(),
+                                                GenericArgument::AssocType(_) => todo!(),
+                                                GenericArgument::AssocConst(_) => todo!(),
+                                                GenericArgument::Constraint(_) => todo!(),
+                                                _ => todo!(),
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        PathArguments::Parenthesized(_) => todo!(),
+                                    },
+                                })
+                                .collect::<Vec<_>>();
+                            // TODO lookup trait in global data to get module path
+                            let (trait_module_path, trait_item_path, _is_scoped) =
+                                get_path_without_namespacing(
+                                    false,
+                                    true,
+                                    false,
+                                    current_module_data,
+                                    trait_bound_path,
+                                    global_data,
+                                    current_module,
+                                    current_module,
+                                );
+                            // A Trait bound should just be a trait, no associated fn or whatever
+                            assert!(trait_item_path.len() == 1);
+
+                            // let (module_path, trait_definition) = global_data
+                            //     .lookup_trait_definition_any_module(&trait_name, current_module)
+                            //     .unwrap();
+                            Some((
+                                Some(trait_module_path),
+                                RustTypeImplTrait::SimpleTrait(trait_item_path[0].ident.clone()),
+                            ))
+                        }
+                        TypeParamBound::Lifetime(_) => None,
+                        TypeParamBound::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            RustType::ImplTrait(bounds)
+        }
+        Type::Infer(_) => todo!(),
+        Type::Macro(_) => todo!(),
+        Type::Never(_) => todo!(),
+        Type::Paren(_) => todo!(),
+        Type::Path(type_path) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::Path");
+            // eg:
+            // Foo<i32>
+            // Foo<T>
+            // Self (which given we are dealing with field or input, *must* be a different instance/type from self)
+            // T (where the types bounds of T are elsewhere eg `where T: FooTrait` or `<T: FooTrait>`)
+            // T: impl FooTrait
+
+            // If it is a field, a type with a generic like T or Foo<T> means the generic depends on the parent so for
+            // let foo = Foo { gen_field: i32 };
+            // let field = foo.gen_field;
+            // If we have just stored that the type of gen_field is T, we can just resolve T to i32 because we will haev the type of foo which will contain the resolved generics.
+            // What happens if it hasn't been resolved yet? eg it might get resolved by being passed as an argument to a fn, so the arg type defines it? Should be fine as long as know we have an unresolved generic, so can (should be able to) look up the input types for the fn/method
+
+            let seg = type_path.path.segments.first().unwrap();
+            let seg_name = seg.ident.to_string();
+            let seg_name_str = seg_name.as_str();
+
+            // Look to see if name is a generic which has been declared
+            let generic = root_parent_item_definition_generics
+                .iter()
+                .find(|generic| generic == &seg_name_str);
+            if let Some(generic) = generic {
+                // return match &generic.type_ {
+                //     RustTypeParamValue::Unresolved => todo!(),
+                //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
+                // };
+                return RustType::TypeParam(RustTypeParam {
+                    name: generic.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                });
+            }
+
+            // For fns:
+            // the names of generics should be stored on FnInfo
+            // Sometimes we can work out what the type of a generic is, eg it impls Fn in which case we only care about the return type, but mostly the generic will just be eg T, maybe with some trait bound, but that doesn't help us determine what the actual type is. We need to record where the generic type is inferred from, eg:
+            // 1. the generic is used as the type for an input: easy, just check the type of the thing that eventually gets passed as an arg
+            // 2. the generic is used as the return type: redundant, we don't need to know the type since we already determine the return type from the body
+
+            // For structs
+            // Can always be inferred from the arguments used to construct the struct?
+
+            // For impl blocks
+            match seg_name_str {
+                "i32" => RustType::I32,
+                "bool" => RustType::Bool,
+                "str" => RustType::String,
+                // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
+                "Option" => {
+                    let generic_type = match &seg.arguments {
+                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                            // Option only has
+                            match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                GenericArgument::Lifetime(_) => todo!(),
+                                GenericArgument::Type(type_) => {
+                                    parse_types_for_populate_item_definitions(
+                                        type_,
+                                        root_parent_item_definition_generics,
+                                        current_module,
+                                        global_data,
+                                    )
+                                }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    };
+                    RustType::Option(Box::new(generic_type))
+                }
+                // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
+                // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
+                // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
+                // "RustBool" => RustType::Struct(StructOrEnum { ident: "RustBool".to_string(), members: (), generics: (), syn_object: () }),
+                _ => {
+                    // get full path
+                    // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
+                    // NOTE also, get_path_without_namespacing() only preserves `RustPathSeg`s/turbofish, it doesn't use or update them so we could just populate them later
+
+                    let rust_path = type_path
+                        .path
+                        .segments
+                        .iter()
+                        .map(|seg| RustPathSegment {
+                            ident: seg.ident.to_string(),
+                            turbofish: match &seg.arguments {
+                                PathArguments::None => Vec::new(),
+                                PathArguments::AngleBracketed(args) => {
+                                    args.args
+                                        .iter()
+                                        .enumerate()
+                                        .filter_map(|(i, arg)| match arg {
+                                            GenericArgument::Lifetime(_) => None,
+                                            GenericArgument::Type(arg_type_) => {
+                                                let rust_type =
+                                                    parse_types_for_populate_item_definitions(
+                                                        arg_type_,
+                                                        root_parent_item_definition_generics,
+                                                        current_module,
+                                                        global_data,
+                                                    );
+
+                                                // TODO IMPORTANT there is no easy way to get the names of the item generics here since we are still construction `ItemDefinition`s. However:
+                                                // 1. Do we even need generic names after they have been resolved like here (generic types used within parent definitions must have concrete types (or the a generic of the parent) supplied)?
+                                                // 2. We could just grab the generic names in the previous pass and add to .pub_definitions etc since this is as easy to get as the idents
+                                                Some(RustTypeParam {
+                                                    name: "unknown_todo".to_string(),
+                                                    type_: RustTypeParamValue::RustType(Box::new(
+                                                        rust_type,
+                                                    )),
+                                                })
+                                            }
+                                            GenericArgument::Const(_) => todo!(),
+                                            GenericArgument::AssocType(_) => todo!(),
+                                            GenericArgument::AssocConst(_) => todo!(),
+                                            GenericArgument::Constraint(_) => todo!(),
+                                            _ => todo!(),
+                                        })
+                                        .collect::<Vec<_>>();
+                                    todo!()
+                                }
+                                PathArguments::Parenthesized(_) => todo!(),
+                            },
+                        })
+                        .collect::<Vec<_>>();
+
+                    let (item_module_path, item_path_seg, _is_scoped) =
+                        get_path_without_namespacing(
+                            false,
+                            true,
+                            false,
+                            current_module_data,
+                            rust_path,
+                            global_data,
+                            current_module,
+                            current_module,
+                        );
+                    let item_seg = &item_path_seg[0];
+
+                    // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
+                    RustType::StructOrEnum(
+                        item_seg
+                            .turbofish
+                            .iter()
+                            .map(|rt| RustTypeParam {
+                                name: "unknown_todo".to_string(),
+                                type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
+                            })
+                            .collect::<Vec<_>>(),
+                        Some(item_module_path),
+                        item_seg.ident.clone(),
+                    )
+                }
+            }
+        }
+        Type::Ptr(_) => todo!(),
+        Type::Reference(type_reference) => {
+            // let type_ = parse_type(&type_reference.elem);
+            // let type_ = match type_ {
+            //     TypeOrVar::RustType(rust_type) => rust_type,
+            //     TypeOrVar::Unknown => RustType::Unknown,
+            // };
+            // TypeOrVar::Var(ScopedVar {
+            //     name: "donotuse".to_string(),
+            //     mut_: false,
+            //     mut_ref: type_reference.mutability.is_some(),
+            //     type_,
+            // })
+            let type_ = parse_types_for_populate_item_definitions(
+                &type_reference.elem,
+                root_parent_item_definition_generics,
+                current_module,
+                global_data,
+            );
+            if type_reference.mutability.is_some() {
+                RustType::MutRef(Box::new(type_))
+            } else {
+                RustType::Ref(Box::new(type_))
+            }
+        }
+        Type::Slice(_) => todo!(),
+        Type::TraitObject(_) => todo!(),
+        Type::Tuple(_) => todo!(),
+        Type::Verbatim(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
 // fn get_type_from_expr(
 //     expr: &Expr,
 
@@ -3183,9 +3482,12 @@ struct ModuleData {
     // fn_info: Vec<(String, Vec<String>)>,
     fn_info: Vec<FnInfo>,
     item_definitons: Vec<ItemDefinition>,
-    /// (name, syn const)
-    consts: Vec<(String, ItemConst)>,
+    /// (name, type, syn const)
+    consts: Vec<ConstDef>,
     trait_definitons: Vec<RustTraitDefinition>,
+
+    // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but it populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
+    items: Vec<Item>,
 }
 impl ModuleData {
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
@@ -3344,7 +3646,7 @@ enum RustType {
     // I think we do need to copy the data into the InstanceType because for scoped items we might have a Foo which then gets defined again in a lower scope so if we just look it up to get member info we will find the wrong one and have nothing to pin it to differentiate with like module paths. Yes but we could also give the item definitions indexes or unique ids and then we only have to store those with the InstanceType... NOTE in an item definition, while that items type params won't be resolved, the other types it uses in it's definition might be eg `stuct Foo { bar: Bar<i32> }`
     ///
     /// TODO storing a module path doesn't make much sense if the struct/enum/fn is scoped? Could use an Option which is None if the item is scoped? For now just store the Vec as whatever the current module is (even though this could be confusing for a scoped item), because it doesn't really matter since we always look for scoped items first, and determining whether eg handle_item_fn is for a module level fn or scoped fn would require passing extra args... NO actually we need to know whether we are top level or in a scope because currently we are putting all fns handled with handle_item_fn into the current scope, even if they are top level... which of course should just be scope=0, but this is not a nice approach
-    /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition on the RustType as this seems to be hows Rust itself models where/how item are allowed to be used/instantiated. eg:
+    /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can exist in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition on the RustType as this seems to be hows Rust itself models where/how item are allowed to be used/instantiated. eg:
     /// ```rust
     /// struct AmIHoisted {
     ///     ohno: String,
@@ -3662,11 +3964,19 @@ enum RustImplItemItem {
     Const,
 }
 
+#[derive(Debug, Clone)]
+struct ConstDef {
+    name: String,
+    type_: RustType,
+    syn_object: ItemConst,
+}
+
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
     ident: String,
+    /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything
     inputs_types: Vec<RustType>,
     generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
@@ -3757,6 +4067,7 @@ struct GlobalDataScope {
     impl_blocks: Vec<RustImplBlock>,
     // trait_definitons: Vec<RustTypeImplTrait>,
     trait_definitons: Vec<RustTraitDefinition>,
+    consts: Vec<ConstDef>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
     look_in_outer_scope: bool,
 }
@@ -4585,9 +4896,6 @@ fn extract_data(
                         .private_definitions
                         .push(item_const.ident.to_string()),
                 }
-                current_module_data
-                    .consts
-                    .push((const_name, item_const.clone()));
             }
             Item::Enum(item_enum) => {
                 let enum_name = item_enum.ident.to_string();
@@ -4606,47 +4914,6 @@ fn extract_data(
                         .private_definitions
                         .push(item_enum.ident.to_string()),
                 }
-
-                // Make ItemDefinition
-                let members_for_scope = item_enum
-                    .variants
-                    .iter()
-                    .map(|v| EnumVariantInfo {
-                        ident: v.ident.to_string(),
-                        inputs: v
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                let input_type = RustType::Todo;
-                                match &f.ident {
-                                    Some(input_name) => EnumVariantInputsInfo::Named {
-                                        ident: input_name.to_string(),
-                                        input_type,
-                                    },
-                                    None => EnumVariantInputsInfo::Unnamed(input_type),
-                                }
-                            })
-                            .collect::<Vec<_>>(),
-                    })
-                    .collect::<Vec<_>>();
-
-                current_module_data.item_definitons.push(ItemDefinition {
-                    ident: enum_name,
-                    generics: item_enum
-                        .generics
-                        .params
-                        .iter()
-                        .map(|p| match p {
-                            GenericParam::Lifetime(_) => todo!(),
-                            GenericParam::Type(type_param) => type_param.ident.to_string(),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>(),
-                    struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                        members: members_for_scope,
-                        syn_object: item_enum.clone(),
-                    }),
-                });
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
@@ -4689,7 +4956,7 @@ fn extract_data(
                 let parent_name = module_path.last().map(|x| x.clone());
                 module_path.push(item_mod.ident.to_string());
 
-                modules.push(ModuleData {
+                let mut partial_module_data = ModuleData {
                     name: item_mod.ident.to_string(),
                     parent_name,
                     path: module_path.clone(),
@@ -4703,9 +4970,15 @@ fn extract_data(
                     fn_info: Vec::new(),
                     item_definitons: Vec::new(),
                     trait_definitons: Vec::new(),
-                });
+                    consts: Vec::new(),
+                    items: Vec::new(),
+                };
 
+                // NOTE we do the `modules.push(ModuleData { ...` below because we need to get the module items from the different content/no content branches
                 if let Some(content) = &item_mod.content {
+                    partial_module_data.items = content.1.clone();
+                    modules.push(partial_module_data);
+
                     // TODO how does `mod bar { mod foo; }` work?
                     extract_data(&content.1, crate_path, module_path, names, modules);
                 } else {
@@ -4725,6 +4998,9 @@ fn extract_data(
 
                         let code = fs::read_to_string(&file_path).unwrap();
                         let file = syn::parse_file(&code).unwrap();
+
+                        partial_module_data.items = file.items.clone();
+                        modules.push(partial_module_data);
                         extract_data(&file.items, Some(crate_path), module_path, names, modules);
                     } else {
                         panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
@@ -4750,72 +5026,6 @@ fn extract_data(
                         .private_definitions
                         .push(item_struct.ident.to_string()),
                 }
-
-                // Make ItemDefinition
-                let generics = item_struct
-                    .generics
-                    .params
-                    .iter()
-                    .map(|p| match p {
-                        GenericParam::Lifetime(_) => todo!(),
-                        GenericParam::Type(type_param) => type_param.ident.to_string(),
-                        GenericParam::Const(_) => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-
-                let generics_type_params = generics
-                    .iter()
-                    .map(|name| RustTypeParam {
-                        name: name.clone(),
-                        type_: RustTypeParamValue::Unresolved,
-                    })
-                    .collect::<Vec<_>>();
-
-                let fields = if item_struct.fields.len() == 0 {
-                    StructFieldInfo::UnitStruct
-                } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-                    StructFieldInfo::RegularStruct(
-                        item_struct
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                (
-                                    f.ident.as_ref().unwrap().to_string(),
-                                    parse_fn_input_or_field(
-                                        &f.ty,
-                                        &generics_type_params,
-                                        current_module_path,
-                                        global_data,
-                                    ),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                } else {
-                    StructFieldInfo::TupleStruct(
-                        item_struct
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                parse_fn_input_or_field(
-                                    &f.ty,
-                                    &generics_type_params,
-                                    current_module_path,
-                                    global_data,
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
-
-                current_module_data.item_definitons.push(ItemDefinition {
-                    ident: item_struct.ident.to_string(),
-                    generics,
-                    struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                        fields,
-                        syn_object: item_struct.clone(),
-                    }),
-                });
             }
             Item::Trait(item_trait) => {
                 names.push((module_path.clone(), item_trait.ident.to_string()));
@@ -4843,6 +5053,235 @@ fn extract_data(
             }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
+        }
+    }
+}
+
+fn extract_data_populate_item_definitions(
+    // items: &Vec<Item>,
+    // None if we are extracted data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    // crate_path: Option<&PathBuf>,
+    // module_path: &mut Vec<String>,
+    // (module path, name)
+    // names: &mut Vec<(Vec<String>, String)>,
+    // modules: &mut Vec<ModuleData>,
+    global_data: &mut GlobalData,
+) {
+    // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
+
+    // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
+    let global_data_copy = global_data.clone();
+
+    for module in &mut global_data.modules {
+        println!(
+            "extract_data_populate_item_definitions module: {:?}",
+            &module.path
+        );
+        for item in &module.items {
+            match item {
+                Item::Const(item_const) => {
+                    let const_name = item_const.ident.to_string();
+                    let rust_type = parse_types_for_populate_item_definitions(
+                        &item_const.ty,
+                        &Vec::new(),
+                        &module.path,
+                        &global_data_copy,
+                    );
+                    module.consts.push(ConstDef {
+                        name: const_name,
+                        type_: rust_type,
+                        syn_object: item_const.clone(),
+                    });
+                }
+                Item::Enum(item_enum) => {
+                    let enum_name = item_enum.ident.to_string();
+
+                    // Make ItemDefinition
+                    let generics = item_enum
+                        .generics
+                        .params
+                        .iter()
+                        .map(|p| match p {
+                            GenericParam::Lifetime(_) => todo!(),
+                            GenericParam::Type(type_param) => type_param.ident.to_string(),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>();
+                    let members_for_scope = item_enum
+                        .variants
+                        .iter()
+                        .map(|v| EnumVariantInfo {
+                            ident: v.ident.to_string(),
+                            inputs: v
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    let input_type = parse_types_for_populate_item_definitions(
+                                        &f.ty,
+                                        &generics,
+                                        &module.path,
+                                        &global_data_copy,
+                                    );
+                                    match &f.ident {
+                                        Some(input_name) => EnumVariantInputsInfo::Named {
+                                            ident: input_name.to_string(),
+                                            input_type,
+                                        },
+                                        None => EnumVariantInputsInfo::Unnamed(input_type),
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        })
+                        .collect::<Vec<_>>();
+
+                    module.item_definitons.push(ItemDefinition {
+                        ident: enum_name,
+                        generics,
+                        struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                            members: members_for_scope,
+                            syn_object: item_enum.clone(),
+                        }),
+                    });
+                }
+                Item::ExternCrate(_) => todo!(),
+                Item::Fn(item_fn) => {
+                    println!(
+                        "extract_data_populate_item_definitions item_fn: {:?}",
+                        item_fn.sig.ident
+                    );
+                    let generics = item_fn
+                        .sig
+                        .generics
+                        .params
+                        .iter()
+                        .filter_map(|g| match g {
+                            GenericParam::Lifetime(_) => None,
+                            GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>();
+
+                    let inputs_types = item_fn
+                        .sig
+                        .inputs
+                        .iter()
+                        .filter_map(|input| match input {
+                            FnArg::Receiver(_) => None,
+                            FnArg::Typed(pat_type) => {
+                                Some(parse_types_for_populate_item_definitions(
+                                    &*pat_type.ty,
+                                    &generics,
+                                    &module.path,
+                                    &global_data_copy,
+                                ))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let return_type = match &item_fn.sig.output {
+                        ReturnType::Default => RustType::Unit,
+                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                            &*type_,
+                            &generics,
+                            &module.path,
+                            &global_data_copy,
+                        ),
+                    };
+                    module.fn_info.push(FnInfo {
+                        ident: item_fn.sig.ident.to_string(),
+                        inputs_types,
+                        generics,
+                        return_type,
+                    })
+                }
+                Item::ForeignMod(_) => todo!(),
+                Item::Impl(_) => {
+                    // TODO
+                }
+                Item::Macro(_) => {}
+                Item::Mod(item_mod) => {}
+                Item::Static(_) => todo!(),
+                Item::Struct(item_struct) => {
+                    let struct_name = item_struct.ident.to_string();
+
+                    // Make ItemDefinition
+                    let generics = item_struct
+                        .generics
+                        .params
+                        .iter()
+                        .map(|p| match p {
+                            GenericParam::Lifetime(_) => todo!(),
+                            GenericParam::Type(type_param) => type_param.ident.to_string(),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>();
+
+                    let generics_type_params = generics
+                        .iter()
+                        .map(|name| RustTypeParam {
+                            name: name.clone(),
+                            type_: RustTypeParamValue::Unresolved,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let fields = if item_struct.fields.len() == 0 {
+                        StructFieldInfo::UnitStruct
+                    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                        StructFieldInfo::RegularStruct(
+                            item_struct
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        f.ident.as_ref().unwrap().to_string(),
+                                        parse_types_for_populate_item_definitions(
+                                            &f.ty,
+                                            &generics,
+                                            &module.path,
+                                            &global_data_copy,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        StructFieldInfo::TupleStruct(
+                            item_struct
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    parse_types_for_populate_item_definitions(
+                                        &f.ty,
+                                        &generics,
+                                        &module.path,
+                                        &global_data_copy,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+
+                    module.item_definitons.push(ItemDefinition {
+                        ident: item_struct.ident.to_string(),
+                        generics,
+                        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
+                            StructDefinitionInfo {
+                                fields,
+                                syn_object: item_struct.clone(),
+                            },
+                        ),
+                    });
+                }
+                Item::Trait(item_trait) => module.trait_definitons.push(RustTraitDefinition {
+                    name: item_trait.ident.to_string(),
+                }),
+                Item::TraitAlias(_) => todo!(),
+                Item::Type(_) => todo!(),
+                Item::Union(_) => todo!(),
+                Item::Use(_) => {}
+                Item::Verbatim(_) => todo!(),
+                _ => todo!(),
+            }
         }
     }
 }
@@ -5071,6 +5510,8 @@ pub fn process_items(
         fn_info: Vec::new(),
         item_definitons: Vec::new(),
         trait_definitons: Vec::new(),
+        consts: Vec::new(),
+        items: items.clone(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
@@ -5078,16 +5519,10 @@ pub fn process_items(
     extract_data(
         &items,
         get_names_crate_path,
-        &mut get_names_module_path,
+        &mut get_names_module_path.clone(),
         &mut names,
         &mut modules,
     );
-
-    // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
-    // 1. Only use syn for resolving types. Currently we use `get_path_without_namespacing()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
-    // 2. Do another pass. Leave the types empty in the definitions for `extract_data()` and then do another pass to populate them once we have all the item defs etc so `get_path_without_namespacing()` will work.
-    // NOTE `get_path_without_namespacing()` shouldn't need full `ItemDefinition`s etc, it should only need the names of each item in each module. Given having partially completed `ItemDefinition`s etc will be a pain without using Option<T> or something (eg FnInfo has `return_type: RustType`, though could just use eg RustType::Todo or something), maybe we should update `get_path_without_namespacing()` to only use eg ModuleData.pub_definitions instead of `ItemDefinition`s... NO:
-    // So `get_path_without_namespacing()` doesn't actually use `ItemDefinition`s etc, only ModuleData.pub_definitions etc
 
     // find duplicates
     // TODO account for local functions which shadow these names
@@ -5125,6 +5560,25 @@ pub fn process_items(
 
     let mut global_data = GlobalData::new(global_data_crate_path, duplicates.clone());
     global_data.modules = modules;
+
+    // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
+    // 1. Only use syn for resolving types. Currently we use `get_path_without_namespacing()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
+    // 2. Do another pass. Leave the types empty in the definitions for `extract_data()` and then do another pass to populate them once we have all the item defs etc so `get_path_without_namespacing()` will work.
+    // NOTE `get_path_without_namespacing()` shouldn't need full `ItemDefinition`s etc, it should only need the names of each item in each module. Given having partially completed `ItemDefinition`s etc will be a pain without using Option<T> or something (eg FnInfo has `return_type: RustType`, though could just use eg RustType::Todo or something), maybe we should update `get_path_without_namespacing()` to only use eg ModuleData.pub_definitions instead of `ItemDefinition`s... NO:
+    // So `get_path_without_namespacing()` doesn't actually use `ItemDefinition`s etc, only ModuleData.pub_definitions etc...
+    // So we can just entirely populate .item_definitions etc in the second pass, as parse_input... whatever is not using item_definitions...
+
+    // So, we are using `parse_fn_input_or_field()` to parse: struct fields, and probably more stuff when finished like fn inputs and return, maybe trait bound?, etc
+    // `parse_fn_input_or_field()` currently uses `ItemDefinition`s etc, which doesn't work because that is what we are in the process of creating... however the only thing it uses from the `ItemDefinition` is the names of the genereics ie:
+    // let gen_arg_name = item_definition.generics[i].clone();
+    //
+    extract_data_populate_item_definitions(
+        // &items,
+        // get_names_crate_path,
+        // &mut get_names_module_path.clone(),
+        // &mut modules,
+        &mut global_data,
+    );
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
@@ -5268,6 +5722,8 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         fn_info: Vec::new(),
         item_definitons: Vec::new(),
         trait_definitons: Vec::new(),
+        consts: Vec::new(),
+        items: Vec::new(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
 
@@ -7928,6 +8384,7 @@ fn get_path_without_namespacing(
     look_for_scoped_vars: bool,
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
+    // I think this is just a duplicate of `look_for_scoped_vars` and we aren't even using it anyway
     module_level_items_only: bool,
     module: &ModuleData,
     // syn_path essentially mirrors segs so don't need segs
@@ -8004,10 +8461,12 @@ fn get_path_without_namespacing(
         let is_var = scope.variables.iter().any(|var| var.name == segs[0].ident)
             && segs.len() == 1
             && look_for_scoped_vars;
-        is_func || is_item_def || is_var
+
+        // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
+        (is_func || is_item_def || is_var) && current_module == original_module
     });
 
-    dbg!(&global_data.scopes);
+    // dbg!(&global_data.scopes);
 
     // TODO not sure why we need use_private_items here
     // if use_private_items && is_scoped {
@@ -8115,6 +8574,7 @@ fn get_path_without_namespacing(
     } else if let Some(use_mapping) = matched_use_mapping {
         let mut use_segs = use_mapping.1.clone();
         use_segs.push(use_mapping.0.clone());
+        // TODO IMPORTANT seems like we are not correctly populating turbofish here
         let mut use_segs = use_segs
             .into_iter()
             .map(|s| RustPathSegment {
@@ -8332,6 +8792,10 @@ fn handle_expr_path(
                 .item_definitons
                 .iter()
                 .find(|se| se.ident == item_path_seg.ident);
+            let const_def = module
+                .consts
+                .iter()
+                .find(|const_def| const_def.name == item_path_seg.ident);
 
             dbg!("arpy");
             dbg!(module);
@@ -8340,6 +8804,7 @@ fn handle_expr_path(
                 None,
                 func,
                 item_def,
+                const_def,
                 Some(segs_copy_module_path.clone()),
             )
         } else {
@@ -8358,6 +8823,10 @@ fn handle_expr_path(
                         .item_definitons
                         .iter()
                         .find(|f| f.ident == item_path_seg.ident);
+                    let const_def = scope
+                        .i
+                        .iter()
+                        .find(|const_def| const_def.name == item_path_seg.ident);
 
                     if var.is_some() || func.is_some() || item_def.is_some() {
                         Some(found_item_to_partial_rust_type(
@@ -8585,6 +9054,7 @@ fn found_item_to_partial_rust_type(
     var: Option<&ScopedVar>,
     func: Option<&FnInfo>,
     item_def: Option<&ItemDefinition>,
+    const_def: Option<&ConstDef>,
     module_path: Option<Vec<String>>,
 ) -> PartialRustType {
     debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
@@ -8655,6 +9125,8 @@ fn found_item_to_partial_rust_type(
                 panic!()
             }
         }
+    } else if let Some(const_def) = const_def {
+        PartialRustType::RustType(const_def.type_)
     } else {
         // dbg!(segs_copy);
         todo!()
