@@ -1777,8 +1777,10 @@ fn handle_stmt(
         }
         Stmt::Local(local) => handle_local(local, global_data, current_module_path),
         Stmt::Item(item) => match item {
-            // TODO this should all be handled by `fn handle_item()`
-            Item::Const(item_const) => todo!(),
+            // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
+            Item::Const(item_const) => {
+                handle_item_const(item_const, false, global_data, current_module_path)
+            }
             Item::Enum(item_enum) => {
                 handle_item_enum(item_enum.clone(), false, global_data, current_module_path)
             }
@@ -2146,6 +2148,76 @@ fn handle_item_fn(
     global_data.scopes.pop();
 
     stmt
+}
+
+fn handle_item_const(
+    item_const: &ItemConst,
+    at_module_top_level: bool,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> JsStmt {
+    let mut name = item_const.ident.to_string();
+    debug!(name = ?name, "handle_item_const");
+
+    if !at_module_top_level {
+        let generics = item_const
+            .generics
+            .params
+            .iter()
+            .map(|p| match p {
+                GenericParam::Lifetime(_) => todo!(),
+                GenericParam::Type(type_param) => type_param.ident.to_string(),
+                GenericParam::Const(_) => todo!(),
+            })
+            .collect::<Vec<_>>();
+
+        let generics_type_params = generics
+            .iter()
+            .map(|name| RustTypeParam {
+                name: name.clone(),
+                type_: RustTypeParamValue::Unresolved,
+            })
+            .collect::<Vec<_>>();
+
+        let rust_type = parse_fn_input_or_field(
+            &item_const.ty,
+            &generics_type_params,
+            current_module,
+            global_data,
+        );
+
+        let global_data_scope = global_data.scopes.last_mut().unwrap();
+        global_data_scope.consts.push(ConstDef {
+            name: name.clone(),
+            type_: rust_type,
+            syn_object: item_const.clone(),
+        });
+    }
+
+    // What is this doing?
+    if let Some(dup) = global_data
+        .duplicates
+        .iter()
+        .find(|dup| dup.name == name && dup.original_module_path == *current_module)
+    {
+        name = dup
+            .namespace
+            .iter()
+            .map(|seg| camel(seg))
+            .collect::<Vec<_>>()
+            .join("__");
+    }
+    JsStmt::Local(JsLocal {
+        export: false,
+        public: match item_const.vis {
+            Visibility::Public(_) => true,
+            Visibility::Restricted(_) => todo!(),
+            Visibility::Inherited => false,
+        },
+        type_: LocalType::Var,
+        lhs: LocalName::Single(name),
+        value: handle_expr(&*item_const.expr, global_data, current_module).0,
+    })
 }
 
 /// We convert enum variants like Foo::Bar to Foo.bar because otherwise when the variant has arguments, syn is not able to distinguish it from an associated method, so we cannot deduce when Pascal or Camel case should be used, so stick to Pascal for both case.
@@ -2553,7 +2625,7 @@ fn handle_item_impl(
                 type_: RustTypeParamValue::Unresolved,
             })
             .collect::<Vec<_>>(),
-        target_item_module,
+        target_item_module.clone(),
         target_item.ident.to_string(),
     );
 
@@ -2961,7 +3033,7 @@ fn handle_item_impl(
                         ident: item_impl_fn.sig.ident.to_string(),
                         inputs_types,
                         generics: fn_generics,
-                        return_type: match item_impl_fn.sig.output {
+                        return_type: match &item_impl_fn.sig.output {
                             ReturnType::Default => RustType::Unit,
                             ReturnType::Type(_, type_) => parse_fn_input_or_field(
                                 &*type_,
@@ -3021,7 +3093,7 @@ fn handle_item_impl(
         })
         .collect::<Vec<_>>();
 
-    let trait_path_and_name = item_impl.trait_.map(|(_, trait_, _)| {
+    let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
         let (module_path, trait_def) = global_data
             .lookup_trait_definition_any_module(
                 current_module_path,
@@ -3054,7 +3126,7 @@ fn handle_item_impl(
                 false
             };
             let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
-                let trait_path = trait_.1.segments;
+                let trait_path = &trait_.1.segments;
                 if trait_path.len() == 1 {
                     s.trait_definitons.iter().any(|trait_def| {
                         trait_def.name == trait_path.first().unwrap().ident.to_string()
@@ -3076,7 +3148,7 @@ fn handle_item_impl(
             global_data.impl_blocks.push(rust_impl_block);
         }
     } else {
-        // TODO IMPORTANT what if the methods from this impl block are used
+        // TODO IMPORTANT what if the methods from this impl block are used before we've added the impl block to global_data.impl_blocks???
         global_data.impl_blocks.push(rust_impl_block);
     }
 
@@ -3112,6 +3184,7 @@ fn handle_item_impl(
 
 fn handle_item_struct(
     item_struct: &ItemStruct,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) -> JsStmt {
@@ -3147,64 +3220,64 @@ fn handle_item_struct(
     //     },
     // },
 
-    let generics = item_struct
-        .generics
-        .params
-        .iter()
-        .map(|p| match p {
-            GenericParam::Lifetime(_) => todo!(),
-            GenericParam::Type(type_param) => type_param.ident.to_string(),
-            GenericParam::Const(_) => todo!(),
-        })
-        .collect::<Vec<_>>();
+    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
+    if !at_module_top_level {
+        let generics = item_struct
+            .generics
+            .params
+            .iter()
+            .map(|p| match p {
+                GenericParam::Lifetime(_) => todo!(),
+                GenericParam::Type(type_param) => type_param.ident.to_string(),
+                GenericParam::Const(_) => todo!(),
+            })
+            .collect::<Vec<_>>();
 
-    let generics_type_params = generics
-        .iter()
-        .map(|name| RustTypeParam {
-            name: name.clone(),
-            type_: RustTypeParamValue::Unresolved,
-        })
-        .collect::<Vec<_>>();
+        let generics_type_params = generics
+            .iter()
+            .map(|name| RustTypeParam {
+                name: name.clone(),
+                type_: RustTypeParamValue::Unresolved,
+            })
+            .collect::<Vec<_>>();
 
-    let fields = if item_struct.fields.len() == 0 {
-        StructFieldInfo::UnitStruct
-    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-        StructFieldInfo::RegularStruct(
-            item_struct
-                .fields
-                .iter()
-                .map(|f| {
-                    (
-                        f.ident.as_ref().unwrap().to_string(),
+        let fields = if item_struct.fields.len() == 0 {
+            StructFieldInfo::UnitStruct
+        } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+            StructFieldInfo::RegularStruct(
+                item_struct
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        (
+                            f.ident.as_ref().unwrap().to_string(),
+                            parse_fn_input_or_field(
+                                &f.ty,
+                                &generics_type_params,
+                                current_module_path,
+                                global_data,
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            StructFieldInfo::TupleStruct(
+                item_struct
+                    .fields
+                    .iter()
+                    .map(|f| {
                         parse_fn_input_or_field(
                             &f.ty,
                             &generics_type_params,
                             current_module_path,
                             global_data,
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        StructFieldInfo::TupleStruct(
-            item_struct
-                .fields
-                .iter()
-                .map(|f| {
-                    parse_fn_input_or_field(
-                        &f.ty,
-                        &generics_type_params,
-                        current_module_path,
-                        global_data,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-    };
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
 
-    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
-    if global_data.at_module_top_level {
         let global_data_scope = global_data.scopes.last_mut().unwrap();
         global_data_scope.item_definitons.push(ItemDefinition {
             ident: item_struct.ident.to_string(),
@@ -3297,46 +3370,34 @@ fn handle_item(
 ) {
     match item {
         Item::Const(item_const) => {
-            let mut name = item_const.ident.to_string();
-            debug!(name = ?name, "handle_item_const");
-            if let Some(dup) = global_data
-                .duplicates
-                .iter()
-                .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
-            {
-                name = dup
-                    .namespace
-                    .iter()
-                    .map(|seg| camel(seg))
-                    .collect::<Vec<_>>()
-                    .join("__");
-            }
-            let local_stmt = JsStmt::Local(JsLocal {
-                export: false,
-                public: match item_const.vis {
-                    Visibility::Public(_) => true,
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => false,
-                },
-                type_: LocalType::Var,
-                lhs: LocalName::Single(name),
-                value: handle_expr(&*item_const.expr, global_data, current_module_path).0,
-            });
-            js_stmts.push(local_stmt);
+            js_stmts.push(handle_item_const(
+                &item_const,
+                true,
+                global_data,
+                current_module_path,
+            ));
         }
         Item::Enum(item_enum) => {
             js_stmts.push(handle_item_enum(
                 item_enum,
+                true,
                 global_data,
                 current_module_path,
             ));
         }
         Item::ExternCrate(_) => todo!(),
         Item::Fn(item_fn) => {
-            js_stmts.push(handle_item_fn(&item_fn, global_data, current_module_path));
+            js_stmts.push(handle_item_fn(
+                &item_fn,
+                true,
+                global_data,
+                current_module_path,
+            ));
         }
         Item::ForeignMod(_) => todo!(),
-        Item::Impl(item_impl) => handle_item_impl(&item_impl, global_data, current_module_path),
+        Item::Impl(item_impl) => {
+            handle_item_impl(&item_impl, true, global_data, current_module_path)
+        }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => handle_item_mod(
             item_mod,
@@ -3346,11 +3407,11 @@ fn handle_item(
         ),
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
-            let js_stmt = handle_item_struct(&item_struct, global_data, current_module_path);
+            let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module_path);
             js_stmts.push(js_stmt);
         }
         Item::Trait(item_trait) => {
-            handle_item_trait(&item_trait, global_data, current_module_path);
+            handle_item_trait(&item_trait, true, global_data, current_module_path);
             js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
         }
         Item::TraitAlias(_) => todo!(),
@@ -3452,10 +3513,19 @@ fn handle_item_mod(
 
 fn handle_item_trait(
     item_trait: &ItemTrait,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
 ) {
     debug!("handle_item_trait");
+
+    if !at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.trait_definitons.push(RustTraitDefinition {
+            name: item_trait.ident.to_string(),
+        });
+    }
+
     // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not
     for trait_item in &item_trait.items {
         match trait_item {
@@ -3546,7 +3616,7 @@ fn js_stmts_from_syn_items(
     for item in items {
         handle_item(
             item,
-            is_module,
+            // is_module,
             global_data,
             current_module,
             &mut js_stmts,
@@ -4299,7 +4369,7 @@ impl GlobalData {
             duplicates,
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
-            at_module_top_level: false,
+            // at_module_top_level: false,
         }
     }
 
