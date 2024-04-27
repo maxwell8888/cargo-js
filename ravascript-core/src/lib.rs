@@ -2637,39 +2637,36 @@ fn handle_item_impl(
         .impl_block_target_type
         .push(target_rust_type.clone());
 
-    let mut impl_stmts = Vec::new();
+    // let mut impl_stmts = Vec::new();
     let mut rust_impl_items = Vec::new();
     for impl_item in &item_impl.items {
         match impl_item {
             ImplItem::Const(impl_item_const) => {
+                let js_local = JsLocal {
+                    public: false,
+                    export: false,
+                    type_: LocalType::Static,
+                    lhs: LocalName::Single(impl_item_const.ident.to_string()),
+                    value: handle_expr(&impl_item_const.expr, global_data, &current_module_path).0,
+                };
+
                 // impl_item_const
-                impl_stmts.push(ImplItemTemp {
-                    // class_name: impl_item_const.ident.to_string(),
-                    class_name: target_item.ident.clone(),
-                    module_path: current_module_path.clone(),
-                    item_stmt: JsImplItem::ClassStatic(JsLocal {
-                        public: false,
-                        export: false,
-                        type_: LocalType::Static,
-                        lhs: LocalName::Single(impl_item_const.ident.to_string()),
-                        value: handle_expr(
-                            &impl_item_const.expr,
-                            global_data,
-                            &current_module_path,
-                        )
-                        .0,
-                    }),
-                    // return_type: asdfa parse_fn_input_or_field(
-                    //     &impl_item_const.ty,
-                    //     &Vec::new(),
-                    //     current_module_path,
-                    //     &global_data,
-                    // ),
-                    item_name: impl_item_const.ident.to_string(),
-                });
+                // impl_stmts.push(ImplItemTemp {
+                //     // class_name: impl_item_const.ident.to_string(),
+                //     class_name: target_item.ident.clone(),
+                //     module_path: current_module_path.clone(),
+                //     item_stmt: JsImplItem::ClassStatic(js_local.clone()),
+                //     // return_type: asdfa parse_fn_input_or_field(
+                //     //     &impl_item_const.ty,
+                //     //     &Vec::new(),
+                //     //     current_module_path,
+                //     //     &global_data,
+                //     // ),
+                //     item_name: impl_item_const.ident.to_string(),
+                // });
                 rust_impl_items.push(RustImplItem {
                     ident: impl_item_const.ident.to_string(),
-                    item: RustImplItemItem::Const,
+                    item: RustImplItemItem::Const(js_local),
                     syn_object: impl_item.clone(),
                 });
             }
@@ -2680,7 +2677,7 @@ fn handle_item_impl(
                 };
                 // dbg!(item_impl_fn);
                 // let private = !export;
-                let input_names = item_impl_fn
+                let js_input_names = item_impl_fn
                     .clone()
                     .sig
                     .inputs
@@ -2967,73 +2964,83 @@ fn handle_item_impl(
 
                     Some(body_stmts)
                 };
+
+                // TODO no idea why body_stmts is an `Option`
                 if let Some((body_stmts, return_type)) = body_stmts {
-                    impl_stmts.push(
-                        // item_impl_fn.sig.ident.to_string(),
-                        ImplItemTemp {
-                            class_name: target_item.ident.clone(),
-                            module_path: current_module_path.clone(),
-                            item_stmt: JsImplItem::ClassMethod(
-                                target_item.ident.clone(),
-                                false,
-                                static_,
-                                JsFn {
-                                    iife: false,
-                                    public: false,
-                                    export: false,
-                                    is_method: true,
-                                    async_: item_impl_fn.sig.asyncness.is_some(),
-                                    name: camel(item_impl_fn.sig.ident.clone()),
-                                    input_names,
-                                    body_stmts,
-                                },
-                            ),
-                            // return_type,
-                            item_name: item_impl_fn.sig.ident.to_string(),
-                        },
-                    );
-                }
-                info!("handle_item_impl after scope");
-                // dbg!(&global_data.scopes);
-                global_data.scopes.pop();
+                    // impl_stmts.push(
+                    //     // item_impl_fn.sig.ident.to_string(),
+                    //     ImplItemTemp {
+                    //         class_name: target_item.ident.clone(),
+                    //         module_path: current_module_path.clone(),
+                    //         item_stmt: JsImplItem::ClassMethod(
+                    //             target_item.ident.clone(),
+                    //             false,
+                    //             static_,
+                    //             JsFn {
+                    //                 iife: false,
+                    //                 public: false,
+                    //                 export: false,
+                    //                 is_method: true,
+                    //                 async_: item_impl_fn.sig.asyncness.is_some(),
+                    //                 name: camel(item_impl_fn.sig.ident.clone()),
+                    //                 input_names: js_input_names,
+                    //                 body_stmts,
+                    //             },
+                    //         ),
+                    //         // return_type,
+                    //         item_name: item_impl_fn.sig.ident.to_string(),
+                    //     },
+                    // );
 
-                // push to rust_impl_items
-                let fn_generics = item_impl_fn
-                    .sig
-                    .generics
-                    .params
-                    .iter()
-                    .filter_map(|gen| match gen {
-                        GenericParam::Lifetime(_) => None,
-                        GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
-                        GenericParam::Const(_) => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-                let fn_rust_type_params = &fn_generics
-                    .iter()
-                    .map(|gen| RustTypeParam {
-                        name: gen.clone(),
-                        type_: RustTypeParamValue::Unresolved,
-                    })
-                    .collect::<Vec<_>>();
-                let inputs_types = item_impl_fn
-                    .sig
-                    .inputs
-                    .iter()
-                    .filter_map(|input| match input {
-                        FnArg::Receiver(_) => None,
-                        FnArg::Typed(pat_type) => Some(parse_fn_input_or_field(
-                            &*pat_type.ty,
-                            &fn_rust_type_params,
-                            current_module_path,
-                            global_data,
-                        )),
-                    })
-                    .collect::<Vec<_>>();
+                    // push to rust_impl_items
+                    let fn_generics = item_impl_fn
+                        .sig
+                        .generics
+                        .params
+                        .iter()
+                        .filter_map(|gen| match gen {
+                            GenericParam::Lifetime(_) => None,
+                            GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>();
+                    let fn_rust_type_params = &fn_generics
+                        .iter()
+                        .map(|gen| RustTypeParam {
+                            name: gen.clone(),
+                            type_: RustTypeParamValue::Unresolved,
+                        })
+                        .collect::<Vec<_>>();
+                    let inputs_types = item_impl_fn
+                        .sig
+                        .inputs
+                        .iter()
+                        .filter_map(|input| match input {
+                            FnArg::Receiver(_) => None,
+                            FnArg::Typed(pat_type) => Some(parse_fn_input_or_field(
+                                &*pat_type.ty,
+                                &fn_rust_type_params,
+                                current_module_path,
+                                global_data,
+                            )),
+                        })
+                        .collect::<Vec<_>>();
 
-                rust_impl_items.push(RustImplItem {
-                    ident: item_impl_fn.sig.ident.to_string(),
-                    item: RustImplItemItem::Fn(FnInfo {
+                    let private = match item_impl_fn.vis {
+                        Visibility::Public(_) => false,
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => true,
+                    };
+                    let static_ =
+                        item_impl_fn
+                            .sig
+                            .inputs
+                            .first()
+                            .map_or(true, |input| match input {
+                                FnArg::Receiver(_) => false,
+                                FnArg::Typed(_) => true,
+                            });
+                    let fn_info = FnInfo {
                         ident: item_impl_fn.sig.ident.to_string(),
                         inputs_types,
                         generics: fn_generics,
@@ -3046,9 +3053,50 @@ fn handle_item_impl(
                                 global_data,
                             ),
                         },
-                    }),
-                    syn_object: impl_item.clone(),
-                });
+                    };
+                    // let input_names = item_impl_fn.sig.inputs.iter().filter_map(|input| match input {
+                    //     FnArg::Receiver(_) => None,
+                    //     FnArg::Typed(pat_type) => match pat_type.pat {
+                    //         Pat::Const(_) => todo!(),
+                    //         Pat::Ident(_) => todo!(),
+                    //         Pat::Lit(_) => todo!(),
+                    //         Pat::Macro(_) => todo!(),
+                    //         Pat::Or(_) => todo!(),
+                    //         Pat::Paren(_) => todo!(),
+                    //         Pat::Path(_) => todo!(),
+                    //         Pat::Range(_) => todo!(),
+                    //         Pat::Reference(_) => todo!(),
+                    //         Pat::Rest(_) => todo!(),
+                    //         Pat::Slice(_) => todo!(),
+                    //         Pat::Struct(_) => todo!(),
+                    //         Pat::Tuple(_) => todo!(),
+                    //         Pat::TupleStruct(_) => todo!(),
+                    //         Pat::Type(_) => todo!(),
+                    //         Pat::Verbatim(_) => todo!(),
+                    //         Pat::Wild(_) => todo!(),
+                    //         _ => todo!(),
+                    //     },
+                    // })
+                    let js_fn = JsFn {
+                        iife: false,
+                        public: !private,
+                        export: false,
+                        // TODO
+                        async_: false,
+                        is_method: true,
+                        name: camel(item_impl_fn.sig.ident.clone()),
+                        input_names: js_input_names,
+                        body_stmts: body_stmts,
+                    };
+                    rust_impl_items.push(RustImplItem {
+                        ident: item_impl_fn.sig.ident.to_string(),
+                        item: RustImplItemItem::Fn(private, static_, fn_info, js_fn),
+                        syn_object: impl_item.clone(),
+                    });
+                }
+                info!("handle_item_impl after scope");
+                // dbg!(&global_data.scopes);
+                global_data.scopes.pop();
             }
             ImplItem::Type(_) => todo!(),
             ImplItem::Macro(_) => todo!(),
@@ -4199,8 +4247,9 @@ struct RustImplItem {
 }
 #[derive(Debug, Clone)]
 enum RustImplItemItem {
-    Fn(FnInfo),
-    Const,
+    /// (private, static, fn info, js fn),
+    Fn(bool, bool, FnInfo, JsFn),
+    Const(JsLocal),
 }
 
 #[derive(Debug, Clone)]
@@ -4345,7 +4394,7 @@ struct GlobalData {
     default_trait_impls_class_mapping: Vec<(String, String)>,
     /// For temporary storage of JS methods prior to adding to JS classes
     /// TODO doesn't seem like we are actually populating this even though it has been used for a while?
-    impl_items_for_js: Vec<ImplItemTemp>,
+    // impl_items_for_js: Vec<ImplItemTemp>,
     /// For looking up return types of methods etc
     // impl_items_for_types: Vec<(RustType, RustImplItem)>,
     // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
@@ -4369,7 +4418,7 @@ impl GlobalData {
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
             default_trait_impls: Vec::new(),
-            impl_items_for_js: Vec::new(),
+            // impl_items_for_js: Vec::new(),
             duplicates,
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
@@ -4772,7 +4821,7 @@ impl GlobalData {
         );
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItem::Fn(fn_info) => {
+                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                     let fn_generics = if sub_path.turbofish.len() > 0 {
                         sub_path
@@ -4813,7 +4862,7 @@ impl GlobalData {
                         ),
                     ))
                 }
-                RustImplItemItem::Const => todo!(),
+                RustImplItemItem::Const(_) => todo!(),
             }
         } else {
             None
@@ -5022,32 +5071,54 @@ enum VarItemFn {
 /// Match impl items to the classes in a `JsStmtModule`'s stmts and update the classes, recursively doing the same thing for any sub modules
 fn update_classes(
     js_stmt_modules: &mut Vec<JsModule>,
-    impl_items: &Vec<ImplItemTemp>,
+    // impl_items: &Vec<ImplItemTemp>,
+    impl_items: &Vec<RustImplBlock>,
     default_trait_impls_class_mapping: &Vec<(String, String)>,
     default_trait_impls: &Vec<(String, JsImplItem)>,
 ) {
+    // dbg!(&js_stmt_modules);
+    // dbg!(&impl_items);
     for js_stmt_module in js_stmt_modules {
         for stmt in js_stmt_module.stmts.iter_mut() {
             match stmt {
                 JsStmt::Class(js_class) => {
                     // add impl methods to class
-                    for impl_item in impl_items.clone() {
+                    for impl_block in impl_items.clone() {
                         // TODO impl could be in another module?
-                        if impl_item.module_path == js_stmt_module.module_path
-                            && js_class.name == impl_item.class_name
-                        {
-                            match impl_item.item_stmt {
-                                JsImplItem::ClassStatic(js_local) => {
-                                    js_class.static_fields.push(js_local);
-                                }
-                                JsImplItem::ClassMethod(name, private, static_, js_fn) => {
-                                    js_class.methods.push((name, private, static_, js_fn));
-                                }
-                                stmt => {
-                                    dbg!(stmt);
-                                    panic!("this JsStmt cannot be an impl item")
+                        let impl_target_name = match impl_block.target {
+                            RustType::StructOrEnum(_, _, name) => name,
+                            _ => todo!(),
+                        };
+                        if js_class.name == impl_target_name {
+                            for impl_item in impl_block.items {
+                                match impl_item.item {
+                                    RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                        let FnInfo {
+                                            ident,
+                                            inputs_types,
+                                            generics,
+                                            return_type,
+                                        } = fn_info;
+
+                                        js_class.methods.push((ident, private, static_, js_fn));
+                                    }
+                                    RustImplItemItem::Const(js_local) => {
+                                        js_class.static_fields.push(js_local);
+                                    }
                                 }
                             }
+                            // match impl_item.item_stmt {
+                            //     JsImplItem::ClassStatic(js_local) => {
+                            //         js_class.static_fields.push(js_local);
+                            //     }
+                            //     JsImplItem::ClassMethod(name, private, static_, js_fn) => {
+                            //         js_class.methods.push((name, private, static_, js_fn));
+                            //     }
+                            //     stmt => {
+                            //         dbg!(stmt);
+                            //         panic!("this JsStmt cannot be an impl item")
+                            //     }
+                            // }
                         }
                     }
 
@@ -5317,9 +5388,9 @@ fn extract_data_populate_item_definitions(
     let global_data_copy = global_data.clone();
 
     for module in &mut global_data.modules {
-        println!(
+        debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
-            &module.path
+            module_path = ?module.path
         );
         for item in &module.items {
             match item {
@@ -5389,10 +5460,6 @@ fn extract_data_populate_item_definitions(
                 }
                 Item::ExternCrate(_) => todo!(),
                 Item::Fn(item_fn) => {
-                    println!(
-                        "extract_data_populate_item_definitions item_fn: {:?}",
-                        item_fn.sig.ident
-                    );
                     let generics = item_fn
                         .sig
                         .generics
@@ -5853,7 +5920,7 @@ pub fn process_items(
 
     update_classes(
         &mut global_data.transpiled_modules,
-        &global_data.impl_items_for_js,
+        &global_data.impl_blocks,
         &global_data.default_trait_impls_class_mapping,
         &global_data.default_trait_impls,
     );
@@ -7593,7 +7660,6 @@ fn handle_expr_and_stmt_macro(
             );
         }
         if path_segs[0] == "assert_eq" {
-            dbg!(&path_segs);
             let input = mac.tokens.clone().to_string();
             let mut parts = input.split(",");
 
@@ -7842,7 +7908,7 @@ fn handle_expr_method_call(
             }
 
             match impl_method.item {
-                RustImplItemItem::Fn(fn_info) => {
+                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
                     // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
                     match &fn_info.return_type {
                         RustType::NotAllowed => todo!(),
@@ -7924,7 +7990,7 @@ fn handle_expr_method_call(
                         RustType::Fn(_, _, _, _) => todo!(),
                     }
                 }
-                RustImplItemItem::Const => todo!(),
+                RustImplItemItem::Const(_) => todo!(),
             }
         }
         RustType::Vec(_) => todo!(),
@@ -8211,8 +8277,8 @@ fn handle_expr_call(
                                         )
                                         .unwrap();
                                     match impl_method.item {
-                                        RustImplItemItem::Fn(fn_info) => fn_info,
-                                        RustImplItemItem::Const => todo!(),
+                                        RustImplItemItem::Fn(_, _, fn_info, _) => fn_info,
+                                        RustImplItemItem::Const(_) => todo!(),
                                     }
                                 }
                             };
@@ -9808,7 +9874,6 @@ fn handle_expr(
             )
         }
         Expr::Block(expr_block) => {
-            println!("expr_block new scope");
             let mut global_data_scope = GlobalDataScope::default();
             global_data_scope.look_in_outer_scope = true;
             global_data.scopes.push(global_data_scope);
@@ -9820,7 +9885,6 @@ fn handle_expr(
                 .map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .collect::<Vec<_>>();
 
-            println!("expr_block pop scope");
             global_data.scopes.pop();
 
             todo!()
