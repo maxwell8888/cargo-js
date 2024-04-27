@@ -1496,7 +1496,7 @@ fn handle_local(
         } else {
             match rhs_type {
                 RustType::Todo => todo!(),
-                RustType::Unit => todo!(),
+                RustType::Unit => {},
                 RustType::I32 => {
                     // fn returns i32
                     if lhs_is_mut {
