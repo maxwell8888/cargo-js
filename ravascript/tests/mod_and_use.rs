@@ -9,7 +9,9 @@ use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use tracing::{debug, info, trace};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_tree::HierarchicalLayer;
 use utils::*;
 
 pub fn setup_tracing() {
@@ -22,10 +24,24 @@ pub fn setup_tracing() {
             .with_thread_names(false) // include the name of the current thread
             .pretty(); // use the `Compact` formatting style.
 
-        tracing_subscriber::fmt()
-            .event_format(format)
-            .with_env_filter(EnvFilter::new(format!("ravascript={level}")))
-            .init();
+        let layer = HierarchicalLayer::default()
+            .with_writer(std::io::stdout)
+            .with_indent_lines(true)
+            .with_indent_amount(2)
+            // .with_thread_names(true)
+            // .with_thread_ids(true)
+            .with_verbose_exit(true)
+            .with_verbose_entry(true);
+        // .with_targets(true);
+        Registry::default().with(layer).init();
+        // Registry::default().with(HierarchicalLayer::new(2));
+
+        // tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        // tracing_subscriber::fmt()
+        //     .event_format(format)
+        //     .with_env_filter(EnvFilter::new(format!("ravascript={level}")))
+        //     .init();
     }
 }
 

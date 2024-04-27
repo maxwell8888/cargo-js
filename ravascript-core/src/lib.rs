@@ -17,7 +17,7 @@ use syn::{
     ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt,
     TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
-use tracing::{debug, debug_span, span};
+use tracing::{debug, debug_span, info, span};
 pub mod prelude;
 pub mod rust_prelude;
 
@@ -1326,6 +1326,7 @@ fn handle_local(
         }
         Expr::Reference(_) => todo!(),
         Expr::Unary(_) => todo!(),
+        Expr::Struct(_) => false,
         _ => {
             dbg!(rhs_expr);
             todo!()
@@ -1510,7 +1511,9 @@ fn handle_local(
                 RustType::F32 => todo!(),
                 RustType::Bool => todo!(),
                 RustType::String => todo!(),
-                RustType::StructOrEnum(_, _, _) => todo!(),
+                RustType::StructOrEnum(_, _, _) => {
+                    // TODO what do we need to do here? check if the struct/enum is `Copy` and clone it if so?
+                }
                 // RustType::Enum(_,_,_) => {}
                 RustType::NotAllowed => todo!(),
                 RustType::Unknown => todo!(),
@@ -1827,7 +1830,8 @@ fn handle_item_fn(
     current_module: &Vec<String>,
 ) -> JsStmt {
     let name = item_fn.sig.ident.to_string();
-    debug!(name = ?name, "handle_item_fn");
+    let span = debug_span!("handle_item_fn", name = ?name);
+    let _guard = span.enter();
     let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -1926,9 +1930,9 @@ fn handle_item_fn(
     }
 
     // Create new scope for fn vars
-    println!("handle_item_fn: {:?}", &item_fn.sig.ident);
-    println!("existing scopes:");
-    dbg!(&global_data.scopes);
+    info!("handle_item_fn: {:?}", &item_fn.sig.ident);
+    info!("existing scopes:");
+    // dbg!(&global_data.scopes);
     global_data.scopes.push(GlobalDataScope::default());
 
     // record which vars are mut and/or &mut
@@ -2143,8 +2147,8 @@ fn handle_item_fn(
     };
 
     // pop fn scope
-    println!("with new scope before popping it:");
-    dbg!(&global_data.scopes);
+    info!("with new scope before popping it:");
+    // dbg!(&global_data.scopes);
     global_data.scopes.pop();
 
     stmt
@@ -2827,8 +2831,8 @@ fn handle_item_impl(
                 }
 
                 // Create scope for impl method/fn body
-                println!("handle_item_impl new scope");
-                dbg!(&global_data.scopes);
+                info!("handle_item_impl new scope");
+                // dbg!(&global_data.scopes);
                 global_data.scopes.push(GlobalDataScope {
                     variables: vars,
                     fns: Vec::new(),
@@ -2989,8 +2993,8 @@ fn handle_item_impl(
                         },
                     );
                 }
-                println!("handle_item_impl after scope");
-                dbg!(&global_data.scopes);
+                info!("handle_item_impl after scope");
+                // dbg!(&global_data.scopes);
                 global_data.scopes.pop();
 
                 // push to rust_impl_items
@@ -3189,7 +3193,7 @@ fn handle_item_struct(
     current_module_path: &Vec<String>,
 ) -> JsStmt {
     let mut name = item_struct.ident.to_string();
-    dbg!(&global_data.scopes);
+    // dbg!(&global_data.scopes);
     debug!(name = ?name, "handle_item_struct");
     // Attribute {
     //     pound_token: Pound,
@@ -3432,8 +3436,8 @@ fn handle_item_mod(
 ) {
     let mod_name = &item_mod.ident;
     debug!(mod_name = ?mod_name, "handle_item_mod");
-    // let span = debug_span!("handle_item_mod", current_module_path = ?current_module_path);
-    // let _guard = span.enter();
+    let span = debug_span!("handle_item_mod", current_module_path = ?current_module_path);
+    let _guard = span.enter();
 
     // Notes
     // The `self` keyword is only allowed as the first segment of a path
@@ -3594,8 +3598,8 @@ fn js_stmts_from_syn_items(
     global_data: &mut GlobalData,
     current_file_path: &mut Option<PathBuf>,
 ) -> Vec<JsStmt> {
-    // let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module, current_file_path = ?current_file_path);
-    // let _guard = span.enter();
+    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module, current_file_path = ?current_file_path);
+    let _guard = span.enter();
     debug!("js_stmts_from_syn_items");
 
     let mut js_stmts = Vec::new();
@@ -7706,6 +7710,7 @@ fn handle_expr_method_call(
         _ => todo!(),
     };
     let method_name = expr_method_call.method.to_string();
+    debug!(method_name = ?method_name, "handle_expr_method_call");
 
     // // Look up types... should really be looking up item types when handling the receiver, and then at this stage we are just seeing if there are generics we can resolve with the argument types
     // // Look up variable
@@ -7862,7 +7867,7 @@ fn handle_expr_method_call(
                                 &args_rust_types,
                             )
                         }
-                        RustType::I32 => todo!(),
+                        RustType::I32 => RustType::I32,
                         RustType::F32 => todo!(),
                         RustType::Bool => todo!(),
                         RustType::String => todo!(),
@@ -8080,7 +8085,7 @@ fn handle_expr_call(
 
             let rust_type = match partial_rust_type {
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
-                PartialRustType::TupleStructIdent(type_params, module_path, struct_name) => {
+                PartialRustType::StructIdent(type_params, module_path, struct_name) => {
                     let item_def =
                         global_data.lookup_item_definition_known_module(&struct_name, &module_path);
 
@@ -8181,21 +8186,39 @@ fn handle_expr_call(
                             todo!()
                         }
                         RustType::Fn(item_type_params, type_params, module_path, name) => {
-                            if let Some(item_type_params) = item_type_params {
-                                // TODO We have an associated fn we need to look up
-                                todo!();
-                            }
-
-                            let name = match name {
-                                RustTypeFnType::Standalone(name) => name,
-                                RustTypeFnType::AssociatedFn(_, _) => todo!(),
+                            // let name = match name {
+                            let fn_info = match name {
+                                RustTypeFnType::Standalone(name) => global_data
+                                    .lookup_fn_definition_known_module(name, &module_path),
+                                RustTypeFnType::AssociatedFn(item_name, fn_name) => {
+                                    let item_type_params = item_type_params.unwrap();
+                                    let item_definition = global_data
+                                        .lookup_item_def_known_module_assert_not_func(
+                                            &module_path,
+                                            &item_name.clone(),
+                                        );
+                                    let impl_method = global_data
+                                        .lookup_impl_item_item(
+                                            &item_type_params,
+                                            &module_path,
+                                            // TODO IMPORTANT not populating turbofish correctly
+                                            &RustPathSegment {
+                                                ident: fn_name.clone(),
+                                                turbofish: Vec::new(),
+                                            },
+                                            &item_name.clone(),
+                                            &item_definition,
+                                        )
+                                        .unwrap();
+                                    match impl_method.item {
+                                        RustImplItemItem::Fn(fn_info) => fn_info,
+                                        RustImplItemItem::Const => todo!(),
+                                    }
+                                }
                             };
 
-                            // Lookup fn
-                            let fn_info =
-                                global_data.lookup_fn_definition_known_module(name, &module_path);
-
                             // Look to see if any of the input types are type params replace with concrete type from argument
+                            // TODO IMPORTANT for an associated fn, attempt_to_resolve_type_params_using_arg_types will not take into account generics defined on the *item* which might be concretised by the args and used in the return type
                             let new_type_params = fn_info
                                 .attempt_to_resolve_type_params_using_arg_types(&args_rust_types);
 
@@ -8231,7 +8254,7 @@ fn handle_expr_call(
                                     }
                                     RustType::Option(rust_type) => todo!(),
                                     RustType::Result(_) => todo!(),
-                                    RustType::StructOrEnum(_, _, _) => todo!(),
+                                    // RustType::StructOrEnum(_, _, _) => todo!(),
                                     RustType::Vec(_) => todo!(),
                                     RustType::Array(_) => todo!(),
                                     RustType::Tuple(_) => todo!(),
@@ -8863,12 +8886,12 @@ fn get_path_without_namespacing(
 
 // return type for `handle_expr_path` because the path might not comprise a full expression/type, ie a tuple struct or enum variant that has args so requires being called
 pub enum PartialRustType {
-    /// This is only used for tuple struct instantiation since normal struct instantiation are parsed to Expr::Struct and so can be directly evaluated to a struct instance, whereas a tuple struct instantiation is parsed as an ExprCall
+    /// This is only used for tuple struct instantiation since normal struct instantiation are parsed to Expr::Struct and so can be directly evaluated to a struct instance, whereas a tuple struct instantiation is parsed as an ExprCall. Ok but Expr::Struct still has a `.path` `Path` field which we want to be able to parse/handle with the same handle_expr code, so now this can also be the path of a Expr::Struct
     ///
-    /// So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple strut
+    /// So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
     ///
     /// (type params, module path, name) module path is None for scoped structs
-    TupleStructIdent(Vec<RustTypeParam>, Option<Vec<String>>, String),
+    StructIdent(Vec<RustTypeParam>, Option<Vec<String>>, String),
     /// This is only used for instantiation of enum variants with args which are parsed as an ExprCall, since normal enum variant instantiation are simply evaluated directly to an enum instance.
     /// Note we need to record type params because we might be parsing something like the `MyGenericEnum::<i32>::MyVariant` portion of `MyGenericEnum::<i32>::MyVariant("hi")` where the *enum definition* has had generics resolved
     ///
@@ -8877,25 +8900,34 @@ pub enum PartialRustType {
     RustType(RustType),
 }
 
-/// is_call: is this path being called eg foo() or Foo()
-///
-/// Rather than return RustType we return PartialRustType to handle the fact that a path might not be a full expression which evaluates to a type, it might only be part of an expression eg the `TupleStruct` in `TupleStruct()` or `Enum::Variant` in `Enum::Variant(5)`
-///
 fn handle_expr_path(
     expr_path: &ExprPath,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
+    handle_expr_path_inner(&expr_path.path, global_data, current_module)
+}
+
+/// is_call: is this path being called eg foo() or Foo()
+///
+/// Rather than return RustType we return PartialRustType to handle the fact that a path might not be a full expression which evaluates to a type, it might only be part of an expression eg the `TupleStruct` in `TupleStruct()` or `Enum::Variant` in `Enum::Variant(5)`
+///
+fn handle_expr_path_inner(
+    // expr_path: &ExprPath,
+    // Use Path in place of ExprPath since eg ExprStruct has a Path that needs handling, but not a ExprPath
+    expr_path: &syn::Path,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+    // is_call: bool,
+) -> (JsExpr, PartialRustType) {
     let path_idents = expr_path
-        .path
         .segments
         .iter()
         .map(|seg| seg.ident.to_string())
         .collect::<Vec<_>>();
     debug!(expr_path = ?path_idents, "handle_expr_path");
     let mut segs = expr_path
-        .path
         .segments
         .iter()
         .map(|seg| {
@@ -8970,7 +9002,6 @@ fn handle_expr_path(
     // What is all this doing? We just got the module path to an item using `get_path()` so we should be looking up the definition of found item and then if there is remaining segments in the expr_path after then item then determine if these are an enum variant or associated fn
     // What does get_path() return if the expr_path is just a scoped variable?
     let segs_copy = expr_path
-        .path
         .segments
         .iter()
         .map(|seg| RustPathSegment {
@@ -9363,12 +9394,8 @@ fn found_item_to_partial_rust_type(
         };
         match &item_def.struct_or_enum_info {
             StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
-                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
-                PartialRustType::TupleStructIdent(
-                    item_generics,
-                    module_path,
-                    item_path.ident.clone(),
-                )
+                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
+                PartialRustType::StructIdent(item_generics, module_path, item_path.ident.clone())
             }
             StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
                 // So we are assuming you can't have a path where the final segment is an enum ident
@@ -9662,7 +9689,8 @@ fn handle_expr(
                 )
                 .1
             } else {
-                RustType::Todo
+                // RustType::Todo
+                todo!()
             };
             (
                 JsExpr::Array(
@@ -9795,7 +9823,8 @@ fn handle_expr(
             println!("expr_block pop scope");
             global_data.scopes.pop();
 
-            (JsExpr::Block(stmts), RustType::Todo)
+            todo!()
+            // (JsExpr::Block(stmts), RustType::Todo)
         }
         Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
         Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
@@ -9883,12 +9912,31 @@ fn handle_expr(
             // TODO for a field, the type must be a struct or tuple, so look it up and get the type of the field
             match &expr_field.member {
                 Member::Named(ident) => {
-                    // TODO look up struct
-                    // global_data.scopes...
-                    (
-                        JsExpr::Field(Box::new(base_expr), camel(ident)),
-                        RustType::Todo,
-                    )
+                    let field_type = match base_type {
+                        RustType::StructOrEnum(type_params, module_path, name) => {
+                            let item_definition = global_data
+                                .lookup_item_def_known_module_assert_not_func(&module_path, &name);
+                            match item_definition.struct_or_enum_info {
+                                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                    match struct_def_info.fields {
+                                        StructFieldInfo::UnitStruct => todo!(),
+                                        StructFieldInfo::TupleStruct(_) => todo!(),
+                                        StructFieldInfo::RegularStruct(fields) => fields
+                                            .iter()
+                                            .find_map(|(field_name, field_type)| {
+                                                (field_name == &ident.to_string())
+                                                    .then_some(field_type)
+                                            })
+                                            .unwrap()
+                                            .clone(),
+                                    }
+                                }
+                                StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    };
+                    (JsExpr::Field(Box::new(base_expr), camel(ident)), field_type)
                 }
                 Member::Unnamed(index) => match base_type {
                     RustType::Tuple(tuple_types) => {
@@ -9943,7 +9991,7 @@ fn handle_expr(
                         Box::new(handle_expr(&*expr, global_data, current_module).0)
                     }),
                 }),
-                RustType::Todo,
+                todo!(), // RustType::Todo,
             )
         }
         Expr::Index(expr_index) => {
@@ -10069,7 +10117,7 @@ fn handle_expr(
                 handle_expr_path(expr_path, global_data, current_module);
             match partial_rust_type {
                 // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
-                PartialRustType::TupleStructIdent(_, _, _) => panic!(),
+                PartialRustType::StructIdent(_, _, _) => panic!(),
                 PartialRustType::EnumVariantIdent(_, _, _, _) => panic!(),
                 PartialRustType::RustType(rust_type) => (js_expr, rust_type),
             }
@@ -10099,7 +10147,8 @@ fn handle_expr(
                 (JsExpr::Return(Box::new(js_expr)), type_)
             } else {
                 // TODO surely an empty in Rust should also be an empty return in JS?
-                (JsExpr::Return(Box::new(JsExpr::Vanish)), RustType::Todo)
+                todo!()
+                // (JsExpr::Return(Box::new(JsExpr::Vanish)), RustType::Todo)
             }
         }
         Expr::Struct(expr_struct) => {
@@ -10124,28 +10173,46 @@ fn handle_expr(
                     })
                     .collect::<Vec<_>>(),
             );
-            if segs.len() == 2 {
-                (
-                    JsExpr::FnCall(Box::new(JsExpr::Path(segs)), vec![obj]),
-                    RustType::Todo,
-                )
-            } else {
-                let struct_name = segs.first().unwrap().clone();
-                if struct_name == "FetchOptions" || struct_name == "SseOptions" {
-                    (obj, RustType::Todo)
-                } else {
-                    // TODO we are assuming all other struct literals are inside ::new() so can be disappeared because the JsClass will write the constructor body
-                    // JsExpr::Vanish
-                    // TODO Expr structs can be instaniating an object but also instantiating an enum Variant with struct args. For now assume all Paths with len == 2 are enum variants and everthing else is a struct instaniation. Need an improved AST.
+
+            let (js_expr, rust_partial_type) =
+                handle_expr_path_inner(&expr_struct.path, global_data, current_module);
+            match rust_partial_type {
+                PartialRustType::StructIdent(type_params, module_path, name) => {
+                    let rust_type = RustType::StructOrEnum(type_params, module_path, name.clone());
                     let args = expr_struct
                         .fields
                         .iter()
                         .map(|field| handle_expr(&field.expr, global_data, current_module).0)
                         .collect::<Vec<_>>();
-
-                    (JsExpr::New(vec![struct_name], args), RustType::Todo)
+                    // TODO IMPORTANT need to be using dedupliated name here
+                    (JsExpr::New(vec![name], args), rust_type)
                 }
+                PartialRustType::EnumVariantIdent(_, _, _, _) => todo!(),
+                PartialRustType::RustType(_) => todo!(),
             }
+
+            // if segs.len() == 2 {
+            //     (
+            //         JsExpr::FnCall(Box::new(JsExpr::Path(segs)), vec![obj]),
+            //         rust_type,
+            //     )
+            // } else {
+            //     let struct_name = segs.first().unwrap().clone();
+            //     if struct_name == "FetchOptions" || struct_name == "SseOptions" {
+            //         (obj, RustType::Todo)
+            //     } else {
+            //         // TODO we are assuming all other struct literals are inside ::new() so can be disappeared because the JsClass will write the constructor body
+            //         // JsExpr::Vanish
+            //         // TODO Expr structs can be instaniating an object but also instantiating an enum Variant with struct args. For now assume all Paths with len == 2 are enum variants and everthing else is a struct instaniation. Need an improved AST.
+            //         let args = expr_struct
+            //             .fields
+            //             .iter()
+            //             .map(|field| handle_expr(&field.expr, global_data, current_module).0)
+            //             .collect::<Vec<_>>();
+
+            //         // (JsExpr::New(vec![struct_name], args), RustType::Todo)
+            //     }
+            // }
         }
         Expr::Try(_) => todo!(),
         Expr::TryBlock(_) => todo!(),

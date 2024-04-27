@@ -19,6 +19,7 @@ ravascript-macros = { path = "../ravascript-macros" }
 ravascript-core = { path = "../ravascript-core" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-tree = "0.3.0"
 
 [dev-dependencies]
 # chromiumoxide = { version = "0.5.6", features = ["tokio-runtime"], default-features = false }
