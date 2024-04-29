@@ -19,6 +19,9 @@ use prettify_js::prettyprint;
 use pretty_assertions::assert_eq;
 use std::{fs, path::PathBuf};
 use tokio;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_tree::HierarchicalLayer;
 
 use ravascript::from_file;
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
@@ -257,4 +260,38 @@ pub async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::err
         .context("Failed in events_handle.await")??;
 
     Ok(())
+}
+
+pub fn setup_tracing() {
+    if let Ok(level) = std::env::var("RUST_LOG") {
+        let filter = EnvFilter::new("ravascript=debug"); // Set to 'debug' or your desired log level
+
+        // Configure a custom event formatter
+        let format = fmt::format()
+            .with_level(false) // don't include levels in formatted output
+            .with_target(false) // don't include targets
+            .with_thread_ids(false) // include the thread ID of the current thread
+            .with_thread_names(false) // include the name of the current thread
+            .pretty(); // use the `Compact` formatting style.
+
+        let layer = HierarchicalLayer::default()
+            .with_writer(std::io::stdout)
+            .with_indent_lines(true)
+            .with_indent_amount(2)
+            // .with_thread_names(true)
+            // .with_thread_ids(true)
+            .with_verbose_exit(true)
+            .with_verbose_entry(true);
+        // .with_targets(true);
+
+        Registry::default().with(layer).with(filter).init();
+        // Registry::default().with(HierarchicalLayer::new(2));
+
+        // tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        // tracing_subscriber::fmt()
+        //     .event_format(format)
+        //     .with_env_filter(EnvFilter::new(format!("ravascript={level}")))
+        //     .init();
+    }
 }

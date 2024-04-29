@@ -8,42 +8,7 @@ use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
-use tracing::{debug, info, trace};
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
-use tracing_tree::HierarchicalLayer;
 use utils::*;
-
-pub fn setup_tracing() {
-    if let Ok(level) = std::env::var("RUST_LOG") {
-        // Configure a custom event formatter
-        let format = fmt::format()
-            .with_level(false) // don't include levels in formatted output
-            .with_target(false) // don't include targets
-            .with_thread_ids(false) // include the thread ID of the current thread
-            .with_thread_names(false) // include the name of the current thread
-            .pretty(); // use the `Compact` formatting style.
-
-        let layer = HierarchicalLayer::default()
-            .with_writer(std::io::stdout)
-            .with_indent_lines(true)
-            .with_indent_amount(2)
-            // .with_thread_names(true)
-            // .with_thread_ids(true)
-            .with_verbose_exit(true)
-            .with_verbose_entry(true);
-        // .with_targets(true);
-        Registry::default().with(layer).init();
-        // Registry::default().with(HierarchicalLayer::new(2));
-
-        // tracing::subscriber::set_global_default(subscriber).unwrap();
-
-        // tracing_subscriber::fmt()
-        //     .event_format(format)
-        //     .with_env_filter(EnvFilter::new(format!("ravascript={level}")))
-        //     .init();
-    }
-}
 
 // #[ignore]
 #[tokio::test]
@@ -72,7 +37,7 @@ async fn it_transpiles_crate_directory() {
       }
     
       addTen() {
-        return this.age.add(10);
+        return this.age + 10;
       }
     }
     class External {
@@ -110,15 +75,15 @@ async fn it_transpiles_crate_directory() {
           return 9999;
         }
         return (
-          this.age
-          .add(green__duplicateName())
-          .add(green__duplicateName())
-          .add(sayHello())
-          .add(duplicateName())
-          .add(sayHello())
-          .add(green__duplicateName())
-          .add(DOG_ACTIVITY)
-          .add(stuffFunction())
+          this.age +
+          green__duplicateName() +
+          green__duplicateName() +
+          sayHello() +
+          duplicateName() +
+          sayHello() +
+          green__duplicateName() +
+          DOG_ACTIVITY +
+          stuffFunction()
         );
       }
     }
