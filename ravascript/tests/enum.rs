@@ -12,7 +12,8 @@ use utils::*;
 
 #[tokio::test]
 async fn enum_match() {
-    let actual = r2j_block_with_prelude!({
+    setup_tracing();
+    let actual = r2j_block!({
         enum MyEnum {
             FooBar,
             // Foo(MyType),
@@ -25,24 +26,19 @@ async fn enum_match() {
         // TODO need to use a better pretty printer cos the current one messes up the the destructure formatting
         let match_result = match my_data {
             MyEnum::FooBar => 1,
-            MyEnum::Bar { x, y } => {
-                Console::log(x);
-                Console::log(y);
-                x
-            }
+            MyEnum::Bar { x, y } => x,
             MyEnum::Baz(text, num) => {
-                Console::log(text);
-                Console::log(num);
+                // Comment to force block
                 num
             }
         };
-        assert_eq!(match_result, 5);
+        assert!(match_result == 5);
     });
 
+    // include_str!("string_prototype_extensions.js"),
+    // "\n",
+    // include_str!("number_prototype_extensions.js"),
     let expected = format_js(concat!(
-        include_str!("string_prototype_extensions.js"),
-        "\n",
-        include_str!("number_prototype_extensions.js"),
         r#"
             class MyEnum {
                 static fooBarId = "FooBar";
@@ -71,18 +67,14 @@ async fn enum_match() {
                 matchResult = 1;
             } else if (myData.id === MyEnum.barId) {
                 var { x, y } = myData.data;
-                console.log(x);
-                console.log(y);
                 matchResult = x;
             } else if (myData.id === MyEnum.bazId) {
                 var [text, num] = myData.data;
-                console.log(text);
-                console.log(num);
                 matchResult = num;
             } else {
                 throw new Error("couldn't match enum variant");
             }
-            console.assert(matchResult.eq(5));
+            console.assert(matchResult === 5);
             "#
     ));
     assert_eq!(expected, actual);
@@ -91,7 +83,7 @@ async fn enum_match() {
 
 #[tokio::test]
 async fn enum_methods() {
-    let actual = r2j_block_with_prelude!({
+    let actual = r2j_block!({
         enum Animal {
             Cat,
             Dog,

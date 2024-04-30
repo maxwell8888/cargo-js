@@ -5,7 +5,7 @@ members = [
     "ravascript-macros",
     # "comprehensive-example",
     "cargo-js",
-    "for-testing",
+    "for-testing", "syn-cli",
 ]
 resolver = "2"
 

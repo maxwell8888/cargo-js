@@ -718,6 +718,7 @@ enum TypeOrVar {
 /// TODO handle types with len > 1
 fn parse_fn_input_or_field(
     type_: &Type,
+    // TODO if this is for passing types used in a parent item definition, surely the parent items generics cannot have been made concrete, in which case this should be &Vec<String> instead of &Vec<RustTypeParam>?
     parent_item_definition_generics: &Vec<RustTypeParam>,
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &Vec<String>,
@@ -1884,43 +1885,59 @@ fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
-) -> JsStmt {
+) -> (JsStmt, RustType) {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
-            let (mut js_expr, _type) = handle_expr(expr, global_data, current_module_path);
+            let (mut js_expr, type_) = handle_expr(expr, global_data, current_module_path);
             // copying etc should be handled in handle_expr, not here?
             // if should_copy_expr_unary(expr, global_data) {
             //     js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
             // }
 
-            JsStmt::Expr(js_expr, closing_semi.is_some())
+            (
+                JsStmt::Expr(js_expr, closing_semi.is_some()),
+                if closing_semi.is_some() {
+                    RustType::Unit
+                } else {
+                    type_
+                },
+            )
         }
-        Stmt::Local(local) => handle_local(local, global_data, current_module_path),
+        Stmt::Local(local) => (
+            handle_local(local, global_data, current_module_path),
+            RustType::Unit,
+        ),
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
-            Item::Const(item_const) => {
-                handle_item_const(item_const, false, global_data, current_module_path)
-            }
-            Item::Enum(item_enum) => {
-                handle_item_enum(item_enum.clone(), false, global_data, current_module_path)
-            }
+            Item::Const(item_const) => (
+                handle_item_const(item_const, false, global_data, current_module_path),
+                RustType::Unit,
+            ),
+            Item::Enum(item_enum) => (
+                handle_item_enum(item_enum.clone(), false, global_data, current_module_path),
+                RustType::Unit,
+            ),
             Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => handle_item_fn(item_fn, false, global_data, current_module_path),
+            Item::Fn(item_fn) => (
+                handle_item_fn(item_fn, false, global_data, current_module_path),
+                RustType::Unit,
+            ),
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
                 handle_item_impl(item_impl, false, global_data, current_module_path);
-                JsStmt::Expr(JsExpr::Vanish, false)
+                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
             }
             Item::Macro(_) => todo!(),
             Item::Mod(_) => todo!(),
             Item::Static(_) => todo!(),
             // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
-            Item::Struct(item_struct) => {
-                handle_item_struct(item_struct, false, global_data, current_module_path)
-            }
+            Item::Struct(item_struct) => (
+                handle_item_struct(item_struct, false, global_data, current_module_path),
+                RustType::Unit,
+            ),
             Item::Trait(item_trait) => {
                 handle_item_trait(item_trait, false, global_data, current_module_path);
-                JsStmt::Expr(JsExpr::Vanish, false)
+                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
             }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -1931,9 +1948,12 @@ fn handle_stmt(
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Stmt::Macro(stmt_macro) => JsStmt::Expr(
-            handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
-            stmt_macro.semi_token.is_some(),
+        Stmt::Macro(stmt_macro) => (
+            JsStmt::Expr(
+                handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
+                stmt_macro.semi_token.is_some(),
+            ),
+            RustType::Unit,
         ),
     }
 }
@@ -2355,7 +2375,7 @@ fn handle_item_enum(
 
     if !at_module_top_level {
         // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
-        let global_data_scope = global_data.scopes.last_mut().unwrap();
+
         // TODO we can't just get the type of a variant from the enum definiton if it is generic, as the generic type info will only be available in the actual code where that particular instance of the enum is instantiated, or later on. Well actually we will be looking this up from where the enum is instantiated like `MyEnum::MyVariant` so maybe just return the type if there is no enum, else return something to flag that the generic type should be looked for??
         let generics = item_enum
             .generics
@@ -2395,13 +2415,13 @@ fn handle_item_enum(
         let members_for_scope = item_enum
             .variants
             .iter()
-            .map(|v| EnumVariantInfo {
-                ident: v.ident.to_string(),
-                inputs: v
+            .map(|v| {
+                let inputs = v
                     .fields
                     .iter()
                     .map(|f| {
-                        let input_type = RustType::Todo;
+                        let input_type =
+                            parse_fn_input_or_field(&f.ty, &generics, current_module, global_data);
                         match &f.ident {
                             Some(input_name) => EnumVariantInputsInfo::Named {
                                 ident: input_name.to_string(),
@@ -2410,10 +2430,15 @@ fn handle_item_enum(
                             None => EnumVariantInputsInfo::Unnamed(input_type),
                         }
                     })
-                    .collect::<Vec<_>>(),
+                    .collect::<Vec<_>>();
+                EnumVariantInfo {
+                    ident: v.ident.to_string(),
+                    inputs,
+                }
             })
             .collect::<Vec<_>>();
 
+        let global_data_scope = global_data.scopes.last_mut().unwrap();
         global_data_scope.item_definitons.push(ItemDefinition {
             ident: item_enum.ident.to_string(),
             generics: item_enum
@@ -3720,7 +3745,7 @@ fn handle_item_trait(
                         body_stmts: default
                             .stmts
                             .iter()
-                            .map(|stmt| handle_stmt(stmt, global_data, current_module_path))
+                            .map(|stmt| handle_stmt(stmt, global_data, current_module_path).0)
                             .collect::<Vec<_>>(),
                     };
                     global_data.default_trait_impls.push((
@@ -6213,7 +6238,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         .block
         .stmts
         .iter()
-        .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]))
+        .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
         .collect::<Vec<_>>();
 
     let stmts = if with_rust_types {
@@ -6280,7 +6305,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 
     let mut js_stmts = Vec::new();
     for stmt in &item_fn.block.stmts {
-        let js_stmt = handle_stmt(stmt, &mut GlobalData::new(None, Vec::new()), &Vec::new());
+        let js_stmt = handle_stmt(stmt, &mut GlobalData::new(None, Vec::new()), &Vec::new()).0;
         js_stmts.push(js_stmt);
     }
     js_stmts
@@ -7478,7 +7503,7 @@ fn parse_fn_body_stmts(
                         Expr::If(expr_if) => {
                             if semi.is_some() {
                                 return_type = RustType::Unit;
-                                handle_stmt(stmt, global_data, current_module)
+                                handle_stmt(stmt, global_data, current_module).0
                             } else {
                                 let condition = Box::new(
                                     handle_expr(&*expr_if.cond, global_data, current_module).0,
@@ -7495,7 +7520,7 @@ fn parse_fn_body_stmts(
                                             .stmts
                                             .iter()
                                             .map(|stmt| {
-                                                handle_stmt(stmt, global_data, current_module)
+                                                handle_stmt(stmt, global_data, current_module).0
                                             })
                                             .collect::<Vec<_>>(),
                                         fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
@@ -7510,7 +7535,7 @@ fn parse_fn_body_stmts(
                         }
                         Expr::Match(expr_match) => {
                             if semi.is_some() {
-                                handle_stmt(stmt, global_data, current_module)
+                                handle_stmt(stmt, global_data, current_module).0
                             } else {
                                 JsStmt::Expr(
                                     handle_expr_match(
@@ -7659,7 +7684,7 @@ fn parse_fn_body_stmts(
                         _ => {
                             if semi.is_some() {
                                 return_type = RustType::Unit;
-                                handle_stmt(stmt, global_data, current_module)
+                                handle_stmt(stmt, global_data, current_module).0
                             } else {
                                 match &expr {
                                     Expr::Unary(_) => {
@@ -7677,10 +7702,10 @@ fn parse_fn_body_stmts(
                             }
                         }
                     },
-                    _ => handle_stmt(stmt, global_data, current_module),
+                    _ => handle_stmt(stmt, global_data, current_module).0,
                 }
             } else {
-                handle_stmt(stmt, global_data, current_module)
+                handle_stmt(stmt, global_data, current_module).0
             }
         })
         .collect::<Vec<_>>();
@@ -7731,7 +7756,7 @@ fn handle_expr_and_stmt_macro(
             let stmt_vec = try_block
                 .stmts
                 .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
                 .collect::<Vec<_>>();
             return (JsExpr::TryBlock(stmt_vec), RustType::Unit);
         }
@@ -7748,7 +7773,7 @@ fn handle_expr_and_stmt_macro(
             let stmt_vec = catch_block
                 .stmts
                 .into_iter()
-                .map(|stmt| handle_stmt(&stmt, global_data, current_module));
+                .map(|stmt| handle_stmt(&stmt, global_data, current_module).0);
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType::Unit);
         }
@@ -8606,6 +8631,7 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
 // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
 // What happens if the path is to a scoped item, or a variable (ie not an item definition)? We return the path of the item/var, which I believe in all cases must be a 0 length path/Vec<String>?
 fn get_path(
+    look_for_scoped_vars: bool,
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
     module_level_items_only: bool,
@@ -8666,7 +8692,34 @@ fn get_path(
     // dbg!(&module.resolved_mappings);
     // dbg!(&segs[0]);
 
-    if item_defined_in_module {
+    let is_scoped = global_data.scopes.iter().rev().any(|scope| {
+        let is_func = scope.fns.iter().any(|func| func.ident == segs[0]);
+        let is_item_def = scope
+            .item_definitons
+            .iter()
+            .any(|item_def| item_def.ident == segs[0]);
+
+        // self could be and instance or module path ie `fn foo(&self) { self }` or `self::MyStruct`. I can't think of any situations where a module path can
+        let is_var = scope.variables.iter().any(|var| var.name == segs[0])
+            && segs.len() == 1
+            && look_for_scoped_vars;
+
+        // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
+        (is_func || is_item_def || is_var) && current_module == original_module
+    });
+
+    // dbg!(&global_data.scopes);
+
+    // TODO not sure why we need use_private_items here
+    // if use_private_items && is_scoped {
+    if is_scoped {
+        // Variables and scoped items
+        // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
+
+        // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
+        assert!(current_module == original_module);
+        segs
+    } else if item_defined_in_module {
         // Path starts with an item defined in the module
 
         // Check whether it is not globally unique and so has been namespaced
@@ -8702,6 +8755,7 @@ fn get_path(
 
         // dbg!("in super");
         get_path(
+            false,
             true,
             true,
             module,
@@ -8718,6 +8772,7 @@ fn get_path(
         // TODO problem is that we are conflating `in_same_module` with pub/private
         // dbg!("in self");
         get_path(
+            false,
             true,
             true,
             module,
@@ -8741,6 +8796,7 @@ fn get_path(
 
         // NOTE all modules are desecendants of crate so all items in crate are visible/public
         get_path(
+            false,
             true,
             true,
             module,
@@ -8766,6 +8822,7 @@ fn get_path(
         // dbg!("Path starts with a submodule of the current module");
         get_path(
             false,
+            false,
             true,
             submodule,
             segs,
@@ -8779,6 +8836,7 @@ fn get_path(
         segs.remove(0);
         use_segs.extend(segs);
         let mut segs = get_path(
+            false,
             true,
             true,
             module,
@@ -8815,6 +8873,7 @@ fn get_path(
         // dbg!("in private items");
 
         // Since this is the path to a scoped item or var, the path must be length 1
+        dbg!(&segs);
         assert!(segs.len() == 1);
         segs
     } else {
@@ -9078,6 +9137,7 @@ fn get_path_without_namespacing(
 }
 
 // return type for `handle_expr_path` because the path might not comprise a full expression/type, ie a tuple struct or enum variant that has args so requires being called
+#[derive(Debug, Clone)]
 pub enum PartialRustType {
     /// This is only used for tuple struct instantiation since normal struct instantiation are parsed to Expr::Struct and so can be directly evaluated to a struct instance, whereas a tuple struct instantiation is parsed as an ExprCall. Ok but Expr::Struct still has a `.path` `Path` field which we want to be able to parse/handle with the same handle_expr code, so now this can also be the path of a Expr::Struct
     ///
@@ -9175,6 +9235,7 @@ fn handle_expr_path_inner(
     // println!("before get_path: {:?}", &segs);
     let mut segs = get_path(
         true,
+        true,
         false,
         module,
         segs,
@@ -9208,18 +9269,18 @@ fn handle_expr_path_inner(
 
     // TODO item could be a builtin like Some so need to either handle that here or add Some etc to the item definitions
     // Get item identifier (ie name of item and module path for non-scoped items)
-    let scoped_item = global_data.scopes.iter().rev().any(|scope| {
-        let var = scope
-            .variables
-            .iter()
-            .find(|v| v.name == segs_copy[0].ident);
-        let func = scope.fns.iter().find(|f| f.ident == segs_copy[0].ident);
-        let item_def = scope
-            .item_definitons
-            .iter()
-            .find(|f| f.ident == segs_copy[0].ident);
-        var.is_some() || func.is_some() || item_def.is_some()
-    });
+    // let scoped_item = global_data.scopes.iter().rev().any(|scope| {
+    //     let var = scope
+    //         .variables
+    //         .iter()
+    //         .find(|v| v.name == segs_copy[0].ident);
+    //     let func = scope.fns.iter().find(|f| f.ident == segs_copy[0].ident);
+    //     let item_def = scope
+    //         .item_definitons
+    //         .iter()
+    //         .find(|f| f.ident == segs_copy[0].ident);
+    //     var.is_some() || func.is_some() || item_def.is_some()
+    // });
 
     // TODO can we not use get_path_without_namespacing() for everything?
     let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path_without_namespacing(
@@ -9244,6 +9305,7 @@ fn handle_expr_path_inner(
     // dbg!(&segs_copy_item_path);
     // Split out item and any sub path eg for an enum variant, associated fn, etc
     let partial_rust_type = if segs_copy_item_path.len() == 1 {
+        // TODO handle len=1 enums like Some(5), None, etc
         if let Some(segs_copy_module_path) = segs_copy_module_path {
             // Look for module level items
             let module = global_data
@@ -9423,12 +9485,20 @@ fn handle_expr_path_inner(
                 }
 
                 enum_variant.map(|enum_variant| {
-                    PartialRustType::EnumVariantIdent(
-                        enum_generics,
-                        segs_copy_module_path,
-                        item_def.ident,
-                        sub_path.ident.clone(),
-                    )
+                    if enum_variant.inputs.len() == 0 {
+                        PartialRustType::RustType(RustType::StructOrEnum(
+                            enum_generics,
+                            segs_copy_module_path,
+                            item_def.ident,
+                        ))
+                    } else {
+                        PartialRustType::EnumVariantIdent(
+                            enum_generics,
+                            segs_copy_module_path,
+                            item_def.ident,
+                            sub_path.ident.clone(),
+                        )
+                    }
                 })
             }
         };
@@ -10215,7 +10285,7 @@ fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(&stmt, global_data, current_module))
+                    .map(|stmt| handle_stmt(&stmt, global_data, current_module).0)
                     .collect::<Vec<_>>(),
             ),
             RustType::Unit,
@@ -10236,7 +10306,7 @@ fn handle_expr(
                         .then_branch
                         .stmts
                         .iter()
-                        .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                        .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
                         .collect::<Vec<_>>(),
                     fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
                         Box::new(handle_expr(&*expr, global_data, current_module).0)
@@ -10345,7 +10415,7 @@ fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                    .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
                     .collect::<Vec<_>>(),
             ),
             RustType::Never,
@@ -10403,29 +10473,7 @@ fn handle_expr(
             }
         }
         Expr::Struct(expr_struct) => {
-            let segs = expr_struct
-                .path
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>();
-            let obj = JsExpr::Object(
-                expr_struct
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        (
-                            match &field.member {
-                                Member::Named(ident) => ident.to_string(),
-                                Member::Unnamed(_) => todo!(),
-                            },
-                            Box::new(handle_expr(&field.expr, global_data, current_module).0),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            );
-
-            let (js_expr, rust_partial_type) =
+            let (js_path_expr, rust_partial_type) =
                 handle_expr_path_inner(&expr_struct.path, global_data, current_module);
             match rust_partial_type {
                 PartialRustType::StructIdent(type_params, module_path, name) => {
@@ -10435,10 +10483,38 @@ fn handle_expr(
                         .iter()
                         .map(|field| handle_expr(&field.expr, global_data, current_module).0)
                         .collect::<Vec<_>>();
-                    // TODO IMPORTANT need to be using dedupliated name here
+                    // TODO IMPORTANT need to be using deduplicated name here
                     (JsExpr::New(vec![name], args), rust_type)
                 }
-                PartialRustType::EnumVariantIdent(_, _, _, _) => todo!(),
+                PartialRustType::EnumVariantIdent(
+                    type_params,
+                    module_path,
+                    enum_name,
+                    variant_name,
+                ) => {
+                    let rust_type =
+                        RustType::StructOrEnum(type_params, module_path, enum_name.clone());
+                    // TODO IMPORTANT need to be using deduplicated name here
+                    // (JsExpr::New(vec![name], args), rust_type);
+                    let obj = JsExpr::Object(
+                        expr_struct
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                (
+                                    match &field.member {
+                                        Member::Named(ident) => ident.to_string(),
+                                        Member::Unnamed(_) => todo!(),
+                                    },
+                                    Box::new(
+                                        handle_expr(&field.expr, global_data, current_module).0,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    (JsExpr::FnCall(Box::new(js_path_expr), vec![obj]), rust_type)
+                }
                 PartialRustType::RustType(_) => todo!(),
             }
 
@@ -10491,7 +10567,7 @@ fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                    .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
                     .collect::<Vec<_>>(),
             ),
             RustType::Unit,
@@ -10509,6 +10585,7 @@ fn handle_match_pat(
     expr_match: &ExprMatch,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
+    match_condition_type: &RustType,
 ) -> (Vec<String>, Vec<JsStmt>, Vec<ScopedVar>) {
     match arm_pat {
         Pat::Const(_) => todo!(),
@@ -10534,7 +10611,6 @@ fn handle_match_pat(
                 Vec::new(),
             )
         }
-
         Pat::Range(_) => todo!(),
         Pat::Reference(_) => todo!(),
         Pat::Rest(_) => todo!(),
@@ -10548,18 +10624,51 @@ fn handle_match_pat(
                     Member::Unnamed(_) => todo!(),
                 })
                 .collect::<Vec<_>>();
+
+            // A struct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
+            let enum_def_info = match match_condition_type {
+                RustType::StructOrEnum(type_params, module_path, name) => {
+                    let item_def =
+                        global_data.lookup_item_def_known_module_assert_not_func(module_path, name);
+                    match item_def.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                        StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
+                    }
+                }
+                _ => todo!(),
+            };
+            let arm_field_defs = enum_def_info
+                .members
+                .iter()
+                .find(|member| {
+                    member.ident == pat_struct.path.segments.last().unwrap().ident.to_string()
+                })
+                .unwrap();
+
             let scoped_vars = pat_struct
                 .fields
                 .iter()
                 .map(|field| match &field.member {
                     Member::Named(ident) => {
+                        let field_type = arm_field_defs
+                            .inputs
+                            .iter()
+                            .find_map(|input| match input {
+                                EnumVariantInputsInfo::Named {
+                                    ident: field_def_ident,
+                                    input_type,
+                                } => (ident == field_def_ident).then_some(input_type),
+                                EnumVariantInputsInfo::Unnamed(_) => todo!(),
+                            })
+                            .unwrap()
+                            .clone();
+
                         ScopedVar {
                             name: ident.to_string(),
                             // TODO can't find the data for mutability on `field`
                             mut_: false,
                             // mut_ref: false,
-                            // TODO a struct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
-                            type_: RustType::Todo,
+                            type_: field_type,
                         }
                     }
                     Member::Unnamed(_) => todo!(),
@@ -10585,19 +10694,56 @@ fn handle_match_pat(
         }
         Pat::Tuple(_) => todo!(),
         Pat::TupleStruct(pat_tuple_struct) => {
-            dbg!("tupleduple");
+            // let enum_info = match match_condition_type {
+            //     RustType::StructOrEnum(type_params, module_path, name) => {
+            //         let item_def = global_data.lookup_item_def_known_module_assert_not_func(module_path, name);
+            //         match item_def.struct_or_enum_info {
+            //             StructOrEnumDefitionInfo::Struct(_) => todo!(),
+            //             StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+            //                 enum_def_info.members.iter().find_map(|enum_var_info| enum_var_info.ident == )
+            //             },
+            //         }
+            //     },
+            //     _ => todo!(),
+            // };
             let names = pat_tuple_struct
                 .elems
                 .iter()
-                .map(|elem| {
-                    todo!();
-                    // handle_pat(elem, global_data, )
-                })
+                .map(|elem| handle_pat(elem, global_data, RustType::I32))
                 .collect::<Vec<_>>();
+
+            // A TupleStruct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
+            let enum_def_info = match match_condition_type {
+                RustType::StructOrEnum(type_params, module_path, name) => {
+                    let item_def =
+                        global_data.lookup_item_def_known_module_assert_not_func(module_path, name);
+                    match item_def.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                        StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
+                    }
+                }
+                _ => todo!(),
+            };
+            let arm_field_defs = enum_def_info
+                .members
+                .iter()
+                .find(|member| {
+                    member.ident
+                        == pat_tuple_struct
+                            .path
+                            .segments
+                            .last()
+                            .unwrap()
+                            .ident
+                            .to_string()
+                })
+                .unwrap();
+
             let scoped_vars = pat_tuple_struct
                 .elems
                 .iter()
-                .map(|elem| {
+                .enumerate()
+                .map(|(i, elem)| {
                     let name = match elem {
                         Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
                         // TODO handle len > 1
@@ -10606,15 +10752,22 @@ fn handle_match_pat(
                         // }
                         _ => todo!(),
                     };
+
+                    // Get input from definition based on it's position
+                    // TODO what about use of .. ??
+                    let field_type = match &arm_field_defs.inputs[i] {
+                        EnumVariantInputsInfo::Named { ident, input_type } => todo!(),
+                        EnumVariantInputsInfo::Unnamed(input_type) => input_type.clone(),
+                    };
+
                     ScopedVar {
                         name,
                         mut_: false,
                         // mut_ref: false,
-                        type_: RustType::Todo,
+                        type_: field_type,
                     }
                 })
                 .collect::<Vec<_>>();
-            dbg!(&names);
             let stmt = JsStmt::Local(JsLocal {
                 public: false,
                 export: false,
@@ -10625,7 +10778,6 @@ fn handle_match_pat(
                     "data".to_string(),
                 ),
             });
-            dbg!("confuse");
             (
                 pat_tuple_struct
                     .path
@@ -10652,14 +10804,27 @@ fn handle_expr_match(
 ) -> (JsExpr, RustType) {
     // (assignment, condition, succeed, fail)
     // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
-    dbg!(&*expr_match);
+    debug_span!("handle_expr_match", expr_match = ?quote! { #expr_match }.to_string());
+
+    let (match_condition_expr, match_condition_type) =
+        handle_expr(&*expr_match.expr, global_data, current_module);
 
     // Fold match arms into if else statements
-    let if_expr = expr_match.arms.iter().rev().fold(
-        JsExpr::ThrowError("couldn't match enum variant".to_string()),
+    // NOTE some arms might return never/unreachable so we can't just rely on eg getting the type from the first or last arm, we need to look through them all until we find a type which is not never/unreachable
+    let (if_expr, rust_type) = expr_match.arms.iter().rev().fold(
+        (
+            JsExpr::ThrowError("couldn't match enum variant".to_string()),
+            // TODO we init with None because we want to make sure it is updated by the `match prev_body_return_type {}` logic, and don't want to set it to eg RustType::Todo because we want to panic and then update the code to eliminate these cases, not silently let them through.
+            None,
+        ),
         |acc, arm| {
-            let (mut cond_rhs, mut body_data_destructure, scoped_vars) =
-                handle_match_pat(&arm.pat, expr_match, global_data, current_module);
+            let (mut cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
+                &arm.pat,
+                expr_match,
+                global_data,
+                current_module,
+                &match_condition_type,
+            );
 
             if cond_rhs == ["Some"] || cond_rhs == ["None"] {
                 cond_rhs.insert(0, "Option".to_string());
@@ -10674,7 +10839,6 @@ fn handle_expr_match(
             // }
             cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
 
-            dbg!(&*arm.body);
             global_data.scopes.push(GlobalDataScope {
                 variables: scoped_vars,
                 fns: Vec::new(),
@@ -10685,53 +10849,87 @@ fn handle_expr_match(
                 trait_definitons: Vec::new(),
                 consts: Vec::new(),
             });
-            let body = match &*arm.body {
+
+            let (body_js_stmts, body_return_type) = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
-                Expr::Array(_) => vec![JsStmt::Raw("sdafasdf".to_string())],
+                // TODO not sure what this is for???
+                Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
                 Expr::Block(expr_block) => {
-                    // Do we need a new scope here?
-                    expr_block
+                    // TODO should probably be using handle_body() or something for this
+                    let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
                         .block
                         .stmts
                         .iter()
                         .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                        .collect::<Vec<_>>()
+                        .unzip();
+
+                    let last_type = types_.last().unwrap().clone();
+
+                    (js_stmts, last_type)
                 }
                 other_expr => {
-                    vec![JsStmt::Expr(
-                        handle_expr(other_expr, global_data, current_module).0,
-                        false,
-                    )]
+                    let (js_expr, rust_type) = handle_expr(other_expr, global_data, current_module);
+                    (vec![JsStmt::Expr(js_expr, false)], rust_type)
                 }
             };
             global_data.scopes.pop();
 
-            body_data_destructure.extend(body.into_iter());
+            body_data_destructure.extend(body_js_stmts.into_iter());
             let body = body_data_destructure;
 
-            JsExpr::If(JsIf {
-                assignment: is_returned
-                    .then_some(LocalName::Single("ifTempAssignment".to_string())),
-                declare_var: is_returned,
-                condition: Box::new(JsExpr::Binary(
-                    Box::new(JsExpr::Field(
-                        Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
-                        "id".to_string(),
+            let (prev_if_expr, prev_body_return_type) = acc;
+            (
+                JsExpr::If(JsIf {
+                    assignment: is_returned
+                        .then_some(LocalName::Single("ifTempAssignment".to_string())),
+                    declare_var: is_returned,
+                    condition: Box::new(JsExpr::Binary(
+                        Box::new(JsExpr::Field(
+                            Box::new(match_condition_expr.clone()),
+                            "id".to_string(),
+                        )),
+                        JsOp::Eq,
+                        Box::new(JsExpr::Path(cond_rhs)),
                     )),
-                    JsOp::Eq,
-                    Box::new(JsExpr::Path(cond_rhs)),
-                )),
-                succeed: body,
-                // TODO
-                fail: Some(Box::new(acc)),
-            })
+                    succeed: body,
+                    // TODO
+                    fail: Some(Box::new(prev_if_expr)),
+                }),
+                match prev_body_return_type {
+                    Some(prev_body_return_type) => Some(match prev_body_return_type {
+                        RustType::NotAllowed => todo!(),
+                        RustType::Unknown => todo!(),
+                        RustType::Todo => todo!(),
+                        RustType::ParentItem => todo!(),
+                        RustType::Unit => todo!(),
+                        RustType::Never => body_return_type,
+                        RustType::ImplTrait(_) => todo!(),
+                        RustType::TypeParam(_) => todo!(),
+                        RustType::I32 => prev_body_return_type,
+                        RustType::F32 => prev_body_return_type,
+                        RustType::Bool => prev_body_return_type,
+                        RustType::String => prev_body_return_type,
+                        RustType::Option(_) => todo!(),
+                        RustType::Result(_) => todo!(),
+                        RustType::StructOrEnum(_, _, _) => prev_body_return_type,
+                        RustType::Vec(_) => prev_body_return_type,
+                        RustType::Array(_) => prev_body_return_type,
+                        RustType::Tuple(_) => prev_body_return_type,
+                        RustType::UserType(_, _) => todo!(),
+                        RustType::MutRef(_) => todo!(),
+                        RustType::Ref(_) => todo!(),
+                        RustType::Fn(_, _, _, _) => todo!(),
+                    }),
+                    None => Some(body_return_type),
+                },
+            )
         },
     );
     // for arm in &expr_match.arms {
     //     dbg!(arm);
     // }
     // todo!()
-    (if_expr, RustType::Todo)
+    (if_expr, rust_type.unwrap())
 }
 
 pub fn generate_js_from_module(js: impl ToString) -> String {
