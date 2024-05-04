@@ -2673,7 +2673,8 @@ fn handle_item_impl(
         Type::Path(type_path) => format!("{:?}", type_path.path.segments),
         _ => format!("{:?}", item_impl.self_ty),
     };
-    debug!(debug_self_type = ?debug_self_type, "handle_item_impl");
+    let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
+    let _guard = span.enter();
     // The rule seems to be the the enum/struct must be defined, or a use path to it must be defined, in either the same scope as the impl block (order of appearance does not matter) or in a surrounding scope, including the module top level.
 
     // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
@@ -3304,36 +3305,106 @@ fn handle_item_impl(
         items: rust_impl_items,
     };
 
+    // If the block gets pushed to `global_data.impl_blocks` then `update_clases()` should add the method to the appropriate class, however if the block is added to a scope then we need to do what `update_classes()` does here.
+
     if !at_module_top_level {
         // a scoped impl block must at least be in the same scope or a child scope of any types used in the impl definition, ie the target/self type, the trait if it is a trait impl, and any types used in the generics of the target/self and trait. So we can/should hoist the impl block to the "lowest common denominator.
+        // IMPORTANT NOTE This approach seems flawed given that the methods impl'd can be used in higher scopes than the impl.
         // Get lowest scope
-        let scope = global_data.scopes.iter_mut().rev().find(|s| {
-            // Is target type scoped?
-            let is_target_item_scope = if target_item_module.is_none() {
-                s.item_definitons
-                    .iter()
-                    .any(|item_def| item_def.ident == target_item.ident)
-            } else {
-                false
-            };
-            let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
-                let trait_path = &trait_.1.segments;
-                if trait_path.len() == 1 {
-                    s.trait_definitons.iter().any(|trait_def| {
-                        trait_def.name == trait_path.first().unwrap().ident.to_string()
-                    })
+        // NOTE we enumerate the scopes in reverse so that we can determine whether the found scope is the current scope (ie the impl is in the same scope as it's target and other definitions it uses)
+        let scope = global_data
+            .scopes
+            .iter_mut()
+            .rev()
+            .enumerate()
+            .find(|(i, s)| {
+                // Is target type scoped?
+                let is_target_item_scope = if target_item_module.is_none() {
+                    s.item_definitons
+                        .iter()
+                        .any(|item_def| item_def.ident == target_item.ident)
                 } else {
                     false
-                }
+                };
+                let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
+                    let trait_path = &trait_.1.segments;
+                    if trait_path.len() == 1 {
+                        s.trait_definitons.iter().any(|trait_def| {
+                            trait_def.name == trait_path.first().unwrap().ident.to_string()
+                        })
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                // IMPORTANT TODO what about all the other types used in the impl'd items? We can't be in a higher scope than these without capturing them
+                // let is_other_items_scope = ...
+
+                is_target_item_scope || is_trait_scope
+            });
+
+        if let Some((scope_idx, scope)) = scope {
+            if rust_impl_block.trait_.is_some() {
+                todo!();
             } else {
-                false
-            };
+                // Here we simply store the rust impl block on the appropriate scope, at the end of parsing a block of statements we will iterate through any `.impl_blocks` for the current scope and update the classes in the parsed stmts accordingly before returning the statements
 
-            is_target_item_scope || is_trait_scope
-        });
+                if scope_idx > 0 {
+                    // IMPORTANT TODO in Rust we can `impl Foo` with a method returning `Bar`, both defined in a lower scope than Foo, then in a higher scope, eg Foo's scope and call that method which means we have a Bar, even though it was defined in a lower scope, even though we could not directly instantiate a Bar from that scope and we might even have an identically named struct defined in the Scope. This is hard to fully recreate in JS because either we add to Foo's prototype in the scope, we can use the method, but only after the scope appears, not before like in Rust; or we hoist the impl to the scope of the target, but then the other used types from the lower scope won't be available, so they need hoisting too. This is because Rust effectively does some pretty clever hoisting, where the impl will get hoisted to the same scope as the target (surely higher if we can return it in a parent scope? NO because we need the target item to call the method on so must be in same scope or lower, well actually we can still return the instance from eg simple blocks without needing the type definition, so it can actually be used in higher scopes, just not higher fn scopes) and also "capture" any definitions it needs from the scope of the impl. This means to implement this in JS, given we need to hoist the impl def (be that adding methods to a class, adding to prototype, or having a standalone impl) to the target scope so that the methods can be used anywhere in the target impl scope, we would also need to have a duplicate Bar definition in the scope, but given there might already be another *different* Bar definition in the scope, it would need to eg be block scoped with the impl, so it is only accessible by the impl, not the rest of the scope.
+                    // eg:
+                    {
+                        struct Foo {}
+                        struct Bar {
+                            one: i32,
+                        }
+                        let foo = Foo {};
+                        let bar = foo.get_bar();
+                        let four = bar.two;
+                        {
+                            struct Bar {
+                                two: i32,
+                            }
+                            impl Foo {
+                                fn get_bar(&self) -> Bar {
+                                    Bar { two: 4 }
+                                }
+                            }
+                        }
+                    }
 
-        if let Some(scope) = scope {
-            scope.impl_blocks.push(rust_impl_block);
+                    // *IMPORTANT*
+                    // I think the solution is to hoist *all* scoped definitions, including impls, to the module level and then namespace where necessary eg `Foo_1`, `Foo_2`, etc. **BUT** this does also mean we also need to take scoped definitions into account when deduplicating module level idents...
+                    // The hoist to target + capture approach means we are duplicating code which is bad for bundle size
+                    // It also might create very hard to understand and large code becaues say we have a type with a lower impl that use some other types which are not unique, so the impl gets hoisted and the type it uses are also duplicated into the/a scope for the impl block, but one of these types also has lower impl, so we have to copy all the types *it* uses and so on.
+                    // In general I think we want to design for the simplest and far more common cases, however, the hoisting scoped defs to module level approach only works if *all* scoped defs are hoisted (because they of course might be using other scoped types which would need to be at the module level to be accessible).
+                    // Also note that scoped definitions can be made public. Whilst they can't be directly accessed/instantiated, they can be eg returned from a public fn/method, eg:
+                    let foo = some_mod::Foo {};
+                    let bar = foo.get_bar();
+                    assert!(bar.two == 4);
+                    mod some_mod {
+                        pub struct Foo {}
+
+                        fn some_fn() {
+                            pub struct Bar {
+                                pub two: i32,
+                            }
+                            impl Foo {
+                                pub fn get_bar(&self) -> Bar {
+                                    Bar { two: 4 }
+                                }
+                            }
+                        }
+                    }
+                    // So other modules can access scoped items, in which case the items also need to be hoisted to the module level from them to be usable by other modules. How can we know if an scoped item is used by another module? NO other modules can only access *instances* of scoped items, so they don't need access to the item definitions themselves.
+                    // Given https://github.com/rust-lang/rfcs/blob/master/text/3373-avoid-nonlocal-definitions-in-fns.md it seems that doing weird things with scoped impls is generally considered best to be avoided, so in the interest of keeping output JS more similar/familar to the original Rust and avoiding confusing naming for scoped defs hoisted to the module level, will stick with assuming scoped impl blocks are in the same scope as their target
+
+                    // This is a pretty niche and speficic case so we will leave it as a TODO but it is worth bearing in mind when considering the design.
+                    todo!()
+                } else {
+                    scope.impl_blocks.push(rust_impl_block);
+                }
+            }
         } else {
             // If the types used are all module level, then we can hoist the impl block to module level
             global_data.impl_blocks.push(rust_impl_block);
@@ -4072,7 +4143,7 @@ enum RustType {
     // I think we do need to copy the data into the InstanceType because for scoped items we might have a Foo which then gets defined again in a lower scope so if we just look it up to get member info we will find the wrong one and have nothing to pin it to differentiate with like module paths. Yes but we could also give the item definitions indexes or unique ids and then we only have to store those with the InstanceType... NOTE in an item definition, while that items type params won't be resolved, the other types it uses in it's definition might be eg `stuct Foo { bar: Bar<i32> }`
     ///
     /// TODO storing a module path doesn't make much sense if the struct/enum/fn is scoped? Could use an Option which is None if the item is scoped? For now just store the Vec as whatever the current module is (even though this could be confusing for a scoped item), because it doesn't really matter since we always look for scoped items first, and determining whether eg handle_item_fn is for a module level fn or scoped fn would require passing extra args... NO actually we need to know whether we are top level or in a scope because currently we are putting all fns handled with handle_item_fn into the current scope, even if they are top level... which of course should just be scope=0, but this is not a nice approach
-    /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can exist in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition on the RustType as this seems to be hows Rust itself models where/how item are allowed to be used/instantiated. eg:
+    /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can exist in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition (or a reference to it) on the RustType as this seems to be how Rust itself models where/how item are allowed to be used/instantiated. eg:
     /// ```rust
     /// struct AmIHoisted {
     ///     ohno: String,
@@ -4086,6 +4157,7 @@ enum RustType {
     /// };
     /// assert!(cool.ohno == 5);
     /// ```
+    /// Alternatively, this wouldn't be a problem if we hoisted *all* scoped definitions to the module level.
     ///
     /// (type params, module path, name)
     StructOrEnum(Vec<RustTypeParam>, Option<Vec<String>>, String),
@@ -5216,85 +5288,113 @@ fn update_classes(
     default_trait_impls_class_mapping: &Vec<(String, String)>,
     default_trait_impls: &Vec<(String, JsImplItem)>,
 ) {
+    let span = debug_span!("update_classes");
+    let _guard = span.enter();
     // dbg!(&js_stmt_modules);
     // dbg!(&impl_items);
     for js_stmt_module in js_stmt_modules {
-        for stmt in js_stmt_module.stmts.iter_mut() {
-            match stmt {
-                JsStmt::Class(js_class) => {
-                    // add impl methods to class
-                    for impl_block in impl_items.clone() {
-                        // TODO impl could be in another module?
-                        let impl_target_name = match impl_block.target {
-                            RustType::StructOrEnum(_, _, name) => name,
-                            _ => todo!(),
-                        };
-                        if js_class.name == impl_target_name {
-                            for impl_item in impl_block.items {
-                                match impl_item.item {
-                                    RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-                                        let FnInfo {
-                                            ident,
-                                            inputs_types,
-                                            generics,
-                                            return_type,
-                                        } = fn_info;
+        let span = debug_span!("update_classes for js_stmt_module", path = ?js_stmt_module.module_path, name = ?js_stmt_module.name);
+        let _guard = span.enter();
 
+        update_classes_js_stmts(
+            &mut js_stmt_module.stmts,
+            impl_items,
+            // default_trait_impls_class_mapping,
+            // default_trait_impls,
+        )
+    }
+}
+
+// For impl blocks targetting a concrete type (including when implementing a trait), we want to add the items directly to the JS class, because no other types/classes are using the same implementation. For blocks targetting a generic type eg `Foo<T>` or `T`, we need to check if multiple classes are using the same method impls and if so keep the impl standalone and point to the impl from a class method.
+fn update_classes_js_stmts(
+    js_stmts: &mut Vec<JsStmt>,
+    impl_items: &Vec<RustImplBlock>,
+    // default_trait_impls_class_mapping: &Vec<(String, String)>,
+    // default_trait_impls: &Vec<(String, JsImplItem)>,
+) {
+    for stmt in js_stmts {
+        match stmt {
+            JsStmt::Class(js_class) => {
+                let span = debug_span!("update_classes for js_class", name = ?js_class.name);
+                let _guard = span.enter();
+                // dbg!(&js_class);
+                // dbg!(&impl_items);
+                // add impl methods to class
+                for impl_block in impl_items.clone() {
+                    // TODO impl could be in another module?
+                    let impl_target_name = match impl_block.target {
+                        RustType::StructOrEnum(_, _, name) => name,
+                        _ => todo!(),
+                    };
+                    if js_class.name == impl_target_name {
+                        for impl_item in impl_block.items {
+                            match impl_item.item {
+                                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                    let FnInfo {
+                                        ident,
+                                        inputs_types,
+                                        generics,
+                                        return_type,
+                                    } = fn_info;
+
+                                    // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct
+                                    if js_class.methods.iter().any(|method| method.0 == ident) {
+                                        todo!("need to monomorphize");
+                                    } else {
                                         js_class.methods.push((ident, private, static_, js_fn));
                                     }
-                                    RustImplItemItem::Const(js_local) => {
-                                        js_class.static_fields.push(js_local);
-                                    }
                                 }
-                            }
-                            // match impl_item.item_stmt {
-                            //     JsImplItem::ClassStatic(js_local) => {
-                            //         js_class.static_fields.push(js_local);
-                            //     }
-                            //     JsImplItem::ClassMethod(name, private, static_, js_fn) => {
-                            //         js_class.methods.push((name, private, static_, js_fn));
-                            //     }
-                            //     stmt => {
-                            //         dbg!(stmt);
-                            //         panic!("this JsStmt cannot be an impl item")
-                            //     }
-                            // }
-                        }
-                    }
-
-                    // TODO when adding a default impl to a class, we need to know which module/scope it came from in case there are two trait with the same name
-                    // TODO also need to only add if there is not an impl which overrides the default
-                    // add trait methods with default impl to class
-                    for trait_name in default_trait_impls_class_mapping.iter().filter_map(
-                        |(class_name, trait_name)| {
-                            (class_name == &js_class.name).then_some(trait_name)
-                        },
-                    ) {
-                        for js_impl_item in
-                            default_trait_impls
-                                .iter()
-                                .filter_map(|(trait_name2, js_impl_item)| {
-                                    (trait_name == trait_name2).then_some(js_impl_item.clone())
-                                })
-                        {
-                            match js_impl_item {
-                                JsImplItem::ClassStatic(js_local) => {
+                                RustImplItemItem::Const(js_local) => {
                                     js_class.static_fields.push(js_local);
                                 }
-                                JsImplItem::ClassMethod(name, private, static_, js_fn) => {
-                                    js_class.methods.push((name, private, static_, js_fn));
-                                }
-                                stmt => {
-                                    dbg!(stmt);
-                                    panic!("this JsStmt cannot be an impl item")
-                                }
                             }
                         }
+                        // match impl_item.item_stmt {
+                        //     JsImplItem::ClassStatic(js_local) => {
+                        //         js_class.static_fields.push(js_local);
+                        //     }
+                        //     JsImplItem::ClassMethod(name, private, static_, js_fn) => {
+                        //         js_class.methods.push((name, private, static_, js_fn));
+                        //     }
+                        //     stmt => {
+                        //         dbg!(stmt);
+                        //         panic!("this JsStmt cannot be an impl item")
+                        //     }
+                        // }
                     }
                 }
-                // JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
-                _ => {}
+
+                // TODO when adding a default impl to a class, we need to know which module/scope it came from in case there are two trait with the same name
+                // TODO also need to only add if there is not an impl which overrides the default
+                // add trait methods with default impl to class
+                // let trait_names = default_trait_impls_class_mapping.iter().filter_map(
+                //     |(class_name, trait_name)| (class_name == &js_class.name).then_some(trait_name),
+                // );
+                // for trait_name in trait_names {
+                //     let impl_items =
+                //         default_trait_impls
+                //             .iter()
+                //             .filter_map(|(trait_name2, js_impl_item)| {
+                //                 (trait_name == trait_name2).then_some(js_impl_item.clone())
+                //             });
+                //     for js_impl_item in impl_items {
+                //         match js_impl_item {
+                //             JsImplItem::ClassStatic(js_local) => {
+                //                 js_class.static_fields.push(js_local);
+                //             }
+                //             JsImplItem::ClassMethod(name, private, static_, js_fn) => {
+                //                 js_class.methods.push((name, private, static_, js_fn));
+                //             }
+                //             stmt => {
+                //                 dbg!(stmt);
+                //                 panic!("this JsStmt cannot be an impl item")
+                //             }
+                //         }
+                //     }
+                // }
             }
+            // JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
+            _ => {}
         }
     }
 }
@@ -6234,12 +6334,20 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     //     &mut global_data,
     //     &mut None,
     // );
-    let mut stmts = expr_block
-        .block
-        .stmts
-        .iter()
-        .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
-        .collect::<Vec<_>>();
+
+    // It is better to parse this as an actual block expression and then just remove the braces/take the stmts within, because `handle_stmt()` will parse any items as being not module level, which means impls are added to the scope, which we don't have, so calling update_classes() tries to use module level impls which don't exist.
+    // let mut stmts = expr_block
+    //     .block
+    //     .stmts
+    //     .iter()
+    //     .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
+    //     .collect::<Vec<_>>();
+    let (js_block, _rust_type) =
+        handle_expr_block(&expr_block, &mut global_data, &vec!["crate".to_string()]);
+    let stmts = match js_block {
+        JsExpr::Block(js_stmts) => js_stmts,
+        _ => todo!(),
+    };
 
     let stmts = if with_rust_types {
         push_rust_types(&global_data, stmts)
@@ -6257,6 +6365,12 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     // update_classes(
     //     &mut global_data.transpiled_modules,
     //     &global_data.impl_items,
+    //     &global_data.default_trait_impls_class_mapping,
+    //     &global_data.default_trait_impls,
+    // );
+    // update_classes(
+    //     &mut global_data.transpiled_modules,
+    //     &global_data.impl_blocks,
     //     &global_data.default_trait_impls_class_mapping,
     //     &global_data.default_trait_impls,
     // );
@@ -6433,7 +6547,7 @@ pub enum JsExpr {
     Object(Vec<(String, Box<JsExpr>)>),
     ObjectForModule(Vec<JsStmt>),
     Paren(Box<JsExpr>),
-    /// like obj::inner::mynumber -> obj.inner.mynumber;
+    /// eg module::struct::associated_fn -> module.struct.associated_fn;
     Path(Vec<String>),
     Raw(String),
     Return(Box<JsExpr>),
@@ -7491,225 +7605,137 @@ fn parse_fn_body_stmts(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> (Vec<JsStmt>, RustType) {
-    let mut return_type = RustType::Unknown;
-    let js_stmts = stmts
-        .iter()
-        .enumerate()
-        .map(|(i, stmt)| {
-            // Manually set assignment var name for if expressions that are a return stmt
-            if i == stmts.len() - 1 {
-                match stmt {
-                    Stmt::Expr(expr, semi) => match expr {
-                        Expr::If(expr_if) => {
-                            if semi.is_some() {
-                                return_type = RustType::Unit;
-                                handle_stmt(stmt, global_data, current_module).0
-                            } else {
-                                let condition = Box::new(
-                                    handle_expr(&*expr_if.cond, global_data, current_module).0,
-                                );
-                                JsStmt::Expr(
-                                    JsExpr::If(JsIf {
-                                        assignment: Some(LocalName::Single(
-                                            "ifTempAssignment".to_string(),
-                                        )),
-                                        declare_var: true,
-                                        condition,
-                                        succeed: expr_if
-                                            .then_branch
-                                            .stmts
-                                            .iter()
-                                            .map(|stmt| {
-                                                handle_stmt(stmt, global_data, current_module).0
-                                            })
-                                            .collect::<Vec<_>>(),
-                                        fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
-                                            Box::new(
-                                                handle_expr(&*expr, global_data, current_module).0,
-                                            )
-                                        }),
-                                    }),
-                                    false,
-                                )
-                            }
-                        }
-                        Expr::Match(expr_match) => {
-                            if semi.is_some() {
-                                handle_stmt(stmt, global_data, current_module).0
-                            } else {
-                                JsStmt::Expr(
-                                    handle_expr_match(
-                                        expr_match,
-                                        true,
-                                        global_data,
-                                        current_module,
-                                    )
-                                    .0,
-                                    false,
-                                )
-                            }
-                        }
-                        Expr::Path(expr_path)
-                            if returns_non_mut_ref_val
-                                && expr_path.path.segments.len() == 1
-                                && semi.is_none() =>
-                        {
-                            let var_name =
-                                expr_path.path.segments.first().unwrap().ident.to_string();
-                            let var_info = global_data
-                                .scopes
-                                .iter()
-                                .rev()
-                                .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
-                                .unwrap();
-                            let mut js_var = JsExpr::Path(vec![var_name]);
-                            if var_info.mut_ {
-                                js_var = JsExpr::MethodCall(
-                                    Box::new(js_var),
-                                    "inner".to_string(),
-                                    vec![],
-                                )
-                            }
-                            JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
-                        }
-                        Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
-                            // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
-                            // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
-                            // The problem is we need to know `returns_non_mut_ref_val`?
-                            // match &*expr_unary.expr {
-                            //     Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-                            //         let var_name =
-                            //             expr_path.path.segments.first().unwrap().ident.to_string();
-                            //         let mut js_var = JsExpr::Path(vec![var_name.clone()]);
+    // let mut return_type = RustType::Todo;
+    let mut js_stmts = Vec::new();
+    // let (js_stmts, types): (Vec<_>, Vec<_>) = stmts
+    //     .iter()
+    //     .enumerate()
+    //     .map(|(i, stmt)| )
+    //     .unzip();
 
-                            //         let var_info = global_data
-                            //             .scopes
-                            //             .iter()
-                            //             .rev()
-                            //             .find_map(|s| s.0.iter().rev().find(|v| v.name == var_name))
-                            //             .unwrap();
-
-                            //         match var_info.type_ {
-                            //             RustType::Todo => todo!(),
-                            //             RustType::Unit => todo!(),
-                            //             RustType::I32
-                            //             | RustType::F32
-                            //             | RustType::Bool
-                            //             | RustType::String => {
-                            //                 js_var = JsExpr::MethodCall(
-                            //                     Box::new(js_var),
-                            //                     "inner".to_string(),
-                            //                     vec![],
-                            //                 )
-                            //             }
-                            //             RustType::Struct(_) | RustType::Enum(_) => {
-                            //                 js_var = JsExpr::MethodCall(
-                            //                     Box::new(js_var),
-                            //                     "copy".to_string(),
-                            //                     vec![],
-                            //                 )
-                            //             }
-                            //             RustType::NotAllowed => todo!(),
-                            //             RustType::Unknown => todo!(),
-                            //             RustType::Never => todo!(),
-                            //             RustType::Vec(_) => todo!(),
-                            //             RustType::Array(_) => todo!(),
-                            //             RustType::Tuple(_) => todo!(),
-                            //             RustType::MutRef(_) => todo!(),
-                            //         }
-
-                            //         JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
-                            //     }
-                            //     Expr::Call(expr_call) => {
-                            //         // get fn_item from scope, extract return type, then apply inner or copy accordingly
-                            //         let path = match &*expr_call.func {
-                            //             Expr::Path(expr_path)
-                            //                 if expr_path.path.segments.len() == 1 =>
-                            //             {
-                            //                 expr_path
-                            //                     .path
-                            //                     .segments
-                            //                     .first()
-                            //                     .unwrap()
-                            //                     .ident
-                            //                     .to_string()
-                            //             }
-                            //             _ => todo!(),
-                            //         };
-                            //         let item_fn = global_data.scopes.iter().rev().find_map(|s| {
-                            //             s.1.iter().rev().find(|f| f.sig.ident.to_string() == path)
-                            //         });
-                            //         let type_or_var = item_fn
-                            //             .map(|f| match &f.sig.output {
-                            //                 ReturnType::Default => RustType::Unit,
-                            //                 ReturnType::Type(_, type_) => {
-                            //                     parse_fn_input_or_return_type(&**type_)
-                            //                 }
-                            //             })
-                            //             .unwrap();
-
-                            //         // TODO handle different cases other than foo() eg foo(bar) etc
-                            //         let mut js_expr =
-                            //             JsExpr::FnCall(Box::new(JsExpr::Path(vec![path])), vec![]);
-                            //         match type_or_var {
-                            //             RustType::NotAllowed => todo!(),
-                            //             RustType::Unknown => todo!(),
-                            //             RustType::Todo => todo!(),
-                            //             RustType::Unit => todo!(),
-                            //             RustType::Never => todo!(),
-                            //             RustType::I32 => todo!(),
-                            //             RustType::F32 => todo!(),
-                            //             RustType::Bool => todo!(),
-                            //             RustType::String => todo!(),
-                            //             RustType::Struct(_) => todo!(),
-                            //             RustType::Enum(_) => todo!(),
-                            //             RustType::Vec(_) => todo!(),
-                            //             RustType::Array(_) => todo!(),
-                            //             RustType::Tuple(_) => todo!(),
-                            //             RustType::MutRef(_) => todo!(),
-                            //         }
-
-                            //         JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
-                            //     }
-                            //     other => {
-                            //         dbg!(other);
-                            //         todo!()
-                            //     }
-                            // }
-                            let (expr, type_) =
-                                handle_expr(&*expr_unary.expr, global_data, current_module);
-                            return_type = type_;
-                            JsStmt::Expr(expr, false)
-                        }
-                        _ => {
-                            if semi.is_some() {
-                                return_type = RustType::Unit;
-                                handle_stmt(stmt, global_data, current_module).0
-                            } else {
-                                match &expr {
-                                    Expr::Unary(_) => {
-                                        dbg!(expr);
-                                    }
-                                    _ => {}
-                                }
-                                JsStmt::Expr(
-                                    JsExpr::Return(Box::new(
-                                        handle_expr(expr, global_data, current_module).0,
+    let mut return_type = None;
+    for (i, stmt) in stmts.iter().enumerate() {
+        // Manually set assignment var name for if expressions that are a return stmt
+        if i == stmts.len() - 1 {
+            match stmt {
+                Stmt::Expr(expr, semi) => match expr {
+                    Expr::If(expr_if) => {
+                        if semi.is_some() {
+                            let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
+                            js_stmts.push(stmt);
+                            return_type = Some(type_);
+                        } else {
+                            let (condition, type_) =
+                                handle_expr(&*expr_if.cond, global_data, current_module);
+                            let condition = Box::new(condition);
+                            let stmt = JsStmt::Expr(
+                                JsExpr::If(JsIf {
+                                    assignment: Some(LocalName::Single(
+                                        "ifTempAssignment".to_string(),
                                     )),
-                                    // TODO is this correct?
-                                    true,
-                                )
-                            }
+                                    declare_var: true,
+                                    condition,
+                                    succeed: expr_if
+                                        .then_branch
+                                        .stmts
+                                        .iter()
+                                        .map(|stmt| {
+                                            handle_stmt(stmt, global_data, current_module).0
+                                        })
+                                        .collect::<Vec<_>>(),
+                                    fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
+                                        Box::new(handle_expr(&*expr, global_data, current_module).0)
+                                    }),
+                                }),
+                                false,
+                            );
+                            js_stmts.push(stmt);
+                            return_type = Some(type_);
                         }
-                    },
-                    _ => handle_stmt(stmt, global_data, current_module).0,
+                    }
+                    Expr::Match(expr_match) => {
+                        if semi.is_some() {
+                            let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
+                            js_stmts.push(stmt);
+                            return_type = Some(type_);
+                        } else {
+                            let (if_expr, type_) =
+                                handle_expr_match(expr_match, true, global_data, current_module);
+                            js_stmts.push(JsStmt::Expr(if_expr, true));
+                            js_stmts.push(JsStmt::Expr(
+                                JsExpr::Return(Box::new(JsExpr::Path(vec![
+                                    "ifTempAssignment".to_string()
+                                ]))),
+                                true,
+                            ));
+                            return_type = Some(type_);
+                        }
+                    }
+                    Expr::Path(expr_path)
+                        if returns_non_mut_ref_val
+                            && expr_path.path.segments.len() == 1
+                            && semi.is_none() =>
+                    {
+                        let var_name = expr_path.path.segments.first().unwrap().ident.to_string();
+                        let var_info = global_data
+                            .scopes
+                            .iter()
+                            .rev()
+                            .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
+                            .unwrap();
+                        let mut js_var = JsExpr::Path(vec![var_name]);
+                        if var_info.mut_ {
+                            js_var =
+                                JsExpr::MethodCall(Box::new(js_var), "inner".to_string(), vec![])
+                        }
+                        // Lookup path to get return type
+                        todo!();
+                        // JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                    }
+                    Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
+                        // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
+                        // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
+                        // The problem is we need to know `returns_non_mut_ref_val`?
+
+                        let (expr, type_) =
+                            handle_expr(&*expr_unary.expr, global_data, current_module);
+                        // return_type = type_;
+
+                        js_stmts.push(JsStmt::Expr(expr, true));
+                        return_type = Some(type_);
+                        // (JsStmt::Expr(expr, false), type_)
+                    }
+                    _ => {
+                        if semi.is_some() {
+                            let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
+                            js_stmts.push(stmt);
+                            return_type = Some(type_);
+                        } else {
+                            let (js_expr, type_) = handle_expr(expr, global_data, current_module);
+                            let return_expr = JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true);
+                            js_stmts.push(return_expr);
+                            return_type = Some(type_);
+                        }
+                    }
+                },
+                _ => {
+                    let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
+                    js_stmts.push(stmt);
+                    return_type = Some(type_);
                 }
-            } else {
-                handle_stmt(stmt, global_data, current_module).0
             }
-        })
-        .collect::<Vec<_>>();
-    (js_stmts, return_type)
+        } else {
+            let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
+            js_stmts.push(stmt);
+            return_type = Some(type_);
+        }
+    }
+
+    if stmts.len() == 0 {
+        (Vec::new(), RustType::Unit)
+    } else {
+        (js_stmts, return_type.unwrap())
+    }
 }
 
 // TODO might want to split this up so that in some cases we can return JsStmt and JsExpr in others
@@ -7834,9 +7860,6 @@ fn handle_expr_and_stmt_macro(
                                     .find(|scoped_var| scoped_var.name == var_name)
                             })
                             .map_or((false, false, false), |ScopedVar { name, mut_, type_ }| {
-                                dbg!(&name);
-                                dbg!(&mut_);
-                                dbg!(&type_);
                                 let is_primative = match type_ {
                                     RustType::Todo => {
                                         global_data
@@ -8062,85 +8085,110 @@ fn handle_expr_method_call(
             match impl_method.item {
                 RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
                     // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
-                    match &fn_info.return_type {
-                        RustType::NotAllowed => todo!(),
-                        RustType::Unknown => todo!(),
-                        RustType::Todo => todo!(),
-                        RustType::ParentItem => todo!(),
-                        RustType::Unit => todo!(),
-                        RustType::Never => todo!(),
-                        RustType::ImplTrait(_) => todo!(),
-                        RustType::TypeParam(rust_type_param) => {
-                            // type param is unresolved at this point
-                            assert!(match rust_type_param.type_ {
-                                RustTypeParamValue::Unresolved => true,
-                                RustTypeParamValue::RustType(_) => false,
-                            });
+                    let return_type = fn_info.return_type.clone();
+                    fn resolve_generics_for_return_type(
+                        return_type: RustType,
+                        item_type_params: &Vec<RustTypeParam>,
+                        fn_info: &FnInfo,
+                        method_turbofish_rust_types: &Option<Vec<RustType>>,
+                        args_rust_types: &Vec<RustType>,
+                    ) -> RustType {
+                        match return_type {
+                            RustType::NotAllowed => todo!(),
+                            RustType::Unknown => todo!(),
+                            RustType::Todo => todo!(),
+                            RustType::ParentItem => todo!(),
+                            RustType::Unit => RustType::Unit,
+                            RustType::Never => todo!(),
+                            RustType::ImplTrait(_) => todo!(),
+                            RustType::TypeParam(rust_type_param) => {
+                                // type param is unresolved at this point
+                                assert!(match rust_type_param.type_ {
+                                    RustTypeParamValue::Unresolved => true,
+                                    RustTypeParamValue::RustType(_) => false,
+                                });
 
-                            method_return_type_generic_resolve_to_rust_type(
-                                &item_type_params,
-                                &rust_type_param,
-                                &fn_info,
-                                &method_turbofish_rust_types,
-                                &args_rust_types,
-                            )
-                        }
-                        RustType::I32 => RustType::I32,
-                        RustType::F32 => todo!(),
-                        RustType::Bool => todo!(),
-                        RustType::String => todo!(),
-                        RustType::Option(_) => todo!(),
-                        RustType::Result(_) => todo!(),
-                        RustType::StructOrEnum(type_params, module_path, name) => {
-                            // Return type generics are unresolved at this point - NO the return type might be eg `Foo<i32>` ie *resolved* generics.
-                            // assert!(type_params.iter().all(|tp| match tp.type_ {
-                            //     RustTypeParamValue::Unresolved => true,
-                            //     RustTypeParamValue::RustType(_) => false,
-                            // }));
+                                method_return_type_generic_resolve_to_rust_type(
+                                    &item_type_params,
+                                    &rust_type_param,
+                                    &fn_info,
+                                    &method_turbofish_rust_types,
+                                    &args_rust_types,
+                                )
+                            }
+                            RustType::I32 => RustType::I32,
+                            RustType::F32 => RustType::F32,
+                            RustType::Bool => RustType::Bool,
+                            RustType::String => RustType::String,
+                            RustType::Option(_) => todo!(),
+                            RustType::Result(_) => todo!(),
+                            RustType::StructOrEnum(type_params, module_path, name) => {
+                                // Return type generics are unresolved at this point - NO the return type might be eg `Foo<i32>` ie *resolved* generics.
+                                // assert!(type_params.iter().all(|tp| match tp.type_ {
+                                //     RustTypeParamValue::Unresolved => true,
+                                //     RustTypeParamValue::RustType(_) => false,
+                                // }));
 
-                            // So we have the *unresolved* RustType return type of the method call
-                            // If this type has any generics, we want to resolve them with the concrete type we already have from:
-                            // receiver item instance, the method's turbofish, and the methods arguments
-                            // So we need to take the return type def param names, see whether they belong to the item or method...
-                            // For the item and turbofish this is easy because it is clear what the type belong to, for method args, we need to check if there is any generic input types, (NO look to see if the generic name belongs to the item or method) *whose name matches a generic name in the return type*, and if it does just get the concrete type from the method arg and resolve the return type here.
-                            let resolved_type_params = type_params
-                                .iter()
-                                .map(|tp| {
-                                    match tp.type_ {
-                                        RustTypeParamValue::Unresolved => {
-                                            let mut new_tp = tp.clone();
-                                            let rust_type =
-                                                method_return_type_generic_resolve_to_rust_type(
-                                                    &item_type_params,
-                                                    tp,
-                                                    &fn_info,
-                                                    &method_turbofish_rust_types,
-                                                    &args_rust_types,
+                                // So we have the *unresolved* RustType return type of the method call
+                                // If this type has any generics, we want to resolve them with the concrete type we already have from:
+                                // receiver item instance, the method's turbofish, and the methods arguments
+                                // So we need to take the return type def param names, see whether they belong to the item or method...
+                                // For the item and turbofish this is easy because it is clear what the type belong to, for method args, we need to check if there is any generic input types, (NO look to see if the generic name belongs to the item or method) *whose name matches a generic name in the return type*, and if it does just get the concrete type from the method arg and resolve the return type here.
+                                let resolved_type_params = type_params
+                                    .iter()
+                                    .map(|tp| {
+                                        match tp.type_ {
+                                            RustTypeParamValue::Unresolved => {
+                                                let mut new_tp = tp.clone();
+                                                let rust_type =
+                                                    method_return_type_generic_resolve_to_rust_type(
+                                                        &item_type_params,
+                                                        tp,
+                                                        &fn_info,
+                                                        &method_turbofish_rust_types,
+                                                        &args_rust_types,
+                                                    );
+                                                new_tp.type_ = RustTypeParamValue::RustType(
+                                                    Box::new(rust_type),
                                                 );
-                                            new_tp.type_ =
-                                                RustTypeParamValue::RustType(Box::new(rust_type));
-                                            new_tp
+                                                new_tp
+                                            }
+                                            // type param is already resolved so don't need to do anything
+                                            RustTypeParamValue::RustType(_) => tp.clone(),
                                         }
-                                        // type param is already resolved so don't need to do anything
-                                        RustTypeParamValue::RustType(_) => tp.clone(),
-                                    }
-                                })
-                                .collect::<Vec<_>>();
+                                    })
+                                    .collect::<Vec<_>>();
 
-                            RustType::StructOrEnum(
-                                resolved_type_params,
-                                module_path.clone(),
-                                name.clone(),
-                            )
+                                RustType::StructOrEnum(
+                                    resolved_type_params,
+                                    module_path.clone(),
+                                    name.clone(),
+                                )
+                            }
+                            RustType::Vec(_) => todo!(),
+                            RustType::Array(_) => todo!(),
+                            RustType::Tuple(_) => todo!(),
+                            RustType::UserType(_, _) => todo!(),
+                            RustType::MutRef(_) => todo!(),
+                            RustType::Ref(inner_type) => {
+                                RustType::Ref(Box::new(resolve_generics_for_return_type(
+                                    *inner_type,
+                                    item_type_params,
+                                    fn_info,
+                                    method_turbofish_rust_types,
+                                    args_rust_types,
+                                )))
+                            }
+                            RustType::Fn(_, _, _, _) => todo!(),
                         }
-                        RustType::Vec(_) => todo!(),
-                        RustType::Array(_) => todo!(),
-                        RustType::Tuple(_) => todo!(),
-                        RustType::UserType(_, _) => todo!(),
-                        RustType::MutRef(_) => todo!(),
-                        RustType::Ref(_) => todo!(),
-                        RustType::Fn(_, _, _, _) => todo!(),
                     }
+                    resolve_generics_for_return_type(
+                        return_type,
+                        &item_type_params,
+                        &fn_info,
+                        &method_turbofish_rust_types,
+                        &args_rust_types,
+                    )
                 }
                 RustImplItemItem::Const(_) => todo!(),
             }
@@ -8221,6 +8269,31 @@ fn handle_expr_method_call(
         JsExpr::MethodCall(Box::new(receiver), camel(method_name), args_js_exprs),
         method_return_type,
     )
+}
+
+fn handle_expr_block(
+    expr_block: &ExprBlock,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> (JsExpr, RustType) {
+    let span = debug_span!("handle_expr_block", expr_block = ?quote! { #expr_block }.to_string());
+    let _guard = span.enter();
+
+    let mut global_data_scope = GlobalDataScope::default();
+    global_data_scope.look_in_outer_scope = true;
+    global_data.scopes.push(global_data_scope);
+    // TODO block needs to use something like parse_fn_body to be able to return the type
+    let (mut stmts, types): (Vec<_>, Vec<_>) = expr_block
+        .block
+        .stmts
+        .iter()
+        .map(|stmt| handle_stmt(stmt, global_data, current_module))
+        .unzip();
+
+    let scope = global_data.scopes.pop();
+    update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
+
+    (JsExpr::Block(stmts), types.last().unwrap().clone())
 }
 
 fn handle_expr_call(
@@ -10130,23 +10203,7 @@ fn handle_expr(
             };
             (expr, type_)
         }
-        Expr::Block(expr_block) => {
-            let mut global_data_scope = GlobalDataScope::default();
-            global_data_scope.look_in_outer_scope = true;
-            global_data.scopes.push(global_data_scope);
-            // TODO block needs to use something like parse_fn_body to be able to return the type
-            let stmts = expr_block
-                .block
-                .stmts
-                .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .collect::<Vec<_>>();
-
-            global_data.scopes.pop();
-
-            todo!()
-            // (JsExpr::Block(stmts), RustType::Todo)
-        }
+        Expr::Block(expr_block) => handle_expr_block(expr_block, global_data, current_module),
         Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
         Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
         Expr::Cast(_) => todo!(),
@@ -10917,7 +10974,7 @@ fn handle_expr_match(
                         RustType::Tuple(_) => prev_body_return_type,
                         RustType::UserType(_, _) => todo!(),
                         RustType::MutRef(_) => todo!(),
-                        RustType::Ref(_) => todo!(),
+                        RustType::Ref(_) => prev_body_return_type,
                         RustType::Fn(_, _, _, _) => todo!(),
                     }),
                     None => Some(body_return_type),

@@ -83,6 +83,7 @@ async fn enum_match() {
 
 #[tokio::test]
 async fn enum_methods() {
+    setup_tracing();
     let actual = r2j_block!({
         enum Animal {
             Cat,
@@ -94,20 +95,20 @@ async fn enum_methods() {
             fn five() -> i32 {
                 5
             }
-            fn bar_y(&self) -> Option<String> {
+            fn bar_y(self) -> &'static str {
                 match self {
-                    Animal::Cat => None,
-                    Animal::Dog => None,
-                    Animal::Bar { x, y } => Some(y.to_string()),
-                    Animal::Baz(text, num) => None,
+                    Animal::Cat => "Cat",
+                    Animal::Dog => "Dog",
+                    Animal::Bar { x, y } => y,
+                    Animal::Baz(text, num) => text,
                 }
             }
-            fn baz_num(&self) -> i32 {
+            fn baz_num(self) -> i32 {
                 match self {
                     Animal::Cat => 0,
                     Animal::Dog => 0,
                     Animal::Bar { x, y } => 0,
-                    Animal::Baz(text, num) => *num,
+                    Animal::Baz(text, num) => num,
                 }
             }
         }
@@ -116,30 +117,30 @@ async fn enum_methods() {
         let bar = Animal::Bar { x: 1, y: "hibar" };
         let baz = Animal::Baz("hibaz", 5);
 
-        // Some("hibar")
         let bar_y = bar.bar_y();
-        assert_eq!(bar_y, Some("hibar".to_string()));
+        assert_eq!(bar_y, "hibar");
 
-        // None
         let bar_y_two = baz.bar_y();
-        assert_eq!(bar_y_two, None);
+        assert_eq!(bar_y_two, "hibaz");
 
-        // Some("hibar")
+        // Redeclare vars because they have been moved
+        let bar = Animal::Bar { x: 1, y: "hibar" };
+        let baz = Animal::Baz("hibaz", 5);
+
         let baz_num = bar.baz_num();
         assert_eq!(baz_num, 0);
 
-        // None
         let baz_num = baz.baz_num();
         assert_eq!(baz_num, 5);
     });
 
+    // include_str!("option_prelude.js"),
+    // "var Some = Option.Some;",
+    // "var None = Option.None;",
+    // include_str!("string_prototype_extensions.js"),
+    // "\n",
+    // include_str!("number_prototype_extensions.js"),
     let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        include_str!("string_prototype_extensions.js"),
-        "\n",
-        include_str!("number_prototype_extensions.js"),
         r#"
         class Animal {
             static catId = "Cat";
@@ -164,15 +165,15 @@ async fn enum_methods() {
             barY() {
                 var ifTempAssignment;
                 if (this.id === Animal.catId) {
-                    ifTempAssignment = None;
+                    ifTempAssignment = "Cat";
                 } else if (this.id === Animal.dogId) {
-                    ifTempAssignment = None;
+                    ifTempAssignment = "Dog";
                 } else if (this.id === Animal.barId) {
                     var { x, y } = this.data;
-                    ifTempAssignment = Some(y.toString());
+                    ifTempAssignment = y;
                 } else if (this.id === Animal.bazId) {
                     var [text, num] = this.data;
-                    ifTempAssignment = None;
+                    ifTempAssignment = text;
                 } else {
                     throw new Error("couldn't match enum variant");
                 }
@@ -203,13 +204,18 @@ async fn enum_methods() {
         });
         var baz = Animal.Baz("hibaz", 5);
         var barY = bar.barY();
-        console.assert(barY.eq(Some("hibar")));
+        console.assert(barY === "hibar");
         var barYTwo = baz.barY();
-        console.assert(barYTwo.eq(None));
+        console.assert(barYTwo === "hibaz");
+        var bar = Animal.Bar({
+            x: 1,
+            y: "hibar",
+        });
+        var baz = Animal.Baz("hibaz", 5);
         var bazNum = bar.bazNum();
-        console.assert(bazNum.eq(0));
+        console.assert(bazNum === 0);
         var bazNum = baz.bazNum();
-        console.assert(bazNum.eq(5));
+        console.assert(bazNum === 5);
         "#
     ));
     assert_eq!(expected, actual);

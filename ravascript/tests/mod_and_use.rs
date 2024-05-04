@@ -27,7 +27,7 @@ async fn it_transpiles_crate_directory() {
       utils__colors__duplicateName();
       var thing = External.new();
       var fido = new Green(true, 2);
-      console.assert(fido.woof().eq(32));
+      fido.woof();
     })();
     
     // foo_bar
@@ -52,12 +52,12 @@ async fn it_transpiles_crate_directory() {
     }
     
     // colors
-    var DOG_ACTIVITY = 10;
+    var DOG_ACTIVITY = 5;
     function colors__duplicateName() {
-      return 10;
+      return 6;
     }
     function stuffFunction() {
-      return 10;
+      return 4;
     }
     
     // colors::green
@@ -72,19 +72,16 @@ async fn it_transpiles_crate_directory() {
     
       woof() {
         function green__duplicateName() {
-          return 9999;
+          return 9;
         }
-        return (
-          this.age +
-          green__duplicateName() +
-          green__duplicateName() +
-          sayHello() +
-          duplicateName() +
-          sayHello() +
-          green__duplicateName() +
-          DOG_ACTIVITY +
-          stuffFunction()
-        );
+        console.assert(this.age === 2);
+        console.assert(duplicateName() === 9);
+        console.assert(sayHello() === 8);
+        console.assert(sayHello() === 8);
+        console.assert(colors__duplicateName() === 6);
+        console.assert(utils__colors__duplicateName() === 7);
+        console.assert(DOG_ACTIVITY === 5);
+        console.assert(stuffFunction() === 4);
       }
     }
     
@@ -92,12 +89,12 @@ async fn it_transpiles_crate_directory() {
     
     // utils::say_something
     function sayHello() {
-      return 10;
+      return 8;
     }
     
     // utils::colors
     function utils__colors__duplicateName() {
-      return 10;
+      return 7;
     }
     "#;
 
