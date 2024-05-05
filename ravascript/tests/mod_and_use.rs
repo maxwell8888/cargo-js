@@ -23,13 +23,13 @@ async fn it_transpiles_crate_directory() {
           function duplicateName() {
             return 10;
           }
-          (function main() {
+          function main() {
             duplicateName();
             utils__colors__duplicateName();
             var thing = External.new();
             var fido = new Green(true, 2);
             fido.woof();
-          })();
+          };
 
           // foo_bar
           class Internal {
@@ -97,6 +97,8 @@ async fn it_transpiles_crate_directory() {
           function utils__colors__duplicateName() {
             return 7;
           }
+
+          main();
           "#,
     );
 
@@ -106,7 +108,7 @@ async fn it_transpiles_crate_directory() {
     // println!("{}", format_js(&actual));
 
     assert_eq!(expected, format_js(actual));
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust
@@ -134,6 +136,7 @@ function baz() {
 // foo
 function green() {}"#;
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -162,6 +165,7 @@ function green() {
   var blue = baz();
 }"#;
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -183,6 +187,7 @@ function green() {
   var blue = baz();
 }"#;
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -208,6 +213,7 @@ function green() {
   var blue = baz();
 }"#;
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO why is this not checking anything?

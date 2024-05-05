@@ -2253,7 +2253,9 @@ fn handle_item_fn(
             current_module,
         );
         copy_stmts.extend(body_stmts);
-        let iife = item_fn.sig.ident == "main";
+        // let iife = item_fn.sig.ident == "main";
+        // wrapping main in an iffe means we need to move it to the end of the JS file, given we have the crate module appear first, and even if it appears last, main() can appear anywhere within the crate module so the easist thing is to just append a `main();` call to the end of the JS file
+        let iife = false;
         let js_fn = JsFn {
             iife,
             // iife: false,
@@ -5861,9 +5863,7 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
 
 fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<JsStmt> {
     let code = include_str!("rust_prelude/option.rs");
-    dbg!("hi");
     let modules = from_file(code, false);
-    dbg!("bye");
     assert_eq!(modules.len(), 1);
     let option_module = &modules[0];
 
@@ -6210,11 +6210,12 @@ pub fn modules_to_string(modules: &Vec<JsModule>, lib: bool) -> String {
     if lib {
         todo!()
     } else {
-        modules
+        let mut module_strings = modules
             .iter()
             .map(|module| module.js_string())
-            .collect::<Vec<_>>()
-            .join("\n\n")
+            .collect::<Vec<_>>();
+        module_strings.push("main();".to_string());
+        module_strings.join("\n\n")
     }
 }
 
