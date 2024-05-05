@@ -1969,7 +1969,6 @@ fn handle_item_fn(
     let name = item_fn.sig.ident.to_string();
     let span = debug_span!("handle_item_fn", name = ?name);
     let _guard = span.enter();
-    let duplicates = &global_data.duplicates;
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
             Meta::Path(path) => {
@@ -1985,17 +1984,23 @@ fn handle_item_fn(
         false
     };
 
-    let js_name = if let Some(dup) = duplicates
-        .iter()
-        .find(|dup| dup.name == name && &dup.original_module_path == current_module)
-    {
-        dup.namespace
-            .iter()
-            .map(|seg| camel(seg))
-            .collect::<Vec<_>>()
-            .join("__")
-    } else {
+    let js_name = if !at_module_top_level {
         camel(name.clone())
+    } else {
+        let in_module_level_duplicates = global_data
+            .duplicates
+            .iter()
+            .find(|dup| dup.name == name && &dup.original_module_path == current_module);
+
+        if let Some(dup) = in_module_level_duplicates {
+            dup.namespace
+                .iter()
+                .map(|seg| camel(seg))
+                .collect::<Vec<_>>()
+                .join("__")
+        } else {
+            camel(name.clone())
+        }
     };
 
     let type_params = item_fn
@@ -6080,6 +6085,7 @@ pub fn process_items(
     // (name space, module path (which gets popped), name, original module path)
 
     let mut duplicates = Vec::new();
+    // NOTE names doesn't currently include scoped items
     for name in &names {
         if names
             .iter()

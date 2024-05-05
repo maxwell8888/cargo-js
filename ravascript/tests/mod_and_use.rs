@@ -16,94 +16,97 @@ async fn it_transpiles_crate_directory() {
     setup_tracing();
 
     let actual = from_crate("../for-testing".into(), false, false);
+    let actual = format_js(actual);
 
-    let expected = r#"
-    // crate
-    function duplicateName() {
-      return 10;
-    }
-    (function main() {
-      duplicateName();
-      utils__colors__duplicateName();
-      var thing = External.new();
-      var fido = new Green(true, 2);
-      fido.woof();
-    })();
-    
-    // foo_bar
-    class Internal {
-      constructor(age) {
-        this.age = age;
-      }
-    
-      addTen() {
-        return this.age + 10;
-      }
-    }
-    class External {
-      constructor(sub, count) {
-        this.sub = sub;
-        this.count = count;
-      }
-    
-      static new() {
-        return new External(new Internal(0), 9);
-      }
-    }
-    
-    // colors
-    var DOG_ACTIVITY = 5;
-    function colors__duplicateName() {
-      return 6;
-    }
-    function stuffFunction() {
-      return 4;
-    }
-    
-    // colors::green
-    function green__duplicateName() {
-      return 3;
-    }
-    class Green {
-      constructor(fluffy, age) {
-        this.fluffy = fluffy;
-        this.age = age;
-      }
-    
-      woof() {
-        function green__duplicateName() {
-          return 9;
-        }
-        console.assert(this.age === 2);
-        console.assert(duplicateName() === 9);
-        console.assert(sayHello() === 8);
-        console.assert(sayHello() === 8);
-        console.assert(colors__duplicateName() === 6);
-        console.assert(utils__colors__duplicateName() === 7);
-        console.assert(DOG_ACTIVITY === 5);
-        console.assert(stuffFunction() === 4);
-      }
-    }
-    
-    // utils
-    
-    // utils::say_something
-    function sayHello() {
-      return 8;
-    }
-    
-    // utils::colors
-    function utils__colors__duplicateName() {
-      return 7;
-    }
-    "#;
+    let expected = format_js(
+        r#"// crate
+          function duplicateName() {
+            return 10;
+          }
+          (function main() {
+            duplicateName();
+            utils__colors__duplicateName();
+            var thing = External.new();
+            var fido = new Green(true, 2);
+            fido.woof();
+          })();
+
+          // foo_bar
+          class Internal {
+            constructor(age) {
+              this.age = age;
+            }
+          
+            addTen() {
+              return this.age + 10;
+            }
+          }
+          class External {
+            constructor(sub, count) {
+              this.sub = sub;
+              this.count = count;
+            }
+          
+            static new() {
+              return new External(new Internal(0), 9);
+            }
+          }
+
+          // colors
+          var DOG_ACTIVITY = 5;
+          function colors__duplicateName() {
+            return 6;
+          }
+          function stuffFunction() {
+            return 4;
+          }
+
+          // colors::green
+          function green__duplicateName() {
+            return 3;
+          }
+          class Green {
+            constructor(fluffy, age) {
+              this.fluffy = fluffy;
+              this.age = age;
+            }
+          
+            woof() {
+              function duplicateName() {
+                return 9;
+              }
+              console.assert(this.age === 2);
+              console.assert(duplicateName() === 9);
+              console.assert(sayHello() === 8);
+              console.assert(sayHello() === 8);
+              console.assert(colors__duplicateName() === 6);
+              console.assert(utils__colors__duplicateName() === 7);
+              console.assert(DOG_ACTIVITY === 5);
+              console.assert(stuffFunction() === 4);
+            }
+          }
+
+          // utils
+
+          // utils::say_something
+          function sayHello() {
+            return 8;
+          }
+
+          // utils::colors
+          function utils__colors__duplicateName() {
+            return 7;
+          }
+          "#,
+    );
 
     // println!("{}", expected);
     // println!("{}", format_js(expected));
     // println!("{}", &actual);
     // println!("{}", format_js(&actual));
 
-    assert_eq!(format_js(expected), format_js(actual));
+    assert_eq!(expected, format_js(actual));
+    // let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust
