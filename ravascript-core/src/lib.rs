@@ -13,10 +13,10 @@ use std::{
 };
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam, ImplItem,
-    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait,
-    ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment, ReturnType, Stmt,
-    TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
+    ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
+    ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
+    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment,
+    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
 use tracing::{debug, debug_span, info, span, warn};
 pub mod prelude;
@@ -1958,6 +1958,221 @@ fn handle_stmt(
     }
 }
 
+fn handle_expr_closure(
+    expr_closure: &ExprClosure,
+    global_data: &mut GlobalData,
+    current_module: &Vec<String>,
+) -> (JsExpr, RustType) {
+    let async_ = match &*expr_closure.body {
+        Expr::Async(_) => true,
+        _ => false,
+    };
+
+    let block = match &*expr_closure.body {
+        Expr::Async(expr_async) => {
+            // If we have a single statement which is an expression that has no semi so is being returned then in Rust async we have to put it in a block but in Javascript we don't need to
+
+            // multi lines should be in blocks
+            let stmts = &expr_async.block.stmts;
+            if stmts.len() > 1 {
+                true
+            } else {
+                let is_expr_with_no_semi = match stmts.last().unwrap() {
+                    Stmt::Expr(_, semi) => semi.is_none(),
+                    Stmt::Macro(_) => todo!(),
+                    _ => false,
+                };
+                if is_expr_with_no_semi {
+                    false
+                } else {
+                    true
+                }
+            }
+        }
+        Expr::Block(_) => true,
+        Expr::Match(_) => true,
+        _ => false,
+    };
+
+    let inputs = expr_closure
+        .inputs
+        .iter()
+        .map(|input| match input {
+            Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+            Pat::Tuple(_) => todo!(),
+            Pat::Type(pat_type) => {
+                let name = match &*pat_type.pat {
+                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                    _ => todo!(),
+                };
+                camel(name)
+            }
+            other => {
+                dbg!(other);
+                todo!()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // NOTE we don't add closure as a fn to scoped fns, like for fn definitions because we instead do this when the closure (or fn) is assigned to a variable
+
+    // Create scope for closure body
+    global_data.scopes.push(GlobalDataScope::default());
+
+    // Below is copied/adapted from `handle_item_fn()`. Ideally we would use the same code for both but closure inputs are just pats because they have no self/reciever and might not even have a type eg `|x| x + 1`
+    // record which vars are mut and/or &mut
+    let mut copy_stmts = Vec::new();
+    // for input in &item_fn.sig.inputs {
+    //     match input {
+    //         FnArg::Receiver(_) => {}
+    //         FnArg::Typed(pat_type) => match &*pat_type.pat {
+    //              ...
+    //         },
+    //     }
+    // }
+    for input in &expr_closure.inputs {
+        let (input_name, mutable, pat_type) = match input {
+            Pat::Const(_) => todo!(),
+            Pat::Ident(pat_ident) => (
+                pat_ident.ident.to_string(),
+                pat_ident.mutability.is_some(),
+                None,
+            ),
+            Pat::Lit(_) => todo!(),
+            Pat::Macro(_) => todo!(),
+            Pat::Or(_) => todo!(),
+            Pat::Paren(_) => todo!(),
+            Pat::Path(_) => todo!(),
+            Pat::Range(_) => todo!(),
+            Pat::Reference(_) => todo!(),
+            Pat::Rest(_) => todo!(),
+            Pat::Slice(_) => todo!(),
+            Pat::Struct(_) => todo!(),
+            Pat::Tuple(_) => todo!(),
+            Pat::TupleStruct(_) => todo!(),
+            Pat::Type(pat_type) => {
+                let (input_name, mutable) = match &*pat_type.pat {
+                    Pat::Ident(pat_ident) => {
+                        (pat_ident.ident.to_string(), pat_ident.mutability.is_some())
+                    }
+                    _ => todo!(),
+                };
+                (input_name, mutable, Some(*pat_type.ty.clone()))
+            }
+            Pat::Verbatim(_) => todo!(),
+            Pat::Wild(_) => todo!(),
+            _ => todo!(),
+        };
+
+        let input_type = if let Some(pat_type) = pat_type {
+            parse_fn_input_or_field(&pat_type, &Vec::new(), current_module, &global_data)
+        } else {
+            todo!();
+            // Could in theory return Uknown and resolve the type later, but even Rust will often error with:
+            // `type must be known at this point. consider giving this closure parameter an explicit type.`
+            // So need think more about which cases need type annotations and which don't, so just assume type annotations for now.
+            RustType::Unknown
+        };
+
+        let scoped_var = ScopedVar {
+            name: input_name.clone(),
+            mut_: mutable,
+            type_: input_type.clone(),
+        };
+
+        // record add var to scope
+        global_data
+            .scopes
+            .last_mut()
+            .unwrap()
+            .variables
+            .push(scoped_var);
+
+        // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
+        if mutable {
+            copy_stmts.push(JsStmt::Local(JsLocal {
+                public: false,
+                export: false,
+                type_: LocalType::Var,
+                lhs: LocalName::Single(input_name.clone()),
+                // value: JsExpr::MethodCall(
+                //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
+                //     "copy".to_string(),
+                //     Vec::new(),
+                // ),
+                value: match &input_type {
+                    RustType::Todo => todo!(),
+                    RustType::Unit => todo!(),
+                    RustType::I32 => {
+                        global_data.rust_prelude_types.integer = true;
+                        JsExpr::New(
+                            vec!["RustInteger".to_string()],
+                            vec![JsExpr::MethodCall(
+                                Box::new(JsExpr::Path(vec![input_name])),
+                                "inner".to_string(),
+                                Vec::new(),
+                            )],
+                        )
+                    }
+                    RustType::F32 => todo!(),
+                    RustType::Bool => todo!(),
+                    RustType::String => todo!(),
+                    RustType::StructOrEnum(_, _, _) => todo!(),
+                    // RustType::Enum(_,_,_) => todo!(),
+                    RustType::NotAllowed => todo!(),
+                    RustType::Unknown => todo!(),
+                    RustType::Never => todo!(),
+                    RustType::Vec(_) => todo!(),
+                    RustType::Array(_) => todo!(),
+                    RustType::Tuple(_) => todo!(),
+                    RustType::MutRef(_) => todo!(),
+                    RustType::Fn(_, _, _, _) => todo!(),
+                    RustType::Option(_) => todo!(),
+                    RustType::Result(_) => todo!(),
+                    RustType::TypeParam(_) => todo!(),
+                    RustType::ImplTrait(_) => todo!(),
+                    RustType::ParentItem => todo!(),
+                    RustType::UserType(_, _) => todo!(),
+                    RustType::Ref(_) => todo!(),
+                },
+            }))
+        }
+    }
+
+    // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
+    let (body_stmts, return_type) = match &*expr_closure.body {
+        Expr::Block(expr_block) => parse_fn_body_stmts(
+            true,
+            false,
+            &expr_block.block.stmts,
+            global_data,
+            current_module,
+        ),
+        Expr::Async(expr_async) => parse_fn_body_stmts(
+            true,
+            false,
+            &expr_async.block.stmts,
+            global_data,
+            current_module,
+        ),
+        Expr::Match(expr_match) => {
+            let (expr, type_) = handle_expr_match(expr_match, true, global_data, current_module);
+            (vec![JsStmt::Expr(expr, false)], type_)
+        }
+        other => {
+            let (expr, type_) = handle_expr(other, global_data, current_module);
+            (vec![JsStmt::Expr(expr, false)], type_)
+        }
+    };
+
+    global_data.scopes.pop();
+
+    (
+        JsExpr::ArrowFn(async_, block, inputs, body_stmts),
+        return_type,
+    )
+}
+
 fn handle_item_fn(
     item_fn: &ItemFn,
     // For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
@@ -2073,8 +2288,6 @@ fn handle_item_fn(
 
     // Create new scope for fn vars
     info!("handle_item_fn: {:?}", &item_fn.sig.ident);
-    info!("existing scopes:");
-    // dbg!(&global_data.scopes);
     global_data.scopes.push(GlobalDataScope::default());
 
     // record which vars are mut and/or &mut
@@ -2247,6 +2460,7 @@ fn handle_item_fn(
         };
         // dbg!(&item_fn.block.stmts);
         let (body_stmts, return_type) = parse_fn_body_stmts(
+            false,
             returns_non_mut_ref_val,
             &item_fn.block.stmts,
             global_data,
@@ -3103,6 +3317,7 @@ fn handle_item_impl(
                     //
 
                     let body_stmts = parse_fn_body_stmts(
+                        false,
                         returns_non_mut_ref_val,
                         &body_stmts,
                         global_data,
@@ -6597,11 +6812,14 @@ impl JsExpr {
                     .join(", ")
             ),
             JsExpr::ArrowFn(async_, block, inputs, body) => {
-                let sig = if inputs.len() == 1 {
-                    inputs.get(0).unwrap().clone()
-                } else {
-                    format!("({})", inputs.join(", "))
-                };
+                // JS formatter converts `x => x` to `(x) => x` which seems pointless but what we will go with for now
+                // let sig = if inputs.len() == 1 {
+                //     inputs.get(0).unwrap().clone()
+                // } else {
+                //     format!("({})", inputs.join(", "))
+                // };
+                let sig = format!("({})", inputs.join(", "));
+
                 // TODO single objects returned by concise body must be wrapped in parenthesis
                 let body = if *block {
                     body.iter()
@@ -7607,6 +7825,7 @@ impl JsStmt {
 // }
 
 fn parse_fn_body_stmts(
+    is_arrow_fn: bool,
     returns_non_mut_ref_val: bool,
     stmts: &Vec<Stmt>,
     global_data: &mut GlobalData,
@@ -7620,6 +7839,45 @@ fn parse_fn_body_stmts(
     //     .map(|(i, stmt)| )
     //     .unzip();
 
+    // It is important to be able to generate no body arrow fns like `(x) => x + 1` eg for `.map()` etc but we need to be able to determine whether the resultant expression is suitable to fit in or should be within braces and thus require a return statement, which is not straightforward. Eg a call might be a single line depending on how many args/length of idents, a macro might be depending on what it expands/transpiles to, etc. Really we need to parse it, format it, then check whether it is a single line. We take a simplified approach here.
+    let is_single_expr_return = if stmts.len() == 1 {
+        match stmts.get(0).unwrap() {
+            Stmt::Local(_) => false,
+            Stmt::Item(_) => false,
+            Stmt::Expr(expr, _) => match expr {
+                Expr::Array(_) => true,
+                Expr::Assign(_) => true,
+                Expr::Async(_) => todo!(),
+                Expr::Await(_) => true,
+                Expr::Binary(_) => true,
+                Expr::Call(_) => true,
+                Expr::Cast(_) => true,
+                Expr::Field(_) => true,
+                // TODO should be true for if expressions that transpile to a (short) ternary
+                Expr::If(_) => false,
+                Expr::Index(_) => true,
+                Expr::Lit(_) => true,
+                Expr::Macro(_) => true,
+                Expr::MethodCall(_) => true,
+                Expr::Paren(_) => true,
+                Expr::Path(_) => true,
+                Expr::Range(_) => todo!(),
+                Expr::Reference(_) => true,
+                Expr::Repeat(_) => true,
+                Expr::Struct(_) => true,
+                Expr::Tuple(_) => true,
+                Expr::Unary(_) => true,
+                Expr::Unsafe(_) => todo!(),
+                Expr::Verbatim(_) => todo!(),
+                _ => false,
+            },
+            Stmt::Macro(_) => true,
+        }
+    } else {
+        false
+    };
+
+    // TODO loads of duplication here and needs documenting why each special case is requried
     let mut return_type = None;
     for (i, stmt) in stmts.iter().enumerate() {
         // Manually set assignment var name for if expressions that are a return stmt
@@ -7719,7 +7977,11 @@ fn parse_fn_body_stmts(
                             return_type = Some(type_);
                         } else {
                             let (js_expr, type_) = handle_expr(expr, global_data, current_module);
-                            let return_expr = JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true);
+                            let return_expr = if is_arrow_fn && is_single_expr_return {
+                                JsStmt::Expr(js_expr, true)
+                            } else {
+                                JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true)
+                            };
                             js_stmts.push(return_expr);
                             return_type = Some(type_);
                         }
@@ -10168,7 +10430,7 @@ fn handle_expr(
                 BinOp::Lt(_) => todo!(),
                 BinOp::Le(_) => todo!(),
                 BinOp::Ne(_) => todo!(),
-                BinOp::Ge(_) => todo!(),
+                BinOp::Ge(_) => JsOp::GtEq,
                 BinOp::Gt(_) => todo!(),
                 BinOp::AddAssign(_) => todo!(),
                 BinOp::SubAssign(_) => todo!(),
@@ -10215,79 +10477,7 @@ fn handle_expr(
         Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
         Expr::Cast(_) => todo!(),
         Expr::Closure(expr_closure) => {
-            let async_ = match &*expr_closure.body {
-                Expr::Async(_) => true,
-                _ => false,
-            };
-
-            let block = match &*expr_closure.body {
-                Expr::Async(expr_async) => {
-                    // If we have a single statement which is an expression that has no semi so is being returned then in Rust async we have to put it in a block but in Javascript we don't need to
-
-                    // multi lines should be in blocks
-                    let stmts = &expr_async.block.stmts;
-                    if stmts.len() > 1 {
-                        true
-                    } else {
-                        let is_expr_with_no_semi = match stmts.last().unwrap() {
-                            Stmt::Expr(_, semi) => semi.is_none(),
-                            Stmt::Macro(_) => todo!(),
-                            _ => false,
-                        };
-                        if is_expr_with_no_semi {
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                }
-                Expr::Block(_) => true,
-                Expr::Match(_) => true,
-                _ => false,
-            };
-
-            let inputs = expr_closure
-                .inputs
-                .iter()
-                .map(|input| match input {
-                    Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                    Pat::Tuple(_) => todo!(),
-                    Pat::Type(pat_type) => {
-                        let name = match &*pat_type.pat {
-                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                            _ => todo!(),
-                        };
-                        camel(name)
-                    }
-                    other => {
-                        dbg!(other);
-                        todo!()
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let (body_stmts, return_type) = match &*expr_closure.body {
-                Expr::Block(expr_block) => {
-                    parse_fn_body_stmts(false, &expr_block.block.stmts, global_data, current_module)
-                }
-                Expr::Async(expr_async) => {
-                    parse_fn_body_stmts(false, &expr_async.block.stmts, global_data, current_module)
-                }
-                Expr::Match(expr_match) => {
-                    let (expr, type_) =
-                        handle_expr_match(expr_match, true, global_data, current_module);
-                    (vec![JsStmt::Expr(expr, false)], type_)
-                }
-                other => {
-                    let (expr, type_) = handle_expr(other, global_data, current_module);
-                    (vec![JsStmt::Expr(expr, false)], type_)
-                }
-            };
-
-            (
-                JsExpr::ArrowFn(async_, block, inputs, body_stmts),
-                return_type,
-            )
+            handle_expr_closure(expr_closure, global_data, current_module)
         }
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
@@ -10360,23 +10550,37 @@ fn handle_expr(
                 Expr::Let(_) => todo!(),
                 _ => {}
             }
+
+            let mut global_data_scope = GlobalDataScope::default();
+            global_data_scope.look_in_outer_scope = true;
+            global_data.scopes.push(global_data_scope);
+            // TODO block needs to use something like parse_fn_body to be able to return the type
+
+            // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
+            // TODO For now assume first block return types
+            let (mut succeed_stmts, types): (Vec<_>, Vec<_>) = expr_if
+                .then_branch
+                .stmts
+                .iter()
+                .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                .unzip();
+
+            let scope = global_data.scopes.pop().unwrap();
+            update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
+
             // TODO handle same as expr::block
+
             (
                 JsExpr::If(JsIf {
                     assignment: None,
                     declare_var: false,
                     condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module).0),
-                    succeed: expr_if
-                        .then_branch
-                        .stmts
-                        .iter()
-                        .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
-                        .collect::<Vec<_>>(),
+                    succeed: succeed_stmts,
                     fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
                         Box::new(handle_expr(&*expr, global_data, current_module).0)
                     }),
                 }),
-                todo!(), // RustType::Todo,
+                types.last().unwrap().clone(),
             )
         }
         Expr::Index(expr_index) => {
@@ -10874,7 +11078,7 @@ fn handle_expr_match(
         handle_expr(&*expr_match.expr, global_data, current_module);
 
     // Fold match arms into if else statements
-    // NOTE some arms might return never/unreachable so we can't just rely on eg getting the type from the first or last arm, we need to look through them all until we find a type which is not never/unreachable
+    // NOTE some arms might return never/unreachable (ie throw) so we can't just rely on eg getting the type from the first or last arm, we need to look through them all until we find a type which is not never/unreachable
     let (if_expr, rust_type) = expr_match.arms.iter().rev().fold(
         (
             JsExpr::ThrowError("couldn't match enum variant".to_string()),

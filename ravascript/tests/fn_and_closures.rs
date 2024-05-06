@@ -55,7 +55,7 @@ var _closure6 = async (arg) => {
 }
 var _closure7 = (arg) => {
   var ifTempAssignment;
-  if (arg.ge(0)) {
+  if (arg >= 0) {
     ifTempAssignment = "positive";
   } else {
     var _thing = 5;
@@ -103,10 +103,10 @@ async fn function_returns_if_else_if_else() {
         r#"
         var _closure = (arg) => {
             var ifTempAssignment;
-            if (arg.ge(0)) {
+            if (arg >= 0) {
                 var _thing = 5;
                 ifTempAssignment = "positive";
-            } else if (arg.eq(0)) {
+            } else if (arg === 0) {
                 ifTempAssignment = "zero";
             } else {
                 ifTempAssignment = "negative";
@@ -121,26 +121,44 @@ async fn function_returns_if_else_if_else() {
 #[tokio::test]
 async fn closure_return_match() {
     let actual = r2j_block!({
-        let _closure = |arg: Option<i32>| match arg {
-            Some(num) => {
+        enum Number {
+            Some(i32),
+            None,
+        }
+        let _closure = |arg: Number| match arg {
+            Number::Some(num) => {
                 let sum = num + 5;
                 sum
             }
-            None => 0,
+            Number::None => 0,
         };
     });
-    let expected = r#"var _closure = (arg) => {
-  var ifTempAssignment;
-  if (arg.id === Option.someId) {
-    var [num] = arg.data;
-    var sum = num.add(5);
-    ifTempAssignment = sum;
-  } else if (arg.id === Option.noneId) {
-    ifTempAssignment = 0;
-  } else {
-    throw new Error("couldn't match enum variant");
-  }
-  return ifTempAssignment;
-};"#;
+    let expected = format_js(
+        r#"class Number {
+            static someId = "Some";
+            static noneId = "None";
+            static None = new Number("None", null);
+            constructor(id, data) {
+              this.id = id;
+              this.data = data;
+            }
+            static Some(arg_0) {
+              return new Number("Some", [arg_0]);
+            }
+          }
+          var _closure = (arg) => {
+          var ifTempAssignment;
+          if (arg.id === Number.someId) {
+            var [num] = arg.data;
+            var sum = num + 5;
+            ifTempAssignment = sum;
+          } else if (arg.id === Number.noneId) {
+            ifTempAssignment = 0;
+          } else {
+            throw new Error("couldn't match enum variant");
+          }
+          return ifTempAssignment;
+        };"#,
+    );
     assert_eq!(expected, actual);
 }
