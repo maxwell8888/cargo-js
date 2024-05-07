@@ -125,48 +125,48 @@ async fn ownership_mut() {
             num
         }
         let bar = add_one(&mut foo);
-        assert_eq!(*bar, 6);
+        assert!(*bar == 6);
         *bar += 1;
-        assert_eq!(*bar, 7);
-        assert_eq!(foo, 7);
+        assert!(*bar == 7);
+        assert!(foo == 7);
 
         let mut baz = 4;
         let mut baz_two = baz;
         baz_two += 1;
-        assert_eq!(baz, 4);
-        assert_eq!(baz_two, 5);
+        assert!(baz == 4);
+        assert!(baz_two == 5);
 
         let five = &mut 5;
         *five += 1;
         let six = five;
-        assert_eq!(*six, 6);
+        assert!(*six == 6);
     });
 
     let expected = concat!(
-        include_str!("string_prototype_extensions.js"),
-        "\n",
-        include_str!("number_prototype_extensions.js"),
-        "\n",
-        include_str!("rust_integer_prelude.js"),
+        "class RustInteger {
+            constructor(inner) {
+                this.inner = inner;
+            }
+        }",
         r#"var foo = new RustInteger(5);
         function addOne(num) {
-            num.addAssign(1);
+            num.inner += 1;
             return num;
         }
         var bar = addOne(foo);
-        console.assert(bar.eq(6));
-        bar.addAssign(1);
-        console.assert(bar.eq(7));
-        console.assert(foo.eq(7));
+        console.assert(bar.inner === 6);
+        bar.inner += 1;
+        console.assert(bar.inner === 7);
+        console.assert(foo.inner === 7);
         var baz = new RustInteger(4);
-        var bazTwo = baz.copy();
-        bazTwo.addAssign(1);
-        console.assert(baz.eq(4));
-        console.assert(bazTwo.eq(5));
+        var bazTwo = new RustInteger(baz.inner);
+        bazTwo.inner += 1;
+        console.assert(baz.inner === 4);
+        console.assert(bazTwo.inner === 5);
         var five = new RustInteger(5);
-        five.addAssign(1);
+        five.inner += 1;
         var six = five;
-        console.assert(six.eq(6));
+        console.assert(six.inner === 6);
         "#
     );
 
