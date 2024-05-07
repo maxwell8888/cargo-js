@@ -2446,15 +2446,19 @@ fn handle_item_fn(
                                 RustType::Unit => todo!(),
                                 RustType::I32 => {
                                     global_data.rust_prelude_types.rust_integer = true;
+                                    // JsExpr::New(
+                                    //     vec!["RustInteger".to_string()],
+                                    //     vec![JsExpr::MethodCall(
+                                    //         Box::new(JsExpr::Path(vec![pat_ident
+                                    //             .ident
+                                    //             .to_string()])),
+                                    //         "inner".to_string(),
+                                    //         Vec::new(),
+                                    //     )],
+                                    // )
                                     JsExpr::New(
                                         vec!["RustInteger".to_string()],
-                                        vec![JsExpr::MethodCall(
-                                            Box::new(JsExpr::Path(vec![pat_ident
-                                                .ident
-                                                .to_string()])),
-                                            "inner".to_string(),
-                                            Vec::new(),
-                                        )],
+                                        vec![JsExpr::Path(vec![pat_ident.ident.to_string()])],
                                     )
                                 }
                                 RustType::F32 => todo!(),
@@ -4492,7 +4496,7 @@ impl RustType {
             RustType::String => false,
             RustType::Option(_) => todo!(),
             RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _) => todo!(),
+            RustType::StructOrEnum(_, _, _) => false,
             RustType::Vec(_) => todo!(),
             RustType::Array(_) => todo!(),
             RustType::Tuple(_) => todo!(),
@@ -7997,6 +8001,7 @@ fn parse_fn_body_stmts(
                             js_stmts.push(stmt);
                             return_type = Some(type_);
                         } else {
+                            // TODO should be using same code to parse Expr::If as elsewhere in code
                             let (condition, type_) =
                                 handle_expr(&*expr_if.cond, global_data, current_module);
                             let condition = Box::new(condition);
@@ -8048,6 +8053,7 @@ fn parse_fn_body_stmts(
                             && expr_path.path.segments.len() == 1
                             && semi.is_none() =>
                     {
+                        // NOTE a len=1 path could also be a const or a fn
                         let var_name = expr_path.path.segments.first().unwrap().ident.to_string();
                         let var_info = global_data
                             .scopes
@@ -8057,33 +8063,47 @@ fn parse_fn_body_stmts(
                             .unwrap();
                         let mut js_var = JsExpr::Path(vec![var_name]);
                         if var_info.mut_ {
-                            js_var =
-                                JsExpr::MethodCall(Box::new(js_var), "inner".to_string(), vec![])
+                            js_var = JsExpr::Field(Box::new(js_var), "inner".to_string())
                         }
+                        let stmt = JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true);
                         // Lookup path to get return type
-                        todo!();
                         // JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
+                        js_stmts.push(stmt);
+                        return_type = Some(var_info.type_.clone());
                     }
-                    Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
-                        // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
-                        // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
-                        // The problem is we need to know `returns_non_mut_ref_val`?
+                    // Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
+                    //     // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
+                    //     // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
+                    //     // The problem is we need to know `returns_non_mut_ref_val`?
 
-                        let (expr, type_) =
-                            handle_expr(&*expr_unary.expr, global_data, current_module);
-                        // return_type = type_;
+                    //     let (expr, type_) =
+                    //         handle_expr(&*expr_unary.expr, global_data, current_module);
+                    //     // return_type = type_;
 
-                        js_stmts.push(JsStmt::Expr(expr, true));
-                        return_type = Some(type_);
-                        // (JsStmt::Expr(expr, false), type_)
-                    }
+                    //     js_stmts.push(JsStmt::Expr(expr, true));
+                    //     return_type = Some(type_);
+                    //     // (JsStmt::Expr(expr, false), type_)
+                    // }
                     _ => {
                         if semi.is_some() {
                             let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
                             js_stmts.push(stmt);
                             return_type = Some(type_);
                         } else {
-                            let (js_expr, type_) = handle_expr(expr, global_data, current_module);
+                            let (mut js_expr, type_) =
+                                handle_expr(expr, global_data, current_module);
+                            // Is the thing being returned a JS primative mut var or &mut (ie has a RustInteger wrapper)? in which case we need to get the inner value if `returns_non_mut_ref_val` is true
+
+                            // TODO leave false for now until I clean up/refactor this code since this `is_js_primative_mut_var` should get caught be the Expr::Path branch
+                            let is_js_primative_mut_var = false;
+                            let is_js_primative_mut_ref = type_.is_mut_ref_of_js_primative();
+
+                            if returns_non_mut_ref_val
+                                && (is_js_primative_mut_var || is_js_primative_mut_ref)
+                            {
+                                js_expr = JsExpr::Field(Box::new(js_expr), "inner".to_string());
+                            }
+
                             let return_expr = if is_arrow_fn && is_single_expr_return {
                                 JsStmt::Expr(js_expr, true)
                             } else {
@@ -8238,12 +8258,12 @@ fn handle_expr_and_stmt_macro(
                             .map_or((false, false, false), |ScopedVar { name, mut_, type_ }| {
                                 let is_primative = match type_ {
                                     RustType::Todo => {
-                                        global_data
-                                            .rust_prelude_types
-                                            .number_prototype_extensions = true;
-                                        global_data
-                                            .rust_prelude_types
-                                            .string_prototype_extensions = true;
+                                        // global_data
+                                        //     .rust_prelude_types
+                                        //     .number_prototype_extensions = true;
+                                        // global_data
+                                        //     .rust_prelude_types
+                                        //     .string_prototype_extensions = true;
                                         false
                                     }
                                     RustType::Unit => true,
@@ -8286,8 +8306,8 @@ fn handle_expr_and_stmt_macro(
             };
 
             let mut equality_check = if !lhs_is_primative || lhs_is_mut || lhs_is_mut_ref {
-                global_data.rust_prelude_types.number_prototype_extensions = true;
-                global_data.rust_prelude_types.string_prototype_extensions = true;
+                // global_data.rust_prelude_types.number_prototype_extensions = true;
+                // global_data.rust_prelude_types.string_prototype_extensions = true;
                 JsExpr::MethodCall(Box::new(lhs.0), "eq".to_string(), vec![rhs.0])
             } else {
                 JsExpr::Binary(Box::new(lhs.0), JsOp::Eq, Box::new(rhs.0))
