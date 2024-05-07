@@ -12,65 +12,65 @@ use utils::*;
 
 #[tokio::test]
 async fn mutating_integers() {
+    setup_tracing();
     let actual = r2j_block_with_prelude!({
         /// increments a mutable reference to an int
         fn add_one(num: &mut i32) -> &mut i32 {
-            assert_eq!(*num, 0);
+            assert!(*num == 0);
             *num = 1;
-            assert_eq!(*num, 1);
+            assert!(*num == 1);
             num
         }
         let mut orig_num = 0;
-        assert_eq!(orig_num, 0);
+        assert!(orig_num == 0);
         {
             let mut result = add_one(&mut orig_num);
-            assert_eq!(*result, 1);
+            assert!(*result == 1);
             // TODO what if result was a ref to a struct (copy or move)?
             let result_copy = *result;
-            assert_eq!(result_copy, 1);
+            assert!(result_copy == 1);
             *result += 1;
-            assert_eq!(result_copy, 1);
-            assert_eq!(*result, 2);
+            assert!(result_copy == 1);
+            assert!(*result == 2);
             let six = &mut 6;
             // TODO can't use `&mut 6` after this because it is single ownership so `*result = 6` and `result = &mut 6` can be handled/parsed the same
             result = six;
-            assert_eq!(*result, 6);
+            assert!(*result == 6);
         }
-        assert_eq!(orig_num, 2);
+        assert!(orig_num == 2);
         orig_num += 1;
-        assert_eq!(orig_num, 3);
+        assert!(orig_num == 3);
     });
 
     let expected = format_js(concat!(
-        include_str!("string_prototype_extensions.js"),
-        "\n",
-        include_str!("number_prototype_extensions.js"),
-        "\n",
-        include_str!("rust_integer_prelude.js"),
-        // include_str!("rust_bool_prelude.js"),
-        r#"function addOne(num) {
-            console.assert(num.eq(0));
-            num.derefAssign(1);
-            console.assert(num.eq(1));
+        r#"class RustInteger {
+            constructor(inner) {
+                this.inner = inner;
+            }
+        }
+        function addOne(num) {
+            console.assert(num.inner === 0);
+            num.inner = 1;
+            console.assert(num.inner === 1);
             return num;
         }
         var origNum = new RustInteger(0);
-        console.assert(origNum.eq(0));
+        console.assert(origNum.inner === 0);
         {
             var result = addOne(origNum);
-            console.assert(result.eq(1));
-            var resultCopy = result.copy();
-            console.assert(resultCopy.eq(1));
-            result.addAssign(1);
-            console.assert(resultCopy.eq(1));
-            console.assert(result.eq(2));
+            console.assert(result.inner === 1);
+            var resultCopy = result.inner;
+            console.assert(resultCopy === 1);
+            result.inner += 1;
+            console.assert(resultCopy === 1);
+            console.assert(result.inner === 2);
             var six = new RustInteger(6);
             result = six;
-            console.assert(result.eq(6));
+            console.assert(result.inner === 6);
         }
-        console.assert(origNum.eq(2));
-        origNum.addAssign(1);
-        console.assert(origNum.eq(3));
+        console.assert(origNum.inner === 2);
+        origNum.inner += 1;
+        console.assert(origNum.inner === 3);
         "#
     ));
     assert_eq!(expected, actual);
