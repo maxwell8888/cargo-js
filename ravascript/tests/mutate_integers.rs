@@ -81,34 +81,34 @@ async fn mutating_integers() {
 async fn deref_vs_normal_assign() {
     let actual = r2j_block_with_prelude!({
         let mut result = &1;
-        assert_eq!(*result, 1);
+        assert!(*result == 1);
         let result_copy = *result;
-        assert_eq!(result_copy, 1);
+        assert!(result_copy == 1);
         let mut six = &6;
         // TODO can't use six after this because it is single ownership, but try similar thing with &6 to understand *result = 1 vs result = &1
         result = six;
-        assert_eq!(*result, 6);
+        assert!(*result == 6);
         six = &10;
-        assert_eq!(*six, 10);
-        assert_eq!(*result, 6);
+        assert!(*six == 10);
+        assert!(*result == 6);
     });
 
     let expected = concat!(
-        include_str!("string_prototype_extensions.js"),
-        "\n",
-        include_str!("number_prototype_extensions.js"),
-        "\n",
-        include_str!("rust_integer_prelude.js"),
+        "class RustInteger {
+            constructor(inner) {
+                this.inner = inner;
+            }
+        }",
         r#"var result = new RustInteger(1);
-        console.assert(result.eq(1));
-        var resultCopy = result.inner();
+        console.assert(result.inner === 1);
+        var resultCopy = result.inner;
         console.assert(resultCopy === 1);
         var six = new RustInteger(6);
-        result = six;
-        console.assert(result.eq(6));
-        six = 10;
-        console.assert(six.eq(10));
-        console.assert(result.eq(6));
+        result.inner = six.inner;
+        console.assert(result.inner === 6);
+        six.inner = 10;
+        console.assert(six.inner === 10);
+        console.assert(result.inner === 6);
         "#
     );
 

@@ -9997,6 +9997,8 @@ fn handle_expr_path_inner(
         },
         _ => false,
     };
+
+    // TODO all this logic could be cleaned up and/or made clearer
     let final_expr = if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
         JsExpr::Path(segs)
     } else {
