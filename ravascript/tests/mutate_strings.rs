@@ -12,6 +12,7 @@ use utils::*;
 
 #[tokio::test]
 async fn mutating_strings() {
+    setup_tracing();
     let actual = r2j_block_with_prelude!({
         fn add_one(text: &mut String) -> &mut String {
             assert!(*text == "one");
@@ -19,24 +20,24 @@ async fn mutating_strings() {
             assert!(*text == "two");
             text
         }
-        // let mut orig_text = "one".to_string();
-        // {
-        //     let mut result = add_one(&mut orig_text);
-        //     assert!(*result == "two");
-        //     // TODO what if result was a ref to a struct (copy or move)?
-        //     let result_copy = result.clone();
-        //     assert!(result_copy == "two");
-        //     *result += "three";
-        //     assert!(result_copy == "two");
-        //     assert!(*result == "twothree");
-        //     let four = &mut "four".to_string();
-        //     // TODO can't use `&mut 6` after this because it is single ownership so `*result = 6` and `result = &mut 6` can be handled/parsed the same
-        //     result = four;
-        //     assert!(*result == "four");
-        // }
-        // assert!(orig_text == "twothree");
-        // orig_text.push_str("four");
-        // assert!(orig_text == "twothreefour");
+        let mut orig_text = "one".to_string();
+        {
+            let mut result = add_one(&mut orig_text);
+            assert!(*result == "two");
+            // TODO what if result was a ref to a struct (copy or move)?
+            let result_copy = result.clone();
+            assert!(result_copy == "two");
+            *result += "three";
+            assert!(result_copy == "two");
+            assert!(*result == "twothree");
+            let four = &mut "four".to_string();
+            // TODO can't use `&mut 6` after this because it is single ownership so `*result = 6` and `result = &mut 6` can be handled/parsed the same
+            result = four;
+            assert!(*result == "four");
+        }
+        assert!(orig_text == "twothree");
+        orig_text.push_str("four");
+        assert!(orig_text == "twothreefour");
     });
 
     // include_str!("rust_string_prelude.js"),
