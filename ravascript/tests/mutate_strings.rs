@@ -14,56 +14,61 @@ use utils::*;
 async fn mutating_strings() {
     let actual = r2j_block_with_prelude!({
         fn add_one(text: &mut String) -> &mut String {
-            assert_eq!(*text, "one");
+            assert!(*text == "one");
             *text = "two".to_string();
-            assert_eq!(*text, "two");
+            assert!(*text == "two");
             text
         }
-        let mut orig_text = "one".to_string();
-        {
-            let mut result = add_one(&mut orig_text);
-            assert_eq!(*result, "two");
-            // TODO what if result was a ref to a struct (copy or move)?
-            let result_copy = result.clone();
-            assert_eq!(result_copy, "two");
-            *result += "three";
-            assert_eq!(result_copy, "two");
-            assert_eq!(*result, "twothree");
-            let four = &mut "four".to_string();
-            // TODO can't use `&mut 6` after this because it is single ownership so `*result = 6` and `result = &mut 6` can be handled/parsed the same
-            result = four;
-            assert_eq!(*result, "four");
-        }
-        assert_eq!(orig_text, "twothree");
-        orig_text.push_str("four");
-        assert_eq!(orig_text, "twothreefour");
+        // let mut orig_text = "one".to_string();
+        // {
+        //     let mut result = add_one(&mut orig_text);
+        //     assert!(*result == "two");
+        //     // TODO what if result was a ref to a struct (copy or move)?
+        //     let result_copy = result.clone();
+        //     assert!(result_copy == "two");
+        //     *result += "three";
+        //     assert!(result_copy == "two");
+        //     assert!(*result == "twothree");
+        //     let four = &mut "four".to_string();
+        //     // TODO can't use `&mut 6` after this because it is single ownership so `*result = 6` and `result = &mut 6` can be handled/parsed the same
+        //     result = four;
+        //     assert!(*result == "four");
+        // }
+        // assert!(orig_text == "twothree");
+        // orig_text.push_str("four");
+        // assert!(orig_text == "twothreefour");
     });
 
+    // include_str!("rust_string_prelude.js"),
+    // include_str!("rust_bool_prelude.js"),
     let expected = format_js(concat!(
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        "class RustString {
+            constructor(inner) {
+                this.inner = inner;
+            }
+        }",
         r#"function addOne(text) {
-            console.assert(text.eq("one"));
-            text.derefAssign("two");
-            console.assert(text.eq("two"));
+            console.assert(text.inner === "one");
+            text.inner = "two";
+            console.assert(text.inner === "two");
             return text;
         }
         var origText = new RustString("one");
         {
             var result = addOne(origText);
-            console.assert(result.eq("two"));
-            var resultCopy = result.clone();
-            console.assert(resultCopy.eq("two"));
-            result.addAssign("three");
-            console.assert(resultCopy.eq("two"));
-            console.assert(result.eq("twothree"));
+            console.assert(result.inner === "two");
+            var resultCopy = result.inner;
+            console.assert(resultCopy === "two");
+            result.inner += "three";
+            console.assert(resultCopy === "two");
+            console.assert(result.inner === "twothree");
             var four = new RustString("four");
             result = four;
-            console.assert(result.eq("four"));
+            console.assert(result.inner === "four");
         }
-        console.assert(origText.eq("twothree"));
-        origText.pushStr("four");
-        console.assert(origText.eq("twothreefour"));
+        console.assert(origText.inner === "twothree");
+        origText.inner += "four";
+        console.assert(origText.inner === "twothreefour");
         "#
     ));
 

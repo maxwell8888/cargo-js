@@ -722,7 +722,7 @@ fn parse_fn_input_or_field(
     parent_item_definition_generics: &Vec<RustTypeParam>,
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &Vec<String>,
-    global_data: &GlobalData,
+    global_data: &mut GlobalData,
 ) -> RustType {
     debug!(type_ = ?quote! { #type_ }.to_string(), "parse_fn_input_or_field");
     match type_ {
@@ -854,6 +854,7 @@ fn parse_fn_input_or_field(
                                 &vec![struct_or_enum_name.to_string()],
                             )
                             .unwrap();
+
                         // Look to see if any of the item's type params have been specified (they *must* have been specified, because you can't use a type without specifiying prodviding it's type params so they must either be concrete types, or use one of the parents params)
                         let item_type_params = match &seg.arguments {
                             PathArguments::None => Vec::new(),
@@ -916,11 +917,26 @@ fn parse_fn_input_or_field(
                         //     StructOrEnumSynObject::Struct(_) => RustType::StructOrEnum(item_type_params, item_module_path, item_definition.ident.to_string()),
                         //     StructOrEnumSynObject::Enum(_) => RustType::Enum(item_type_params, item_module_path, item_definition.ident.to_string()),
                         // }
-                        RustType::StructOrEnum(
-                            item_type_params,
-                            item_definition_module_path,
-                            item_definition.ident.to_string(),
-                        )
+
+                        if item_definition_module_path
+                            == Some(vec!["prelude_special_case".to_string()])
+                        {
+                            if item_definition.ident == "i32" {
+                                global_data.rust_prelude_types.rust_integer = true;
+                                RustType::I32
+                            } else if item_definition.ident == "String" {
+                                global_data.rust_prelude_types.rust_string = true;
+                                RustType::String
+                            } else {
+                                todo!()
+                            }
+                        } else {
+                            RustType::StructOrEnum(
+                                item_type_params,
+                                item_definition_module_path,
+                                item_definition.ident.to_string(),
+                            )
+                        }
                     }
                 }
             } else {
@@ -2104,7 +2120,7 @@ fn handle_expr_closure(
         };
 
         let input_type = if let Some(pat_type) = pat_type {
-            parse_fn_input_or_field(&pat_type, &Vec::new(), current_module, &global_data)
+            parse_fn_input_or_field(&pat_type, &Vec::new(), current_module, global_data)
         } else {
             todo!();
             // Could in theory return Uknown and resolve the type later, but even Rust will often error with:
@@ -2283,12 +2299,9 @@ fn handle_item_fn(
         .filter_map(|input| match input {
             FnArg::Receiver(_) => None,
             FnArg::Typed(pat_type) => Some(match &*pat_type.pat {
-                Pat::Ident(pat_ident) => parse_fn_input_or_field(
-                    &*pat_type.ty,
-                    &Vec::new(),
-                    current_module,
-                    &global_data,
-                ),
+                Pat::Ident(pat_ident) => {
+                    parse_fn_input_or_field(&*pat_type.ty, &Vec::new(), current_module, global_data)
+                }
                 _ => {
                     todo!();
                 }
@@ -2326,7 +2339,6 @@ fn handle_item_fn(
     }
 
     // Create new scope for fn vars
-    info!("handle_item_fn: {:?}", &item_fn.sig.ident);
     global_data.scopes.push(GlobalDataScope::default());
 
     // record which vars are mut and/or &mut
@@ -2358,7 +2370,7 @@ fn handle_item_fn(
                         &*pat_type.ty,
                         &Vec::new(),
                         current_module,
-                        &global_data,
+                        global_data,
                     );
                     match &input_type {
                         // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
@@ -2548,8 +2560,6 @@ fn handle_item_fn(
     };
 
     // pop fn scope
-    info!("with new scope before popping it:");
-    // dbg!(&global_data.scopes);
     global_data.scopes.pop();
 
     stmt
@@ -3219,7 +3229,7 @@ fn handle_item_impl(
                                 &*pat_type.ty,
                                 &fn_generics,
                                 current_module_path,
-                                &global_data,
+                                global_data,
                             );
                             let scoped_var = ScopedVar {
                                 name: ident,
@@ -3811,7 +3821,7 @@ fn handle_item_struct(
             generics,
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields,
-                syn_object: item_struct.clone(),
+                syn_object: Some(item_struct.clone()),
             }),
         });
     }
@@ -4183,6 +4193,7 @@ struct RustPreludeTypes {
     // New approach
     // Basic `RustInteger`
     rust_integer: bool,
+    rust_string: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -4590,7 +4601,7 @@ enum StructFieldInfo {
 #[derive(Debug, Clone)]
 struct StructDefinitionInfo {
     fields: StructFieldInfo,
-    syn_object: ItemStruct,
+    syn_object: Option<ItemStruct>,
 }
 
 #[derive(Debug, Clone)]
@@ -4918,6 +4929,7 @@ struct GlobalData {
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
+    rust_prelude_definitions: Vec<(String, ItemDefinition)>,
     /// (trait name, impl item)
     default_trait_impls: Vec<(String, JsImplItem)>,
     /// Used for working out which `default_trait_impls` elements to add to which classes
@@ -4939,6 +4951,23 @@ struct GlobalData {
 }
 impl GlobalData {
     fn new(crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
+        // Create prelude definitions
+        let i32_def = ItemDefinition {
+            ident: "i32".to_string(),
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                fields: StructFieldInfo::RegularStruct(Vec::new()),
+                syn_object: None,
+            }),
+        };
+        let string_def = ItemDefinition {
+            ident: "String".to_string(),
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                fields: StructFieldInfo::RegularStruct(Vec::new()),
+                syn_object: None,
+            }),
+        };
         GlobalData {
             crate_path,
             modules: Vec::new(),
@@ -4949,6 +4978,10 @@ impl GlobalData {
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
+            rust_prelude_definitions: vec![
+                ("i32".to_string(), i32_def),
+                ("String".to_string(), string_def),
+            ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
             duplicates,
@@ -5212,7 +5245,6 @@ impl GlobalData {
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
-            debug!(lookup_item_definition_any_module = ?current_module_path);
             let current_module = self
                 .modules
                 .iter()
@@ -5233,6 +5265,17 @@ impl GlobalData {
                 current_module_path,
                 current_module_path,
             );
+
+            if item_module_path == vec!["prelude_special_case".to_string()] {
+                // Get prelude item definitions
+                let (_name, def) = self
+                    .rust_prelude_definitions
+                    .iter()
+                    .find(|(name, def)| name == &item_path[0].ident)
+                    .unwrap();
+                return Some((Some(item_module_path), def.clone()));
+            }
+
             let item_module = self
                 .modules
                 .iter()
@@ -6138,7 +6181,7 @@ fn extract_data_populate_item_definitions(
                         struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
                             StructDefinitionInfo {
                                 fields,
-                                syn_object: item_struct.clone(),
+                                syn_object: Some(item_struct.clone()),
                             },
                         ),
                     });
@@ -6186,6 +6229,18 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             export: false,
             tuple_struct: false,
             name: "RustInteger".to_string(),
+            inputs: vec!["inner".to_string()],
+            static_fields: Vec::new(),
+            methods: Vec::new(),
+        });
+        prelude_stmts.push(js_class);
+    }
+    if rust_prelude_types.rust_string {
+        let js_class = JsStmt::Class(JsClass {
+            public: false,
+            export: false,
+            tuple_struct: false,
+            name: "RustString".to_string(),
             inputs: vec!["inner".to_string()],
             static_fields: Vec::new(),
             methods: Vec::new(),
@@ -8339,13 +8394,6 @@ fn handle_expr_method_call(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> (JsExpr, RustType) {
-    // TODO how/can we get in-scope items from global_data? would also need item info like methods and their return signatures
-    let var_name = match &*expr_method_call.receiver {
-        Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-            expr_path.path.segments.first().unwrap().ident.to_string()
-        }
-        _ => todo!(),
-    };
     let method_name = expr_method_call.method.to_string();
     debug!(method_name = ?method_name, "handle_expr_method_call");
 
@@ -8392,7 +8440,13 @@ fn handle_expr_method_call(
         RustType::I32 => todo!(),
         RustType::F32 => todo!(),
         RustType::Bool => todo!(),
-        RustType::String => todo!(),
+        RustType::String => {
+            if method_name == "to_string" {
+                return (receiver, RustType::String);
+            } else {
+                todo!()
+            }
+        }
         RustType::Option(_) => todo!(),
         RustType::Result(_) => todo!(),
         RustType::StructOrEnum(item_type_params, item_module_path, item_name) => {
@@ -8598,11 +8652,6 @@ fn handle_expr_method_call(
         RustType::Fn(_, _, _, _) => todo!(),
     };
 
-    if let JsExpr::LitStr(_) = receiver {
-        if method_name == "to_string" {
-            return (receiver, RustType::String);
-        }
-    }
     if let JsExpr::Path(path) = &receiver {
         if path.len() == 2 {
             if path[0] == "JSON" && path[1] == "parse" {
@@ -9599,10 +9648,19 @@ fn get_path_without_namespacing(
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
     } else {
-        // dbg!(module);
-        dbg!(current_module);
-        dbg!(segs);
-        panic!()
+        // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
+        assert!(current_module == original_module);
+        assert!(segs.len() == 1);
+        let seg = &segs[0];
+        if seg.ident == "i32" || seg.ident == "String" {
+            // TODO properly encode "prelude_special_case" in a type rather than a String
+            (vec!["prelude_special_case".to_string()], segs, false)
+        } else {
+            // dbg!(module);
+            dbg!(current_module);
+            dbg!(segs);
+            panic!()
+        }
     }
 }
 
