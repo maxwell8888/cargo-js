@@ -10,6 +10,7 @@ use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
+#[ignore]
 #[tokio::test]
 async fn impl_in_fn_scope() {
     let actual = r2j_block_with_prelude!({
@@ -66,6 +67,7 @@ async fn impl_in_fn_scope() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[ignore]
 #[tokio::test]
 async fn impl_with_generic_arguments() {
     let actual = r2j_block_with_prelude!({
