@@ -718,6 +718,7 @@ enum TypeOrVar {
 /// TODO handle types with len > 1
 fn parse_fn_input_or_field(
     type_: &Type,
+    has_mut_keyword: bool,
     // TODO if this is for passing types used in a parent item definition, surely the parent items generics cannot have been made concrete, in which case this should be &Vec<String> instead of &Vec<RustTypeParam>?
     parent_item_definition_generics: &Vec<RustTypeParam>,
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
@@ -828,6 +829,7 @@ fn parse_fn_input_or_field(
                                     GenericArgument::Lifetime(_) => todo!(),
                                     GenericArgument::Type(type_) => parse_fn_input_or_field(
                                         type_,
+                                        has_mut_keyword,
                                         parent_item_definition_generics,
                                         current_module,
                                         global_data,
@@ -889,6 +891,7 @@ fn parse_fn_input_or_field(
                                                 // Otherwise we have another type we need to parse
                                                 let param_rust_type = parse_fn_input_or_field(
                                                     type_,
+                                                    has_mut_keyword,
                                                     parent_item_definition_generics,
                                                     current_module,
                                                     global_data,
@@ -922,12 +925,16 @@ fn parse_fn_input_or_field(
                             == Some(vec!["prelude_special_case".to_string()])
                         {
                             if item_definition.ident == "i32" {
-                                global_data.rust_prelude_types.rust_integer = true;
+                                if has_mut_keyword {
+                                    global_data.rust_prelude_types.rust_integer = true;
+                                }
                                 RustType::I32
                             } else if item_definition.ident == "String"
                                 || item_definition.ident == "str"
                             {
-                                global_data.rust_prelude_types.rust_string = true;
+                                if has_mut_keyword {
+                                    global_data.rust_prelude_types.rust_string = true;
+                                }
                                 RustType::String
                             } else {
                                 todo!()
@@ -960,11 +967,23 @@ fn parse_fn_input_or_field(
             // })
             let type_ = parse_fn_input_or_field(
                 &type_reference.elem,
+                has_mut_keyword,
                 parent_item_definition_generics,
                 current_module,
                 global_data,
             );
             if type_reference.mutability.is_some() {
+                match type_ {
+                    RustType::I32 => {
+                        global_data.rust_prelude_types.rust_integer = true;
+                    }
+                    RustType::F32 => todo!(),
+                    RustType::Bool => todo!(),
+                    RustType::String => {
+                        global_data.rust_prelude_types.rust_string = true;
+                    }
+                    _ => {}
+                }
                 RustType::MutRef(Box::new(type_))
             } else {
                 // RustType::Ref(Box::new(type_))
@@ -2128,7 +2147,7 @@ fn handle_expr_closure(
         };
 
         let input_type = if let Some(pat_type) = pat_type {
-            parse_fn_input_or_field(&pat_type, &Vec::new(), current_module, global_data)
+            parse_fn_input_or_field(&pat_type, mutable, &Vec::new(), current_module, global_data)
         } else {
             todo!();
             // Could in theory return Uknown and resolve the type later, but even Rust will often error with:
@@ -2310,9 +2329,13 @@ fn handle_item_fn(
         .filter_map(|input| match input {
             FnArg::Receiver(_) => None,
             FnArg::Typed(pat_type) => Some(match &*pat_type.pat {
-                Pat::Ident(pat_ident) => {
-                    parse_fn_input_or_field(&*pat_type.ty, &Vec::new(), current_module, global_data)
-                }
+                Pat::Ident(pat_ident) => parse_fn_input_or_field(
+                    &*pat_type.ty,
+                    pat_ident.mutability.is_some(),
+                    &Vec::new(),
+                    current_module,
+                    global_data,
+                ),
                 _ => {
                     todo!();
                 }
@@ -2327,7 +2350,14 @@ fn handle_item_fn(
         return_type: match &item_fn.sig.output {
             ReturnType::Default => RustType::Unit,
             ReturnType::Type(_, type_) => {
-                parse_fn_input_or_field(type_, &rust_type_params, current_module, global_data)
+                // TODO Note we are passing false for has_mut_keyword because it doesn't apply to fn returns
+                parse_fn_input_or_field(
+                    type_,
+                    false,
+                    &rust_type_params,
+                    current_module,
+                    global_data,
+                )
             }
         },
     };
@@ -2379,6 +2409,7 @@ fn handle_item_fn(
                     };
                     let input_type = parse_fn_input_or_field(
                         &*pat_type.ty,
+                        pat_ident.mutability.is_some(),
                         &Vec::new(),
                         current_module,
                         global_data,
@@ -2609,6 +2640,8 @@ fn handle_item_const(
 
         let rust_type = parse_fn_input_or_field(
             &item_const.ty,
+            // TODO note mut isn't allowed for const so has_mut_keyword is false
+            false,
             &generics_type_params,
             current_module,
             global_data,
@@ -2707,8 +2740,14 @@ fn handle_item_enum(
                     .fields
                     .iter()
                     .map(|f| {
-                        let input_type =
-                            parse_fn_input_or_field(&f.ty, &generics, current_module, global_data);
+                        let input_type = parse_fn_input_or_field(
+                            &f.ty,
+                            // NOTE it is not possible to make variant args mut in the definition
+                            false,
+                            &generics,
+                            current_module,
+                            global_data,
+                        );
                         match &f.ident {
                             Some(input_name) => EnumVariantInputsInfo::Named {
                                 ident: input_name.to_string(),
@@ -3240,6 +3279,7 @@ fn handle_item_impl(
                             };
                             let rust_type = parse_fn_input_or_field(
                                 &*pat_type.ty,
+                                mut_,
                                 &fn_generics,
                                 current_module_path,
                                 global_data,
@@ -3447,6 +3487,10 @@ fn handle_item_impl(
                             FnArg::Receiver(_) => None,
                             FnArg::Typed(pat_type) => Some(parse_fn_input_or_field(
                                 &*pat_type.ty,
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                                    _ => todo!(),
+                                },
                                 &fn_rust_type_params,
                                 current_module_path,
                                 global_data,
@@ -3476,6 +3520,7 @@ fn handle_item_impl(
                             ReturnType::Default => RustType::Unit,
                             ReturnType::Type(_, type_) => parse_fn_input_or_field(
                                 &*type_,
+                                false,
                                 &fn_rust_type_params,
                                 current_module_path,
                                 global_data,
@@ -3803,6 +3848,8 @@ fn handle_item_struct(
                             f.ident.as_ref().unwrap().to_string(),
                             parse_fn_input_or_field(
                                 &f.ty,
+                                // NOTE cannot make struct arg definitions mut
+                                false,
                                 &generics_type_params,
                                 current_module_path,
                                 global_data,
@@ -3819,6 +3866,7 @@ fn handle_item_struct(
                     .map(|f| {
                         parse_fn_input_or_field(
                             &f.ty,
+                            false,
                             &generics_type_params,
                             current_module_path,
                             global_data,
@@ -8928,28 +8976,28 @@ fn handle_expr_call(
     let args_js_expr = args.iter().map(|a| a.0.clone()).collect::<Vec<_>>();
     let args_rust_types = args.iter().map(|a| a.1.clone()).collect::<Vec<_>>();
 
-    // handle tuple structs Some, Ok, Err
-    match &*expr_call.func {
-        Expr::Path(expr_path) => {
-            let path = expr_path
-                .path
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>();
-            let name = path.last().unwrap();
-            // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
-            if path.len() == 1
-                && name.chars().next().unwrap().is_ascii_uppercase()
-                && name != "Some"
-                && name != "Ok"
-                && name != "Err"
-            {
-                return (JsExpr::New(path, args_js_expr.clone()), RustType::Todo);
-            }
-        }
-        _ => {}
-    }
+    // // handle tuple structs Some, Ok, Err
+    // match &*expr_call.func {
+    //     Expr::Path(expr_path) => {
+    //         let path = expr_path
+    //             .path
+    //             .segments
+    //             .iter()
+    //             .map(|seg| seg.ident.to_string())
+    //             .collect::<Vec<_>>();
+    //         let name = path.last().unwrap();
+    //         // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
+    //         if path.len() == 1
+    //             && name.chars().next().unwrap().is_ascii_uppercase()
+    //             && name != "Some"
+    //             && name != "Ok"
+    //             && name != "Err"
+    //         {
+    //             return (JsExpr::New(path, args_js_expr.clone()), RustType::Todo);
+    //         }
+    //     }
+    //     _ => {}
+    // }
 
     // record if using Some/Option
     match &*expr_call.func {
@@ -8977,7 +9025,7 @@ fn handle_expr_call(
             let (expr, partial_rust_type) =
                 handle_expr_path(expr_path, global_data, current_module, false);
 
-            let rust_type = match partial_rust_type {
+            let rust_type = match partial_rust_type.clone() {
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
                 PartialRustType::StructIdent(type_params, module_path, struct_name) => {
                     let item_def =
@@ -9178,11 +9226,19 @@ fn handle_expr_call(
             //         _ => rust_type,
             //     }
             // }
-
-            (
-                JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
-                rust_type,
-            )
+            match partial_rust_type {
+                PartialRustType::StructIdent(_, _, _) => {
+                    let js_path = match expr {
+                        JsExpr::Path(path) => path,
+                        _ => todo!(),
+                    };
+                    (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
+                }
+                PartialRustType::EnumVariantIdent(_, _, _, _) | PartialRustType::RustType(_) => (
+                    JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
+                    rust_type,
+                ),
+            }
         }
         // Expr::Path(expr_path)
         //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
@@ -10901,19 +10957,39 @@ fn handle_expr(
                     };
                     (JsExpr::Field(Box::new(base_expr), camel(ident)), field_type)
                 }
-                Member::Unnamed(index) => match base_type {
-                    RustType::Tuple(tuple_types) => {
-                        let type_ = tuple_types[index.index as usize].clone();
-                        (
-                            JsExpr::Index(
-                                Box::new(base_expr),
-                                Box::new(JsExpr::LitInt(index.index as i32)),
-                            ),
-                            type_,
-                        )
-                    }
-                    _ => todo!(),
-                },
+                Member::Unnamed(index) => {
+                    let type_ = match base_type {
+                        RustType::Tuple(tuple_types) => tuple_types[index.index as usize].clone(),
+                        RustType::StructOrEnum(type_params, module_path, name) => {
+                            let item_definition = global_data
+                                .lookup_item_def_known_module_assert_not_func(&module_path, &name);
+                            match item_definition.struct_or_enum_info {
+                                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                    match struct_def_info.fields {
+                                        StructFieldInfo::UnitStruct => todo!(),
+                                        StructFieldInfo::TupleStruct(fields) => {
+                                            fields[index.index as usize].clone()
+                                        }
+                                        StructFieldInfo::RegularStruct(_) => todo!(),
+                                    }
+                                }
+                                StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                            }
+                        }
+                        _ => {
+                            dbg!(&expr);
+                            dbg!(&base_type);
+                            todo!()
+                        }
+                    };
+                    (
+                        JsExpr::Index(
+                            Box::new(base_expr),
+                            Box::new(JsExpr::LitInt(index.index as i32)),
+                        ),
+                        type_,
+                    )
+                }
             }
         }
         Expr::ForLoop(expr_for_loop) => (

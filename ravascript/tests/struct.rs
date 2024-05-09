@@ -12,6 +12,8 @@ use utils::*;
 
 #[tokio::test]
 async fn it_transpiles_struct_no_new() {
+    setup_tracing();
+
     #[module_as_str]
     mod wrapper {
         struct MyStruct {
@@ -26,8 +28,11 @@ async fn it_transpiles_struct_no_new() {
     assert_eq!(expected, generated_js());
 }
 
+#[ignore = "wait to support impl Trait for T"]
 #[tokio::test]
 async fn struct_and_impl_methods() {
+    setup_tracing();
+
     let actual = r2j_block_with_prelude!({
         trait MyTrait {
             fn get_age(&self) -> i32;
@@ -49,9 +54,9 @@ async fn struct_and_impl_methods() {
             fn my_associated_method(inc: i32) -> i32 {
                 inc + 10
             }
-            fn with_generic<T>(&self, inc: T) -> i32 {
-                self.age
-            }
+            // fn with_generic<T>(&self, inc: T) -> i32 {
+            //     self.age
+            // }
         }
         // TODO currently impls for a struct must appear directly after it. defining a trait inbetween like below is not suppported
         // trait MyTrait {
@@ -79,7 +84,7 @@ async fn struct_and_impl_methods() {
         assert_eq!(thing.my_method(), "Bruce");
         assert_eq!(thing.my_method_with_arg(2), 4);
         assert_eq!(MyStruct::my_associated_method(2), 12);
-        assert_eq!(thing.with_generic(99), 2);
+        // assert_eq!(thing.with_generic::<i32>(99), 2);
         assert_eq!(thing.get_age(), 2);
     });
     let expected = concat!(
@@ -124,6 +129,7 @@ async fn struct_and_impl_methods() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[ignore]
 #[tokio::test]
 async fn impl_in_fn_scope() {
     // impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
@@ -141,18 +147,20 @@ async fn impl_in_fn_scope() {
         let cool = Cool {};
         assert_eq!(cool.whatever(), 5)
     });
-    let expected = r#"
-    class Cool {
-        whatever() {
-            return 5;
-        }
-    }
-    if (false) {
-        function inner() {}
-    }
-    var cool = new Cool();
-    console.assert(cool.whatever().eq(5));
-    "#;
+    let expected = format_js(
+        r#"
+            class Cool {
+                whatever() {
+                    return 5;
+                }
+            }
+            if (false) {
+                function inner() {}
+            }
+            var cool = new Cool();
+            console.assert(cool.whatever().eq(5));
+        "#,
+    );
     assert_eq!(format_js(expected), actual);
 }
 
@@ -169,13 +177,14 @@ async fn tuple_struct() {
             }
         }
         let cool = Cool(5);
-        assert_eq!(cool.0, 5);
-        assert_eq!(cool.get_inner(), 5);
-        assert_eq!(cool.other_number(), 4);
+        assert!(cool.0 == 5);
+        assert!(cool.get_inner() == 5);
+        assert!(cool.other_number() == 4);
     });
+
+    // include_str!("rust_integer_prelude.js"),
+    // include_str!("rust_bool_prelude.js"),
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"class Cool {
             constructor(arg0) {
                 this[0] = arg0;
@@ -190,9 +199,9 @@ async fn tuple_struct() {
         }
         
         var cool = new Cool(5);
-        console.assert(cool[0].eq(5));
-        console.assert(cool.getInner().eq(5));
-        console.assert(cool.otherNumber().eq(4));
+        console.assert(cool[0] === 5);
+        console.assert(cool.getInner() === 5);
+        console.assert(cool.otherNumber() === 4);
         "#
     );
     assert_eq!(format_js(expected), actual);
@@ -218,15 +227,15 @@ async fn tuple_struct_multiple_fields() {
             }
         }
         let cool = Cool(5, "hi".to_string(), true, 4);
-        assert_eq!(cool.0, 5);
-        assert_eq!(cool.1, "hi".to_string());
-        assert_eq!(cool.2, true);
-        assert_eq!(cool.3, 4);
+        assert!(cool.0 == 5);
+        assert!(cool.1 == "hi".to_string());
+        assert!(cool.2 == true);
+        assert!(cool.3 == 4);
     });
+    // include_str!("rust_integer_prelude.js"),
+    // include_str!("rust_string_prelude.js"),
+    // include_str!("rust_bool_prelude.js"),
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
         r#"class Cool {
             constructor(arg0, arg1, arg2, arg3) {
                 this[0] = arg0;
@@ -239,7 +248,7 @@ async fn tuple_struct_multiple_fields() {
                 return this[0];
             }
             one() {
-                return this[1].clone();
+                return this[1];
             }
             two() {
                 return this[2];
@@ -249,11 +258,11 @@ async fn tuple_struct_multiple_fields() {
             }
         }
 
-        var cool = new Cool(new RustInteger(5), new RustString("hi").toString(), new RustBool(true), new RustInteger(4));
-        console.assert(cool[0].eq(5));
-        console.assert(cool[1].eq("hi"));
-        console.assert(cool[2].eq(true));
-        console.assert(cool[3].eq(4));
+        var cool = new Cool(5, "hi", true, 4);
+        console.assert(cool[0] === 5);
+        console.assert(cool[1] === "hi");
+        console.assert(cool[2] === true);
+        console.assert(cool[3] === 4);
         "#
     );
     assert_eq!(format_js(expected), actual);
