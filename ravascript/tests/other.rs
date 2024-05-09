@@ -45,20 +45,26 @@ async fn it_transpiles_vec_macro() {
     let actual = r2j_block!({
         let _data = vec![1, 2, 3];
     });
-    assert_eq!(
-        "var _data = [1, 2, 3];",
-        actual
-    );
+    assert_eq!("var _data = [1, 2, 3];", actual);
 }
 
 #[tokio::test]
 async fn it_transpiles_vec_macro2() {
-    let generated_js = r2j_block_with_prelude!({
+    let actual = r2j_block_with_prelude!({
         let data = vec![1, 2, 3];
         assert!(data[1] == 2);
     });
 
-    let _ = execute_js_with_assertions(&generated_js).await.unwrap();
+    let expected = format_js(
+        r#"
+            var data = [1, 2, 3];
+            console.assert(data[1] === 2)
+        "#,
+    );
+    // let expected = format_js(expected_js);
+    assert_eq!(expected, actual);
+
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -67,17 +73,21 @@ async fn it_transpiles_iter_map() {
         let data = vec![1, 2, 3];
         let _data = data
             .iter()
-            .map(|num| {
+            .map(|num: &i32| {
                 let _sum = num + 2;
                 num
             })
             .collect::<Vec<_>>();
     });
-    let expected = r#"var data = [1, 2, 3];
-var _data = data.map((num) => {
-  var _sum = num.add(2);
-  return num;
-});"#;
+    let expected = format_js(
+        r#"
+            var data = [1, 2, 3];
+            var _data = data.map((num) => {
+                var _sum = num + 2;
+                return num;
+            });
+        "#,
+    );
     // let expected = format_js(expected_js);
     assert_eq!(expected, actual);
 }

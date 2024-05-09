@@ -818,9 +818,9 @@ fn parse_fn_input_or_field(
 
                 // For impl blocks
                 match seg_name_str {
-                    "i32" => RustType::I32,
+                    // "i32" => RustType::I32,
                     "bool" => RustType::Bool,
-                    "str" => RustType::String,
+                    // "str" => RustType::String,
                     "Option" => {
                         let generic_type = match &seg.arguments {
                             PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
@@ -924,7 +924,9 @@ fn parse_fn_input_or_field(
                             if item_definition.ident == "i32" {
                                 global_data.rust_prelude_types.rust_integer = true;
                                 RustType::I32
-                            } else if item_definition.ident == "String" {
+                            } else if item_definition.ident == "String"
+                                || item_definition.ident == "str"
+                            {
                                 global_data.rust_prelude_types.rust_string = true;
                                 RustType::String
                             } else {
@@ -965,7 +967,8 @@ fn parse_fn_input_or_field(
             if type_reference.mutability.is_some() {
                 RustType::MutRef(Box::new(type_))
             } else {
-                RustType::Ref(Box::new(type_))
+                // RustType::Ref(Box::new(type_))
+                type_
             }
         }
         Type::Slice(_) => todo!(),
@@ -1264,7 +1267,8 @@ fn parse_types_for_populate_item_definitions(
             if type_reference.mutability.is_some() {
                 RustType::MutRef(Box::new(type_))
             } else {
-                RustType::Ref(Box::new(type_))
+                // RustType::Ref(Box::new(type_))
+                type_
             }
         }
         Type::Slice(_) => todo!(),
@@ -1512,6 +1516,7 @@ fn handle_local(
             RustType::MutRef(_) => rhs_expr,
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _) => todo!(),
+            RustType::Closure(_) => rhs_expr,
         }
     }
 
@@ -2192,6 +2197,7 @@ fn handle_expr_closure(
                     RustType::ParentItem => todo!(),
                     RustType::UserType(_, _) => todo!(),
                     RustType::Ref(_) => todo!(),
+                    RustType::Closure(_) => todo!(),
                 },
             }))
         }
@@ -2227,7 +2233,9 @@ fn handle_expr_closure(
 
     (
         JsExpr::ArrowFn(async_, block, inputs, body_stmts),
-        return_type,
+        // NOTE closures cannot be generic
+        // RustType::Fn(None, Vec::new(), None, RustTypeFnType::Standalone(())),
+        RustType::Closure(Box::new(return_type)),
     )
 }
 
@@ -2435,6 +2443,7 @@ fn handle_item_fn(
                         RustType::ParentItem => todo!(),
                         RustType::UserType(_, _) => todo!(),
                         RustType::Ref(_) => todo!(),
+                        RustType::Closure(_) => todo!(),
                     }
                     // record add var to scope
                     global_data
@@ -2496,6 +2505,7 @@ fn handle_item_fn(
                                 RustType::ParentItem => todo!(),
                                 RustType::UserType(_, _) => todo!(),
                                 RustType::Ref(_) => todo!(),
+                                RustType::Closure(_) => todo!(),
                             },
                         }))
                     }
@@ -4456,7 +4466,7 @@ enum RustType {
     UserType(String, Box<RustType>),
     /// (&mut T)
     MutRef(Box<RustType>),
-    /// (& T) useful to track & as well as &mut so we know what * is operating on??
+    /// (& T) useful to track & as well as &mut so we know what * is operating on?? NO I think it doesn't matter in practice, we can just check if we have a `&mut` expr and if not just ignore the *
     Ref(Box<RustType>),
     /// (type params, return type)
     // Fn(Vec<RustTypeParam>, Box<RustType>),
@@ -4469,6 +4479,9 @@ enum RustType {
         // TODO arguably it would be better to just store the path and item name all in one, and when looking up the item/fn we are able to determine at that point whether the final one or two elements of the path are a item or associated fn or whatever
         RustTypeFnType,
     ),
+    /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
+    /// (return type)
+    Closure(Box<RustType>),
 }
 impl RustType {
     fn is_js_primative(&self) -> bool {
@@ -4492,6 +4505,7 @@ impl RustType {
             RustType::MutRef(_) => false,
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _) => false,
+            RustType::Closure(_) => todo!(),
         }
     }
     fn is_mut_ref_of_js_primative(&self) -> bool {
@@ -4518,6 +4532,7 @@ impl RustType {
             RustType::MutRef(inner) => inner.is_js_primative(),
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _) => todo!(),
+            RustType::Closure(_) => todo!(),
         }
     }
 }
@@ -4963,8 +4978,17 @@ impl GlobalData {
                 syn_object: None,
             }),
         };
+        // TODO should the ident be `String` or `str`???
         let string_def = ItemDefinition {
             ident: "String".to_string(),
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                fields: StructFieldInfo::RegularStruct(Vec::new()),
+                syn_object: None,
+            }),
+        };
+        let str_def = ItemDefinition {
+            ident: "str".to_string(),
             generics: Vec::new(),
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
@@ -4984,6 +5008,7 @@ impl GlobalData {
             rust_prelude_definitions: vec![
                 ("i32".to_string(), i32_def),
                 ("String".to_string(), string_def),
+                ("str".to_string(), str_def),
             ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
@@ -8349,6 +8374,7 @@ fn handle_expr_and_stmt_macro(
                                         RustType::String => true,
                                         _ => todo!(),
                                     },
+                                    RustType::Closure(_) => todo!(),
                                 };
                                 let mut_ref = match type_ {
                                     RustType::MutRef(_) => true,
@@ -8653,6 +8679,7 @@ fn handle_expr_method_call(
                                     )))
                                 }
                                 RustType::Fn(_, _, _, _) => todo!(),
+                                RustType::Closure(_) => todo!(),
                             }
                         }
                         resolve_generics_for_return_type(
@@ -8667,7 +8694,23 @@ fn handle_expr_method_call(
                 }
             }
             RustType::Vec(_) => todo!(),
-            RustType::Array(_) => todo!(),
+            RustType::Array(element) => {
+                // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
+                if method_name == "iter" || method_name == "collect" {
+                    RustType::Array(element)
+                } else if method_name == "map" {
+                    let closure_return = match &args_rust_types[0] {
+                        RustType::MutRef(_) => todo!(),
+                        RustType::Ref(_) => todo!(),
+                        RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Closure(return_type) => return_type.clone(),
+                        _ => todo!(),
+                    };
+                    RustType::Array(closure_return)
+                } else {
+                    todo!()
+                }
+            }
             RustType::Tuple(_) => todo!(),
             RustType::UserType(_, _) => todo!(),
             RustType::MutRef(inner_rust_type) => get_method_return_type(
@@ -8681,6 +8724,7 @@ fn handle_expr_method_call(
             ),
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _) => todo!(),
+            RustType::Closure(_) => todo!(),
         }
     }
     let method_return_type = get_method_return_type(
@@ -8705,7 +8749,7 @@ fn handle_expr_method_call(
         _ => false,
     };
     // TODO IMPORTANT can't assume that `.to_string()` etc called on are string are the std lib impls, since they might have been overwritten/shadowed by local trait impls, so need to first check for local impls.
-    if let RustType::String = receiver_type {
+    if let RustType::String = &receiver_type {
         if method_name == "to_string" || method_name == "clone" {
             // NOTE ASSUMPTION if the receiver a type RustType::String and also has a RustString wrapper (and this needs `.inner` calling) then it the receiver *must* be a `mut` var. Whilst receivers other than a `mut` var can have a RustString wrapper and call `.to_string()`, `.clone()`, etc, all those receivers *must* be a RustType::MutRef(RustType::String), which is handled below.
             // If receiver var has a RustString wrapper ie is `mut`, then take the inner
@@ -8735,8 +8779,8 @@ fn handle_expr_method_call(
             todo!()
         }
     }
-    if let RustType::MutRef(inner) = receiver_type {
-        if let RustType::String = *inner {
+    if let RustType::MutRef(inner) = &receiver_type {
+        if let RustType::String = **inner {
             if method_name == "to_string" || method_name == "clone" {
                 // Receiver is &mut so has a RustString wrapper so take the inner
                 return (
@@ -8756,6 +8800,12 @@ fn handle_expr_method_call(
             } else {
                 todo!()
             }
+        }
+    }
+
+    if let RustType::Array(inner_type) = receiver_type {
+        if method_name == "iter" || method_name == "collect" {
+            return (receiver, method_return_type);
         }
     }
 
@@ -8787,12 +8837,12 @@ fn handle_expr_method_call(
             }
         }
     }
-    if method_name == "iter" {
-        return (receiver, RustType::Todo);
-    }
-    if method_name == "collect" {
-        return (receiver, RustType::Todo);
-    }
+    // if method_name == "iter" {
+    //     return (receiver, RustType::Todo);
+    // }
+    // if method_name == "collect" {
+    //     return (receiver, RustType::Todo);
+    // }
     if method_name.len() > 3 && &method_name[0..3] == "js_" {
         method_name = method_name[3..].to_string();
     }
@@ -9759,7 +9809,7 @@ fn get_path_without_namespacing(
         assert!(current_module == original_module);
         assert!(segs.len() == 1);
         let seg = &segs[0];
-        if seg.ident == "i32" || seg.ident == "String" {
+        if seg.ident == "i32" || seg.ident == "String" || seg.ident == "str" {
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, false)
         } else {
@@ -10923,6 +10973,8 @@ fn handle_expr(
         }
         Expr::Index(expr_index) => {
             let (expr, type_) = handle_expr(&*expr_index.expr, global_data, current_module);
+            let (index_expr, index_type) =
+                handle_expr(&*expr_index.index, global_data, current_module);
             // NOTE `Index` is a trait that can be implemented for any non primitive type (I think?), so need to look up the `Index` impl of the base expr's type to find what the `Output` type is
             // TODO we can use square bracket array[] indexing for arrays, but for other types which don't get transpiled to an array, we need to use `.index(i)` instead
             // "only traits defined in the current crate can be implemented for primitive types"
@@ -10952,16 +11004,10 @@ fn handle_expr(
                 RustType::ParentItem => todo!(),
                 RustType::UserType(_, _) => todo!(),
                 RustType::Ref(_) => todo!(),
+                RustType::Closure(_) => todo!(),
             };
             (
-                JsExpr::Index(
-                    Box::new(expr),
-                    Box::new(JsExpr::Field(
-                        Box::new(handle_expr(&*expr_index.index, global_data, current_module).0),
-                        // TODO types other than numbers can be used as indexes, also should be able to use .valueof to avoid needing to call .jsNumber
-                        "jsNumber".to_string(),
-                    )),
-                ),
+                JsExpr::Index(Box::new(expr), Box::new(index_expr)),
                 rust_type,
             )
         }
@@ -11103,6 +11149,7 @@ fn handle_expr(
                             RustType::MutRef(_) => todo!(),
                             RustType::Ref(_) => todo!(),
                             RustType::Fn(_, _, _, _) => todo!(),
+                            RustType::Closure(_) => todo!(),
                         }
                     }
                 };
@@ -11239,6 +11286,7 @@ fn handle_expr(
                             RustType::MutRef(_) => todo!(),
                             RustType::Ref(_) => todo!(),
                             RustType::Fn(_, _, _, _) => todo!(),
+                            RustType::Closure(_) => todo!(),
                         };
 
                         let new_expr = if add_inner {
@@ -11626,6 +11674,7 @@ fn handle_expr_match(
                         RustType::MutRef(_) => todo!(),
                         RustType::Ref(_) => prev_body_return_type,
                         RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Closure(_) => todo!(),
                     }),
                     None => Some(body_return_type),
                 },
