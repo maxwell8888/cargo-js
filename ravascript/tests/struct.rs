@@ -161,7 +161,7 @@ async fn impl_in_fn_scope() {
             console.assert(cool.whatever().eq(5));
         "#,
     );
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
 }
 
 #[tokio::test]
@@ -268,3 +268,34 @@ async fn tuple_struct_multiple_fields() {
     assert_eq!(format_js(expected), actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[tokio::test]
+async fn mutate_non_copy_struct() {
+    // We cannot reuse a moved (ie assigned to var, passed to fn) var, so don't need to worry about mutations between copies
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        let mut foo = Foo { num: 1 };
+        assert!(foo.num == 1);
+        foo.num = 2;
+        assert!(foo.num == 2);
+    });
+
+    let expected = format_js(concat!(
+        r#"class Foo {
+            constructor(num) {
+                this.num = num;
+            }
+        }
+        var foo = new Foo(1);
+        console.assert(foo.num === 1);
+        foo.num = 2;
+        console.assert(foo.num === 2);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// async fn mutate_im_ref_to_non_copy_struct() {

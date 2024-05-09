@@ -4545,7 +4545,7 @@ impl RustType {
             RustType::I32 | RustType::F32 | RustType::Bool | RustType::String => true,
             RustType::Option(_) => todo!(),
             RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _) => todo!(),
+            RustType::StructOrEnum(_, _, _) => false,
             RustType::Vec(_) => todo!(),
             RustType::Array(_) => todo!(),
             RustType::Tuple(_) => todo!(),
@@ -10522,31 +10522,31 @@ fn handle_expr_assign(
             _ => todo!(),
         }
     }
-    let (ident_name, is_deref) = get_name_and_deref(&*expr_assign.left);
-    // NOTE that whilst we can assign to a var *holding* a fn eg:
-    {
-        fn cool() -> i32 {
-            4
-        }
-        fn bean() -> i32 {
-            7
-        }
-        let one = &mut (cool as fn() -> i32);
-        *one = bean as fn() -> i32;
-        assert!(one() == 7);
-    }
-    // we can't actuall assign directly to a fn like `cool = bean as fn() -> i32` so any fn idents appearing on the lhs is an error. The rhs can be a fn or const though.
-    let scoped_var = global_data.scopes.iter().rev().find_map(|s| {
-        // TODO would be nice to assert here that the lhs cannot be a fn or const (because fns and const cannot be directly assigned to), but we don't keep track of the order of vars/fns/etc added to the scope so can't know for sure! Would need to store vars/fns/etc in the same Vec
-        // if s.fns.iter().any(|func| (func.ident == ident_name)) {
-        //     panic!();
-        // }
+    // let (ident_name, is_deref) = get_name_and_deref(&*expr_assign.left);
+    // // NOTE that whilst we can assign to a var *holding* a fn eg:
+    // {
+    //     fn cool() -> i32 {
+    //         4
+    //     }
+    //     fn bean() -> i32 {
+    //         7
+    //     }
+    //     let one = &mut (cool as fn() -> i32);
+    //     *one = bean as fn() -> i32;
+    //     assert!(one() == 7);
+    // }
+    // // we can't actuall assign directly to a fn like `cool = bean as fn() -> i32` so any fn idents appearing on the lhs is an error. The rhs can be a fn or const though.
+    // let scoped_var = global_data.scopes.iter().rev().find_map(|s| {
+    //     // TODO would be nice to assert here that the lhs cannot be a fn or const (because fns and const cannot be directly assigned to), but we don't keep track of the order of vars/fns/etc added to the scope so can't know for sure! Would need to store vars/fns/etc in the same Vec
+    //     // if s.fns.iter().any(|func| (func.ident == ident_name)) {
+    //     //     panic!();
+    //     // }
 
-        s.variables
-            .iter()
-            .find(|variable| variable.name == ident_name)
-    });
-    let is_lhs_mut = scoped_var.unwrap().mut_;
+    //     s.variables
+    //         .iter()
+    //         .find(|variable| variable.name == ident_name)
+    // });
+    // let is_lhs_mut = scoped_var.unwrap().mut_;
 
     JsExpr::Assignment(Box::new(lhs_expr), Box::new(rhs_expr))
 
