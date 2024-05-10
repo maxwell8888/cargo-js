@@ -271,6 +271,152 @@ async fn tuple_struct_multiple_fields() {
 
 #[tokio::test]
 async fn mutate_non_copy_struct() {
+    // We cannot reuse a moved (ie assigned to var, passed to fn) var, so don't need to worry about mutations affecting orginal variable
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        let mut foo = Foo { num: 1 };
+        assert!(foo.num == 1);
+        foo.num = 2;
+        assert!(foo.num == 2);
+        {
+            let bar = &mut foo;
+            bar.num += 1;
+            assert!(bar.num == 3);
+        }
+        foo.num += 1;
+        assert!(foo.num == 4);
+    });
+
+    let expected = format_js(concat!(
+        r#"class Foo {
+            constructor(num) {
+                this.num = num;
+            }
+        }
+        var foo = new Foo(1);
+        console.assert(foo.num === 1);
+        foo.num = 2;
+        console.assert(foo.num === 2);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "need to implement mut ref borrows from larger types"]
+#[tokio::test]
+async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        let mut foo = Foo { num: 1 };
+        assert!(foo.num == 1);
+        let num = &mut foo.num;
+        *num += 1;
+        assert!(foo.num == 2);
+        foo.num += 1;
+        assert!(foo.num == 3);
+    });
+
+    // One possible solution is to replace
+    // let num = &mut foo.num;
+    // with
+    // let num = &mut foo;
+    // and record in the RustType info that the var/type actually refers to the `.num` field and so whenever the type is used we add `.num` accordingly, ie if we are assigning to the field we add `.num`, if we are just passing it to a fn we do nothing and just pass it as is.
+    // Not sure what unintended consequences this might have.
+    // * Will make the generated code more confusing because it will be harder to reconcile with the original Rust
+    // * Passing around an object where we are actually expecting eg a number might be a problem but given JS doesn't care what types it recieves, it might not be a problem.
+    // I don't think it will work eg in the case of a fn `fn wants_mut_int(num: &mut i32) {}`. We would need to pass the entire foo object, so the code inside the fn would need to add the `.num` when updating it. But this fn could also be used elsewhere where an actual mut int (ie RustInteger) is passed to it. Could potentially have different branches for each but this would be complicated to implement and not a very clean solution.
+
+    // The obvious/naive solution is that any time we create a mut var of a struct, we must replace all primative field values with a mut wraper equivalent eg RustInteger.
+    // The problem is most of the time this will be completely unnecessary since usually when mutating a struct we are simply assigning a new value to a field using eg `=` or `+=`, and there is no way to tell ahead of time if we take a mut ref of a field `&mut my_struct.my_field` without looking ahead in the code. In fact even if there is a &mut of a field taken, only the child values of that field need be wrapped in mutable wrappers like RustInteger, again it would be very wasteful and inefficient to wrap everything single value, just in case. Even worse, some instantiations might take a mut ref, but others won't so we would either have to use multiple different definitions or have values unnecessarily wrapped. I think we just need to add the wrapper at the point which the class/struct is instantiated.
+    // Given that Rust doesn't have mutable static fields like JS, all values in a struct must always be explicity specified when instantiating the struct (bar using defaults but that's fine), which means in the equivalent JS we can always specify every value in the struct, which is means we don't need the wrappers in the class definition, we can just wrap the args passed to the struct instantiation - NO this only works if the var is assigned directly by a struct/class instantiation, whereas if the var is assigned by eg a function that contains the instantiation, we are back to the previous problem of needing a different function for each instantiation, which scales very badly if there is eg multiple layers functions to instantiate the object.
+    // A possible solution is to instead instantiate the struct as normal without wrappers and *then* go through the object and replace the necessary values with wrapped values. This is not the optimal solution and means doing redundant work compared to if the object had just been correctly created with the wrappers in the first place... but is probably best bet for now.
+    // Also if the &mut field/index is an object containing primatives, this is fine, it is only &mut fields/indexes that are directly primatives, which seems quite niche so just trying compile time erroring for now and see how far we can get and how many libraries we can port without it.
+    // Also it is not just fields and structs, eg `let foo = [1, 2]; let one = &mut data[0];` has the same problem.
+    // Can we, in cargo-js, store a mutable ref to eg the JsExpr of the instantiation, eg on it's RustType or ScopedVar, and then if we later find a mut ref of a field is taken, we can update the JsExpr accordingly? Even if we can't keep a mut ref, we can give the expression a UUID and store that on the RustType then when we find any field mut refs, record this in the global data, then do a subsequent pass over the whole data to update/apply the stored data to the corresponding JsExpr's.
+
+    let expected = format_js(concat!(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+            }
+            var foo = new Foo(new RustInteger(1));
+            console.assert(foo.num.inner === 1);
+            var num = foo.num;
+            num.inner += 1;
+            console.assert(foo.num.inner === 2);
+            foo.num.inner += 1;
+            console.assert(foo.num.inner === 3);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            bar: Bar,
+        }
+        struct Bar {
+            num: i32,
+        }
+        let mut foo = Foo {
+            bar: Bar { num: 1 },
+        };
+        assert!(foo.bar.num == 1);
+        let bar = &mut foo.bar;
+        bar.num += 1;
+        assert!(foo.bar.num == 2);
+        foo.bar.num += 1;
+        assert!(foo.bar.num == 3);
+        // assert!(bar.num == 3);
+    });
+
+    let expected = format_js(concat!(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            class Foo {
+                constructor(bar) {
+                    this.bar = bar;
+                }
+            }
+            class Bar {
+                constructor(num) {
+                    this.num = num;
+                }
+            }
+            var foo = new Foo(new Bar(1));
+            console.assert(foo.bar.num === 1);
+            var bar = foo.bar;
+            bar.num += 1;
+            console.assert(foo.bar.num === 2);
+            foo.bar.num += 1;
+            console.assert(foo.bar.num === 3);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn mutate_copy_struct() {
     // We cannot reuse a moved (ie assigned to var, passed to fn) var, so don't need to worry about mutations between copies
     let actual = r2j_block_with_prelude!({
         struct Foo {
@@ -297,5 +443,3 @@ async fn mutate_non_copy_struct() {
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
-
-// async fn mutate_im_ref_to_non_copy_struct() {
