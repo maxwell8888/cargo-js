@@ -2272,43 +2272,28 @@ fn handle_expr_path_inner(
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
-    let mut segs = expr_path
-        .segments
-        .iter()
-        .map(|seg| {
-            let mut var_name = seg.ident.to_string();
-            if var_name == "Document" {
-                var_name = "document".to_string();
-            }
-            if var_name == "Console" {
-                var_name = "console".to_string();
-            }
-            // TODO be more targetted with this
-            if let Some(last_char) = var_name.chars().last() {
-                if last_char.is_digit(10) {
-                    var_name.pop().unwrap();
-                }
-            }
-            // case_convert(var_name)
-            var_name
-        })
-        .collect::<Vec<_>>();
+    // let mut segs = expr_path
+    //     .segments
+    //     .iter()
+    //     .map(|seg| {
+    //         let mut var_name = seg.ident.to_string();
 
-    if segs.len() == 1 {
-        // if segs[0] == "None" {
-        //     return JsExpr::Null;
-        // }
-        if segs[0] == "None" {
-            global_data.rust_prelude_types.option = true;
-            global_data.rust_prelude_types.none = true;
-        }
-        if segs[0] == "self" {
-            segs[0] = "this".to_string();
-        }
-    }
+    //         // TODO be more targetted with this
+    //         if let Some(last_char) = var_name.chars().last() {
+    //             if last_char.is_digit(10) {
+    //                 var_name.pop().unwrap();
+    //             }
+    //         }
+    //         // case_convert(var_name)
+    //         if segs[0] == "self" {
+    //             segs[0] = "this".to_string();
+    //         }
 
-    // dbg!(&global_data.modules);
-    // dbg!(&current_module);
+    //         var_name
+
+    //     })
+    //     .collect::<Vec<_>>();
+
     let module = global_data
         .modules
         .iter()
@@ -2322,27 +2307,28 @@ fn handle_expr_path_inner(
 
     // let segs_copy = segs.clone();
     // println!("before get_path: {:?}", &segs);
-    let mut segs = get_path(
-        true,
-        true,
-        false,
-        module,
-        segs,
-        global_data,
-        current_module,
-        current_module,
-    );
+    // let mut segs = get_path(
+    //     true,
+    //     true,
+    //     false,
+    //     module,
+    //     segs,
+    //     global_data,
+    //     current_module,
+    //     current_module,
+    // );
+
     // println!("after get_path: {:?}", &segs);
 
     // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
     // convert case of rest of path
-    for (i, seg) in segs.iter_mut().enumerate() {
-        if i == 0 && seg.contains("__") {
-            // namespaced item already case converted
-        } else {
-            *seg = case_convert(seg.clone())
-        }
-    }
+    // for (i, seg) in segs.iter_mut().enumerate() {
+    //     if i == 0 && seg.contains("__") {
+    //         // namespaced item already case converted
+    //     } else {
+    //         *seg = case_convert(seg.clone())
+    //     }
+    // }
 
     // IMPORTANT TODO
     // What is all this doing? We just got the module path to an item using `get_path()` so we should be looking up the definition of found item and then if there is remaining segments in the expr_path after then item then determine if these are an enum variant or associated fn
@@ -2395,7 +2381,7 @@ fn handle_expr_path_inner(
     // Split out item and any sub path eg for an enum variant, associated fn, etc
     let (partial_rust_type, is_mut_var) = if segs_copy_item_path.len() == 1 {
         // TODO handle len=1 enums like Some(5), None, etc
-        if let Some(segs_copy_module_path) = segs_copy_module_path {
+        if let Some(segs_copy_module_path) = segs_copy_module_path.clone() {
             // Look for module level items
             let module = global_data
                 .modules
@@ -2577,13 +2563,13 @@ fn handle_expr_path_inner(
                     if enum_variant.inputs.len() == 0 {
                         PartialRustType::RustType(RustType::StructOrEnum(
                             enum_generics,
-                            segs_copy_module_path,
+                            segs_copy_module_path.clone(),
                             item_def.ident,
                         ))
                     } else {
                         PartialRustType::EnumVariantIdent(
                             enum_generics,
-                            segs_copy_module_path,
+                            segs_copy_module_path.clone(),
                             item_def.ident,
                             sub_path.ident.clone(),
                         )
@@ -2630,19 +2616,47 @@ fn handle_expr_path_inner(
         _ => false,
     };
 
+    // Make JS path
+    // segs_copy_module_path, segs_copy_item_path, is_scoped
+    // Lookup module path to find what it's deduplicated name is
+    // Check whether it is not globally unique and so has been namespaced
+    let mut js_segs = segs_copy_item_path
+        .iter()
+        .map(|seg| case_convert(seg.ident.to_string()))
+        .collect::<Vec<_>>();
+
+    if let Some(segs_copy_module_path) = segs_copy_module_path {
+        if let Some(dup) = global_data.duplicates.iter().find(|dup| {
+            dup.name == segs_copy_item_path[0].ident
+                && &dup.original_module_path == &segs_copy_module_path
+        }) {
+            js_segs[0] = dup
+                .namespace
+                .iter()
+                .map(|seg| camel(seg))
+                .collect::<Vec<_>>()
+                .join("__");
+        }
+    } else {
+        if js_segs[0] == "self" {
+            js_segs[0] = "this".to_string();
+        }
+    }
+
+    // let segs = segs_copy.iter()
     // TODO all this logic could be cleaned up and/or made clearer
     let final_expr = if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
-        JsExpr::Path(segs)
+        JsExpr::Path(js_segs)
     } else {
         match &partial_rust_type {
             PartialRustType::StructIdent(_, _, _) => todo!(),
             PartialRustType::EnumVariantIdent(_, _, _, _) => todo!(),
             PartialRustType::RustType(rust_type) => {
                 if rust_type.is_js_primative() {
-                    JsExpr::Field(Box::new(JsExpr::Path(segs)), "inner".to_string())
+                    JsExpr::Field(Box::new(JsExpr::Path(js_segs)), "inner".to_string())
                 } else {
                     // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-                    JsExpr::Path(segs)
+                    JsExpr::Path(js_segs)
                 }
             }
         }

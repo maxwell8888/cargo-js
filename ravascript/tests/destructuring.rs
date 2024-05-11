@@ -186,7 +186,7 @@ async fn destructure_array_of_copy_structs() {
             }
             var foo = new Foo(1);
             var foo2 = new Foo(1);
-            var arr = [foo, foo];
+            var arr = [foo, foo2];
             var arrRef = arr;
             var [one, _two] = arrRef.copy();
             one.num += 1;
