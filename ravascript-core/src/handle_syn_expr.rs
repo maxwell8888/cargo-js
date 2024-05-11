@@ -1808,7 +1808,12 @@ fn handle_expr_method_call(
         }
     }
 
-    if let RustType::Array(inner_type) = receiver_type {
+    if let RustType::Array(_) = receiver_type {
+        if method_name == "iter" || method_name == "collect" {
+            return (receiver, method_return_type);
+        }
+    }
+    if let RustType::Vec(_) = receiver_type {
         if method_name == "iter" || method_name == "collect" {
             return (receiver, method_return_type);
         }
