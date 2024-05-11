@@ -14,7 +14,7 @@ use std::{
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
     ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
-    ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
+    Ident, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
     ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment,
     ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
 };
@@ -392,11 +392,18 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
         Pat::Rest(_) => todo!(),
         Pat::Slice(pat_slice) => {
             //
-            let element_type = match current_type {
-                RustType::Vec(element_type) => *element_type,
-                RustType::Array(element_type) => *element_type,
-                _ => todo!(),
-            };
+            fn get_element_type(rust_type: RustType) -> RustType {
+                match rust_type {
+                    RustType::Vec(element_type) => *element_type,
+                    RustType::Array(element_type) => *element_type,
+                    RustType::MutRef(inner) => get_element_type(*inner),
+                    other => {
+                        dbg!(other);
+                        todo!()
+                    }
+                }
+            }
+            let element_type = get_element_type(current_type);
             LocalName::DestructureArray(
                 pat_slice
                     .elems
@@ -1489,14 +1496,16 @@ fn handle_local(
     // easy: fn calls, method calls, fields,
     // hard: if expression, parens, block, if let, match, method call
 
+    // If rhs is a non &mut var which is a `Copy` type, we need to add `.copy()`.
+    // Other values eg something returned from a fn don't need to be copied because we will no longer have access to the original value to mutate it
+    // Other values like a var field which is an object we do want to `.copy()`
+
     // NOTE rhs expr is an option because it is possible to create an unitialised var in Rust like `let foo;` but we will no support this (for now)
-    let (mut rhs_expr, rhs_type) = {
-        if let Some(rhs_expr) = &local.init {
-            handle_expr(&rhs_expr.expr, global_data, current_module_path)
-        } else {
-            panic!("uninitialized variables not supported")
-        }
+    let Some(local_init) = &local.init else {
+        panic!("uninitialized variables not supported")
     };
+
+    let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
     let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
 
     // If lhs is `mut` and rhs is a JS primative then we need to wrap it in eg `new RustInteger()`. If rhs is already a `mut` JS primative, it needs copying.
@@ -1504,6 +1513,140 @@ fn handle_local(
         Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
         _ => false,
     };
+
+    // NOTE need to consider whether lhs is destructuring given `let foo = some_number_array;` needs `.copy()`ing whereas `let [one, two] = some_number_array;` doesn't.
+    let mut handle_should_add_copy_expr_path = |expr_path: &ExprPath| {
+        if expr_path.path.segments.len() == 1 {
+            let scopes_clone = global_data.scopes.clone();
+            let var = scopes_clone.iter().rev().find_map(|s| {
+                s.variables
+                    .iter()
+                    .find(|v| v.name == expr_path.path.segments.first().unwrap().ident.to_string())
+            });
+            if let Some(var) = var {
+                assert!(var.type_ == rhs_type);
+
+                // Get var item def so we can check if var is a copy struct or an array
+                fn handle_type(
+                    // NOTE We need to specify the RustType separately to the ScopedVar to allow passing in the inner type of a RustType::MutRef
+                    rust_type: &RustType,
+                    global_data: &mut GlobalData,
+                    var: &ScopedVar,
+                    lhs: &LocalName,
+                    mut_ref_taken: bool,
+                ) -> bool {
+                    match rust_type {
+                        RustType::Unit => todo!(),
+                        RustType::Never => todo!(),
+                        RustType::ImplTrait(_) => todo!(),
+                        RustType::TypeParam(_) => todo!(),
+                        RustType::I32 => false,
+                        RustType::F32 => todo!(),
+                        RustType::Bool => todo!(),
+                        RustType::String => todo!(),
+                        RustType::Option(_) => todo!(),
+                        RustType::Result(_) => todo!(),
+                        RustType::StructOrEnum(type_params, module_path, name) => {
+                            let item_def = global_data
+                                .lookup_item_def_known_module_assert_not_func(&module_path, &name);
+                            item_def.is_copy && var.mut_ && !mut_ref_taken
+                        }
+                        RustType::Vec(_) => todo!(),
+                        RustType::Array(element_type) => {
+                            // (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy)
+                            match lhs {
+                                LocalName::Single(_) => true,
+                                LocalName::DestructureObject(_) => todo!(),
+                                LocalName::DestructureArray(_) => {
+                                    // If element_type is `Copy` struct/enum then should add `.copy()` to rhs array
+                                    match &**element_type {
+                                        RustType::StructOrEnum(type_params, module_path, name) => {
+                                            let item_def = global_data
+                                                .lookup_item_def_known_module_assert_not_func(
+                                                    module_path,
+                                                    name,
+                                                );
+                                            if item_def.is_copy {
+                                                global_data.rust_prelude_types.rust_array_copy =
+                                                    true;
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        _ => false,
+                                    }
+                                }
+                            }
+                        }
+                        RustType::Tuple(_) => todo!(),
+                        RustType::UserType(_, _) => todo!(),
+                        RustType::MutRef(inner) => {
+                            // A &mut T is always `Copy` copied (not the T, the reference) so don't need to `.copy()` it, unless it is dereferenced - *or destructured*
+                            handle_type(&*inner, global_data, var, lhs, true)
+                        }
+                        RustType::Ref(_) => todo!(),
+                        RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Closure(_) => todo!(),
+                        _ => todo!(),
+                    }
+                }
+                handle_type(&var.type_, global_data, var, &lhs, false)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    let rhs_should_add_copy = match &*local_init.expr {
+        Expr::Async(_) => todo!(),
+        Expr::Await(_) => todo!(),
+        Expr::Block(_) => todo!(),
+        Expr::Cast(_) => todo!(),
+        Expr::Const(_) => todo!(),
+        Expr::Continue(_) => todo!(),
+        Expr::Field(_) => todo!(),
+        Expr::ForLoop(_) => todo!(),
+        Expr::Group(_) => todo!(),
+        Expr::Index(_) => todo!(),
+        Expr::Infer(_) => todo!(),
+        Expr::Let(_) => todo!(),
+        Expr::Loop(_) => todo!(),
+        Expr::Paren(_) => todo!(),
+        Expr::Path(expr_path) => handle_should_add_copy_expr_path(expr_path),
+        Expr::Range(_) => todo!(),
+        Expr::Reference(expr_reference) => {
+            if expr_reference.mutability.is_some() {
+                match &*expr_reference.expr {
+                    // Expr::Path(expr_path) => {
+                    //     handle_should_add_copy_expr_path(expr_path)
+                    // }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        Expr::Repeat(_) => todo!(),
+        Expr::Return(_) => todo!(),
+        Expr::Try(_) => todo!(),
+        Expr::TryBlock(_) => todo!(),
+        Expr::Unary(_) => false,
+        Expr::Unsafe(_) => todo!(),
+        Expr::Verbatim(_) => todo!(),
+        Expr::While(_) => todo!(),
+        Expr::Yield(_) => todo!(),
+        _ => false,
+    };
+    // TODO We have two `rhs_should_add_copy`s because for some cases it is easier to check the syn expr, in some cases it is easier/necessary to look at the parsed RustType. Ideally we would store sufficient info on the RustType to combine these??
+    // let rhs_should_add_copy2 = match &rhs_type {
+    //     ...
+    // };
+    // if rhs_should_add_copy || rhs_should_add_copy2 {
+    if rhs_should_add_copy {
+        rhs_expr = JsExpr::MethodCall(Box::new(rhs_expr), "copy".to_string(), Vec::new());
+    }
 
     if lhs_is_mut && rhs_type.is_js_primative() {
         rhs_expr = match rhs_type {
@@ -2767,6 +2910,27 @@ fn handle_item_enum(
         let global_data_scope = global_data.scopes.last_mut().unwrap();
         global_data_scope.item_definitons.push(ItemDefinition {
             ident: item_enum.ident.to_string(),
+            is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
+                Meta::Path(_) => todo!(),
+                Meta::List(meta_list) => {
+                    let segs = &meta_list.path.segments;
+                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                        let tokens = format!("({})", meta_list.tokens);
+                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                        trait_tuple.elems.iter().any(|elem| match elem {
+                            Type::Path(type_path) => {
+                                let segs = &type_path.path.segments;
+                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                            }
+                            _ => todo!(),
+                        })
+                    } else {
+                        false
+                    }
+                }
+                Meta::NameValue(_) => todo!(),
+            }),
             generics: item_enum
                 .generics
                 .params
@@ -3815,6 +3979,28 @@ fn handle_item_struct(
     //     },
     // },
 
+    let is_copy = item_struct.attrs.iter().any(|attr| match &attr.meta {
+        Meta::Path(_) => todo!(),
+        Meta::List(meta_list) => {
+            let segs = &meta_list.path.segments;
+            if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                let tokens = format!("({})", meta_list.tokens);
+                let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                trait_tuple.elems.iter().any(|elem| match elem {
+                    Type::Path(type_path) => {
+                        let segs = &type_path.path.segments;
+                        // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                        segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                    }
+                    _ => todo!(),
+                })
+            } else {
+                false
+            }
+        }
+        Meta::NameValue(_) => todo!(),
+    });
+
     // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
     if !at_module_top_level {
         let generics = item_struct
@@ -3879,6 +4065,7 @@ fn handle_item_struct(
         let global_data_scope = global_data.scopes.last_mut().unwrap();
         global_data_scope.item_definitons.push(ItemDefinition {
             ident: item_struct.ident.to_string(),
+            is_copy,
             generics,
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields,
@@ -3888,6 +4075,25 @@ fn handle_item_struct(
     }
 
     let mut methods = Vec::new();
+
+    if is_copy {
+        let stmt = JsStmt::Raw("return JSON.parse(JSON.stringify(this));".to_string());
+        methods.push((
+            name.clone(),
+            false,
+            false,
+            JsFn {
+                iife: false,
+                public: false,
+                export: false,
+                async_: false,
+                is_method: true,
+                name: "copy".to_string(),
+                input_names: Vec::new(),
+                body_stmts: vec![stmt],
+            },
+        ));
+    }
 
     // TODO deriving PartialEq for our Option causes a clash with the proper Option, so just manually add it for now
     // fn eq(&self, other: &Self) -> bool
@@ -4255,6 +4461,7 @@ struct RustPreludeTypes {
     // Basic `RustInteger`
     rust_integer: bool,
     rust_string: bool,
+    rust_array_copy: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -4505,7 +4712,7 @@ enum RustType {
     // Struct(Vec<RustTypeParam>, Vec<String>, String),
     /// (type params, module path, name)  
     // Enum(Vec<RustTypeParam>, Vec<String>, String),
-    // TODO Should we use the same type for both Arrays and Vecs, because they get transpiled to the same thing anyway?
+    // TODO Should we use the same type for both Arrays and Vecs, because they get transpiled to the same thing anyway? NO because we need to handle the types differently, ie arrays need `.copy()` adding when they are moved (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy).
     Vec(Box<RustType>),
     Array(Box<RustType>),
     Tuple(Vec<RustType>),
@@ -4547,7 +4754,7 @@ impl RustType {
             RustType::Result(_) => todo!(),
             RustType::StructOrEnum(_, _, _) => false,
             RustType::Vec(_) => todo!(),
-            RustType::Array(_) => todo!(),
+            RustType::Array(_) => false,
             RustType::Tuple(_) => todo!(),
             RustType::UserType(_, _) => todo!(),
             RustType::MutRef(_) => false,
@@ -4703,6 +4910,7 @@ enum StructOrEnumDefitionInfo {
 #[derive(Debug, Clone)]
 struct ItemDefinition {
     ident: String,
+    is_copy: bool,
     // /// Fields and enum variants. Methods etc are stored in impl blocks?
     // members: Vec<StructFieldInfo>,
     // members: Vec<ImplItem>,
@@ -5020,6 +5228,8 @@ impl GlobalData {
         // Create prelude definitions
         let i32_def = ItemDefinition {
             ident: "i32".to_string(),
+            // TODO even though i32 is Copy, we are only interested in *structs* which are Copy, though this might be wrong if is_copy is used for other purposes.
+            is_copy: false,
             generics: Vec::new(),
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
@@ -5029,6 +5239,7 @@ impl GlobalData {
         // TODO should the ident be `String` or `str`???
         let string_def = ItemDefinition {
             ident: "String".to_string(),
+            is_copy: false,
             generics: Vec::new(),
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
@@ -5037,6 +5248,7 @@ impl GlobalData {
         };
         let str_def = ItemDefinition {
             ident: "str".to_string(),
+            is_copy: false,
             generics: Vec::new(),
             struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
@@ -6130,6 +6342,28 @@ fn extract_data_populate_item_definitions(
 
                     module.item_definitons.push(ItemDefinition {
                         ident: enum_name,
+                        is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
+                            Meta::Path(_) => todo!(),
+                            Meta::List(meta_list) => {
+                                let segs = &meta_list.path.segments;
+                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                                    let tokens = format!("({})", meta_list.tokens);
+                                    let trait_tuple =
+                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                                    trait_tuple.elems.iter().any(|elem| match elem {
+                                        Type::Path(type_path) => {
+                                            let segs = &type_path.path.segments;
+                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                                        }
+                                        _ => todo!(),
+                                    })
+                                } else {
+                                    false
+                                }
+                            }
+                            Meta::NameValue(_) => todo!(),
+                        }),
                         generics,
                         struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
                             members: members_for_scope,
@@ -6253,6 +6487,28 @@ fn extract_data_populate_item_definitions(
 
                     module.item_definitons.push(ItemDefinition {
                         ident: item_struct.ident.to_string(),
+                        is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
+                            Meta::Path(_) => todo!(),
+                            Meta::List(meta_list) => {
+                                let segs = &meta_list.path.segments;
+                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                                    let tokens = format!("({})", meta_list.tokens);
+                                    let trait_tuple =
+                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                                    trait_tuple.elems.iter().any(|elem| match elem {
+                                        Type::Path(type_path) => {
+                                            let segs = &type_path.path.segments;
+                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                                        }
+                                        _ => todo!(),
+                                    })
+                                } else {
+                                    false
+                                }
+                            }
+                            Meta::NameValue(_) => todo!(),
+                        }),
                         generics,
                         struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
                             StructDefinitionInfo {
@@ -6322,6 +6578,17 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             methods: Vec::new(),
         });
         prelude_stmts.push(js_class);
+    }
+    if rust_prelude_types.rust_array_copy {
+        let js_stmt = JsStmt::Raw(
+            r"
+                Array.prototype.copy = function () {
+                    return JSON.parse(JSON.stringify(this));
+                };
+            "
+            .to_string(),
+        );
+        prelude_stmts.push(js_stmt);
     }
 
     if rust_prelude_types.vec {
@@ -8296,7 +8563,7 @@ fn handle_expr_and_stmt_macro(
                 .iter()
                 .map(|elem| handle_expr(elem, global_data, current_module).0)
                 .collect::<Vec<_>>();
-            return (JsExpr::Array(expr_vec), RustType::Array(Box::new(vec_type)));
+            return (JsExpr::Array(expr_vec), RustType::Vec(Box::new(vec_type)));
         }
         if path_segs[0] == "panic" {
             let input = mac.tokens.clone().to_string();
@@ -8741,8 +9008,25 @@ fn handle_expr_method_call(
                     RustImplItemItem::Const(_) => todo!(),
                 }
             }
-            RustType::Vec(_) => todo!(),
+            RustType::Vec(element) => {
+                // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
+                if method_name == "iter" || method_name == "collect" {
+                    RustType::Vec(element)
+                } else if method_name == "map" {
+                    let closure_return = match &args_rust_types[0] {
+                        RustType::MutRef(_) => todo!(),
+                        RustType::Ref(_) => todo!(),
+                        RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Closure(return_type) => return_type.clone(),
+                        _ => todo!(),
+                    };
+                    RustType::Vec(closure_return)
+                } else {
+                    todo!()
+                }
+            }
             RustType::Array(element) => {
+                // TODO need to think about the different between Array and Vec here
                 // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
                 if method_name == "iter" || method_name == "collect" {
                     RustType::Array(element)
@@ -10931,30 +11215,46 @@ fn handle_expr(
             // TODO for a field, the type must be a struct or tuple, so look it up and get the type of the field
             match &expr_field.member {
                 Member::Named(ident) => {
-                    let field_type = match base_type {
-                        RustType::StructOrEnum(type_params, module_path, name) => {
-                            let item_definition = global_data
-                                .lookup_item_def_known_module_assert_not_func(&module_path, &name);
-                            match item_definition.struct_or_enum_info {
-                                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
-                                    match struct_def_info.fields {
-                                        StructFieldInfo::UnitStruct => todo!(),
-                                        StructFieldInfo::TupleStruct(_) => todo!(),
-                                        StructFieldInfo::RegularStruct(fields) => fields
-                                            .iter()
-                                            .find_map(|(field_name, field_type)| {
-                                                (field_name == &ident.to_string())
-                                                    .then_some(field_type)
-                                            })
-                                            .unwrap()
-                                            .clone(),
+                    fn get_field_type(
+                        base_type: RustType,
+                        global_data: &GlobalData,
+                        ident: &Ident,
+                    ) -> RustType {
+                        match base_type {
+                            RustType::StructOrEnum(type_params, module_path, name) => {
+                                let item_definition = global_data
+                                    .lookup_item_def_known_module_assert_not_func(
+                                        &module_path,
+                                        &name,
+                                    );
+                                match item_definition.struct_or_enum_info {
+                                    StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                        match struct_def_info.fields {
+                                            StructFieldInfo::UnitStruct => todo!(),
+                                            StructFieldInfo::TupleStruct(_) => todo!(),
+                                            StructFieldInfo::RegularStruct(fields) => fields
+                                                .iter()
+                                                .find_map(|(field_name, field_type)| {
+                                                    (field_name == &ident.to_string())
+                                                        .then_some(field_type)
+                                                })
+                                                .unwrap()
+                                                .clone(),
+                                        }
                                     }
+                                    StructOrEnumDefitionInfo::Enum(_) => todo!(),
                                 }
-                                StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                            }
+                            RustType::MutRef(inner_type) => {
+                                get_field_type(*inner_type, global_data, ident)
+                            }
+                            _ => {
+                                dbg!(&base_type);
+                                todo!()
                             }
                         }
-                        _ => todo!(),
-                    };
+                    }
+                    let field_type = get_field_type(base_type, global_data, ident);
                     (JsExpr::Field(Box::new(base_expr), camel(ident)), field_type)
                 }
                 Member::Unnamed(index) => {
@@ -11217,7 +11517,7 @@ fn handle_expr(
                             }
                             RustType::Option(_) => todo!(),
                             RustType::Result(_) => todo!(),
-                            RustType::StructOrEnum(_, _, _) => todo!(),
+                            RustType::StructOrEnum(_, _, _) => (js_expr, rust_type),
                             RustType::Vec(_) => todo!(),
                             RustType::Array(_) => todo!(),
                             RustType::Tuple(_) => todo!(),

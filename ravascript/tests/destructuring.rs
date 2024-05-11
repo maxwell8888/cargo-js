@@ -139,3 +139,65 @@ async fn destructure_array() {
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[tokio::test]
+async fn destructure_array_of_copy_structs() {
+    // setup_tracing();
+    let actual = r2j_block_with_prelude!({
+        #[derive(Clone, Copy)]
+        struct Foo {
+            num: i32,
+        }
+        let mut foo = Foo { num: 1 };
+        let foo2 = Foo { num: 1 };
+        let mut arr = [foo, foo2];
+        // TODO test same thing without the &mut
+        let arr_ref = &mut arr;
+        let [one, _two] = arr_ref;
+
+        one.num += 1;
+        assert!(one.num == 2);
+        assert!(foo.num == 1);
+
+        foo.num += 1;
+        assert!(one.num == 2);
+        assert!(foo.num == 2);
+    });
+
+    // include_str!("string_prototype_extensions.js"),
+    // "\n",
+    // include_str!("number_prototype_extensions.js"),
+    
+    // TODO might be better to add the `.copy()`s to the destructured vars, but would need to do this in subsequent statements which is a faff so leave for now
+    let expected = format_js(concat!(
+        r#"
+            Array.prototype.copy = function () {
+                return JSON.parse(JSON.stringify(this));
+            };
+
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+
+                copy() {
+                    return JSON.parse(JSON.stringify(this));
+                }
+            }
+            var foo = new Foo(1);
+            var foo2 = new Foo(1);
+            var arr = [foo, foo];
+            var arrRef = arr;
+            var [one, _two] = arrRef.copy();
+            one.num += 1;
+            console.assert(one.num === 2);
+            console.assert(foo.num === 1);
+            foo.num += 1;
+            console.assert(one.num === 2);
+            console.assert(foo.num === 2);
+        "#,
+    ));
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}

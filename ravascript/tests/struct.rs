@@ -299,6 +299,13 @@ async fn mutate_non_copy_struct() {
         console.assert(foo.num === 1);
         foo.num = 2;
         console.assert(foo.num === 2);
+        {
+            var bar = foo;
+            bar.num += 1;
+            console.assert(bar.num === 3);
+        }
+        foo.num += 1;
+        console.assert(foo.num === 4);
         "#
     ));
     assert_eq!(expected, actual);
@@ -339,6 +346,10 @@ async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
     // Also it is not just fields and structs, eg `let foo = [1, 2]; let one = &mut data[0];` has the same problem.
     // Can we, in cargo-js, store a mutable ref to eg the JsExpr of the instantiation, eg on it's RustType or ScopedVar, and then if we later find a mut ref of a field is taken, we can update the JsExpr accordingly? Even if we can't keep a mut ref, we can give the expression a UUID and store that on the RustType then when we find any field mut refs, record this in the global data, then do a subsequent pass over the whole data to update/apply the stored data to the corresponding JsExpr's.
 
+    // Another solution is to encourage use of types like maybe `type JsString = &'staic str; type JsNumber = &i32;` and ensure these types cannot be made mutable, so they behave like actual JS types and force users to write code more idiomatic to JS and avoid mutating primatives.
+
+    // We could of course just compile time error for *any* use of a mutable JS primative and force users to explicitly wrap primatives when they need to be mutable. This is nice because it creates an intuitive 1:1 mapping between the source Rust and generated JS and discourages mutating primatives which is not idiomatic in JS. The problem is this means Rust that is not explicitly written for cargo-js might not compile. It is arguably similarly effective to simply advise against use of mutable primatives in code written specifically for cargo-js, and maybe even output warnings from the compiler. Could also have two compile flags, one that dissallows mutable primatives which is for writing "idiomatic" cargo-js code, and another flag for compiling "third party" Rust code which does allow/handle mutable primatives.
+
     let expected = format_js(concat!(
         r#"
             class RustInteger {
@@ -367,11 +378,11 @@ async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
 #[tokio::test]
 async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
     let actual = r2j_block_with_prelude!({
-        struct Foo {
-            bar: Bar,
-        }
         struct Bar {
             num: i32,
+        }
+        struct Foo {
+            bar: Bar,
         }
         let mut foo = Foo {
             bar: Bar { num: 1 },
@@ -387,19 +398,14 @@ async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
 
     let expected = format_js(concat!(
         r#"
-            class RustInteger {
-                constructor(inner) {
-                    this.inner = inner;
+            class Bar {
+                constructor(num) {
+                    this.num = num;
                 }
             }
             class Foo {
                 constructor(bar) {
                     this.bar = bar;
-                }
-            }
-            class Bar {
-                constructor(num) {
-                    this.num = num;
                 }
             }
             var foo = new Foo(new Bar(1));
@@ -417,8 +423,9 @@ async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
 
 #[tokio::test]
 async fn mutate_copy_struct() {
-    // We cannot reuse a moved (ie assigned to var, passed to fn) var, so don't need to worry about mutations between copies
+    // We cannot reuse a moved (ie assigned to var, passed to fn) var, so don't need to worry about mutations affecting orginal variable
     let actual = r2j_block_with_prelude!({
+        #[derive(Clone, Copy)]
         struct Foo {
             num: i32,
         }
@@ -426,18 +433,41 @@ async fn mutate_copy_struct() {
         assert!(foo.num == 1);
         foo.num = 2;
         assert!(foo.num == 2);
+        let bar = &mut foo;
+        bar.num += 1;
+        assert!(bar.num == 3);
+        foo.num += 1;
+        assert!(foo.num == 4);
+        let mut baz = foo;
+        baz.num += 1;
+        assert!(baz.num == 5);
+        assert!(foo.num == 4);
     });
 
     let expected = format_js(concat!(
-        r#"class Foo {
-            constructor(num) {
-                this.num = num;
+        r#"
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+                
+                copy() {
+                    return JSON.parse(JSON.stringify(this));
+                }
             }
-        }
-        var foo = new Foo(1);
-        console.assert(foo.num === 1);
-        foo.num = 2;
-        console.assert(foo.num === 2);
+            var foo = new Foo(1);
+            console.assert(foo.num === 1);
+            foo.num = 2;
+            console.assert(foo.num === 2);
+            var bar = foo;
+            bar.num += 1;
+            console.assert(bar.num === 3);
+            foo.num += 1;
+            console.assert(foo.num === 4);
+            var baz = foo.copy();
+            baz.num += 1;
+            console.assert(baz.num === 5);
+            console.assert(foo.num === 4);
         "#
     ));
     assert_eq!(expected, actual);
