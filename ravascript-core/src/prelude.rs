@@ -455,7 +455,6 @@ pub mod web {
 
     pub trait Node {
         // TODO deprecate append_child() in favour of append_child2
-        fn append_child3(&self, _child: AnyNode) {}
         fn append_child<T: Node>(&self, _a_child: T) {}
         fn add_event_listener(&self, _action: &str, _callback: impl Fn(Event)) {}
         fn add_event_listener_async<F>(&self, _action: &str, _callback: impl Fn(Event) -> F)
@@ -587,8 +586,14 @@ pub mod web {
             AnyNode::default()
         }
         /// For type safety prefer to use `create_element_<tag name>`
-        pub fn create_element(_tag: &str) -> impl HtmlElement {
-            AnyHtmlElement {}
+        ///
+        /// We need this untyped version so that we can make elements from runtime strings eg `Document::create_element(var_containing_some_html_tag);`. Actually we could just use the typed version and specify the element as `AnyHtmlElement`.
+        ///
+        /// mdn: "Note: A new HTMLElement is returned if the document is an HTMLDocument, which is the most common case. Otherwise a new Element is returned."
+        pub fn create_element_untyped(_tag: &str) -> impl HtmlElement {
+            // It doesn't matter what we return here, because the `-> impl HtmlElement` causes the type info to be lost so we are just left with "any" html element
+            AnyHtmlElement {}; // Don't really need AnyHtmlElement
+            HTMLInputElement { value: "" }
         }
         // pub fn create_element_div() -> HTMLDivElement {
         //     HTMLDivElement {}
@@ -596,7 +601,9 @@ pub mod web {
         pub fn create_element_textarea() -> Textarea {
             Textarea {}
         }
-        pub fn create_element2<T: Element>(_tag: &str) -> T {
+
+        // TODO given we need to keep the untyped `create_element`, it seems somewhat pointless having this and we may as well go straight to `create_element_div` etc??
+        pub fn create_element<T: Element>(_tag: &str) -> T {
             T::get_self()
         }
         pub fn create_text_node(_text: impl ToString) -> Text {

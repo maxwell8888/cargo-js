@@ -21,8 +21,8 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, case_convert, found_item_to_partial_rust_type, get_path, get_path_without_namespacing,
-    handle_pat, handle_syn_stmt::handle_stmt, hardcoded_conversions, js_stmts_from_syn_items,
+    camel, case_convert, found_item_to_partial_rust_type, get_path, get_path_old, handle_pat,
+    handle_syn_stmt::handle_stmt, hardcoded_conversions, js_stmts_from_syn_items,
     parse_fn_body_stmts, parse_fn_input_or_field, update_classes_js_stmts, ConstDef,
     DestructureObject, DestructureValue, EnumDefinitionInfo, EnumVariantInfo,
     EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, JsClass, JsExpr,
@@ -2358,12 +2358,10 @@ fn handle_expr_path_inner(
     // });
 
     // TODO can we not use get_path_without_namespacing() for everything?
-    let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path_without_namespacing(
+    let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
         true,
-        false,
-        module,
         segs_copy,
         global_data,
         current_module,
@@ -2935,6 +2933,7 @@ pub fn handle_expr_match(
                 impl_blocks: Vec::new(),
                 trait_definitons: Vec::new(),
                 consts: Vec::new(),
+                use_mappings: Vec::new(),
             });
 
             let (body_js_stmts, body_return_type) = match &*arm.body {

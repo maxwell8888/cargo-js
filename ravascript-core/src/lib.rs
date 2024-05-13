@@ -129,12 +129,17 @@ fn tree_parsing_for_boilerplate(
     };
 }
 
+enum ItemUseModuleOrScope<'a> {
+    Module(&'a mut ModuleData),
+    Scope(&'a mut GlobalDataScope),
+}
 fn handle_item_use(
     item_use: &ItemUse,
-    current_module: Vec<String>,
-    is_module: bool,
+    // current_module: Vec<String>,
+    // is_module: bool,
     // global_data: &mut GlobalData,
-    modules: &mut Vec<ModuleData>,
+    // modules: &mut Vec<ModuleData>,
+    item_use_module_or_scope: ItemUseModuleOrScope,
 ) {
     let public = match item_use.vis {
         Visibility::Public(_) => true,
@@ -163,17 +168,17 @@ fn handle_item_use(
         return;
     }
 
-    if root_module_or_crate == "ravascript" || root_module_or_crate == "crate" {
-        match &sub_modules.0[0] {
-            DestructureValue::KeyName(_) => {}
-            DestructureValue::Rename(_, _) => {}
-            DestructureValue::Nesting(name, _) => {
-                if name == "prelude" {
-                    return;
-                }
-            }
-        }
-    }
+    // if root_module_or_crate == "ravascript" || root_module_or_crate == "crate" {
+    //     match &sub_modules.0[0] {
+    //         DestructureValue::KeyName(_) => {}
+    //         DestructureValue::Rename(_, _) => {}
+    //         DestructureValue::Nesting(name, _) => {
+    //             if name == "prelude" {
+    //                 return;
+    //             }
+    //         }
+    //     }
+    // }
 
     // TODO fix this mess
     if match sub_modules.0.first().unwrap() {
@@ -203,44 +208,50 @@ fn handle_item_use(
         //     value: JsExpr::Path(vec![camel(root_module_or_crate)]),
         // })
 
+        // eg this.colorModule.spinachMessage = this.colorModule.greenModule.spinachModule.spinachMessage;
+
+        let (_root_module_or_crate, item_paths) = match &item_use.tree {
+            UseTree::Path(use_path) => {
+                // let mut sub_modules: Vec<DestructureValue> = Vec::new();
+                let root_module_or_crate = use_path.ident.to_string();
+
+                // Vec<(item name (snake), relative path (snake))>
+                let mut item_paths = Vec::new();
+                let mut relative_path = vec![use_path.ident.to_string()];
+                tree_parsing_for_boilerplate(&*use_path.tree, &mut relative_path, &mut item_paths);
+                // let sub_modules = DestructureObject (sub_modules);
+                // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
+                (root_module_or_crate, item_paths)
+            }
+            // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
+            // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+            UseTree::Name(_use_name) => todo!(),
+            _ => panic!("root of use trees are always a path or name"),
+        };
+
         // TODO we do want to do the JsLocal destructure thing if the use is not a top level item?
         // TODO this is probably also the correct place to determine if std stuff like HashMap needs flagging
-        if is_module {
-            // eg this.colorModule.spinachMessage = this.colorModule.greenModule.spinachModule.spinachMessage;
-
-            let (_root_module_or_crate, item_paths) = match &item_use.tree {
-                UseTree::Path(use_path) => {
-                    // let mut sub_modules: Vec<DestructureValue> = Vec::new();
-                    let root_module_or_crate = use_path.ident.to_string();
-
-                    // Vec<(item name (snake), relative path (snake))>
-                    let mut item_paths = Vec::new();
-                    let mut relative_path = vec![use_path.ident.to_string()];
-                    tree_parsing_for_boilerplate(
-                        &*use_path.tree,
-                        &mut relative_path,
-                        &mut item_paths,
-                    );
-                    // let sub_modules = DestructureObject (sub_modules);
-                    // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
-                    (root_module_or_crate, item_paths)
+        // if is_module {
+        match item_use_module_or_scope {
+            ItemUseModuleOrScope::Module(module) => {
+                for item_path in item_paths {
+                    // Get current module since it must already exist if we are in it
+                    match item_use.vis {
+                        Visibility::Public(_) => module.pub_use_mappings.push(item_path),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => module.private_use_mappings.push(item_path),
+                    }
                 }
-                // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
-                // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
-                UseTree::Name(_use_name) => todo!(),
-                _ => panic!("root of use trees are always a path or name"),
-            };
-
-            let module = modules
-                .iter_mut()
-                .find(|module| module.path == current_module)
-                .unwrap();
-            for item_path in item_paths {
-                // Get current module since it must already exist if we are in it
-                match item_use.vis {
-                    Visibility::Public(_) => module.pub_use_mappings.push(item_path),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => module.private_use_mappings.push(item_path),
+            }
+            ItemUseModuleOrScope::Scope(scope) => {
+                for item_path in item_paths {
+                    // Get current module since it must already exist if we are in it
+                    match item_use.vis {
+                        // TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
+                        Visibility::Public(_) => todo!(),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => scope.use_mappings.push(item_path),
+                    }
                 }
             }
         }
@@ -973,11 +984,11 @@ fn parse_types_for_populate_item_definitions(
     current_module: &Vec<String>,
     global_data: &GlobalData,
 ) -> RustType {
-    let current_module_data = global_data
-        .modules
-        .iter()
-        .find(|m| &m.path == current_module)
-        .unwrap();
+    // let current_module_data = global_data
+    //     .modules
+    //     .iter()
+    //     .find(|m| &m.path == current_module)
+    //     .unwrap();
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
@@ -1032,17 +1043,14 @@ fn parse_types_for_populate_item_definitions(
                                 })
                                 .collect::<Vec<_>>();
                             // TODO lookup trait in global data to get module path
-                            let (trait_module_path, trait_item_path, _is_scoped) =
-                                get_path_without_namespacing(
-                                    false,
-                                    true,
-                                    false,
-                                    current_module_data,
-                                    trait_bound_path,
-                                    global_data,
-                                    current_module,
-                                    current_module,
-                                );
+                            let (trait_module_path, trait_item_path, _is_scoped) = get_path(
+                                false,
+                                true,
+                                trait_bound_path,
+                                global_data,
+                                current_module,
+                                current_module,
+                            );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
 
@@ -1197,17 +1205,14 @@ fn parse_types_for_populate_item_definitions(
                         })
                         .collect::<Vec<_>>();
 
-                    let (item_module_path, item_path_seg, _is_scoped) =
-                        get_path_without_namespacing(
-                            false,
-                            true,
-                            false,
-                            current_module_data,
-                            rust_path,
-                            global_data,
-                            current_module,
-                            current_module,
-                        );
+                    let (item_module_path, item_path_seg, _is_scoped) = get_path(
+                        false,
+                        true,
+                        rust_path,
+                        global_data,
+                        current_module,
+                        current_module,
+                    );
                     let item_seg = &item_path_seg[0];
 
                     // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
@@ -1538,6 +1543,16 @@ struct ImplItemTemp {
     // return_type: RustType,
 }
 
+// Third party crates
+#[derive(Debug, Clone)]
+struct CrateData {
+    name: String,
+    // Ideally we would just store the data like this, but we need to be able to resolve third party crate use statements, which might chain use statements, using `get_path_without_namespacing` just like any other module, so we need to maintain the same data structure? Yes we need to parse the third party crate anyway since we need to include it's source the JS output so will already have all it's ModuleData. Although in theory we could just do a one off calculation of all it's crate level pub module paths/items and only look for those when resolving paths in the main crate, which would reduce work, for now we will just resolve the paths just like any other module
+    // (name, module path, definition)
+    // items: Vec<(String, Vec<String>, ItemDefinition)>,
+    modules: Vec<ModuleData>,
+}
+
 #[derive(Debug, Clone)]
 struct ModuleData {
     name: String,
@@ -1582,7 +1597,7 @@ struct ModuleData {
     consts: Vec<ConstDef>,
     trait_definitons: Vec<RustTraitDefinition>,
 
-    // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but it populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
+    // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but is populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
     items: Vec<Item>,
 }
 impl ModuleData {
@@ -2227,6 +2242,7 @@ struct GlobalDataScope {
     consts: Vec<ConstDef>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
     look_in_outer_scope: bool,
+    use_mappings: Vec<(String, Vec<String>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -2239,6 +2255,7 @@ struct RustTraitDefinition {
 struct GlobalData {
     crate_path: Option<PathBuf>,
     modules: Vec<ModuleData>,
+    crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
@@ -2306,9 +2323,16 @@ impl GlobalData {
                 syn_object: None,
             }),
         };
+
+        // let ravascript_prelude_crate = CrateData {
+        //     name: "ravascript".to_string(),
+        // };
+
         GlobalData {
             crate_path,
             modules: Vec::new(),
+            // crates: vec![ravascript_prelude_crate],
+            crates: vec![],
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope::default()],
             // struct_or_enum_methods: Vec::new(),
@@ -2485,21 +2509,8 @@ impl GlobalData {
             assert!(type_path.len() == 1);
             (scoped_item.clone(), None, type_path[0].ident.clone())
         } else {
-            let module = self
-                .modules
-                .iter()
-                .find(|m| &m.path == current_module)
-                .unwrap();
-            let (module_path, item_path, is_scoped) = get_path_without_namespacing(
-                false,
-                true,
-                false,
-                module,
-                type_path,
-                self,
-                current_module,
-                current_module,
-            );
+            let (module_path, item_path, is_scoped) =
+                get_path(false, true, type_path, self, current_module, current_module);
             assert!(item_path.len() == 1);
             let item_def = self.lookup_item_def_known_module_assert_not_func(
                 &Some(module_path.clone()),
@@ -2584,16 +2595,9 @@ impl GlobalData {
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
-            let current_module = self
-                .modules
-                .iter()
-                .find(|m| &m.path == current_module_path)
-                .unwrap();
-            let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
+            let (item_module_path, item_path, _is_scoped) = get_path(
                 false,
                 true,
-                false,
-                current_module,
                 path.iter()
                     .map(|seg| RustPathSegment {
                         ident: seg.clone(),
@@ -2670,16 +2674,9 @@ impl GlobalData {
         if let Some(trait_def) = scoped_trait_def {
             return Some((None, trait_def.clone()));
         } else {
-            let current_module = self
-                .modules
-                .iter()
-                .find(|m| &m.path == current_module_path)
-                .unwrap();
-            let (item_module_path, item_path, _is_scoped) = get_path_without_namespacing(
+            let (item_module_path, item_path, _is_scoped) = get_path(
                 false,
                 true,
-                false,
-                current_module,
                 path.iter()
                     .map(|seg| RustPathSegment {
                         ident: seg.clone(),
@@ -3306,7 +3303,11 @@ fn extract_data(
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
             Item::Use(item_use) => {
-                handle_item_use(&item_use, module_path.clone(), true, modules);
+                let module = modules
+                    .iter_mut()
+                    .find(|module| &module.path == module_path)
+                    .unwrap();
+                handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
@@ -3819,13 +3820,12 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
 
 pub fn process_items(
     items: Vec<Item>,
-    // TODO combine use of all 3 PathBuf into 1
+    // TODO combine use of all 3 PathBuf into 1, or atleast document what each one is for
     get_names_crate_path: Option<&PathBuf>,
     global_data_crate_path: Option<PathBuf>,
     entrypoint_path: &mut Option<PathBuf>,
     with_rust_types: bool,
 ) -> Vec<JsModule> {
-    let mut names = Vec::new();
     let mut modules = Vec::new();
     modules.push(ModuleData {
         name: "crate".to_string(),
@@ -3847,11 +3847,21 @@ pub fn process_items(
     let mut get_names_module_path = vec!["crate".to_string()];
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
 
+    // Fix module tests, clean up get_names_crate_path, global_data_crate_path, entrypoint_path args, etc before tackling third party crates
+    // let web_prelude_path = PathBuf::new();
+    // let code = fs::read_to_string(web_prelude_path.join("../web-prelude").join("src").join("main.rs")).unwrap();
+    // let file = syn::parse_file(&code).unwrap();
+    // let items = file.items;
+
+    // let mut current_file_path = vec!["main.rs".to_string()];
+
+    // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
+    let mut names_for_finding_duplicates = Vec::new();
     extract_data(
         &items,
         get_names_crate_path,
         &mut get_names_module_path.clone(),
-        &mut names,
+        &mut names_for_finding_duplicates,
         &mut modules,
     );
 
@@ -3861,8 +3871,8 @@ pub fn process_items(
 
     let mut duplicates = Vec::new();
     // NOTE names doesn't currently include scoped items
-    for name in &names {
-        if names
+    for name in &names_for_finding_duplicates {
+        if names_for_finding_duplicates
             .iter()
             .filter(|(module_path, name2)| &name.1 == name2)
             .collect::<Vec<_>>()
@@ -3958,7 +3968,7 @@ pub fn process_items(
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
 
-    // and module name comments when there is more than 1 module
+    // add module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {
         for module in &mut global_data.transpiled_modules {
             module.stmts.insert(
@@ -4796,6 +4806,7 @@ impl DestructureValue {
 }
 
 #[derive(Clone, Debug)]
+// TODO consider replacing the Vec with DestructureValue::Group, like how syn works
 struct DestructureObject(Vec<DestructureValue>);
 impl DestructureObject {
     fn js_string(&self) -> String {
@@ -5672,7 +5683,7 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
 // Take a path segs like foo::my_func(), and finds the absolute path to the item eg crate::bar::foo::my_func()
 // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
 // What happens if the path is to a scoped item, or a variable (ie not an item definition)? We return the path of the item/var, which I believe in all cases must be a 0 length path/Vec<String>?
-fn get_path(
+fn get_path_old(
     look_for_scoped_vars: bool,
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
@@ -5796,7 +5807,7 @@ fn get_path(
             .unwrap();
 
         // dbg!("in super");
-        get_path(
+        get_path_old(
             false,
             true,
             true,
@@ -5813,7 +5824,7 @@ fn get_path(
         // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
         // TODO problem is that we are conflating `in_same_module` with pub/private
         // dbg!("in self");
-        get_path(
+        get_path_old(
             false,
             true,
             true,
@@ -5837,7 +5848,7 @@ fn get_path(
         segs.remove(0);
 
         // NOTE all modules are desecendants of crate so all items in crate are visible/public
-        get_path(
+        get_path_old(
             false,
             true,
             true,
@@ -5862,7 +5873,7 @@ fn get_path(
         segs.remove(0);
 
         // dbg!("Path starts with a submodule of the current module");
-        get_path(
+        get_path_old(
             false,
             false,
             true,
@@ -5877,7 +5888,7 @@ fn get_path(
         use_segs.push(use_mapping.0.clone());
         segs.remove(0);
         use_segs.extend(segs);
-        let mut segs = get_path(
+        let mut segs = get_path_old(
             false,
             true,
             true,
@@ -5937,27 +5948,30 @@ pub struct RustPathSegment {
 /// -> (current module (during recursion)/item module path (upon final return), found item path, is scoped item/var/func)
 ///
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
-fn get_path_without_namespacing(
+fn get_path(
     look_for_scoped_vars: bool,
     use_private_items: bool,
-    // So we know whether allow segs to simply be somthing in an outer scope
-    // I think this is just a duplicate of `look_for_scoped_vars` and we aren't even using it anyway
-    module_level_items_only: bool,
-    module: &ModuleData,
-    // syn_path essentially mirrors segs so don't need segs
-    // segs: Vec<String>,
     mut segs: Vec<RustPathSegment>,
     global_data: &GlobalData,
-    current_module: &Vec<String>,
-    // Only used to determine if current module is
-    original_module: &Vec<String>,
+    current_mod: &Vec<String>,
+    // Only used to determine if current module is the original module
+    orig_mod: &Vec<String>,
 ) -> (Vec<String>, Vec<RustPathSegment>, bool) {
     debug!(segs = ?segs, "get_path_without_namespacing");
-    let is_parent_or_same_module = if original_module.len() >= current_module.len() {
-        current_module
+
+    // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
+    // assert!(current_module == &module.path);
+    let module = global_data
+        .modules
+        .iter()
+        .find(|m| &m.path == current_mod)
+        .unwrap();
+
+    let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
+        current_mod
             .iter()
             .enumerate()
-            .all(|(i, current_module)| current_module == &original_module[i])
+            .all(|(i, current_module)| current_module == &orig_mod[i])
     } else {
         false
     };
@@ -5972,8 +5986,16 @@ fn get_path_without_namespacing(
         &segs[0].ident,
     );
 
+    // TODO only look through transparent scopes
+    let scoped_use_mapping = global_data
+        .scopes
+        .iter()
+        .rev()
+        .find_map(|s| s.use_mappings.iter().find(|u| u.0 == segs[0].ident));
     let mut use_mappings = module.pub_use_mappings.iter();
-    let matched_use_mapping = if use_private_items || is_parent_or_same_module {
+    let matched_use_mapping = if scoped_use_mapping.is_some() {
+        scoped_use_mapping
+    } else if use_private_items || is_parent_or_same_module {
         use_mappings
             .chain(module.private_use_mappings.iter())
             .find(|use_mapping| use_mapping.0 == segs[0].ident)
@@ -6020,7 +6042,7 @@ fn get_path_without_namespacing(
             && look_for_scoped_vars;
 
         // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
-        (is_func || is_item_def || is_var) && current_module == original_module
+        (is_func || is_item_def || is_var) && current_mod == orig_mod
     });
 
     // dbg!(&global_data.scopes);
@@ -6032,103 +6054,44 @@ fn get_path_without_namespacing(
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
 
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
-        assert!(current_module == original_module);
-        (current_module.clone(), segs, true)
+        assert!(current_mod == orig_mod);
+        (current_mod.clone(), segs, true)
     } else if item_defined_in_module {
-        // if let Some(dup) = global_data
-        //     .duplicates
-        //     .iter()
-        //     .find(|dup| dup.name == segs[0] && &dup.original_module_path == current_module)
-        // {
-        //     segs[0] = dup
-        //         .namespace
-        //         .iter()
-        //         .map(|seg| camel(seg))
-        //         .collect::<Vec<_>>()
-        //         .join("__");
-        // }
-        (current_module.clone(), segs, false)
+        (current_mod.clone(), segs, false)
     } else if segs[0].ident == "super" {
-        // TODO if a module level item name is shadowed by a item in a fn scope, then module level item needs to be namespaced
+        // TODO if a module level item name is shadowed by an item in a fn scope, then module level item needs to be namespaced
         segs.remove(0);
 
-        let mut current_module = current_module.clone();
+        let mut current_module = current_mod.clone();
         current_module.pop();
 
-        let module = global_data
-            .modules
-            .iter()
-            .find(|module| module.path == current_module)
-            .unwrap();
-
-        get_path_without_namespacing(
-            false,
-            true,
-            true,
-            module,
-            segs,
-            global_data,
-            &current_module,
-            original_module,
-        )
+        get_path(false, true, segs, global_data, &current_module, orig_mod)
     } else if segs[0].ident == "self" {
         // NOTE private items are still accessible from the module via self
         segs.remove(0);
 
-        get_path_without_namespacing(
-            false,
-            true,
-            true,
-            module,
-            segs,
-            global_data,
-            &current_module,
-            original_module,
-        )
+        get_path(false, true, segs, global_data, &current_mod, orig_mod)
     } else if segs[0].ident == "crate" {
         let current_module = vec!["crate".to_string()];
-        let module = global_data
-            .modules
-            .iter()
-            .find(|module| module.path == current_module)
-            .unwrap();
 
         segs.remove(0);
 
-        get_path_without_namespacing(
-            false,
-            true,
-            true,
-            module,
-            segs,
-            global_data,
-            &current_module,
-            original_module,
-        )
+        get_path(false, true, segs, global_data, &current_module, orig_mod)
     } else if path_starts_with_sub_module {
         // Path starts with a submodule of the current module
-        let mut submodule_path = current_module.clone();
-        submodule_path.push(segs[0].ident.to_string());
-
-        let submodule = global_data
-            .modules
-            .iter()
-            .find(|submodule| submodule.path == submodule_path)
-            .unwrap();
+        let mut submod_path = current_mod.clone();
+        submod_path.push(segs[0].ident.to_string());
 
         segs.remove(0);
 
-        get_path_without_namespacing(
-            false,
-            false,
-            true,
-            submodule,
-            segs,
-            global_data,
-            &submodule_path,
-            original_module,
-        )
+        get_path(false, false, segs, global_data, &submod_path, orig_mod)
     } else if let Some(use_mapping) = matched_use_mapping {
+        // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
+        // `use super::super::some_module::another_module;` will have a use mapping recorded of eg ("another_module", ["crate", "top_module", "some_module"])
+        // So say we have a path like `another_module::MyStruct;`, then we will match this use mapping and the below code combines the path from the mapping and the current "segs" to make `"crate", "top_module", "some_module", "another_module", "MyStruct";`
+
+        // TODO IMPORTANT for a `use` statement for a third party crate, we need to set the `current_module` accordingly. I think it is fine to just use ["name_of_crate", "module_in_crate", etc].
+
         let mut use_segs = use_mapping.1.clone();
         use_segs.push(use_mapping.0.clone());
         // TODO IMPORTANT seems like we are not correctly populating turbofish here
@@ -6141,46 +6104,35 @@ fn get_path_without_namespacing(
             .collect::<Vec<_>>();
         segs.remove(0);
         use_segs.extend(segs);
-        let mut result = get_path_without_namespacing(
-            false,
-            true,
-            true,
-            module,
-            use_segs,
-            global_data,
-            current_module,
-            original_module,
-        );
 
-        if let Some(dup) = global_data
-            .duplicates
-            .iter()
-            .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
-        {
-            // segs[0] = dup
-            //     .namespace
-            //     .iter()
-            //     .map(|seg| camel(seg))
-            //     .collect::<Vec<_>>()
-            //     .join("__");
-            result
-        } else {
-            // If the item has not been namespaced, we don't need to do anything
-            result
-        }
+        // TODO do we not need to update the current module if the use path/mapping has taken us to a new module??
+
+        get_path(false, true, use_segs, global_data, current_mod, orig_mod)
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
     } else {
+        // Handle third party crates
+        // TODO lookup available crates in Cargo.toml
+        // if segs[0..3].iter().map(|s| &s.ident).collect::<Vec<_>>()
+        //     == ["ravascript", "prelude", "web"]
+        // {
+        //     return (
+        //         vec!["prelude_special_case".to_string()],
+        //         segs[3..].to_vec(),
+        //         false,
+        //     );
+        // }
+
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
-        assert!(current_module == original_module);
-        assert!(segs.len() == 1);
+        assert_eq!(current_mod, orig_mod);
+        assert_eq!(segs.len(), 1);
         let seg = &segs[0];
         if seg.ident == "i32" || seg.ident == "String" || seg.ident == "str" {
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, false)
         } else {
             // dbg!(module);
-            dbg!(current_module);
+            dbg!(current_mod);
             dbg!(segs);
             panic!()
         }

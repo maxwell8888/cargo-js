@@ -1098,6 +1098,7 @@ pub fn handle_item_impl(
                     impl_blocks: Vec::new(),
                     trait_definitons: Vec::new(),
                     consts: Vec::new(),
+                    use_mappings: Vec::new(),
                 });
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name

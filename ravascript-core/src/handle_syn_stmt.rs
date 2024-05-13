@@ -21,7 +21,7 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, handle_pat,
+    camel, handle_item_use, handle_pat,
     handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro},
     handle_syn_item::{
         handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
@@ -29,9 +29,9 @@ use crate::{
     },
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, JsClass, JsExpr, JsFn, JsIf, JsImplItem, JsLocal, JsModule,
-    JsStmt, LocalName, LocalType, RustGeneric, RustImplBlock, RustImplItem, RustImplItemItem,
-    RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
+    GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsClass, JsExpr, JsFn, JsIf, JsImplItem,
+    JsLocal, JsModule, JsStmt, LocalName, LocalType, RustGeneric, RustImplBlock, RustImplItem,
+    RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
     StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
@@ -775,7 +775,11 @@ pub fn handle_stmt(
             Item::Union(_) => todo!(),
             // Item::Use(item_use) => handle_item_use(item_use),
             // TODO surely need to handle scoped use statements as they could shadow other item idents?
-            Item::Use(item_use) => todo!(),
+            Item::Use(item_use) => {
+                let scope = global_data.scopes.last_mut().unwrap();
+                handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
+                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
+            }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
