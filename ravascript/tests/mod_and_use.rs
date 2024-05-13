@@ -20,11 +20,11 @@ async fn it_transpiles_crate_directory() {
 
     let expected = format_js(
         r#"// crate
-          function duplicateName() {
+          function crate__duplicateName() {
             return 10;
           }
           function main() {
-            duplicateName();
+            crate__duplicateName();
             utils__colors__duplicateName();
             var thing = External.new();
             var fido = new Green(true, 2);
@@ -76,9 +76,12 @@ async fn it_transpiles_crate_directory() {
                 return 9;
               }
               console.assert(this.age === 2);
+              console.assert(green__duplicateName() === 3);
               console.assert(duplicateName() === 9);
               console.assert(sayHello() === 8);
+              console.assert(crate__duplicateName() === 10);
               console.assert(sayHello() === 8);
+              console.assert(green__duplicateName() === 3);
               console.assert(colors__duplicateName() === 6);
               console.assert(utils__colors__duplicateName() === 7);
               console.assert(DOG_ACTIVITY === 5);

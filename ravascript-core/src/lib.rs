@@ -5,6 +5,10 @@ use biome_js_syntax::JsFileSource;
 use handle_syn_expr::{handle_expr, handle_expr_block, handle_expr_match};
 use handle_syn_stmt::handle_stmt;
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
+use js_ast::{
+    DestructureObject, DestructureValue, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, JsStmt,
+    LocalName,
+};
 use quote::quote;
 use std::{
     default,
@@ -22,10 +26,11 @@ use syn::{
 };
 use tracing::{debug, debug_span, info, span, warn};
 
-use crate::handle_syn_item::handle_item;
 mod handle_syn_expr;
 mod handle_syn_item;
+use crate::handle_syn_item::handle_item;
 mod handle_syn_stmt;
+mod js_ast;
 pub mod prelude;
 pub mod rust_prelude;
 
@@ -1046,6 +1051,7 @@ fn parse_types_for_populate_item_definitions(
                             let (trait_module_path, trait_item_path, _is_scoped) = get_path(
                                 false,
                                 true,
+                                true,
                                 trait_bound_path,
                                 global_data,
                                 current_module,
@@ -1207,6 +1213,7 @@ fn parse_types_for_populate_item_definitions(
 
                     let (item_module_path, item_path_seg, _is_scoped) = get_path(
                         false,
+                        true,
                         true,
                         rust_path,
                         global_data,
@@ -2498,6 +2505,7 @@ impl GlobalData {
         //     }
         // }
 
+        // TODO should just use get_path to look for scoped item?
         let scoped_item = self.scopes.iter().rev().find_map(|scope| {
             scope
                 .item_definitons
@@ -2509,8 +2517,15 @@ impl GlobalData {
             assert!(type_path.len() == 1);
             (scoped_item.clone(), None, type_path[0].ident.clone())
         } else {
-            let (module_path, item_path, is_scoped) =
-                get_path(false, true, type_path, self, current_module, current_module);
+            let (module_path, item_path, is_scoped) = get_path(
+                false,
+                false,
+                true,
+                type_path,
+                self,
+                current_module,
+                current_module,
+            );
             assert!(item_path.len() == 1);
             let item_def = self.lookup_item_def_known_module_assert_not_func(
                 &Some(module_path.clone()),
@@ -2592,10 +2607,12 @@ impl GlobalData {
         // current_module: &Vec<String>,
     ) -> Option<(Option<Vec<String>>, ItemDefinition)> {
         let first = &path[0];
+        // TODO should just use get_path to look for scoped items?
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
             let (item_module_path, item_path, _is_scoped) = get_path(
+                false,
                 false,
                 true,
                 path.iter()
@@ -2671,10 +2688,13 @@ impl GlobalData {
             .iter()
             .rev()
             .find_map(|s| s.trait_definitons.iter().find(|t| &t.name == first));
+
+        // TODO should just use get_path to look for scoped traits?
         if let Some(trait_def) = scoped_trait_def {
             return Some((None, trait_def.clone()));
         } else {
             let (item_module_path, item_path, _is_scoped) = get_path(
+                false,
                 false,
                 true,
                 path.iter()
@@ -3114,12 +3134,14 @@ fn update_classes_js_stmts(
 // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
 /// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
 fn extract_data(
+    module_level_items: bool,
     items: &Vec<Item>,
     // None if we are extracted data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
     crate_path: Option<&PathBuf>,
     module_path: &mut Vec<String>,
     // (module path, name)
     names: &mut Vec<(Vec<String>, String)>,
+    scoped_names: &mut Vec<(Vec<String>, String)>,
     modules: &mut Vec<ModuleData>,
 ) {
     // let mut module_path_with_crate = vec!["crate".to_string()];
@@ -3135,61 +3157,122 @@ fn extract_data(
         match item {
             Item::Const(item_const) => {
                 let const_name = item_const.ident.to_string();
-                names.push((module_path.clone(), const_name.clone()));
-
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
-                match item_const.vis {
-                    Visibility::Public(_) => current_module_data
-                        .pub_definitions
-                        .push(item_const.ident.to_string()),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
-                        .private_definitions
-                        .push(item_const.ident.to_string()),
+                if module_level_items {
+                    names.push((module_path.clone(), const_name.clone()));
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_const.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_const.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_const.ident.to_string()),
+                    }
+                } else {
+                    scoped_names.push((module_path.clone(), const_name.clone()));
                 }
             }
             Item::Enum(item_enum) => {
                 let enum_name = item_enum.ident.to_string();
-                names.push((module_path.clone(), enum_name.clone()));
+                if module_level_items {
+                    names.push((module_path.clone(), enum_name.clone()));
 
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
-                match item_enum.vis {
-                    Visibility::Public(_) => current_module_data
-                        .pub_definitions
-                        .push(item_enum.ident.to_string()),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
-                        .private_definitions
-                        .push(item_enum.ident.to_string()),
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_enum.vis {
+                        Visibility::Public(_) => current_module_data
+                            .pub_definitions
+                            .push(item_enum.ident.to_string()),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => current_module_data
+                            .private_definitions
+                            .push(item_enum.ident.to_string()),
+                    }
+                } else {
+                    scoped_names.push((module_path.clone(), enum_name.clone()));
                 }
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
-                names.push((module_path.clone(), item_fn.sig.ident.to_string()));
+                let fn_name = item_fn.sig.ident.to_string();
+                if module_level_items {
+                    names.push((module_path.clone(), fn_name.clone()));
 
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
-                match item_fn.vis {
-                    Visibility::Public(_) => current_module_data
-                        .pub_definitions
-                        .push(item_fn.sig.ident.to_string()),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
-                        .private_definitions
-                        .push(item_fn.sig.ident.to_string()),
+                    let current_module_data = modules
+                        .iter_mut()
+                        .find(|module| module.path == *module_path)
+                        .unwrap();
+                    match item_fn.vis {
+                        Visibility::Public(_) => current_module_data.pub_definitions.push(fn_name),
+                        Visibility::Restricted(_) => todo!(),
+                        Visibility::Inherited => {
+                            current_module_data.private_definitions.push(fn_name)
+                        }
+                    }
+                } else {
+                    scoped_names.push((module_path.clone(), fn_name));
                 }
+
+                // Record scoped ident names so we can ensure any module level items with the same name are namespaced
+                let items = item_fn
+                    .clone()
+                    .block
+                    .stmts
+                    .into_iter()
+                    .filter_map(|s| match s {
+                        Stmt::Item(item) => Some(item),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                extract_data(
+                    false,
+                    &items,
+                    crate_path,
+                    module_path,
+                    names,
+                    scoped_names,
+                    modules,
+                )
             }
             Item::ForeignMod(_) => todo!(),
-            Item::Impl(_) => {
-                // TODO
+            Item::Impl(item_impl) => {
+                // Record scoped ident names so we can ensure any module level items with the same name are namespaced
+                let items = item_impl
+                    .clone()
+                    .items
+                    .into_iter()
+                    .filter_map(|impl_item| match impl_item {
+                        ImplItem::Fn(impl_item_fn) => {
+                            let items =
+                                impl_item_fn.block.stmts.into_iter().filter_map(
+                                    |stmt| match stmt {
+                                        Stmt::Item(item) => Some(item),
+                                        _ => None,
+                                    },
+                                );
+                            Some(items)
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>();
+
+                extract_data(
+                    false,
+                    &items,
+                    crate_path,
+                    module_path,
+                    names,
+                    scoped_names,
+                    modules,
+                )
             }
             Item::Macro(_) => {}
             Item::Mod(item_mod) => {
@@ -3234,7 +3317,15 @@ fn extract_data(
                     modules.push(partial_module_data);
 
                     // TODO how does `mod bar { mod foo; }` work?
-                    extract_data(&content.1, crate_path, module_path, names, modules);
+                    extract_data(
+                        true,
+                        &content.1,
+                        crate_path,
+                        module_path,
+                        names,
+                        scoped_names,
+                        modules,
+                    );
                 } else {
                     if let Some(crate_path) = crate_path {
                         let mut file_path = crate_path.clone();
@@ -3255,7 +3346,15 @@ fn extract_data(
 
                         partial_module_data.items = file.items.clone();
                         modules.push(partial_module_data);
-                        extract_data(&file.items, Some(crate_path), module_path, names, modules);
+                        extract_data(
+                            true,
+                            &file.items,
+                            Some(crate_path),
+                            module_path,
+                            names,
+                            scoped_names,
+                            modules,
+                        );
                     } else {
                         panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
                     }
@@ -3585,13 +3684,13 @@ fn extract_data_populate_item_definitions(
 }
 
 fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
+    // We take a copy to make sure both duplicates have a path segment added to their namespace, rather than just the first one that is found
     let dups_copy = duplicates.clone();
     for dup in duplicates.iter_mut() {
         if dups_copy
             .iter()
             .filter(|dup_copy| dup.name == dup_copy.name && dup.namespace == dup_copy.namespace)
-            .collect::<Vec<_>>()
-            .len()
+            .count()
             > 1
         {
             if dup.module_path != vec!["crate"] {
@@ -3857,11 +3956,14 @@ pub fn process_items(
 
     // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
     let mut names_for_finding_duplicates = Vec::new();
+    let mut scoped_names_for_finding_duplicates = Vec::new();
     extract_data(
+        true,
         &items,
         get_names_crate_path,
         &mut get_names_module_path.clone(),
         &mut names_for_finding_duplicates,
+        &mut scoped_names_for_finding_duplicates,
         &mut modules,
     );
 
@@ -3870,13 +3972,14 @@ pub fn process_items(
     // (name space, module path (which gets popped), name, original module path)
 
     let mut duplicates = Vec::new();
-    // NOTE names doesn't currently include scoped items
+    // TODO surely we want
     for name in &names_for_finding_duplicates {
         if names_for_finding_duplicates
             .iter()
+            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
+            .chain(scoped_names_for_finding_duplicates.iter())
             .filter(|(module_path, name2)| &name.1 == name2)
-            .collect::<Vec<_>>()
-            .len()
+            .count()
             > 1
         {
             duplicates.push(Duplicate {
@@ -3885,6 +3988,15 @@ pub fn process_items(
                 name: name.1.clone(),
                 original_module_path: name.0.clone(),
             });
+        }
+    }
+    // First add a single path segment to names that are duplicated by scoped items
+    for dup in duplicates.iter_mut() {
+        let is_scoped_name = scoped_names_for_finding_duplicates
+            .iter()
+            .any(|s| dup.name == s.1);
+        if is_scoped_name {
+            dup.namespace.insert(0, dup.module_path.pop().unwrap())
         }
     }
     update_dup_names(&mut duplicates);
@@ -4232,1169 +4344,6 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 //     js_stmts
 // }
 
-#[derive(Clone, Debug)]
-pub enum JsOp {
-    Add,
-    Sub,
-    AddAssign,
-    And,
-    Or,
-    Eq,
-    NotEq,
-    Gt,
-    GtEq,
-    Lt,
-    Rem,
-}
-impl JsOp {
-    fn js_string(&self) -> &str {
-        match self {
-            JsOp::Add => "+",
-            JsOp::Sub => "-",
-            JsOp::AddAssign => "+=",
-            JsOp::And => "&&",
-            JsOp::Or => "||",
-            JsOp::Eq => "===",
-            JsOp::NotEq => "!==",
-            JsOp::Gt => ">",
-            JsOp::GtEq => ">=",
-            JsOp::Lt => "<",
-            JsOp::Rem => "%",
-        }
-    }
-    fn from_binop(binop: BinOp) -> JsOp {
-        match binop {
-            BinOp::Add(_) => JsOp::Add,
-            BinOp::Sub(_) => JsOp::Sub,
-            BinOp::Mul(_) => todo!(),
-            BinOp::Div(_) => todo!(),
-            BinOp::Rem(_) => JsOp::Rem,
-            BinOp::And(_) => JsOp::And,
-            BinOp::Or(_) => JsOp::Or,
-            BinOp::BitXor(_) => todo!(),
-            BinOp::BitAnd(_) => todo!(),
-            BinOp::BitOr(_) => todo!(),
-            BinOp::Shl(_) => todo!(),
-            BinOp::Shr(_) => todo!(),
-            BinOp::Eq(_) => JsOp::Eq,
-            BinOp::Lt(_) => JsOp::Lt,
-            BinOp::Le(_) => todo!(),
-            BinOp::Ne(_) => JsOp::NotEq,
-            BinOp::Ge(_) => JsOp::GtEq,
-            BinOp::Gt(_) => JsOp::Gt,
-            BinOp::AddAssign(_) => JsOp::AddAssign,
-            BinOp::SubAssign(_) => todo!(),
-            BinOp::MulAssign(_) => todo!(),
-            BinOp::DivAssign(_) => todo!(),
-            BinOp::RemAssign(_) => todo!(),
-            BinOp::BitXorAssign(_) => todo!(),
-            BinOp::BitAndAssign(_) => todo!(),
-            BinOp::BitOrAssign(_) => todo!(),
-            BinOp::ShlAssign(_) => todo!(),
-            BinOp::ShrAssign(_) => todo!(),
-            _ => todo!(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum JsExpr {
-    Array(Vec<JsExpr>),
-    /// (async, block, inputs, body)
-    ArrowFn(bool, bool, Vec<String>, Vec<JsStmt>),
-    Assignment(Box<JsExpr>, Box<JsExpr>),
-    Await(Box<JsExpr>),
-    Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
-    /// Will only make itself disappear
-    Blank,
-    Block(Vec<JsStmt>),
-    Break,
-    /// (const/let/var, left, right)
-    /// use const for immutatble, let for mutable, var for shadowing
-    Declaration(bool, String, Box<JsExpr>),
-    /// (base expr, field name)
-    Field(Box<JsExpr>, String),
-    Fn(JsFn),
-    /// (name, args)
-    FnCall(Box<JsExpr>, Vec<JsExpr>),
-    /// (pat, expr, block)
-    ForLoop(String, Box<JsExpr>, Vec<JsStmt>),
-    Index(Box<JsExpr>, Box<JsExpr>),
-    /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
-    /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var
-    ///
-    If(JsIf),
-    LitInt(i32),
-    LitFloat(f32),
-    LitStr(String),
-    LitBool(bool),
-    /// (receiver, method name, method args)
-    /// TODO assumes receiver is single var
-    MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
-    Minus(Box<JsExpr>),
-    /// (Class path, args)
-    New(Vec<String>, Vec<JsExpr>),
-    Null,
-    Not(Box<JsExpr>),
-    Object(Vec<(String, Box<JsExpr>)>),
-    ObjectForModule(Vec<JsStmt>),
-    Paren(Box<JsExpr>),
-    /// eg module::struct::associated_fn -> module.struct.associated_fn;
-    Path(Vec<String>),
-    Raw(String),
-    Return(Box<JsExpr>),
-    ThrowError(String),
-    /// Will make the entire statement disappear no matter where it is nested?
-    Vanish,
-    Var(String),
-    // Class(JsClass),
-    While(Box<JsExpr>, Vec<JsStmt>),
-    TryBlock(Vec<JsStmt>),
-    CatchBlock(String, Vec<JsStmt>),
-}
-
-impl JsExpr {
-    fn js_string(&self) -> String {
-        match self {
-            JsExpr::LitInt(int) => int.to_string(),
-            // NOTE `(5.).to_string()` is "5" not "5." or "5.0"
-            JsExpr::LitFloat(float) => float.to_string(),
-            JsExpr::LitStr(text) => format!(r#""{text}""#),
-            JsExpr::LitBool(bool) => bool.to_string(),
-            JsExpr::Object(fields) => {
-                format!(
-                    "{{\n{}\n}}",
-                    fields
-                        .iter()
-                        .map(|(member, expr)| format!("{member}: {}", expr.js_string()))
-                        .collect::<Vec<_>>()
-                        .join(",\n")
-                )
-            }
-            JsExpr::Vanish => String::new(),
-            JsExpr::Blank => String::new(),
-            JsExpr::FnCall(func, args) => format!(
-                "{}({})",
-                func.js_string(),
-                args.iter()
-                    .map(|arg| arg.js_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            JsExpr::ArrowFn(async_, block, inputs, body) => {
-                // JS formatter converts `x => x` to `(x) => x` which seems pointless but what we will go with for now
-                // let sig = if inputs.len() == 1 {
-                //     inputs.get(0).unwrap().clone()
-                // } else {
-                //     format!("({})", inputs.join(", "))
-                // };
-                let sig = format!("({})", inputs.join(", "));
-
-                // TODO single objects returned by concise body must be wrapped in parenthesis
-                let body = if *block {
-                    body.iter()
-                        .enumerate()
-                        .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, body.len()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    if body.len() > 1 {
-                        panic!("closures with no block should only have 1 statement")
-                    } else {
-                        body.first().unwrap().js_string()
-                    }
-                };
-                format!(
-                    "{}{} => {}",
-                    if *async_ { "async " } else { "" },
-                    sig,
-                    if *block {
-                        format!("{{\n{}\n}}", body)
-                    } else {
-                        body
-                    }
-                )
-            }
-            JsExpr::Binary(left, op, right) => format!(
-                "{} {} {}",
-                left.js_string(),
-                op.js_string(),
-                right.js_string()
-            ),
-            JsExpr::Var(var_name) => var_name.clone(),
-            JsExpr::Field(base, field_name) => format!("{}.{field_name}", base.js_string()),
-            JsExpr::New(path, args) => format!(
-                "new {}({})",
-                path.join("."),
-                args.iter()
-                    .map(|arg| arg.js_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            JsExpr::MethodCall(receiver_name, method_name, args) => {
-                format!(
-                    "{}.{}({})",
-                    receiver_name.js_string(),
-                    method_name,
-                    args.iter()
-                        .map(|arg| arg.js_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-            JsExpr::Path(segments) => segments.join("."),
-            JsExpr::Assignment(left, right) => {
-                format!("{} = {}", left.js_string(), right.js_string())
-            }
-            JsExpr::ForLoop(pat, expr, block) => {
-                format!(
-                    "for (var {pat} of {}) {{\n{}\n}}",
-                    expr.js_string(),
-                    block
-                        .iter()
-                        .map(|expr| expr.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-            JsExpr::Index(expr, index) => {
-                format!("{}[{}]", expr.js_string(), index.js_string())
-            }
-            JsExpr::Await(expr) => format!("await {}", expr.js_string()),
-            JsExpr::While(cond, block) => format!(
-                "while ({}) {{\n{}\n}}",
-                cond.js_string(),
-                block
-                    .iter()
-                    .map(|stmt| stmt.js_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            JsExpr::If(js_if) => js_if.if_expr_to_string(),
-            JsExpr::Declaration(_, name, expr) => format!("var {name} = {}", expr.js_string()),
-            JsExpr::Break => "break".to_string(),
-            JsExpr::Not(expr) => format!("!{}", expr.js_string()),
-            JsExpr::Block(stmts) => {
-                let stmts = stmts
-                    .iter()
-                    .map(|stmt| stmt.js_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("{{\n{}\n}}", stmts)
-            }
-            JsExpr::Minus(expr) => format!("-{}", expr.js_string()),
-            JsExpr::Paren(expr) => format!("({})", expr.js_string()),
-            JsExpr::Null => "null".to_string(),
-            JsExpr::Return(expr) => format!("return {}", expr.js_string()),
-            JsExpr::Array(elems) => format!(
-                "[{}]",
-                elems
-                    .iter()
-                    .map(|elem| elem.js_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            JsExpr::Fn(js_fn) => js_fn.js_string(),
-            JsExpr::ObjectForModule(js_stmts) => {
-                let js_stmt_module = JsModule {
-                    public: false,
-                    name: "whatever".to_string(),
-                    module_path: vec![],
-                    stmts: js_stmts.clone(),
-                };
-                js_stmt_module.js_string()
-            }
-            JsExpr::Raw(text) => text.clone(),
-            JsExpr::ThrowError(message) => {
-                // TODO improve this - ideally use existing code eg from rustc
-
-                let parts = message
-                    .split(",")
-                    .into_iter()
-                    .map(|part| part.trim().to_string())
-                    .collect::<Vec<String>>();
-                let expanded_message = if parts.len() > 1 {
-                    let mut text = parts[0].clone();
-                    if text.is_ascii() {
-                        text.remove(0);
-                        text.insert(0, '`');
-                        text.pop();
-                        text.push('`');
-                    } else {
-                        todo!()
-                    }
-                    text = text.replacen("{}", format!("${{{}}}", &parts[1]).as_str(), 1);
-                    text
-                } else if parts[0].chars().next() == Some('"') {
-                    parts[0].clone()
-                } else {
-                    format!(r#""{}""#, parts[0])
-                };
-
-                // let lhs = parts.next().unwrap();
-                // let lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
-                // let lhs = handle_expr(&lhs, global_data, current_module_path);
-
-                format!(r#"throw new Error({expanded_message})"#)
-            }
-            JsExpr::TryBlock(try_block) => {
-                format!(
-                    "try {{\n{}\n}}",
-                    try_block
-                        .iter()
-                        .map(|s| s.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            }
-            JsExpr::CatchBlock(err_var_name, catch_block) => {
-                format!(
-                    "catch ({}) {{\n{}\n}}",
-                    err_var_name,
-                    catch_block
-                        .iter()
-                        .map(|s| s.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct JsIf {
-    /// The name of the initialised var we are assigning to in the final statement of the block
-    assignment: Option<LocalName>,
-    /// Whether to prepend the if statement with eg `var result = `
-    /// TODO not sure why this is necessary and not handle by the original `let` `Local` statement
-    declare_var: bool,
-    condition: Box<JsExpr>,
-    succeed: Vec<JsStmt>,
-    /// syn has an expr as the else branch, rather than an iter of statements - because the expr might be another if expr, not always a block
-    fail: Option<Box<JsExpr>>,
-}
-
-// TODO Make a struct called If with these fields so I can define js_string() on the struct and not have this fn
-// TODO we want to know if the if is a single statment being return from a fn and if so in line the return in the branches rather than use an assignment var
-impl JsIf {
-    fn if_expr_to_string(&self) -> String {
-        let JsIf {
-            assignment,
-            declare_var,
-            condition: cond,
-            succeed,
-            fail: else_,
-        } = self;
-        let else_ = if let Some(else_) = else_ {
-            match &**else_ {
-                // if else {}
-                JsExpr::If(js_if) => format!(
-                    " else {}",
-                    JsExpr::If(JsIf {
-                        assignment: assignment.clone(),
-                        declare_var: false,
-                        condition: js_if.condition.clone(),
-                        succeed: js_if.succeed.clone(),
-                        fail: js_if.fail.clone()
-                    })
-                    .js_string()
-                ),
-                // else {}
-                _ => {
-                    let thing = match &**else_ {
-                        // else { block of stmts }
-                        JsExpr::Block(stmts) => stmts
-                            .iter()
-                            .enumerate()
-                            .map(|(i, stmt)| {
-                                if i == stmts.len() - 1 {
-                                    if let Some(assignment) = assignment {
-                                        let is_error = match stmt {
-                                            JsStmt::Expr(expr, _) => match expr {
-                                                JsExpr::ThrowError(_) => todo!(),
-                                                _ => false,
-                                            },
-                                            _ => false,
-                                        };
-                                        format!(
-                                            "{} = {};",
-                                            assignment.js_string(),
-                                            stmt.js_string()
-                                        )
-                                    } else {
-                                        stmt.js_string()
-                                    }
-                                } else {
-                                    stmt.js_string()
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        // else { expr }
-                        _ => {
-                            if let Some(assignment) = assignment {
-                                let is_error = match &**else_ {
-                                    JsExpr::ThrowError(_) => true,
-                                    _ => false,
-                                };
-                                // let is_error = match stmt {
-                                //     JsStmt::Expr(expr, _) => match expr {
-                                //         JsExpr::ThrowError(_) => true,
-                                //         _ => false,
-                                //     },
-                                //     _ => false,
-                                // };
-                                if is_error {
-                                    format!("{};", else_.js_string())
-                                } else {
-                                    // format!("{} = {};", assignment.js_string(), stmt.js_string())
-                                    format!("{} = {};", assignment.js_string(), else_.js_string())
-                                }
-                            } else {
-                                else_.js_string()
-                            }
-                        }
-                    };
-                    format!(" else {{\n{}\n}}", thing)
-                }
-            }
-        } else {
-            "".to_string()
-        };
-        let assignment_str = if let Some(lhs) = assignment {
-            if *declare_var {
-                let local = JsLocal {
-                    public: false,
-                    export: false,
-                    type_: LocalType::Var,
-                    lhs: lhs.clone(),
-                    value: JsExpr::Blank,
-                };
-                format!("{}\n", local.js_string())
-                // "jargallleee".to_string()
-            } else {
-                "".to_string()
-            }
-        } else {
-            "".to_string()
-        };
-
-        format!(
-            "{}if ({}) {{\n{}\n}}{}",
-            assignment_str,
-            cond.js_string(),
-            succeed
-                .iter()
-                .enumerate()
-                .map(|(i, stmt)| {
-                    if i == succeed.len() - 1 {
-                        if let Some(assignment) = assignment {
-                            // TODO not sure how to handle `let (var1, var2) = if true { (1, 2) } else { (3, 4) };`. I think we would need to use:
-                            // `var temp;`
-                            // `if (true) { temp = [1, 2] } else { temp = [3, 4] }`
-                            // `var [var1, var2] = temp;`
-
-                            // _ => {
-                            //     if *semi {
-                            //         format!("{};", js_expr.js_string())
-                            //     } else if i == self.body_stmts.len() - 1 {
-                            //         format!("return {};", js_expr.js_string())
-                            //     } else {
-                            //         js_expr.js_string()
-                            //     }
-                            // }
-
-                            let is_error = match stmt {
-                                JsStmt::Expr(expr, _) => match expr {
-                                    JsExpr::ThrowError(_) => true,
-                                    _ => false,
-                                },
-                                _ => false,
-                            };
-                            if is_error {
-                                stmt.js_string()
-                            } else {
-                                format!("{} = {};", assignment.js_string(), stmt.js_string())
-                            }
-                        } else {
-                            stmt.js_string()
-                        }
-                    } else {
-                        stmt.js_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            else_
-        )
-    }
-}
-
-// ::new()/Constructor must assign all fields of class
-#[derive(Clone, Debug)]
-pub struct JsClass {
-    /// None if class is not defined at module level
-    // module_path: Option<Vec<String>>,
-    public: bool,
-    export: bool,
-    tuple_struct: bool,
-    name: String,
-    /// we are assuming input names is equivalent to field names
-    inputs: Vec<String>,
-    static_fields: Vec<JsLocal>,
-    /// (class name, private, static, JsFn)  
-    methods: Vec<(String, bool, bool, JsFn)>,
-    // NOTE dropped the idea of just storing eg a list of impld items or the path to an impl block, because there is methods and fields we might want to add manually eg for an enum, so it makes more sense
-    // struct_or_enum: StructOrEnumSynObject,
-    // /// all methods impl'd specifically for the type ie `impl MyStructOrEnum { ... }` and `impl MyTrait for MyStructOrEnum { ... }`
-    // impld_methods: Vec<JsImplItem>,
-    // /// all methods impl'd for a generic that matches this type ie `impl<T> MyTrait for T { ... }`
-    // /// trait impl block name, which can be transpiled/formatted to eg `var someModule__myTrait__for__anotherModule__myStructOrEnum = { ... }`
-    // /// (trait namespaced name, type namespaced name) (namespaced name just means a vector of snake_case, hasn't bean camel cased or joined with __ yet.
-    // generic_trait_impl_methods: Vec<(Vec<String>, Vec<String>)>,
-}
-// #[derive(Clone, Debug)]
-// pub struct JsClassImpldMethods {
-//     // TypeImplItem(TypeImplItem),
-//     // TraitImplItem(TraitImplItem),
-//     // TypeImplItem(ImplItem),
-//     // TraitImplItem(ImplItem),
-//     impl_item: ImplItem,
-//     impl_type_or_trait: ImplTypeOrTrait
-// }
-
-// #[derive(Clone, Debug)]
-// pub enum ImplTypeOrTrait {
-//     Type,
-//     /// trait impl block name, which can be transpiled/formatted to eg `var someModule__myTrait__for__anotherModule__myStructOrEnum = { ... }`
-//     /// (trait namespaced name, type namespaced name) (namespaced name just means a vector of snake_case, hasn't bean camel cased or joined with __ yet.
-//     Trait(Vec<String>, Vec<String>)
-// }
-// #[derive(Clone, Debug)]
-// pub struct TypeImplItem {
-
-// }
-
-#[derive(Clone, Debug)]
-pub enum LocalType {
-    Var,
-    Const,
-    Let,
-    Static,
-}
-
-#[derive(Clone, Debug)]
-enum DestructureValue {
-    /// A simple destructure like `var { a } = obj;`
-    KeyName(String),
-    /// A rename destructure like `var { a: b } = obj;`
-    Rename(String, String),
-    /// A nested destructure like `var { a: { b } } = obj;`
-    Nesting(String, DestructureObject),
-}
-impl DestructureValue {
-    fn js_string(&self) -> String {
-        match self {
-            DestructureValue::KeyName(key) => key.clone(),
-            DestructureValue::Rename(key, new_name) => format!("{key}: {new_name}"),
-            DestructureValue::Nesting(key, destructure_object) => {
-                format!("{key}: {}", destructure_object.js_string())
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-// TODO consider replacing the Vec with DestructureValue::Group, like how syn works
-struct DestructureObject(Vec<DestructureValue>);
-impl DestructureObject {
-    fn js_string(&self) -> String {
-        format!(
-            "{{ {} }}",
-            self.0
-                .iter()
-                .map(|destructure_value| destructure_value.js_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum LocalName {
-    Single(String),
-    DestructureObject(DestructureObject),
-    DestructureArray(Vec<LocalName>),
-}
-impl LocalName {
-    fn js_string(&self) -> String {
-        match self {
-            LocalName::Single(name) => name.clone(),
-            LocalName::DestructureObject(destructure_object) => destructure_object.js_string(),
-            LocalName::DestructureArray(destructure_array) => format!(
-                "[ {} ]",
-                destructure_array
-                    .iter()
-                    .map(|destructure_object| destructure_object.js_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct JsLocal {
-    public: bool,
-    export: bool,
-    type_: LocalType,
-    lhs: LocalName,
-    value: JsExpr,
-}
-impl JsLocal {
-    fn js_string(&self) -> String {
-        let lhs = self.lhs.js_string();
-        let var_type = match self.type_ {
-            LocalType::Var => "var",
-            LocalType::Const => "const",
-            LocalType::Let => "let",
-            LocalType::Static => "static",
-        };
-
-        // check if there is any shadowing in scope and use var instead
-        match &self.value {
-            // TODO what if we want to declare a null var like `var myvar;` eg prior to if statement
-            JsExpr::Vanish => String::new(),
-            JsExpr::Blank => format!("{var_type} {lhs};"),
-            value_js_expr => format!("{var_type} {lhs} = {};", value_js_expr.js_string()),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct JsFn {
-    iife: bool,
-    public: bool,
-    export: bool,
-    async_: bool,
-    is_method: bool,
-    name: String,
-    input_names: Vec<String>,
-    body_stmts: Vec<JsStmt>,
-}
-
-/// Adds return and semi to expr being returned. For an if expression this means we also need to get the name of the assignment var that needs returning  
-fn handle_fn_body_stmt(i: usize, stmt: &JsStmt, len: usize) -> String {
-    match stmt {
-        JsStmt::Local(js_local) => js_local.js_string(),
-        JsStmt::Expr(js_expr, semi) => match js_expr {
-            JsExpr::If(js_if) => {
-                if i == len - 1 {
-                    // TODO wrongly assuming that all single if expr bodys should be returned
-                    if let Some(assignment) = &js_if.assignment {
-                        format!(
-                            "{}\nreturn {};",
-                            js_expr.js_string(),
-                            assignment.js_string()
-                        )
-                    } else {
-                        js_expr.js_string()
-                    }
-                } else {
-                    js_expr.js_string()
-                }
-            }
-            JsExpr::Block(_) => js_expr.js_string(),
-            JsExpr::While(_, _) => js_expr.js_string(),
-            JsExpr::ForLoop(_, _, _) => js_expr.js_string(),
-            JsExpr::Vanish => "".to_string(),
-            _ => {
-                if *semi {
-                    format!("{};", js_expr.js_string())
-                } else if i == len - 1 {
-                    format!("return {};", js_expr.js_string())
-                } else {
-                    js_expr.js_string()
-                }
-            }
-        },
-        JsStmt::Import(_, _, _) => todo!(),
-        JsStmt::Function(_) => stmt.js_string(),
-        JsStmt::Class(_) => stmt.js_string(),
-        JsStmt::ClassMethod(_, _, _, _) => stmt.js_string(),
-        JsStmt::ClassStatic(_) => stmt.js_string(),
-        JsStmt::Raw(_) => stmt.js_string(),
-        JsStmt::ScopeBlock(_) => stmt.js_string(),
-        // JsStmt::TryBlock(_) => stmt.js_string(),
-        // JsStmt::CatchBlock(_, _) => stmt.js_string(),
-        JsStmt::Comment(_) => stmt.js_string(),
-    }
-}
-impl JsFn {
-    fn js_string(&self) -> String {
-        // TODO private fields and methods should be prepended with `#` like `#private_method() {}` but this would require also prepending all callsites of the the field or method, which requires more sophisticated AST analysis than we currently want to do.
-        let body_stmts = self
-            .body_stmts
-            .iter()
-            // .enumerate()
-            // .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, self.body_stmts.len()))
-            .map(|stmt| stmt.js_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let fn_string = format!(
-            "{}{}{}{}({}) {{\n{}\n}}",
-            if self.export && !self.is_method {
-                "export default "
-            } else {
-                ""
-            },
-            if self.async_ { "async " } else { "" },
-            if self.is_method { "" } else { "function " },
-            self.name,
-            self.input_names.join(", "),
-            body_stmts
-        );
-        if self.iife {
-            format!("({})()", fn_string)
-        } else {
-            fn_string
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct JsModule {
-    public: bool,
-    /// camelCase JS name
-    name: String,
-    /// snake_case Rust path starting with "crate"
-    module_path: Vec<String>,
-    // TODO consider having JsItems like syn::Items to enforce what is allowed at the module level
-    stmts: Vec<JsStmt>,
-}
-impl JsModule {
-    pub fn js_string(&self) -> String {
-        self.stmts
-            .iter()
-            .map(|stmt| stmt.js_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-// pub struct JsImportPath {}
-#[derive(Clone, Debug)]
-pub enum JsStmt {
-    Class(JsClass),
-    /// This means that `foo() {}` will be used in place of `function foo() {}`  
-    ///
-    /// Some means it is a method, the first bool is whether it is private and thus should have # prepended to the name, the second bool is whether it is static  
-    ///
-    /// (class name, private, static, JsFn)  
-    ClassMethod(String, bool, bool, JsFn),
-    ClassStatic(JsLocal),
-    Local(JsLocal),
-    /// (expr, closing semicolon)
-    Expr(JsExpr, bool),
-    /// (default export name, names of the exports to be imported, module path)
-    Import(Option<String>, Vec<String>, Vec<String>),
-    Function(JsFn),
-    ScopeBlock(Vec<JsStmt>),
-    // TryBlock(Vec<JsStmt>),
-    // CatchBlock(String, Vec<JsStmt>),
-    Raw(String),
-    /// Unlike the other variants this *only* has meaning for the parsing/transpiling, and isn't output (except maybe comments for debugging?)
-    ///
-    /// (path, item name)
-    Comment(String),
-}
-
-impl JsStmt {
-    /// Need to keep track of which item is public so we know what is item are made available when a * glob is used
-    pub fn is_pub(&self) -> bool {
-        match self {
-            JsStmt::Class(js_class) => js_class.public,
-            JsStmt::ClassMethod(_, _, _, _) => todo!(),
-            JsStmt::ClassStatic(_) => todo!(),
-            JsStmt::Local(js_local) => js_local.public,
-            JsStmt::Expr(_, _) => todo!(),
-            JsStmt::Import(_, _, _) => todo!(),
-            JsStmt::Function(js_fn) => js_fn.public,
-            JsStmt::ScopeBlock(_) => todo!(),
-            // JsStmt::TryBlock(_) => todo!(),
-            // JsStmt::CatchBlock(_, _) => todo!(),
-            JsStmt::Raw(_) => todo!(),
-            JsStmt::Comment(_) => todo!(),
-        }
-    }
-    pub fn js_string(&self) -> String {
-        match self {
-            JsStmt::Local(local) => local.js_string(),
-            JsStmt::Expr(expr, closing_semi) => {
-                if *closing_semi {
-                    format!("{};", expr.js_string())
-                } else {
-                    expr.js_string()
-                }
-            }
-            JsStmt::Import(default, exports, module) => {
-                let module = module
-                    .iter()
-                    .map(|path_seg| {
-                        if [".", ".."].contains(&path_seg.as_str()) {
-                            path_seg.clone()
-                        } else {
-                            path_seg
-                                .split(".")
-                                .enumerate()
-                                .map(|(i, word)| {
-                                    if i == 0 && path_seg.split(".").count() > 1 {
-                                        AsPascalCase(word).to_string()
-                                    } else {
-                                        AsKebabCase(word).to_string()
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(".")
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("/");
-                format!(
-                    r#"import{}{} from "{}";"#,
-                    if let Some(default) = default {
-                        format!(" {default}")
-                    } else {
-                        "".to_string()
-                    },
-                    if exports.len() > 0 {
-                        let exports = exports
-                            .iter()
-                            .map(|export| {
-                                if export.chars().all(|c| c.is_uppercase()) {
-                                    camel(export)
-                                } else if export.chars().next().unwrap().is_ascii_uppercase() {
-                                    AsPascalCase(export).to_string()
-                                } else {
-                                    camel(export)
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        format!(" {{ {} }}", exports)
-                    } else {
-                        "".to_string()
-                    },
-                    module
-                )
-            }
-            JsStmt::Function(js_fn) => js_fn.js_string(),
-            JsStmt::Class(js_class) => {
-                // TODO name needs to be namespaced and camelcased
-                // let name = match js_class.struct_or_enum {
-                //     StructOrEnumSynObject::Struct(item_struct) => item_struct.ident,
-                //     StructOrEnumSynObject::Enum(item_enum) => item_enum.ident,
-                // };
-
-                // Get methods
-                // let js_methods = js_class.impld_methods.iter().map(|m| {
-                //     match m {
-                //         ImplItem::Const(_) => todo!(),
-                //         ImplItem::Fn(impl_item_fn) => todo!(),
-                //         ImplItem::Type(_) => todo!(),
-                //         ImplItem::Macro(_) => todo!(),
-                //         ImplItem::Verbatim(_) => todo!(),
-                //         _ => todo!(),
-                //     }
-                // }).collect::<Vec<_>>();
-
-                format!(
-                    "class {} {{\n{}{}\n{}}}",
-                    js_class.name,
-                    // name,
-                    if js_class.inputs.len() > 0 {
-                        format!(
-                            "constructor({}) {{\n{}\n}}\n",
-                            js_class.inputs.join(", "),
-                            js_class
-                                .inputs
-                                .iter()
-                                .enumerate()
-                                .map(|(i, input)| if js_class.tuple_struct {
-                                    format!("this[{i}] = {input};")
-                                } else {
-                                    format!("this.{input} = {input};")
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        )
-                    } else {
-                        "".to_string()
-                    },
-                    js_class
-                        .static_fields
-                        .iter()
-                        .map(|field| field.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    js_class
-                        .methods
-                        .iter()
-                        .map(|method| format!(
-                            "{}{}",
-                            if method.2 { "static " } else { "" },
-                            method.3.js_string()
-                        ))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-            JsStmt::ClassMethod(_, _, _, _) => todo!(),
-            JsStmt::ClassStatic(_) => todo!(),
-            JsStmt::Raw(raw_js) => raw_js.clone(),
-            JsStmt::ScopeBlock(stmts) => {
-                format!(
-                    "{{\n{}\n}}",
-                    stmts
-                        .iter()
-                        .map(|s| s.js_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-            JsStmt::Comment(text) => format!("// {text}"),
-        }
-    }
-}
-
-// pub struct JsImplItemFn(ImplItemFn);
-// impl fmt::Display for JsImplItemFn {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         let JsImplItemFn(impl_item_fn) = self;
-//         let body_stmts = impl_item_fn.block.stmts
-//     }
-// }
-
-// // pub trait SynToJs {
-// //     fn write_syn_as_js(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
-// // }
-
-/// (_, body stmts)
-// pub struct JsImplItem {impl_item: ImplItem, body_stmts: Vec<JsStmt>}
-// impl fmt::Display for JsImplItem {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         let JsImplItem(impl_item) = self;
-//         match impl_item {
-//             ImplItem::Const(_) => todo!(),
-//             ImplItem::Fn(impl_item_fn) => todo!(),
-//             ImplItem::Type(_) => todo!(),
-//             ImplItem::Macro(_) => todo!(),
-//             ImplItem::Verbatim(_) => todo!(),
-//             _ => todo!(),
-//         };
-//         let body_stmts = self
-//             .body_stmts
-//             .iter()
-//             // .enumerate()
-//             // .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, self.body_stmts.len()))
-//             .map(|stmt| stmt.js_string())
-//             .collect::<Vec<_>>()
-//             .join("\n");
-//         let fn_string = format!(
-//             "{}{}{}{}({}) {{\n{}\n}}",
-//             if self.export && !self.is_method {
-//                 "export default "
-//             } else {
-//                 ""
-//             },
-//             if self.async_ { "async " } else { "" },
-//             if self.is_method { "" } else { "function " },
-//             self.name,
-//             self.input_names.join(", "),
-//             body_stmts
-//         );
-//         if self.iife {
-//             format!("({})()", fn_string)
-//         } else {
-//             fn_string
-//         }
-//         write!(
-//             f,
-//             "TX detected: {source_owner} sent {formatted_amount} USDC to {destination_owner}"
-//         )
-//     }
-// }
-
-// impl  JsImplItem {
-//     fn js_string(&self, impl_item_target_name: &String)  -> String {
-//         let JsImplItem { impl_item, body_stmts } = self;
-//         match impl_item {
-//             ImplItem::Const(_) => todo!(),
-//             ImplItem::Fn(impl_item_fn) => {
-//                   let static_ = match impl_item_fn.sig.inputs.first() {
-//                     Some(FnArg::Receiver(_)) => false,
-//                     _ => true,
-//                 };
-
-//                 let input_names = impl_item_fn
-//                     .clone()
-//                     .sig
-//                     .inputs
-//                     .into_iter()
-//                     .filter_map(|input| match input {
-//                         FnArg::Receiver(_) => None,
-//                         FnArg::Typed(pat_type) => match *pat_type.pat {
-//                             Pat::Ident(pat_ident) => Some(camel(pat_ident.ident)),
-//                             _ => todo!(),
-//                         },
-//                     })
-//                     .collect::<Vec<_>>();
-
-//                 // Get generics
-//                 let mut fn_generics = impl_item_fn
-//                     .sig
-//                     .generics
-//                     .params
-//                     .iter()
-//                     .map(|generic_param| match generic_param {
-//                         GenericParam::Lifetime(_) => todo!(),
-//                         GenericParam::Type(type_param) => {
-//                             let name = type_param.ident.to_string();
-//                             // let type_ = type_param
-//                             //     .bounds
-//                             //     .first()
-//                             //     .map(|type_param_bound| {
-//                             //         match get_return_type_of_type_param_bound(
-//                             //             type_param_bound,
-//                             //             &Vec::new(),
-//                             //             current_module_path,
-//                             //             &global_data,
-//                             //         ) {
-//                             //             RustType::ImplTrait => RustType::TypeParam(RustTypeParam {
-//                             //                 name: name.clone(),
-//                             //                 type_: RustTypeParamValue::Unresolved,
-//                             //             }),
-//                             //             RustType::TypeParam(_) => todo!(),
-//                             //             RustType::Fn(return_type) => RustType::Fn(return_type),
-//                             //             _ => todo!(),
-//                             //         }
-//                             //     })
-//                             //     .unwrap_or(RustType::TypeParam(RustTypeParam {
-//                             //         name: name.clone(),
-//                             //         type_: RustTypeParamValue::Unresolved,
-//                             //     }));
-//                             RustTypeParam {
-//                                 name,
-//                                 type_: RustTypeParamValue::Unresolved,
-//                             }
-//                         }
-//                         GenericParam::Const(_) => todo!(),
-//                     })
-//                     .collect::<Vec<_>>();
-
-//                 // update generics with any `impl Fn... -> ...` types defined in where clauses
-//                 // let where_clause = &item_impl_fn.sig.generics.where_clause;
-//                 // if let Some(where_clause) = where_clause {
-//                 //     for where_predicate in &where_clause.predicates {
-//                 //         match where_predicate {
-//                 //             WherePredicate::Lifetime(_) => todo!(),
-//                 //             WherePredicate::Type(predicate_type) => {
-//                 //                 let name = match &predicate_type.bounded_ty {
-//                 //                     Type::Path(type_path) => {
-//                 //                         type_path.path.segments.first().unwrap().ident.to_string()
-//                 //                     }
-//                 //                     _ => todo!(),
-//                 //                 };
-//                 //                 let type_param_bound = predicate_type.bounds.first().unwrap();
-//                 //                 let type_ = get_return_type_of_type_param_bound(
-//                 //                     type_param_bound,
-//                 //                     &fn_generics,
-//                 //                     current_module_path,
-//                 //                     &global_data,
-//                 //                 );
-//                 //                 // MyGeneric { name, type_ }
-//                 //                 let generic = fn_generics
-//                 //                     .iter_mut()
-//                 //                     .find(|my_generic| my_generic.name == name)
-//                 //                     .unwrap();
-//                 //                 generic.type_ = type_;
-//                 //             }
-//                 //             _ => todo!(),
-//                 //         }
-//                 //     }
-//                 // }
-
-//                 // let where_generics = item_impl_fn
-//                 //     .sig
-//                 //     .generics
-//                 //     .where_clause
-//                 //     .as_ref()
-//                 //     .map(|where_clause| {
-//                 //         where_clause
-//                 //             .predicates
-//                 //             .iter()
-//                 //             .map(|where_predicate| )
-//                 //             .collect::<Vec<_>>()
-//                 //     })
-//                 //     .unwrap_or(Vec::new());
-//                 // dbg!(&where_generics);
-//                 // generics.extend(where_generics);
-
-//                 // if let Some((body_stmts, return_type)) = body_stmts {
-//                 //     impl_stmts.push(
-//                 //         // item_impl_fn.sig.ident.to_string(),
-//                 //         ImplItemTemp {
-//                 //             class_name: impl_item_target_name.clone(),
-//                 //             module_path: current_module_path.clone(),
-//                 //             item_stmt: JsImplItem::ClassMethod(
-//                 //                 impl_item_target_name.clone(),
-//                 //                 false,
-//                 //                 static_,
-//                 //                 JsFn {
-//                 //                     iife: false,
-//                 //                     public: false,
-//                 //                     export: false,
-//                 //                     is_method: true,
-//                 //                     async_: impl_item_fn.sig.asyncness.is_some(),
-//                 //                     name: camel(impl_item_fn.sig.ident.clone()),
-//                 //                     input_names,
-//                 //                     body_stmts,
-//                 //                 },
-//                 //             ),
-//                 //             // return_type,
-//                 //             item_name: impl_item_fn.sig.ident.to_string(),
-//                 //         },
-//                 //     );
-//                 // } else {
-//                 //     todo!();
-//                 // }
-
-//                 let js_fn = JsFn {
-//                     iife: false,
-//                     public: false,
-//                     export: false,
-//                     is_method: true,
-//                     async_: impl_item_fn.sig.asyncness.is_some(),
-//                     name: camel(impl_item_fn.sig.ident.clone()),
-//                     input_names,
-//                     body_stmts: body_stmts.clone(),
-//                 };
-//                 format!(
-//                     "{}{}",
-//                     if static_ { "static " } else { "" },
-//                     js_fn.js_string()
-//                 )
-
-//             },
-//             ImplItem::Type(_) => todo!(),
-//             ImplItem::Macro(_) => todo!(),
-//             ImplItem::Verbatim(_) => todo!(),
-//             _ => todo!(),
-//         }
-//     }
-// }
-
 fn parse_fn_body_stmts(
     is_arrow_fn: bool,
     returns_non_mut_ref_val: bool,
@@ -5731,20 +4680,6 @@ fn get_path_old(
     //     .iter()
     //     .find(|use_mapping| use_mapping.0 == segs[0]);
 
-    // dbg!(&segs);
-    // dbg!(&module);
-    // dbg!(&current_module);
-    // dbg!(&use_private_items);
-    // dbg!(&module_level_items_only);
-    // dbg!(&module
-    //     .pub_submodules
-    //     .iter()
-    //     .chain(module.private_submodules.iter()));
-    // dbg!(module.private_definitions.contains(&segs[0]));
-    // println!("");
-    // dbg!(&module.resolved_mappings);
-    // dbg!(&segs[0]);
-
     let is_scoped = global_data.scopes.iter().rev().any(|scope| {
         let is_func = scope.fns.iter().any(|func| func.ident == segs[0]);
         let is_item_def = scope
@@ -5950,6 +4885,8 @@ pub struct RustPathSegment {
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
 fn get_path(
     look_for_scoped_vars: bool,
+    // TODO can we combine this with `look_for_scoped_vars`?
+    look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
     global_data: &GlobalData,
@@ -6004,11 +4941,13 @@ fn get_path(
     };
 
     let is_scoped = global_data.scopes.iter().rev().any(|scope| {
-        let is_func = scope.fns.iter().any(|func| func.ident == segs[0].ident);
-        let is_item_def = scope
-            .item_definitons
-            .iter()
-            .any(|item_def| item_def.ident == segs[0].ident);
+        let is_func =
+            look_for_scoped_items && scope.fns.iter().any(|func| func.ident == segs[0].ident);
+        let is_item_def = look_for_scoped_items
+            && scope
+                .item_definitons
+                .iter()
+                .any(|item_def| item_def.ident == segs[0].ident);
         // TODO IMPORTANT
         // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped *var* with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
         // eg this is aloud:
@@ -6042,6 +4981,7 @@ fn get_path(
             && look_for_scoped_vars;
 
         // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
+        // TODO I don't think `&& current_mod == orig_mod` is necessary given look_for_scoped_vars and look_for_scoped_items
         (is_func || is_item_def || is_var) && current_mod == orig_mod
     });
 
@@ -6065,18 +5005,42 @@ fn get_path(
         let mut current_module = current_mod.clone();
         current_module.pop();
 
-        get_path(false, true, segs, global_data, &current_module, orig_mod)
+        get_path(
+            false,
+            false,
+            true,
+            segs,
+            global_data,
+            &current_module,
+            orig_mod,
+        )
     } else if segs[0].ident == "self" {
         // NOTE private items are still accessible from the module via self
         segs.remove(0);
 
-        get_path(false, true, segs, global_data, &current_mod, orig_mod)
+        get_path(
+            false,
+            false,
+            true,
+            segs,
+            global_data,
+            &current_mod,
+            orig_mod,
+        )
     } else if segs[0].ident == "crate" {
         let current_module = vec!["crate".to_string()];
 
         segs.remove(0);
 
-        get_path(false, true, segs, global_data, &current_module, orig_mod)
+        get_path(
+            false,
+            false,
+            true,
+            segs,
+            global_data,
+            &current_module,
+            orig_mod,
+        )
     } else if path_starts_with_sub_module {
         // Path starts with a submodule of the current module
         let mut submod_path = current_mod.clone();
@@ -6084,7 +5048,15 @@ fn get_path(
 
         segs.remove(0);
 
-        get_path(false, false, segs, global_data, &submod_path, orig_mod)
+        get_path(
+            false,
+            false,
+            false,
+            segs,
+            global_data,
+            &submod_path,
+            orig_mod,
+        )
     } else if let Some(use_mapping) = matched_use_mapping {
         // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
         // `use super::super::some_module::another_module;` will have a use mapping recorded of eg ("another_module", ["crate", "top_module", "some_module"])
@@ -6107,7 +5079,15 @@ fn get_path(
 
         // TODO do we not need to update the current module if the use path/mapping has taken us to a new module??
 
-        get_path(false, true, use_segs, global_data, current_mod, orig_mod)
+        get_path(
+            false,
+            false,
+            true,
+            use_segs,
+            global_data,
+            current_mod,
+            orig_mod,
+        )
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
     } else {

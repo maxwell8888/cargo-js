@@ -21,12 +21,7 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, handle_syn_expr::handle_expr, handle_syn_stmt::handle_stmt, js_stmts_from_syn_items,
-    parse_fn_body_stmts, parse_fn_input_or_field, ConstDef, EnumDefinitionInfo, EnumVariantInfo,
-    EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, JsClass, JsExpr,
-    JsFn, JsImplItem, JsLocal, JsModule, JsStmt, LocalName, LocalType, RustGeneric, RustImplBlock,
-    RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
-    RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
+    camel, handle_syn_expr::handle_expr, handle_syn_stmt::handle_stmt, js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType}, js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef, EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, JsImplItem, RustGeneric, RustImplBlock, RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo
 };
 
 pub fn handle_item_fn(

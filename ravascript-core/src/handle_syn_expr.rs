@@ -22,14 +22,18 @@ use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
     camel, case_convert, found_item_to_partial_rust_type, get_path, get_path_old, handle_pat,
-    handle_syn_stmt::handle_stmt, hardcoded_conversions, js_stmts_from_syn_items,
-    parse_fn_body_stmts, parse_fn_input_or_field, update_classes_js_stmts, ConstDef,
-    DestructureObject, DestructureValue, EnumDefinitionInfo, EnumVariantInfo,
-    EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, JsClass, JsExpr,
-    JsFn, JsIf, JsImplItem, JsLocal, JsModule, JsOp, JsStmt, LocalName, LocalType, PartialRustType,
-    RustGeneric, RustImplBlock, RustImplItem, RustImplItemItem, RustPathSegment,
-    RustTraitDefinition, RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar,
-    StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
+    handle_syn_stmt::handle_stmt,
+    hardcoded_conversions,
+    js_ast::{
+        DestructureObject, DestructureValue, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt, LocalName,
+        LocalType,
+    },
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, update_classes_js_stmts,
+    ConstDef, EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
+    GlobalDataScope, ItemDefinition, JsImplItem, PartialRustType, RustGeneric, RustImplBlock,
+    RustImplItem, RustImplItemItem, RustPathSegment, RustTraitDefinition, RustType, RustTypeFnType,
+    RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo,
+    StructOrEnumDefitionInfo,
 };
 
 fn handle_expr_assign(
@@ -2360,6 +2364,7 @@ fn handle_expr_path_inner(
     // TODO can we not use get_path_without_namespacing() for everything?
     let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+        true,
         true,
         true,
         segs_copy,
