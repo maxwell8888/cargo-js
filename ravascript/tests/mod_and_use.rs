@@ -52,6 +52,16 @@ async fn it_transpiles_crate_directory() {
             }
           }
 
+          // foo_bar::file_module_level_inline
+          function fileModuleLevelInline__duplicateName() {
+            return 12;
+          }
+
+          // foo_bar::file_module_level_inline::file_module_inline_sub
+          function fileModuleInlineSub__duplicateName() {
+            return 13;
+          }
+
           // colors
           var DOG_ACTIVITY = 5;
           function colors__duplicateName() {
@@ -86,6 +96,10 @@ async fn it_transpiles_crate_directory() {
               console.assert(utils__colors__duplicateName() === 7);
               console.assert(DOG_ACTIVITY === 5);
               console.assert(stuffFunction() === 4);
+              console.assert(crateLevelInline__duplicateName() === 1);
+              console.assert(crateLevelInlineSub__duplicateName() === 11);
+              console.assert(fileModuleLevelInline__duplicateName() === 12);
+              console.assert(fileModuleInlineSub__duplicateName() === 13);
             }
           }
 
@@ -99,6 +113,16 @@ async fn it_transpiles_crate_directory() {
           // utils::colors
           function utils__colors__duplicateName() {
             return 7;
+          }
+          
+          // crate_level_inline
+          function crateLevelInline__duplicateName() {
+            return 1;
+          }
+          
+          // crate_level_inline::crate_level_inline_sub
+          function crateLevelInlineSub__duplicateName() {
+            return 11;
           }
 
           main();
@@ -219,10 +243,10 @@ function green() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// TODO why is this not checking anything?
+// TODO the Rust code is not being run, causing an assert! to fail is not reported
 #[tokio::test]
 async fn use_paths() {
-    let actual = r2j_file_run_main!(
+    let actual = r2j_file!(
         fn duplicate() -> i32 {
             0
         }
@@ -272,14 +296,49 @@ async fn use_paths() {
     );
     let actual = format_js(actual);
 
-    let expected = r#"class Bar {}
-function baz() {
-  var _ = new Bar();
-}
-function green() {
-  var blue = baz();
-}"#;
+    let expected = format_js(
+        r#"
+          // crate
+          function duplicate() {
+            return 0;
+          }
+          function main() {
+            console.assert(duplicate().eq(0));
+            console.assert(one__duplicate().eq(1));
+            console.assert(three__duplicate().eq(3));
+            console.assert(four__duplicate().eq(4));
+            console.assert(five__duplicate().eq(5));
+          }
 
-    // let _ = execute_js_with_assertions(&actual).await.unwrap();
-    // assert_eq!(expected, actual);
+          // one
+          function one__duplicate() {
+            return 1;
+          }
+
+          // one::two
+          function two__duplicate() {
+            return 2;
+          }
+
+          // one::two::three
+          function three__duplicate() {
+            return one__duplicate() + two__duplicate();
+          }
+
+          // one::two::three::another_one
+
+          // four
+          function four__duplicate() {
+            return three__duplicate() + one__duplicate();
+          }
+
+          // five
+          function five__duplicate() {
+            return three__duplicate() + one__duplicate() + one__duplicate();
+          }
+      "#,
+    );
+
+    let _ = execute_js_with_assertions(&actual).await.unwrap();
+    assert_eq!(expected, actual);
 }

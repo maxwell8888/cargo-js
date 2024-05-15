@@ -21,7 +21,15 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, handle_syn_expr::handle_expr, handle_syn_stmt::handle_stmt, js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType}, js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef, EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, JsImplItem, RustGeneric, RustImplBlock, RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo
+    camel,
+    handle_syn_expr::handle_expr,
+    handle_syn_stmt::handle_stmt,
+    js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType},
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
+    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
+    GlobalDataScope, ItemDefinition, JsImplItem, RustGeneric, RustImplBlock, RustImplItem,
+    RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
+    StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
 pub fn handle_item_fn(
@@ -1794,7 +1802,7 @@ pub fn handle_item(
     global_data: &mut GlobalData,
     current_module_path: &mut Vec<String>,
     js_stmts: &mut Vec<JsStmt>,
-    current_file_path: &mut Option<PathBuf>,
+    // current_file_path: &mut Option<PathBuf>,
 ) {
     match item {
         Item::Const(item_const) => {
@@ -1831,7 +1839,7 @@ pub fn handle_item(
             item_mod,
             global_data,
             current_module_path,
-            current_file_path,
+            // current_file_path,
         ),
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
@@ -1854,12 +1862,8 @@ pub fn handle_item(
 pub fn handle_item_mod(
     item_mod: ItemMod,
     global_data: &mut GlobalData,
-    // current_module_path: &Vec<String>,
     current_module_path: &mut Vec<String>,
-    current_file_path: &mut Option<PathBuf>,
 ) {
-    let mod_name = &item_mod.ident;
-    debug!(mod_name = ?mod_name, "handle_item_mod");
     let span = debug_span!("handle_item_mod", current_module_path = ?current_module_path);
     let _guard = span.enter();
 
@@ -1873,7 +1877,6 @@ pub fn handle_item_mod(
     // Also need to consider how to use the same Rust module/JS function in multiple places - even though modules are just items and therefore immutable, we still can't have the duplication of code because this could be huge in certain cases. So all modules, both crate modules and sub modules, need to be defined at the top level - no they just need to be accessible from the top level using crate and super, nesting modules doesn't mean duplication because they will always be access at that path anyway.
     // We *could* use a solution requiring replacing self:: paths with absolute paths since self:: *always refers to a module path and self in a method always uses self. since self is an instance not a type/path
 
-    let current_module_name = current_module_path.last().unwrap().clone();
     current_module_path.push(item_mod.ident.to_string());
     let mut module_path_copy = current_module_path.clone();
     // TODO get rid of this
@@ -1908,7 +1911,7 @@ pub fn handle_item_mod(
     // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
     let current_module_path_copy = current_module_path.clone();
-    let mut js_stmt_submodule = JsModule {
+    let js_stmt_submodule = JsModule {
         public: match item_mod.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
@@ -1921,13 +1924,7 @@ pub fn handle_item_mod(
     // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
 
     global_data.transpiled_modules.push(js_stmt_submodule);
-    let stmts = js_stmts_from_syn_items(
-        items,
-        true,
-        current_module_path,
-        global_data,
-        current_file_path,
-    );
+    let stmts = js_stmts_from_syn_items(items, current_module_path, global_data);
     let js_stmt_module = global_data
         .transpiled_modules
         .iter_mut()

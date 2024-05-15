@@ -1454,16 +1454,12 @@ enum TypeOrVar {
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
 fn js_stmts_from_syn_items(
     items: Vec<Item>,
-    // Need to know whether to return a module Object or just a vec of stmts
-    is_module: bool,
-    // Need to keep of which module we are currently in, for constructing the boilerplate
+    // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &mut Vec<String>,
     global_data: &mut GlobalData,
-    current_file_path: &mut Option<PathBuf>,
 ) -> Vec<JsStmt> {
-    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module, current_file_path = ?current_file_path);
+    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
     let _guard = span.enter();
-    debug!("js_stmts_from_syn_items");
 
     let mut js_stmts = Vec::new();
     // let mut modules = Vec::new();
@@ -1481,14 +1477,7 @@ fn js_stmts_from_syn_items(
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
 
     for item in items {
-        handle_item(
-            item,
-            // is_module,
-            global_data,
-            current_module,
-            &mut js_stmts,
-            current_file_path,
-        );
+        handle_item(item, global_data, current_module, &mut js_stmts);
     }
 
     js_stmts
@@ -3136,8 +3125,9 @@ fn update_classes_js_stmts(
 fn extract_data(
     module_level_items: bool,
     items: &Vec<Item>,
-    // None if we are extracted data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
-    crate_path: Option<&PathBuf>,
+    // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
+    // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    crate_path: &Option<PathBuf>,
     module_path: &mut Vec<String>,
     // (module path, name)
     names: &mut Vec<(Vec<String>, String)>,
@@ -3327,8 +3317,8 @@ fn extract_data(
                         modules,
                     );
                 } else {
-                    if let Some(crate_path) = crate_path {
-                        let mut file_path = crate_path.clone();
+                    if let Some(crate_path2) = crate_path {
+                        let mut file_path = crate_path2.clone();
                         file_path.push("src");
                         if *module_path == ["crate"] {
                             file_path.push("main.rs");
@@ -3349,7 +3339,7 @@ fn extract_data(
                         extract_data(
                             true,
                             &file.items,
-                            Some(crate_path),
+                            crate_path,
                             module_path,
                             names,
                             scoped_names,
@@ -3919,10 +3909,8 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
 
 pub fn process_items(
     items: Vec<Item>,
-    // TODO combine use of all 3 PathBuf into 1, or atleast document what each one is for
-    get_names_crate_path: Option<&PathBuf>,
-    global_data_crate_path: Option<PathBuf>,
-    entrypoint_path: &mut Option<PathBuf>,
+    crate_path: Option<PathBuf>,
+    // TODO I don't think there is much point in supporting generation without "Rust types" so remove this flag
     with_rust_types: bool,
 ) -> Vec<JsModule> {
     let mut modules = Vec::new();
@@ -3943,29 +3931,28 @@ pub fn process_items(
         consts: Vec::new(),
         items: items.clone(),
     });
-    let mut get_names_module_path = vec!["crate".to_string()];
-    // let mut get_names_crate_path = crate_path.join("src/main.rs");
-
-    // Fix module tests, clean up get_names_crate_path, global_data_crate_path, entrypoint_path args, etc before tackling third party crates
-    // let web_prelude_path = PathBuf::new();
-    // let code = fs::read_to_string(web_prelude_path.join("../web-prelude").join("src").join("main.rs")).unwrap();
-    // let file = syn::parse_file(&code).unwrap();
-    // let items = file.items;
-
-    // let mut current_file_path = vec!["main.rs".to_string()];
+    let get_names_module_path = vec!["crate".to_string()];
 
     // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
     let mut names_for_finding_duplicates = Vec::new();
     let mut scoped_names_for_finding_duplicates = Vec::new();
+    // gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
     extract_data(
         true,
         &items,
-        get_names_crate_path,
+        &crate_path,
         &mut get_names_module_path.clone(),
         &mut names_for_finding_duplicates,
         &mut scoped_names_for_finding_duplicates,
         &mut modules,
     );
+
+    // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
+    // Currently this is only the web prelude for which we need to `extract_data` for deduplicating/namespacing and getting use mappings for resolving paths, and `extract_data_populate_item_definitions` for getting item definitions to eg lookup methods etc, but we do not actually need to parse to a JS AST.
+    // let web_prelude_path = PathBuf::new();
+    // let code = fs::read_to_string(web_prelude_path.join("../web-prelude").join("src").join("main.rs")).unwrap();
+    // let file = syn::parse_file(&code).unwrap();
+    // let prelude_items = file.items;
 
     // find duplicates
     // TODO account for local functions which shadow these names
@@ -3978,7 +3965,7 @@ pub fn process_items(
             .iter()
             // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
             .chain(scoped_names_for_finding_duplicates.iter())
-            .filter(|(module_path, name2)| &name.1 == name2)
+            .filter(|(_module_path, name2)| &name.1 == name2)
             .count()
             > 1
         {
@@ -4012,7 +3999,8 @@ pub fn process_items(
 
     // resolve_use_stmts(&mut modules);
 
-    let mut global_data = GlobalData::new(global_data_crate_path, duplicates.clone());
+    // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
+    let mut global_data = GlobalData::new(crate_path, duplicates.clone());
     global_data.modules = modules;
 
     // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
@@ -4026,13 +4014,7 @@ pub fn process_items(
     // `parse_fn_input_or_field()` currently uses `ItemDefinition`s etc, which doesn't work because that is what we are in the process of creating... however the only thing it uses from the `ItemDefinition` is the names of the genereics ie:
     // let gen_arg_name = item_definition.generics[i].clone();
     //
-    extract_data_populate_item_definitions(
-        // &items,
-        // get_names_crate_path,
-        // &mut get_names_module_path.clone(),
-        // &mut modules,
-        &mut global_data,
-    );
+    extract_data_populate_item_definitions(&mut global_data);
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
@@ -4040,13 +4022,7 @@ pub fn process_items(
         module_path: vec!["crate".to_string()],
         stmts: Vec::new(),
     });
-    let mut stmts = js_stmts_from_syn_items(
-        items,
-        true,
-        &mut vec!["crate".to_string()],
-        &mut global_data,
-        entrypoint_path,
-    );
+    let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
 
     let stmts = if with_rust_types {
         push_rust_types(&global_data, stmts)
@@ -4117,44 +4093,21 @@ pub fn modules_to_string(modules: &Vec<JsModule>, lib: bool) -> String {
 }
 
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, lib: bool) -> String {
-    // dbg!(&main_path);
-    // TODO
-
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
-    let mut entrypoint_path = Some(crate_path.join("src").join("main.rs"));
-    let crate_path_copy = crate_path.clone();
-    let get_names_crate_path = Some(&crate_path_copy);
-    let global_data_crate_path = Some(crate_path.clone());
     let file = syn::parse_file(&code).unwrap();
     let items = file.items;
-    // let mut current_file_path = vec!["main.rs".to_string()];
 
-    let modules = process_items(
-        items,
-        get_names_crate_path,
-        global_data_crate_path,
-        &mut entrypoint_path,
-        with_rust_types,
-    );
+    let modules = process_items(items, Some(crate_path.clone()), with_rust_types);
     modules_to_string(&modules, lib)
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
 // Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
 pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
-    let mut entrypoint_path = None;
-    let get_names_crate_path = None;
-    let global_data_crate_path = None;
     let file = syn::parse_file(code).unwrap();
     let items = file.items;
 
-    process_items(
-        items,
-        get_names_crate_path,
-        global_data_crate_path,
-        &mut entrypoint_path,
-        with_rust_types,
-    )
+    process_items(items, None, with_rust_types)
 }
 
 pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
@@ -4309,13 +4262,7 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let items = item_mod.content.unwrap().1;
     let mut current_module = Vec::new();
     let mut global_data = GlobalData::new(None, Vec::new());
-    js_stmts_from_syn_items(
-        items,
-        true,
-        &mut current_module,
-        &mut global_data,
-        &mut None,
-    )
+    js_stmts_from_syn_items(items, &mut current_module, &mut global_data)
 }
 
 pub fn from_fn(code: &str) -> Vec<JsStmt> {

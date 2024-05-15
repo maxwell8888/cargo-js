@@ -94,10 +94,11 @@ pub fn r2j_file(code: &str) -> String {
     let generated_js = format_js(generated_js);
     generated_js
 }
+
 #[macro_export]
 macro_rules! r2j_file {
     ($($item:item)*) => {{
-        mod generated {
+        pub mod generated {
             $($item)*
         }
         let file = stringify!($($item)*);

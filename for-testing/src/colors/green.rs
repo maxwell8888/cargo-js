@@ -22,5 +22,12 @@ impl Green {
         assert!(crate::utils::duplicate_name() == 7);
         assert!(super::DOG_ACTIVITY == 5);
         assert!(super::stuff_function() == 4);
+        assert!(crate::crate_level_inline::duplicate_name() == 1);
+        assert!(crate::crate_level_inline::crate_level_inline_sub::duplicate_name() == 11);
+        assert!(crate::foo_bar::file_module_level_inline::duplicate_name() == 12);
+        assert!(
+            crate::foo_bar::file_module_level_inline::file_module_inline_sub::duplicate_name()
+                == 13
+        );
     }
 }

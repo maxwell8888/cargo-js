@@ -7,6 +7,17 @@ impl Internal {
     }
 }
 
+pub mod file_module_level_inline {
+    pub fn duplicate_name() -> i32 {
+        12
+    }
+    pub mod file_module_inline_sub {
+        pub fn duplicate_name() -> i32 {
+            13
+        }
+    }
+}
+
 pub struct External {
     sub: Internal,
     count: i32,
