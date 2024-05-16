@@ -23,7 +23,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 
-use ravascript::from_file;
+use ravascript::{from_file, modules_to_string};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 
 // macro_rules! stmts_to_code_str {
@@ -84,13 +84,9 @@ macro_rules! r2j_block_with_prelude {
     }};
 }
 
-pub fn r2j_file(code: &str) -> String {
+pub fn r2j_file(code: &str, run_main: bool) -> String {
     let modules = from_file(code, false);
-    let generated_js = modules
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let generated_js = modules_to_string(&modules, run_main);
     let generated_js = format_js(generated_js);
     generated_js
 }
@@ -102,7 +98,7 @@ macro_rules! r2j_file {
             $($item)*
         }
         let file = stringify!($($item)*);
-        r2j_file(file)
+        r2j_file(file, false)
     }};
 }
 
@@ -117,7 +113,7 @@ macro_rules! r2j_file_run_main {
         }
         generated::run_main();
         let file = stringify!($($item)*);
-        r2j_file(file)
+        r2j_file(file, true)
     }};
 }
 
@@ -125,7 +121,7 @@ macro_rules! r2j_file_run_main {
 macro_rules! r2j_file_unchecked {
     ($($item:item)*) => {{
         let file = stringify!($($item)*);
-        r2j_file(file)
+        r2j_file(file, false)
     }};
 }
 

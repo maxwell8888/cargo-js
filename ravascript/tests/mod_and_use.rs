@@ -15,7 +15,7 @@ use utils::*;
 async fn it_transpiles_crate_directory() {
     setup_tracing();
 
-    let actual = from_crate("../for-testing".into(), false, false);
+    let actual = from_crate("../for-testing".into(), false, true);
     let actual = format_js(actual);
 
     let expected = format_js(
@@ -154,14 +154,18 @@ async fn simple_module() {
             }
         }
     );
-    let expected = r#"// crate
-class Bar {}
-function baz() {
-  var _ = new Bar();
-}
+    let expected = format_js(
+        r#"
+          // crate
+          class Bar {}
+          function baz() {
+            var _ = new Bar();
+          }
 
-// foo
-function green() {}"#;
+          // foo
+          function green() {}
+        "#,
+    );
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -206,13 +210,18 @@ async fn module_self() {
             let blue = self::baz();
         }
     );
-    let expected = r#"class Bar {}
-function baz() {
-  var _ = new Bar();
-}
-function green() {
-  var blue = baz();
-}"#;
+    let expected = format_js(
+        r#"
+          // crate
+          class Bar {}
+          function baz() {
+            var _ = new Bar();
+          }
+          function green() {
+            var blue = baz();
+          }
+        "#,
+    );
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

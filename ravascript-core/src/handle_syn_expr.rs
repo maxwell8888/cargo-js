@@ -2372,6 +2372,10 @@ fn handle_expr_path_inner(
         current_module,
         current_module,
     );
+    // dbg!(&segs_copy_module_path);
+    // dbg!(&segs_copy_item_path);
+    // dbg!(&is_scoped);
+
     let segs_copy_module_path = (!is_scoped).then_some(segs_copy_module_path);
 
     assert!(segs_copy_item_path.len() <= 2);
@@ -2472,7 +2476,6 @@ fn handle_expr_path_inner(
             &item_path_seg.ident,
         );
         // dbg!(&item_def);
-        // dbg!("dealth");
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
         let item_generics = if item_path_seg.turbofish.len() > 0 {
@@ -2627,6 +2630,12 @@ fn handle_expr_path_inner(
         .iter()
         .map(|seg| case_convert(seg.ident.to_string()))
         .collect::<Vec<_>>();
+
+    if let Some(segs_copy_module_path) = &segs_copy_module_path {
+        if segs_copy_module_path == &["web_prelude"] && segs_copy_item_path[0].ident == "Document" {
+            js_segs[0] = "document".to_string();
+        }
+    }
 
     if let Some(segs_copy_module_path) = segs_copy_module_path {
         if let Some(dup) = global_data.duplicates.iter().find(|dup| {

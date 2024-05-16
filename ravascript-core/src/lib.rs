@@ -6,8 +6,7 @@ use handle_syn_expr::{handle_expr, handle_expr_block, handle_expr_match};
 use handle_syn_stmt::handle_stmt;
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use js_ast::{
-    DestructureObject, DestructureValue, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, JsStmt,
-    LocalName,
+    DestructureObject, DestructureValue, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, LocalName,
 };
 use quote::quote;
 use std::{
@@ -33,6 +32,8 @@ mod handle_syn_stmt;
 mod js_ast;
 pub mod prelude;
 pub mod rust_prelude;
+
+pub use js_ast::JsStmt;
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
@@ -135,6 +136,7 @@ fn tree_parsing_for_boilerplate(
 }
 
 enum ItemUseModuleOrScope<'a> {
+    ExternalCrate,
     Module(&'a mut ModuleData),
     Scope(&'a mut GlobalDataScope),
 }
@@ -238,6 +240,7 @@ fn handle_item_use(
         // TODO this is probably also the correct place to determine if std stuff like HashMap needs flagging
         // if is_module {
         match item_use_module_or_scope {
+            ItemUseModuleOrScope::ExternalCrate => {}
             ItemUseModuleOrScope::Module(module) => {
                 for item_path in item_paths {
                     // Get current module since it must already exist if we are in it
@@ -1448,6 +1451,37 @@ enum TypeOrVar {
 //     }
 // }
 
+fn js_stmts_from_syn_items2(
+    items: Vec<Vec<Item>>,
+    // Need to keep track of which module we are currently in, for constructing the boilerplate
+    current_module: &mut Vec<String>,
+    global_data: &mut GlobalData,
+) -> Vec<JsStmt> {
+    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
+    let _guard = span.enter();
+
+    let mut js_stmts = Vec::new();
+    // let mut modules = Vec::new();
+    // TODO this should be optional/configurable, might not always want it
+
+    // We need to know what the syn type is to know whether it is eg a use which needs adding to the boiler plate
+    // but we also need to put the struct impls into the class
+    // solution:
+    // push use to boilerplate in handle_item() and don't push the item to js_stmts
+    // push other items as normal
+    // after loop, group together classes
+    // now that classes are grouped, we can add them to the module object - we either do the conversion to module objects right at the end after parsing all branches, otherwise we are always going to have to be able to amend the classes because impls might be in other modules.
+
+    // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
+    // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
+
+    for item in items {
+        // handle_item(item, global_data, current_module, &mut js_stmts);
+    }
+
+    js_stmts
+}
+
 // TODO remove this as it is unnecessary redirection
 /// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
 ///
@@ -2516,10 +2550,12 @@ impl GlobalData {
                 current_module,
             );
             assert!(item_path.len() == 1);
+            // dbg!("yes");
             let item_def = self.lookup_item_def_known_module_assert_not_func(
                 &Some(module_path.clone()),
                 &item_path[0].ident,
             );
+            // dbg!("ytes222");
             (
                 item_def,
                 Some(module_path.clone()),
@@ -3127,6 +3163,7 @@ fn extract_data(
     items: &Vec<Item>,
     // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
     // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
     module_path: &mut Vec<String>,
     // (module path, name)
@@ -3141,6 +3178,8 @@ fn extract_data(
     //     .find(|module| module.path == *module_path)
     //     .unwrap();
     // let defined_names = &mut current_module_data.defined_names;
+
+    // dbg!(&module_path);
 
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
     for item in items {
@@ -3320,6 +3359,7 @@ fn extract_data(
                     if let Some(crate_path2) = crate_path {
                         let mut file_path = crate_path2.clone();
                         file_path.push("src");
+                        // IMPORTANT TODO need to check for "crate" *and* "my_external_crate", and also use the corrent `crate_path`
                         if *module_path == ["crate"] {
                             file_path.push("main.rs");
                         } else {
@@ -3908,7 +3948,7 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
 }
 
 pub fn process_items(
-    items: Vec<Item>,
+    mut items: Vec<Item>,
     crate_path: Option<PathBuf>,
     // TODO I don't think there is much point in supporting generation without "Rust types" so remove this flag
     with_rust_types: bool,
@@ -3937,6 +3977,7 @@ pub fn process_items(
     let mut names_for_finding_duplicates = Vec::new();
     let mut scoped_names_for_finding_duplicates = Vec::new();
     // gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
+    // dbg!(&modules);
     extract_data(
         true,
         &items,
@@ -3946,13 +3987,48 @@ pub fn process_items(
         &mut scoped_names_for_finding_duplicates,
         &mut modules,
     );
+    // dbg!(&modules);
 
+    // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
     // Currently this is only the web prelude for which we need to `extract_data` for deduplicating/namespacing and getting use mappings for resolving paths, and `extract_data_populate_item_definitions` for getting item definitions to eg lookup methods etc, but we do not actually need to parse to a JS AST.
-    // let web_prelude_path = PathBuf::new();
-    // let code = fs::read_to_string(web_prelude_path.join("../web-prelude").join("src").join("main.rs")).unwrap();
-    // let file = syn::parse_file(&code).unwrap();
-    // let prelude_items = file.items;
+    let web_prelude_crate_path = "../web-prelude";
+    let web_prelude_entry_point_path = PathBuf::new()
+        .join(web_prelude_crate_path)
+        .join("src")
+        .join("lib.rs");
+    let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
+    let file = syn::parse_file(&code).unwrap();
+    let prelude_items = file.items;
+    modules.push(ModuleData {
+        name: "web_prelude".to_string(),
+        parent_name: None,
+        path: vec!["web_prelude".to_string()],
+        pub_definitions: Vec::new(),
+        private_definitions: Vec::new(),
+        pub_submodules: Vec::new(),
+        private_submodules: Vec::new(),
+        pub_use_mappings: Vec::new(),
+        private_use_mappings: Vec::new(),
+        resolved_mappings: Vec::new(),
+        fn_info: Vec::new(),
+        item_definitons: Vec::new(),
+        trait_definitons: Vec::new(),
+        consts: Vec::new(),
+        items: prelude_items.clone(),
+    });
+
+    extract_data(
+        true,
+        &prelude_items,
+        &Some(web_prelude_crate_path.into()),
+        // &mut get_names_module_path.clone(),
+        &mut vec!["web_prelude".to_string()],
+        &mut names_for_finding_duplicates,
+        &mut scoped_names_for_finding_duplicates,
+        &mut modules,
+    );
+    // dbg!(&modules);
 
     // find duplicates
     // TODO account for local functions which shadow these names
@@ -4018,10 +4094,24 @@ pub fn process_items(
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
+        name: "web_prelude".to_string(),
+        module_path: vec!["web_prelude".to_string()],
+        stmts: Vec::new(),
+    });
+    let stmts = js_stmts_from_syn_items(
+        prelude_items,
+        &mut vec!["web_prelude".to_string()],
+        &mut global_data,
+    );
+
+    global_data.transpiled_modules.push(JsModule {
+        public: true,
         name: "crate".to_string(),
         module_path: vec!["crate".to_string()],
         stmts: Vec::new(),
     });
+
+    // TODO IMPORTANT!!!!!!!!! item impls are populated in js_stmts_from_syn_items, which we don't run for web_prelude, which means create_element method is not found
     let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
 
     let stmts = if with_rust_types {
@@ -4056,9 +4146,14 @@ pub fn process_items(
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
 
+    // TODO can this not just be done automatically in JsModule.js_string() ??
     // add module name comments when there is more than 1 module
     if global_data.transpiled_modules.len() > 1 {
-        for module in &mut global_data.transpiled_modules {
+        for module in global_data
+            .transpiled_modules
+            .iter_mut()
+            .filter(|m| m.module_path != ["web_prelude"])
+        {
             module.stmts.insert(
                 0,
                 JsStmt::Comment(if module.module_path == ["crate"] {
@@ -4079,26 +4174,25 @@ pub fn process_items(
     global_data.transpiled_modules.clone()
 }
 
-pub fn modules_to_string(modules: &Vec<JsModule>, lib: bool) -> String {
-    if lib {
-        todo!()
-    } else {
-        let mut module_strings = modules
-            .iter()
-            .map(|module| module.js_string())
-            .collect::<Vec<_>>();
+pub fn modules_to_string(modules: &Vec<JsModule>, run_main: bool) -> String {
+    let mut module_strings = modules
+        .iter()
+        .map(|module| module.js_string())
+        .collect::<Vec<_>>();
+    if run_main {
         module_strings.push("main();".to_string());
-        module_strings.join("\n\n")
     }
+    module_strings.join("\n\n")
 }
 
-pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, lib: bool) -> String {
+pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, run_main: bool) -> String {
     let code = fs::read_to_string(crate_path.join("src").join("main.rs")).unwrap();
     let file = syn::parse_file(&code).unwrap();
     let items = file.items;
 
+    // Crate path is eg "../for-testing/"
     let modules = process_items(items, Some(crate_path.clone()), with_rust_types);
-    modules_to_string(&modules, lib)
+    modules_to_string(&modules, run_main)
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
@@ -4111,6 +4205,8 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
 }
 
 pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
+    // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. Should web prelude be allowed?
+
     // let file = syn::parse_file(code).unwrap();
     let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
 
@@ -4808,7 +4904,7 @@ fn get_path_old(
         // dbg!("in private items");
 
         // Since this is the path to a scoped item or var, the path must be length 1
-        dbg!(&segs);
+        // dbg!(&segs);
         assert!(segs.len() == 1);
         segs
     } else {
@@ -4826,6 +4922,7 @@ pub struct RustPathSegment {
     turbofish: Vec<RustType>,
 }
 
+// TODO ideally test tracing output in get_path test cases to ensure the expect code path is being taken??
 // TODO need to make sure this looks up traits as well as other items
 /// -> (current module (during recursion)/item module path (upon final return), found item path, is scoped item/var/func)
 ///
@@ -4836,12 +4933,16 @@ fn get_path(
     look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
+    // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     global_data: &GlobalData,
     current_mod: &Vec<String>,
     // Only used to determine if current module is the original module
     orig_mod: &Vec<String>,
 ) -> (Vec<String>, Vec<RustPathSegment>, bool) {
     debug!(segs = ?segs, "get_path_without_namespacing");
+
+    // dbg!(&current_mod);
+    // dbg!(&segs);
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
@@ -4850,6 +4951,7 @@ fn get_path(
         .iter()
         .find(|m| &m.path == current_mod)
         .unwrap();
+    // dbg!(&module);
 
     let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
         current_mod
@@ -4864,6 +4966,7 @@ fn get_path(
         use_private_items || is_parent_or_same_module,
         &segs[0].ident,
     );
+    // dbg!(&item_defined_in_module);
 
     let path_starts_with_sub_module = module.path_starts_with_sub_module(
         use_private_items || is_parent_or_same_module,
@@ -4886,6 +4989,12 @@ fn get_path(
     } else {
         use_mappings.find(|use_mapping| use_mapping.0 == segs[0].ident)
     };
+    // dbg!(matched_use_mapping);
+
+    // TODO can module shadow external crate names? In which case we need to look for modules first? I think we do this implicitly based on the order of the if statements below?
+    // TODO actually look up external crates in Cargo.toml
+    let external_crate_names = vec!["web_prelude"];
+    let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     let is_scoped = global_data.scopes.iter().rev().any(|scope| {
         let is_func =
@@ -5008,8 +5117,9 @@ fn get_path(
         // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
         // `use super::super::some_module::another_module;` will have a use mapping recorded of eg ("another_module", ["crate", "top_module", "some_module"])
         // So say we have a path like `another_module::MyStruct;`, then we will match this use mapping and the below code combines the path from the mapping and the current "segs" to make `"crate", "top_module", "some_module", "another_module", "MyStruct";`
+        // What if we have a path like `another_module::yet_another_module::MyStruct;`??
 
-        // TODO IMPORTANT for a `use` statement for a third party crate, we need to set the `current_module` accordingly. I think it is fine to just use ["name_of_crate", "module_in_crate", etc].
+        // TODO I think we need to set the current_module to use_mapping.1, remove this from segs (ie just not add it), and then we can just start from that module in the next get_path iteration?? NO That causes tests to fail
 
         let mut use_segs = use_mapping.1.clone();
         use_segs.push(use_mapping.0.clone());
@@ -5024,7 +5134,21 @@ fn get_path(
         segs.remove(0);
         use_segs.extend(segs);
 
-        // TODO do we not need to update the current module if the use path/mapping has taken us to a new module??
+        // TODO IMPORTANT for a `use` statement for a third party crate, we need to set the `current_module` accordingly. I think it is fine to just use ["name_of_crate", "module_in_crate", etc].
+
+        // TODO do we not need to update the current module if the use path/mapping has taken us to a new module?? write some tests NO because the use mapping just provides an absolute path to the module/item that is used which is of course valid from the current module. The important part is that the get_path iteration after this `matched_use_mapping` iteration
+
+        // let new_mod = if use_segs[0].ident == "crate" {
+        //     // current_mod
+        //     use_mapping.1.clone()
+        // } else if external_crate_names
+        //     .iter()
+        //     .any(|cn| cn == &use_segs[0].ident)
+        // {
+        //     use_mapping.1.clone()
+        // } else {
+        //     panic!()
+        // };
 
         get_path(
             false,
@@ -5032,11 +5156,30 @@ fn get_path(
             true,
             use_segs,
             global_data,
+            // &new_mod,
             current_mod,
+            // &use_mapping.1.clone(),
             orig_mod,
         )
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
+    } else if path_is_external_crate {
+        // } else if false {
+        // TODO need to update current_mod
+
+        // Handle equivalently to segs[0] == "crate"
+        let crate_name = segs.remove(0);
+        let current_module = [crate_name.ident].to_vec();
+
+        get_path(
+            false,
+            false,
+            true,
+            segs,
+            global_data,
+            &current_module,
+            orig_mod,
+        )
     } else {
         // Handle third party crates
         // TODO lookup available crates in Cargo.toml

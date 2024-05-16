@@ -1835,12 +1835,15 @@ pub fn handle_item(
             handle_item_impl(&item_impl, true, global_data, current_module_path)
         }
         Item::Macro(_) => todo!(),
-        Item::Mod(item_mod) => handle_item_mod(
-            item_mod,
-            global_data,
-            current_module_path,
-            // current_file_path,
-        ),
+        Item::Mod(item_mod) => {
+            // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
+            handle_item_mod(
+                item_mod,
+                global_data,
+                current_module_path,
+                // current_file_path,
+            )
+        },
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module_path);

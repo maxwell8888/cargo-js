@@ -123,6 +123,7 @@ async fn main() {
             } else if let Some(crate_path) = package {
                 from_crate(crate_path.into(), true, *lib)
             } else {
+                // TODO would expect `package` to just be eg `my_crate`, not `my_crate/src/main.rs` (should have a runtime check for this), so the below seems wrong.
                 // Look for src/main.rs or src/lib.rs in current folder
                 let crate_path = if PathBuf::from("src/main.rs").exists() {
                     "src/main".into()

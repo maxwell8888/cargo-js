@@ -17,6 +17,7 @@ publish = true
 [dependencies]
 ravascript-macros = { path = "../ravascript-macros" }
 ravascript-core = { path = "../ravascript-core" }
+web-prelude = { path = "../web-prelude" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-tree = "0.3.0"
