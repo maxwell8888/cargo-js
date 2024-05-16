@@ -20,11 +20,15 @@ async fn it_transpiles_struct_no_new() {
             my_field: i32,
         }
     }
-    let expected = r#"class MyStruct {
-  constructor(myField) {
-    this.myField = myField;
-  }
-}"#;
+    let expected = format_js(
+        r#"
+            class MyStruct {
+                constructor(myField) {
+                    this.myField = myField;
+                }
+            }
+        "#,
+    );
     assert_eq!(expected, generated_js());
 }
 
