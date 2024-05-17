@@ -1519,15 +1519,23 @@ fn handle_expr_method_call(
                     turbofish: method_turbofish_rust_types.clone().unwrap_or(Vec::new()),
                 };
 
-                let impl_method = global_data
-                    .lookup_impl_item_item(
-                        &item_type_params,
-                        &item_module_path,
-                        &sub_path,
-                        &item_name,
-                        &item_def,
-                    )
-                    .unwrap();
+                let impl_method = if let Some(impl_method) = global_data.lookup_impl_item_item(
+                    &item_type_params,
+                    &item_module_path,
+                    &sub_path,
+                    &item_name,
+                    &item_def,
+                ) {
+                    impl_method
+                } else {
+                    // dbg!(&global_data.scopes);
+                    dbg!(&item_type_params);
+                    dbg!(&item_module_path);
+                    dbg!(&sub_path);
+                    dbg!(&item_name);
+                    dbg!(&item_def);
+                    panic!()
+                };
 
                 fn method_return_type_generic_resolve_to_rust_type(
                     item_type_params: &Vec<RustTypeParam>,

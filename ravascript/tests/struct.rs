@@ -32,7 +32,7 @@ async fn it_transpiles_struct_no_new() {
     assert_eq!(expected, generated_js());
 }
 
-#[ignore = "wait to support impl Trait for T"]
+// #[ignore = "wait to support impl Trait for T"]
 #[tokio::test]
 async fn struct_and_impl_methods() {
     setup_tracing();
@@ -85,51 +85,49 @@ async fn struct_and_impl_methods() {
         // console.assert(thing.withGeneric(99) === 2);
         // console.assert(thing.getAge() === 2);
 
-        assert_eq!(thing.my_method(), "Bruce");
-        assert_eq!(thing.my_method_with_arg(2), 4);
-        assert_eq!(MyStruct::my_associated_method(2), 12);
+        assert!(thing.my_method() == "Bruce");
+        assert!(thing.my_method_with_arg(2) == 4);
+        assert!(MyStruct::my_associated_method(2) == 12);
         // assert_eq!(thing.with_generic::<i32>(99), 2);
-        assert_eq!(thing.get_age(), 2);
+        assert!(thing.get_age() == 2);
     });
-    let expected = concat!(
-        include_str!("string_prototype_extensions.js"),
-        include_str!("number_prototype_extensions.js"),
+    // withGeneric(inc) {
+    //     return this.age;
+    // }
+    // console.assert(thing.withGeneric(99).eq(2));
+    let expected = format_js(
         r#"
-        class MyStruct {
-            constructor(age, name) {
-                this.age = age;
-                this.name = name;
+            class MyStruct {
+                constructor(age, name) {
+                    this.age = age;
+                    this.name = name;
+                }
+            
+                static new(age, name) {
+                    return new MyStruct(age, name);
+                }
+                myMethod() {
+                    return this.name;
+                }
+                myMethodWithArg(inc) {
+                    return this.age + inc;
+                }
+                static myAssociatedMethod(inc) {
+                    return inc + 10;
+                }
+                getAge() {
+                    return this.age;
+                }
             }
-        
-            static new(age, name) {
-                return new MyStruct(age, name);
-            }
-            myMethod() {
-                return this.name;
-            }
-            myMethodWithArg(inc) {
-                return this.age.add(inc);
-            }
-            static myAssociatedMethod(inc) {
-                return inc.add(new RustInteger(10));
-            }
-            withGeneric(inc) {
-                return this.age;
-            }
-            getAge() {
-                return this.age;
-            }
-        }
 
-        var thing = MyStruct.new(2, "Bruce");
-        console.assert(thing.myMethod().eq("Bruce"));
-        console.assert(thing.myMethodWithArg(2).eq(4));
-        console.assert(MyStruct.myAssociatedMethod(2).eq(12));
-        console.assert(thing.withGeneric(99).eq(2));
-        console.assert(thing.getAge().eq(2));
-        "#
+            var thing = MyStruct.new(2, "Bruce");
+            console.assert(thing.myMethod() === "Bruce");
+            console.assert(thing.myMethodWithArg(2) === 4);
+            console.assert(MyStruct.myAssociatedMethod(2) === 12);
+            console.assert(thing.getAge() === 2);
+        "#,
     );
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 

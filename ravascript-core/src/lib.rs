@@ -2896,11 +2896,16 @@ impl GlobalData {
             .flatten()
             .collect::<Vec<_>>();
         all_impl_blocks.extend(self.impl_blocks.iter().cloned());
+        // dbg!(&all_impl_blocks);
 
         let mut prev_found_traits_length = found_traits.len();
 
         // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
-        while found_traits_previous.len() < found_traits.len() {
+        let mut start = true;
+        // while found_traits_previous.len() < found_traits.len() || start {
+        // TODO this works fine for `impl Foo for Bar`, need to fix for `impl Foo for T`
+        while start {
+            start = false;
             found_traits_previous = found_traits.clone();
             found_traits.clear();
 
@@ -2908,6 +2913,7 @@ impl GlobalData {
                 // TODO this needs extending to handle matching any target type, rather than just user structs
                 match &impl_block.target {
                     RustType::TypeParam(rust_type_param) => {
+                        todo!();
                         // If the target is a type param then we must be implementing a trait
                         let rust_trait = impl_block.trait_.clone().unwrap();
 
@@ -2946,7 +2952,7 @@ impl GlobalData {
                     }
                     RustType::MutRef(_) => todo!(),
                     RustType::Ref(_) => todo!(),
-                    _ => {}
+                    _ => todo!(),
                 }
             }
         }
@@ -2984,6 +2990,7 @@ impl GlobalData {
         //     });
 
         // It is not possible to have impls with the same method name, so we should at most match 1 impl item/method
+        // dbg!(&matched_trait_impl_blocks);
         assert!(
             matched_trait_impl_blocks
                 .iter()
@@ -4111,7 +4118,7 @@ pub fn process_items(
         stmts: Vec::new(),
     });
 
-    // TODO IMPORTANT!!!!!!!!! item impls are populated in js_stmts_from_syn_items, which we don't run for web_prelude, which means create_element method is not found
+    // NOTE IMPORTANT item impls are populated in js_stmts_from_syn_items, which we don't run for web_prelude, which means create_element method is not found
     let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
 
     let stmts = if with_rust_types {

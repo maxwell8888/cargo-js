@@ -1475,7 +1475,8 @@ pub fn handle_item_impl(
 
         if let Some((scope_idx, scope)) = scope {
             if rust_impl_block.trait_.is_some() {
-                todo!();
+                // NOTE haven't though this through, just seeing if it works
+                scope.impl_blocks.push(rust_impl_block);
             } else {
                 // Here we simply store the rust impl block on the appropriate scope, at the end of parsing a block of statements we will iterate through any `.impl_blocks` for the current scope and update the classes in the parsed stmts accordingly before returning the statements
 
