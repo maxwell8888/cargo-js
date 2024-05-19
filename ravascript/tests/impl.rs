@@ -296,7 +296,7 @@ async fn call_method_in_same_impl_block_before_method_definition() {
 }
 
 #[tokio::test]
-async fn simple_method_impl() {
+async fn simple_inherent_impl() {
     setup_tracing();
     let actual = r2j_file_run_main!(
        struct Foo {
@@ -334,6 +334,60 @@ async fn simple_method_impl() {
                 }
             }
 
+            function main() {
+                var foo = new Foo(0);
+                console.assert(foo.baz() === 0);
+                console.assert(Foo.bar() === 1);
+            }
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn module_level_struct_scoped_inherent_impl() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {
+            num: i32,
+        }
+        fn scoped() {
+            impl Foo {
+                fn bar() -> i32 {
+                    1
+                }
+                fn baz(&self) -> i32 {
+                    self.num
+                }
+            }
+        }
+        fn main() {
+            let foo = Foo { num: 0 };
+            assert!(foo.baz() == 0);
+            assert!(Foo::bar() == 1);
+            //    assert!(Foo::baz(&foo) == 0);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+
+                static bar() {
+                    return 1;
+                }
+                baz() {
+                    return this.num;
+                }
+            }
+            function scoped() {}
             function main() {
                 var foo = new Foo(0);
                 console.assert(foo.baz() === 0);
@@ -472,9 +526,9 @@ async fn simple_scoped_impl_trait_for_type_param() {
 // TODO `imp Foo for T` where self is used so need to bind this
 // TODO `imp Foo for T` static vs method
 // etc
-#[ignore = "reason"]
+#[ignore = "todo"]
 #[tokio::test]
-async fn multiple_scoped_impl_trait_for_type_param() {
+async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
     setup_tracing();
 
     let actual = r2j_block_with_prelude!({
