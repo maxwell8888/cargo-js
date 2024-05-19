@@ -21,10 +21,18 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, handle_item_use, handle_pat, handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro}, handle_syn_item::{
+    camel, handle_item_use, handle_pat,
+    handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro},
+    handle_syn_item::{
         handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
         handle_item_trait,
-    }, js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType}, js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef, EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplItem, RustGeneric, RustImplBlock, RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo
+    },
+    js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType},
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
+    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
+    GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplItem, RustGeneric, RustImplBlock,
+    RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
+    RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
 fn handle_local(
@@ -747,8 +755,12 @@ pub fn handle_stmt(
             ),
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
-                handle_item_impl(item_impl, false, global_data, current_module_path);
-                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
+                // handle_item_impl(item_impl, false, global_data, current_module_path);
+                // (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
+                (
+                    handle_item_impl(item_impl, false, global_data, current_module_path),
+                    RustType::Unit,
+                )
             }
             Item::Macro(_) => todo!(),
             Item::Mod(_) => todo!(),

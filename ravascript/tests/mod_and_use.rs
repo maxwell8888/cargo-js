@@ -41,6 +41,7 @@ async fn it_transpiles_crate_directory() {
               return this.age + 10;
             }
           }
+          
           class External {
             constructor(sub, count) {
               this.sub = sub;

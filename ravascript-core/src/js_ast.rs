@@ -1,7 +1,7 @@
 use heck::{AsKebabCase, AsPascalCase};
 use syn::BinOp;
 
-use crate::camel;
+use crate::{camel, ItemDefinition, RustType};
 
 #[derive(Clone, Debug)]
 pub enum JsOp {
@@ -524,6 +524,11 @@ pub struct JsClass {
     // /// trait impl block name, which can be transpiled/formatted to eg `var someModule__myTrait__for__anotherModule__myStructOrEnum = { ... }`
     // /// (trait namespaced name, type namespaced name) (namespaced name just means a vector of snake_case, hasn't bean camel cased or joined with __ yet.
     // generic_trait_impl_methods: Vec<(Vec<String>, Vec<String>)>,
+    /// We need this because after syn -> JS parsing a block (scoped impls) or crate (module level impls) we need to go through and update all the `JsClass`s with their `impl`d methods, either directly add the method for direct impls, or a link the the trait impl object for generic impls, and for the later case we need to check if the classes type matches the trait impl (actually I think we need the type params from the ItemDefinition for simple direct impls too if the item is generic and has bounds, we are probably just glossing over this at the moment).
+    pub rust_name: String,
+    pub module_path: Option<Vec<String>>,
+    /// TODO Should be an enum containing rust_name and module_path
+    pub is_impl_block: bool,
 }
 // #[derive(Clone, Debug)]
 // pub struct JsClassImpldMethods {
@@ -549,6 +554,8 @@ pub struct JsClass {
 
 #[derive(Clone, Debug)]
 pub enum LocalType {
+    // TODO None probably doesn't belong here, it is just a quick hack to allow non-static fields in classes
+    None,
     Var,
     Const,
     Let,
@@ -627,6 +634,7 @@ impl JsLocal {
     fn js_string(&self) -> String {
         let lhs = self.lhs.js_string();
         let var_type = match self.type_ {
+            LocalType::None => "",
             LocalType::Var => "var",
             LocalType::Const => "const",
             LocalType::Let => "let",

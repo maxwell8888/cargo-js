@@ -136,6 +136,7 @@ pub fn handle_item_fn(
         },
     };
 
+    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // if !global_data.at_module_top_level {
     if !at_module_top_level {
         // Record this fn in the *parent* scope
@@ -392,6 +393,7 @@ pub fn handle_item_const(
     let mut name = item_const.ident.to_string();
     debug!(name = ?name, "handle_item_const");
 
+    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     if !at_module_top_level {
         let generics = item_const
             .generics
@@ -467,116 +469,119 @@ pub fn handle_item_enum(
     debug!(enum_name = ?enum_name, "handle_item_enum");
     // dbg!(item_enum.attrs);
 
-    if !at_module_top_level {
-        // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
+    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
 
-        // TODO we can't just get the type of a variant from the enum definiton if it is generic, as the generic type info will only be available in the actual code where that particular instance of the enum is instantiated, or later on. Well actually we will be looking this up from where the enum is instantiated like `MyEnum::MyVariant` so maybe just return the type if there is no enum, else return something to flag that the generic type should be looked for??
-        let generics = item_enum
+    // TODO we can't just get the type of a variant from the enum definiton if it is generic, as the generic type info will only be available in the actual code where that particular instance of the enum is instantiated, or later on. Well actually we will be looking this up from where the enum is instantiated like `MyEnum::MyVariant` so maybe just return the type if there is no enum, else return something to flag that the generic type should be looked for??
+    let generics = item_enum
+        .generics
+        .params
+        .iter()
+        .map(|p| match p {
+            GenericParam::Lifetime(_) => todo!(),
+            GenericParam::Type(type_param) => RustTypeParam {
+                name: type_param.ident.to_string(),
+                type_: RustTypeParamValue::Unresolved,
+            },
+            GenericParam::Const(_) => todo!(),
+        })
+        .collect::<Vec<_>>();
+
+    // let return_type_for_scope = RustType::Enum(ItemDefinition {
+    //     ident: item_enum.ident.to_string(),
+    //     members: item_enum
+    //         .variants
+    //         .iter()
+    //         .map(|v| MemberInfo {
+    //             ident: v.ident.to_string(),
+    //             return_type: RustType::ParentItem,
+    //         })
+    //         .collect::<Vec<_>>(),
+    //     generics,
+    //     syn_object: StructOrEnumSynObject::Enum(item_enum.clone()),
+    // });
+
+    // TODO this is self referential... how to handle this?
+    // We *shouldn't* be storing *resolved* generics (only unresolved generic names) in the list of struct/enum *items*. We *should* be storing resolved generics in the copies of the struct/enum we return from expressions, and possibly store as vars.
+    // For the latter, where we want to store the return type of each "member" ie fields and methods, we can either:
+    // Go through the members and resolve/update any generics used each time we get generic information (ie method input of item instantiation)
+    // Not store the members and just look up methods etc on the syn object/value each time we want to eg check if a path is referrring to an associated fn??? (NOTE the main reason we started storing members in the first place is to store info about members defined impl blocks, but again could just store the syn object) I think just storing the syn objects initially is a good idea until I am clear what info is actually needed.
+    // But all we are going to be doing with the syn objects is getting the return type and if there are generics, look to see if any of them have been resolved in `.generics` and we could do the same thing for `MemberInfo`?
+
+    let members_for_scope = item_enum
+        .variants
+        .iter()
+        .map(|v| {
+            let inputs = v
+                .fields
+                .iter()
+                .map(|f| {
+                    let input_type = parse_fn_input_or_field(
+                        &f.ty,
+                        // NOTE it is not possible to make variant args mut in the definition
+                        false,
+                        &generics,
+                        current_module,
+                        global_data,
+                    );
+                    match &f.ident {
+                        Some(input_name) => EnumVariantInputsInfo::Named {
+                            ident: input_name.to_string(),
+                            input_type,
+                        },
+                        None => EnumVariantInputsInfo::Unnamed(input_type),
+                    }
+                })
+                .collect::<Vec<_>>();
+            EnumVariantInfo {
+                ident: v.ident.to_string(),
+                inputs,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let item_def = ItemDefinition {
+        ident: item_enum.ident.to_string(),
+        is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
+            Meta::Path(_) => todo!(),
+            Meta::List(meta_list) => {
+                let segs = &meta_list.path.segments;
+                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                    let tokens = format!("({})", meta_list.tokens);
+                    let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                    trait_tuple.elems.iter().any(|elem| match elem {
+                        Type::Path(type_path) => {
+                            let segs = &type_path.path.segments;
+                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                        }
+                        _ => todo!(),
+                    })
+                } else {
+                    false
+                }
+            }
+            Meta::NameValue(_) => todo!(),
+        }),
+        generics: item_enum
             .generics
             .params
             .iter()
             .map(|p| match p {
                 GenericParam::Lifetime(_) => todo!(),
-                GenericParam::Type(type_param) => RustTypeParam {
-                    name: type_param.ident.to_string(),
-                    type_: RustTypeParamValue::Unresolved,
-                },
+                GenericParam::Type(type_param) => type_param.ident.to_string(),
                 GenericParam::Const(_) => todo!(),
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>(),
+        struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+            members: members_for_scope,
+            syn_object: item_enum.clone(),
+        }),
+    };
 
-        // let return_type_for_scope = RustType::Enum(ItemDefinition {
-        //     ident: item_enum.ident.to_string(),
-        //     members: item_enum
-        //         .variants
-        //         .iter()
-        //         .map(|v| MemberInfo {
-        //             ident: v.ident.to_string(),
-        //             return_type: RustType::ParentItem,
-        //         })
-        //         .collect::<Vec<_>>(),
-        //     generics,
-        //     syn_object: StructOrEnumSynObject::Enum(item_enum.clone()),
-        // });
-
-        // TODO this is self referential... how to handle this?
-        // We *shouldn't* be storing *resolved* generics (only unresolved generic names) in the list of struct/enum *items*. We *should* be storing resolved generics in the copies of the struct/enum we return from expressions, and possibly store as vars.
-        // For the latter, where we want to store the return type of each "member" ie fields and methods, we can either:
-        // Go through the members and resolve/update any generics used each time we get generic information (ie method input of item instantiation)
-        // Not store the members and just look up methods etc on the syn object/value each time we want to eg check if a path is referrring to an associated fn??? (NOTE the main reason we started storing members in the first place is to store info about members defined impl blocks, but again could just store the syn object) I think just storing the syn objects initially is a good idea until I am clear what info is actually needed.
-        // But all we are going to be doing with the syn objects is getting the return type and if there are generics, look to see if any of them have been resolved in `.generics` and we could do the same thing for `MemberInfo`?
-
-        let members_for_scope = item_enum
-            .variants
-            .iter()
-            .map(|v| {
-                let inputs = v
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        let input_type = parse_fn_input_or_field(
-                            &f.ty,
-                            // NOTE it is not possible to make variant args mut in the definition
-                            false,
-                            &generics,
-                            current_module,
-                            global_data,
-                        );
-                        match &f.ident {
-                            Some(input_name) => EnumVariantInputsInfo::Named {
-                                ident: input_name.to_string(),
-                                input_type,
-                            },
-                            None => EnumVariantInputsInfo::Unnamed(input_type),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                EnumVariantInfo {
-                    ident: v.ident.to_string(),
-                    inputs,
-                }
-            })
-            .collect::<Vec<_>>();
-
+    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
+    if !at_module_top_level {
         let global_data_scope = global_data.scopes.last_mut().unwrap();
-        global_data_scope.item_definitons.push(ItemDefinition {
-            ident: item_enum.ident.to_string(),
-            is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
-                Meta::Path(_) => todo!(),
-                Meta::List(meta_list) => {
-                    let segs = &meta_list.path.segments;
-                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                        let tokens = format!("({})", meta_list.tokens);
-                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                        trait_tuple.elems.iter().any(|elem| match elem {
-                            Type::Path(type_path) => {
-                                let segs = &type_path.path.segments;
-                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                            }
-                            _ => todo!(),
-                        })
-                    } else {
-                        false
-                    }
-                }
-                Meta::NameValue(_) => todo!(),
-            }),
-            generics: item_enum
-                .generics
-                .params
-                .iter()
-                .map(|p| match p {
-                    GenericParam::Lifetime(_) => todo!(),
-                    GenericParam::Type(type_param) => type_param.ident.to_string(),
-                    GenericParam::Const(_) => todo!(),
-                })
-                .collect::<Vec<_>>(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                members: members_for_scope,
-                syn_object: item_enum.clone(),
-            }),
-        });
+        global_data_scope.item_definitons.push(item_def.clone());
     }
 
     let class_name = item_enum.ident.to_string();
@@ -778,6 +783,9 @@ pub fn handle_item_enum(
         inputs: Vec::new(),
         static_fields,
         methods,
+        rust_name: item_enum.ident.to_string(),
+        module_path: at_module_top_level.then_some(current_module.clone()),
+        is_impl_block: false,
         // struct_or_enum: StructOrEnumSynObject::Enum(item_enum.clone()),
         // impld_methods: methods,
         // generic_trait_impl_methods: todo!(),
@@ -789,76 +797,14 @@ pub fn handle_item_impl(
     at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
-) {
+) -> JsStmt {
     let debug_self_type = match &*item_impl.self_ty {
         Type::Path(type_path) => format!("{:?}", type_path.path.segments),
         _ => format!("{:?}", item_impl.self_ty),
     };
     let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
     let _guard = span.enter();
-    // The rule seems to be the the enum/struct must be defined, or a use path to it must be defined, in either the same scope as the impl block (order of appearance does not matter) or in a surrounding scope, including the module top level.
 
-    // impls seem to be basically "hoisted", eg even placed in an unreachable branch, the method is still available on the original item
-    // fn main() {
-    //     struct Cool {}
-    //     if false {
-    //         fn inner() {
-    //             impl Cool {
-    //                 fn whatever(&self) {
-    //                     dbg!("hi");
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     let cool = Cool {};
-    //     cool.whatever();
-    // }
-    // [src/main.rs:8] "hi" = "hi"
-
-    // Where different impls with the same name in different branches is considered "duplicate definitions". similarly different impls in different modules also causes a duplication error eg:
-    // fn main() {
-    //     struct Cool {}
-    //     if false {
-    //         fn inner() {
-    //             impl Cool {
-    //                 fn whatever(&self) {
-    //                     dbg!("hi");
-    //                 }
-    //             }
-    //         }
-    //     } else {
-    //         fn inner() {
-    //             impl Cool {
-    //                 fn whatever(&self) {
-    //                     dbg!("bye");
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     let cool = Cool {};
-    //     cool.whatever();
-    // }
-    // error[E0592]: duplicate definitions with name `whatever`
-
-    // Likewise we don't want to add methods to classes in JS in ways that depend on code being run, we want all impls to be automatically added to the class at compile time and thus accessible from anywhere.
-
-    // Rules/algorithm for finding class
-    // (in both cases a struct being `use`'d means it must be at the top level of a different module)
-    // * Top level impls *
-    // The struct for an impl defined at the top level, could be defined at the top level, or `use`'d at the top level
-    // 1. look for a struct/enum/class with the same name in the current module.
-    // 2. lool for uses with the same name, somehow get access to that list of JsStmts, find the struct and update it. Maybe by the list of (unmatched) impls, with the module module path, so wrapping callers can check for a return -> check if module path matches it's own, else return the impls again. Likewise to get lower ones, pass them as an argument??? The other mod could be in a completely different branch that has already been parsed... I think we need to just add them, with the struct name and module path, to a global vec, then do a second pass where we go through each module and update any classes we have impls for.
-    //
-    // * Impls in functions *
-    // The struct for an impl defined in a function, could be in any parent function, `use`'d in any parent function, defined at the top level, or `use`'d at the top level
-    // 1. look for struct in current block/function scope stmts
-    // 2. look for use in the current scope
-    // 4. look in current module for struct or use (doing this before parent scopes because it is probably quicker and more likely to be there - no because this is simply incorrect)
-    // 3. recursively look in the parent scope for the struct or use
-    // Maybe get access to scopes in higher levels by returning any unmatched impls?
-
-    // for the current block/list of stmts, store impl items in a Vec along with the class name
-    // After
     let impl_item_target_path = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path
             .path
@@ -869,33 +815,118 @@ pub fn handle_item_impl(
         _ => todo!(),
     };
 
-    // Get type of impl target
-    let (target_item_module, target_item) = global_data
-        .lookup_item_definition_any_module(current_module_path, &impl_item_target_path)
-        .unwrap();
+    let rust_impl_block_generics = item_impl
+        .generics
+        .params
+        .iter()
+        .filter_map(|gen| match gen {
+            GenericParam::Lifetime(_) => None,
+            GenericParam::Type(type_param) => Some(RustGeneric {
+                ident: type_param.ident.to_string(),
+                trait_bounds: type_param
+                    .bounds
+                    .iter()
+                    .filter_map(|bound| {
+                        // First lookup trait
+                        match bound {
+                            TypeParamBound::Trait(trait_bound) => {
+                                let trait_path = trait_bound
+                                    .path
+                                    .segments
+                                    .iter()
+                                    .map(|seg| seg.ident.to_string())
+                                    .collect::<Vec<_>>();
+                                let (module_path, trait_def) = global_data
+                                    .lookup_trait_definition_any_module(
+                                        current_module_path,
+                                        &trait_path,
+                                    )
+                                    .unwrap();
+                                Some((module_path, trait_def.name))
+                            }
+                            TypeParamBound::Lifetime(_) => None,
+                            TypeParamBound::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            }),
+            GenericParam::Const(_) => todo!(),
+        })
+        .collect::<Vec<_>>();
 
-    if let Some(trait_) = &item_impl.trait_ {
-        if trait_.1.segments.len() != 1 {
-            todo!()
+    let target_type_param = match &*item_impl.self_ty {
+        Type::Path(type_path) => {
+            if type_path.path.segments.len() == 1 {
+                rust_impl_block_generics
+                    .iter()
+                    .find(|generic| {
+                        generic.ident == type_path.path.segments.first().unwrap().ident.to_string()
+                    })
+                    .cloned()
+            } else {
+                None
+            }
         }
-        global_data.default_trait_impls_class_mapping.push((
-            target_item.ident.clone(),
-            trait_.1.segments.first().unwrap().ident.to_string(),
-        ));
-    }
+        // TODO handle other `Type`s properly
+        _ => None,
+    };
 
-    let target_rust_type = RustType::StructOrEnum(
-        target_item
-            .generics
-            .iter()
-            .map(|g| RustTypeParam {
-                name: g.clone(),
-                type_: RustTypeParamValue::Unresolved,
-            })
-            .collect::<Vec<_>>(),
-        target_item_module.clone(),
-        target_item.ident.to_string(),
-    );
+    let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
+        let (module_path, trait_def) = global_data
+            .lookup_trait_definition_any_module(
+                current_module_path,
+                &trait_
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        (module_path, trait_def.name)
+    });
+
+    // if let Some(trait_) = &item_impl.trait_ {
+    //     if trait_.1.segments.len() != 1 {
+    //         todo!()
+    //     }
+    //     global_data.default_trait_impls_class_mapping.push((
+    //         target_item.ident.clone(),
+    //         trait_.1.segments.first().unwrap().ident.to_string(),
+    //     ));
+    // }
+
+    let (target_rust_type, is_target_type_param) =
+        if let Some(target_type_param) = target_type_param {
+            (
+                RustType::TypeParam(RustTypeParam {
+                    name: target_type_param.ident.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                }),
+                true,
+            )
+        } else {
+            // Get type of impl target
+            let (target_item_module, target_item) = global_data
+                .lookup_item_definition_any_module(current_module_path, &impl_item_target_path)
+                .unwrap();
+
+            (
+                RustType::StructOrEnum(
+                    target_item
+                        .generics
+                        .iter()
+                        .map(|g| RustTypeParam {
+                            name: g.clone(),
+                            type_: RustTypeParamValue::Unresolved,
+                        })
+                        .collect::<Vec<_>>(),
+                    target_item_module.clone(),
+                    target_item.ident.to_string(),
+                ),
+                false,
+            )
+        };
 
     global_data
         .impl_block_target_type
@@ -914,20 +945,6 @@ pub fn handle_item_impl(
                     value: handle_expr(&impl_item_const.expr, global_data, &current_module_path).0,
                 };
 
-                // impl_item_const
-                // impl_stmts.push(ImplItemTemp {
-                //     // class_name: impl_item_const.ident.to_string(),
-                //     class_name: target_item.ident.clone(),
-                //     module_path: current_module_path.clone(),
-                //     item_stmt: JsImplItem::ClassStatic(js_local.clone()),
-                //     // return_type: asdfa parse_fn_input_or_field(
-                //     //     &impl_item_const.ty,
-                //     //     &Vec::new(),
-                //     //     current_module_path,
-                //     //     &global_data,
-                //     // ),
-                //     item_name: impl_item_const.ident.to_string(),
-                // });
                 rust_impl_items.push(RustImplItem {
                     ident: impl_item_const.ident.to_string(),
                     item: RustImplItemItem::Const(js_local),
@@ -1106,156 +1123,56 @@ pub fn handle_item_impl(
 
                 // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
                 // TODO need to look up whether path is eg `rust_std::RustBool`, not just the item name
-                let body_stmts = if target_item.ident == "RustBool"
-                    && item_impl_fn.sig.ident == "bool_and"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsBoolean && other.jsBoolean".to_string())],
-                        RustType::Bool,
-                    ))
-
-                    // fn add_assign(&mut self, other: RustInteger<T>) {
-                    //     self.js_number.0 += other.js_number.0;
-                    // }
-                } else if target_item.ident == "RustInteger"
-                    && item_impl_fn.sig.ident == "add_assign"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsNumber += other.inner()".to_string())],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustInteger"
-                    && item_impl_fn.sig.ident == "deref_assign"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsNumber = other.inner()".to_string())],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustString"
-                    && item_impl_fn.sig.ident == "add_assign"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsString += other.inner()".to_string())],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustString" && item_impl_fn.sig.ident == "push_str"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsString += other.jsString".to_string())],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustString"
-                    && item_impl_fn.sig.ident == "deref_assign"
-                {
-                    Some((
-                        vec![JsStmt::Raw("this.jsString = other.jsString".to_string())],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "Option" && item_impl_fn.sig.ident == "eq" {
-                    let s = "return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data)";
-                    Some((vec![JsStmt::Raw(s.to_string())], RustType::Todo))
-                } else if target_item.ident == "Option" && item_impl_fn.sig.ident == "ne" {
-                    Some((
-                        vec![JsStmt::Raw(
-                            "return this.id !== other.id || this.data.ne(other.data)".to_string(),
-                        )],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustBool" && item_impl_fn.sig.ident == "eq" {
-                    Some((
-                        vec![JsStmt::Raw(
-                            "return this.jsBoolean === other.jsBoolean".to_string(),
-                        )],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustBool" && item_impl_fn.sig.ident == "ne" {
-                    Some((
-                        vec![JsStmt::Raw(
-                            "return this.jsBoolean !== other.jsBoolean".to_string(),
-                        )],
-                        RustType::Todo,
-                    ))
-                } else if target_item.ident == "RustString" && item_impl_fn.sig.ident == "clone" {
-                    Some((
-                        vec![JsStmt::Raw("return this.jsString".to_string())],
-                        RustType::Todo,
-                    ))
-                } else {
-                    let n_stmts = item_impl_fn.block.stmts.len();
-                    let body_stmts = item_impl_fn
-                        .block
-                        .stmts
-                        .clone()
-                        .into_iter()
-                        .map(|stmt| stmt)
-                        .collect::<Vec<_>>();
-                    let returns_non_mut_ref_val = match &item_impl_fn.sig.output {
-                        ReturnType::Default => false,
-                        ReturnType::Type(_, type_) => match &**type_ {
-                            Type::Reference(_) => false,
-                            _ => true,
-                        },
-                    };
-
-                    // so this is just used for the inital/one off analysis of the impl method, and when actually going through the code from main, we will store a self var in the scope like the other vars????
-                    // We are adding other input vars to the scope further up the code, why not just add self to those vars? By definition, if there is self we are dealing with a method on an *instance* of a struct/enum, so *if the instance item is generic* we need to either:
-                    // 1. generate a new method for for whatever the concrete type of the generic is for this particular instance (assuming it is known by this point)
-                    // 2. use the same method for the different generic concrete types, and make sure any interaction with a generic type is generalisable, ie use .eq() in place of ===, etc.
-                    // I think we want to use 2. in all cases  except where we have T::associated_fn() because then we need to replace this with the actual Foo::associated_fn() or whatever.
-                    // Ok but how do we get the type of self, so that we can use it in the fn, eg `self.some_field_with_type_we_want_to_know` or to return from the method... bearing in mind that (for types with generics) we won't know the type (well we'll know the type just not any resolved generics) until the method is called like `instance.the_method()`, so it seems like this is something we can just handle in `handle_expr_method_call`, since that is the point we will have:
-                    // 1. the most recent resolved Self type
-                    // 2. the args of the method to see if they can be used to resolved any generics
-                    // So I think for now we can just record RustType::InstanceSelf as the return type? It doesn't need a type because only the arguments can help narrow the type, and we will handle that in handle_expr_method_call
-                    //
-                    // Need to consider situation where we eg return a &self or &mut self to a var, then later interaction with that var determine some generics, in which case do we need to also update the generics on the original var?
-                    //
-                    // Given signatures like `pub fn map<U, F>(self, f: F) -> Option<U>`, What do we need to store in MemberInfo to be able to know that the return type is Option<U> where U is the return type of the closure argument?
-                    //
-                    // Remember method can return Foo<T> or just T, or Foo<U> (ie Some(5).map(...))
-                    //
-                    // NOTE there is a difference between returning self or &self or &mut self, and some other instance that also has type Self, but is not actually self
-                    //
-                    // What about `let foo: Foo<i32> = foo_maker.method(5)` or something?
-                    //
-
-                    let body_stmts = parse_fn_body_stmts(
-                        false,
-                        returns_non_mut_ref_val,
-                        &body_stmts,
-                        global_data,
-                        current_module_path,
-                    );
-
-                    Some(body_stmts)
+                // TODO see commented out code below this fn for old eg RustInteger + add_assign mappings/updates
+                let n_stmts = item_impl_fn.block.stmts.len();
+                let body_stmts = item_impl_fn
+                    .block
+                    .stmts
+                    .clone()
+                    .into_iter()
+                    .map(|stmt| stmt)
+                    .collect::<Vec<_>>();
+                let returns_non_mut_ref_val = match &item_impl_fn.sig.output {
+                    ReturnType::Default => false,
+                    ReturnType::Type(_, type_) => match &**type_ {
+                        Type::Reference(_) => false,
+                        _ => true,
+                    },
                 };
+
+                // so this is just used for the inital/one off analysis of the impl method, and when actually going through the code from main, we will store a self var in the scope like the other vars????
+                // We are adding other input vars to the scope further up the code, why not just add self to those vars? By definition, if there is self we are dealing with a method on an *instance* of a struct/enum, so *if the instance item is generic* we need to either:
+                // 1. generate a new method for for whatever the concrete type of the generic is for this particular instance (assuming it is known by this point)
+                // 2. use the same method for the different generic concrete types, and make sure any interaction with a generic type is generalisable, ie use .eq() in place of ===, etc.
+                // I think we want to use 2. in all cases  except where we have T::associated_fn() because then we need to replace this with the actual Foo::associated_fn() or whatever.
+                // Ok but how do we get the type of self, so that we can use it in the fn, eg `self.some_field_with_type_we_want_to_know` or to return from the method... bearing in mind that (for types with generics) we won't know the type (well we'll know the type just not any resolved generics) until the method is called like `instance.the_method()`, so it seems like this is something we can just handle in `handle_expr_method_call`, since that is the point we will have:
+                // 1. the most recent resolved Self type
+                // 2. the args of the method to see if they can be used to resolved any generics
+                // So I think for now we can just record RustType::InstanceSelf as the return type? It doesn't need a type because only the arguments can help narrow the type, and we will handle that in handle_expr_method_call
+                //
+                // Need to consider situation where we eg return a &self or &mut self to a var, then later interaction with that var determine some generics, in which case do we need to also update the generics on the original var?
+                //
+                // Given signatures like `pub fn map<U, F>(self, f: F) -> Option<U>`, What do we need to store in MemberInfo to be able to know that the return type is Option<U> where U is the return type of the closure argument?
+                //
+                // Remember method can return Foo<T> or just T, or Foo<U> (ie Some(5).map(...))
+                //
+                // NOTE there is a difference between returning self or &self or &mut self, and some other instance that also has type Self, but is not actually self
+                //
+                // What about `let foo: Foo<i32> = foo_maker.method(5)` or something?
+                //
+
+                let body_stmts = parse_fn_body_stmts(
+                    false,
+                    returns_non_mut_ref_val,
+                    &body_stmts,
+                    global_data,
+                    current_module_path,
+                );
+
+                let body_stmts = Some(body_stmts);
 
                 // TODO no idea why body_stmts is an `Option`
                 if let Some((body_stmts, return_type)) = body_stmts {
-                    // impl_stmts.push(
-                    //     // item_impl_fn.sig.ident.to_string(),
-                    //     ImplItemTemp {
-                    //         class_name: target_item.ident.clone(),
-                    //         module_path: current_module_path.clone(),
-                    //         item_stmt: JsImplItem::ClassMethod(
-                    //             target_item.ident.clone(),
-                    //             false,
-                    //             static_,
-                    //             JsFn {
-                    //                 iife: false,
-                    //                 public: false,
-                    //                 export: false,
-                    //                 is_method: true,
-                    //                 async_: item_impl_fn.sig.asyncness.is_some(),
-                    //                 name: camel(item_impl_fn.sig.ident.clone()),
-                    //                 input_names: js_input_names,
-                    //                 body_stmts,
-                    //             },
-                    //         ),
-                    //         // return_type,
-                    //         item_name: item_impl_fn.sig.ident.to_string(),
-                    //     },
-                    // );
-
                     // push to rust_impl_items
                     let fn_generics = item_impl_fn
                         .sig
@@ -1323,29 +1240,7 @@ pub fn handle_item_impl(
                             ),
                         },
                     };
-                    // let input_names = item_impl_fn.sig.inputs.iter().filter_map(|input| match input {
-                    //     FnArg::Receiver(_) => None,
-                    //     FnArg::Typed(pat_type) => match pat_type.pat {
-                    //         Pat::Const(_) => todo!(),
-                    //         Pat::Ident(_) => todo!(),
-                    //         Pat::Lit(_) => todo!(),
-                    //         Pat::Macro(_) => todo!(),
-                    //         Pat::Or(_) => todo!(),
-                    //         Pat::Paren(_) => todo!(),
-                    //         Pat::Path(_) => todo!(),
-                    //         Pat::Range(_) => todo!(),
-                    //         Pat::Reference(_) => todo!(),
-                    //         Pat::Rest(_) => todo!(),
-                    //         Pat::Slice(_) => todo!(),
-                    //         Pat::Struct(_) => todo!(),
-                    //         Pat::Tuple(_) => todo!(),
-                    //         Pat::TupleStruct(_) => todo!(),
-                    //         Pat::Type(_) => todo!(),
-                    //         Pat::Verbatim(_) => todo!(),
-                    //         Pat::Wild(_) => todo!(),
-                    //         _ => todo!(),
-                    //     },
-                    // })
+
                     let js_fn = JsFn {
                         iife: false,
                         public: !private,
@@ -1374,68 +1269,16 @@ pub fn handle_item_impl(
         }
     }
 
-    let rust_impl_block_generics = item_impl
-        .generics
-        .params
-        .iter()
-        .filter_map(|gen| match gen {
-            GenericParam::Lifetime(_) => None,
-            GenericParam::Type(type_param) => Some(RustGeneric {
-                ident: type_param.ident.to_string(),
-                trait_bounds: type_param
-                    .bounds
-                    .iter()
-                    .filter_map(|bound| {
-                        // First lookup trait
-                        match bound {
-                            TypeParamBound::Trait(trait_bound) => {
-                                let trait_path = trait_bound
-                                    .path
-                                    .segments
-                                    .iter()
-                                    .map(|seg| seg.ident.to_string())
-                                    .collect::<Vec<_>>();
-                                let (module_path, trait_def) = global_data
-                                    .lookup_trait_definition_any_module(
-                                        current_module_path,
-                                        &trait_path,
-                                    )
-                                    .unwrap();
-                                Some((module_path, trait_def.name))
-                            }
-                            TypeParamBound::Lifetime(_) => None,
-                            TypeParamBound::Verbatim(_) => todo!(),
-                            _ => todo!(),
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            }),
-            GenericParam::Const(_) => todo!(),
-        })
-        .collect::<Vec<_>>();
-
-    let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-        let (module_path, trait_def) = global_data
-            .lookup_trait_definition_any_module(
-                current_module_path,
-                &trait_
-                    .segments
-                    .iter()
-                    .map(|seg| seg.ident.to_string())
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        (module_path, trait_def.name)
-    });
     let rust_impl_block = RustImplBlock {
         generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
-        target: target_rust_type,
+        target: target_rust_type.clone(),
         items: rust_impl_items,
     };
 
     // If the block gets pushed to `global_data.impl_blocks` then `update_clases()` should add the method to the appropriate class, however if the block is added to a scope then we need to do what `update_classes()` does here.
 
+    // TODO note that unlike other items, we push both scoped and module level impl blocks here, need to move them.
     if !at_module_top_level {
         // a scoped impl block must at least be in the same scope or a child scope of any types used in the impl definition, ie the target/self type, the trait if it is a trait impl, and any types used in the generics of the target/self and trait. So we can/should hoist the impl block to the "lowest common denominator.
         // IMPORTANT NOTE This approach seems flawed given that the methods impl'd can be used in higher scopes than the impl.
@@ -1448,12 +1291,21 @@ pub fn handle_item_impl(
             .enumerate()
             .find(|(i, s)| {
                 // Is target type scoped?
-                let is_target_item_scope = if target_item_module.is_none() {
-                    s.item_definitons
-                        .iter()
-                        .any(|item_def| item_def.ident == target_item.ident)
-                } else {
-                    false
+                let is_target_item_scope = match &target_rust_type {
+                    RustType::TypeParam(_) => {
+                        // NOTE if target is a type param then is potentially applies to all type, in which case it seems to make sense to hoist to the module level *(or trait scope leve) (so that it's methods are accessible from everywhere) by doing `global_data.impl_blocks.push(rust_impl_block);` not `scope.impl_blocks.push(rust_impl_block);`
+                        false
+                    }
+                    RustType::StructOrEnum(_, target_item_module, target_item_name) => {
+                        if target_item_module.is_none() {
+                            s.item_definitons
+                                .iter()
+                                .any(|item_def| &item_def.ident == target_item_name)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => todo!(),
                 };
                 let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
                     let trait_path = &trait_.1.segments;
@@ -1469,6 +1321,7 @@ pub fn handle_item_impl(
                 };
                 // IMPORTANT TODO what about all the other types used in the impl'd items? We can't be in a higher scope than these without capturing them
                 // let is_other_items_scope = ...
+                // *NOTE even a `impl<T> Foo for T` method *cannot* be called in a parent scope of the trait, so it only makes sense to hoist the impl to the same scope as the trait (given `is_target_item_scope` will always be false in this case)
 
                 is_target_item_scope || is_trait_scope
             });
@@ -1476,103 +1329,142 @@ pub fn handle_item_impl(
         if let Some((scope_idx, scope)) = scope {
             if rust_impl_block.trait_.is_some() {
                 // NOTE haven't though this through, just seeing if it works
-                scope.impl_blocks.push(rust_impl_block);
+                scope.impl_blocks.push(rust_impl_block.clone());
             } else {
                 // Here we simply store the rust impl block on the appropriate scope, at the end of parsing a block of statements we will iterate through any `.impl_blocks` for the current scope and update the classes in the parsed stmts accordingly before returning the statements
 
                 if scope_idx > 0 {
-                    // IMPORTANT TODO in Rust we can `impl Foo` with a method returning `Bar`, both defined in a lower scope than Foo, then in a higher scope, eg Foo's scope and call that method which means we have a Bar, even though it was defined in a lower scope, even though we could not directly instantiate a Bar from that scope and we might even have an identically named struct defined in the Scope. This is hard to fully recreate in JS because either we add to Foo's prototype in the scope, we can use the method, but only after the scope appears, not before like in Rust; or we hoist the impl to the scope of the target, but then the other used types from the lower scope won't be available, so they need hoisting too. This is because Rust effectively does some pretty clever hoisting, where the impl will get hoisted to the same scope as the target (surely higher if we can return it in a parent scope? NO because we need the target item to call the method on so must be in same scope or lower, well actually we can still return the instance from eg simple blocks without needing the type definition, so it can actually be used in higher scopes, just not higher fn scopes) and also "capture" any definitions it needs from the scope of the impl. This means to implement this in JS, given we need to hoist the impl def (be that adding methods to a class, adding to prototype, or having a standalone impl) to the target scope so that the methods can be used anywhere in the target impl scope, we would also need to have a duplicate Bar definition in the scope, but given there might already be another *different* Bar definition in the scope, it would need to eg be block scoped with the impl, so it is only accessible by the impl, not the rest of the scope.
-                    // eg:
-                    {
-                        struct Foo {}
-                        struct Bar {
-                            one: i32,
-                        }
-                        let foo = Foo {};
-                        let bar = foo.get_bar();
-                        let four = bar.two;
-                        {
-                            struct Bar {
-                                two: i32,
-                            }
-                            impl Foo {
-                                fn get_bar(&self) -> Bar {
-                                    Bar { two: 4 }
-                                }
-                            }
-                        }
-                    }
-
-                    // *IMPORTANT*
-                    // I think the solution is to hoist *all* scoped definitions, including impls, to the module level and then namespace where necessary eg `Foo_1`, `Foo_2`, etc. **BUT** this does also mean we also need to take scoped definitions into account when deduplicating module level idents...
-                    // The hoist to target + capture approach means we are duplicating code which is bad for bundle size
-                    // It also might create very hard to understand and large code becaues say we have a type with a lower impl that use some other types which are not unique, so the impl gets hoisted and the type it uses are also duplicated into the/a scope for the impl block, but one of these types also has lower impl, so we have to copy all the types *it* uses and so on.
-                    // In general I think we want to design for the simplest and far more common cases, however, the hoisting scoped defs to module level approach only works if *all* scoped defs are hoisted (because they of course might be using other scoped types which would need to be at the module level to be accessible).
-                    // Also note that scoped definitions can be made public. Whilst they can't be directly accessed/instantiated, they can be eg returned from a public fn/method, eg:
-                    let foo = some_mod::Foo {};
-                    let bar = foo.get_bar();
-                    assert!(bar.two == 4);
-                    mod some_mod {
-                        pub struct Foo {}
-
-                        fn some_fn() {
-                            pub struct Bar {
-                                pub two: i32,
-                            }
-                            impl Foo {
-                                pub fn get_bar(&self) -> Bar {
-                                    Bar { two: 4 }
-                                }
-                            }
-                        }
-                    }
-                    // So other modules can access scoped items, in which case the items also need to be hoisted to the module level from them to be usable by other modules. How can we know if an scoped item is used by another module? NO other modules can only access *instances* of scoped items, so they don't need access to the item definitions themselves.
-                    // Given https://github.com/rust-lang/rfcs/blob/master/text/3373-avoid-nonlocal-definitions-in-fns.md it seems that doing weird things with scoped impls is generally considered best to be avoided, so in the interest of keeping output JS more similar/familar to the original Rust and avoiding confusing naming for scoped defs hoisted to the module level, will stick with assuming scoped impl blocks are in the same scope as their target
-
-                    // This is a pretty niche and speficic case so we will leave it as a TODO but it is worth bearing in mind when considering the design.
                     todo!()
                 } else {
-                    scope.impl_blocks.push(rust_impl_block);
+                    scope.impl_blocks.push(rust_impl_block.clone());
                 }
             }
         } else {
             // If the types used are all module level, then we can hoist the impl block to module level
-            global_data.impl_blocks.push(rust_impl_block);
+            global_data.impl_blocks.push(rust_impl_block.clone());
         }
     } else {
         // TODO IMPORTANT what if the methods from this impl block are used before we've added the impl block to global_data.impl_blocks???
-        global_data.impl_blocks.push(rust_impl_block);
+        global_data.impl_blocks.push(rust_impl_block.clone());
     }
 
-    // If we can find target item in scopes, update the item's methods, otherwise add methods to global_data.impl_items.
-    // TODO/NOTE we are only recording enough info about scoped structs/enums for getting method return type. I would have thought we would instead be needing to update the actual JsClass (or whatever) data, but it seems scoped structs are associated impls are already being reconciled somewhere - only for from_block which I have now removed
-    // We want to keep the class in it's original position and not hoist to top of block/scope
-    // We could just pass over the block/scope first, copy/save any structs/enums that global_data for that scope,
-
-    // We could look record in scope data each struct/enum that is defined in that scope, then for associated impls that appear in the same scope or inner scopes, look up said struct/enum and add method data to it, then at the end of every scope, iterate through the structs/enums that were recorded and now have all their impl method data added, and find the actual JsStmt or whatever and add then method data to it. Alternatively rather than Vec<JsStmt> we could just start using something like JsScope which can have a field for impls or something, but will leave that for refactoring at the end.
-
-    // for scope in global_data.scopes.iter_mut().rev() {
-    //     if let Some(enum_info) = scope
-    //         .3
-    //         .iter_mut()
-    //         .find(|enum_info| enum_info.ident == impl_item_target)
-    //     {
-    //         // enum_info.methods.extend(impl_stmts.iter().map(|impl_item_temp| MethodInfo { method_ident: impl_item_temp., item_stmt: (), return_type: () }));
-    //         enum_info.methods.extend(impl_stmts);
-    //         // return early because we don't need to add to impl_items if we have found an enum/struct
-    //         return;
-    //     } else if let Some(struct_info) = scope
-    //         .4
-    //         .iter_mut()
-    //         .find(|struct_info| struct_info.ident == impl_item_target)
-    //     {
-    //         struct_info.methods.extend(impl_stmts);
-    //         return;
-    //     }
-    // }
-
     global_data.impl_block_target_type.pop();
+
+    if is_target_type_param {
+        let static_fields = rust_impl_block
+            .items
+            .iter()
+            .cloned()
+            .filter_map(|item| match item.item {
+                RustImplItemItem::Fn(_, _, _, _) => None,
+                RustImplItemItem::Const(js_local) => Some(js_local),
+            })
+            .collect::<Vec<_>>();
+        let methods = rust_impl_block
+            .items
+            .iter()
+            .cloned()
+            .filter_map(|item| match item.item {
+                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                    Some((rust_impl_block.js_name(), private, static_, js_fn))
+                }
+                RustImplItemItem::Const(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        JsStmt::Class(JsClass {
+            public: false,
+            export: false,
+            tuple_struct: false,
+            name: rust_impl_block.js_name(),
+            inputs: Vec::new(),
+            static_fields,
+            methods,
+            // TODO this is good evidence why we shouldn't be storing Rust stuff in a JS type
+            rust_name: "implblockdonotuse".to_string(),
+            module_path: Some(["implblockdonotuse".to_string()].to_vec()),
+            is_impl_block: true,
+        })
+    } else {
+        JsStmt::Expr(JsExpr::Vanish, false)
+    }
 }
+
+// if target_item.ident == "RustBool"
+//                     && item_impl_fn.sig.ident == "bool_and"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsBoolean && other.jsBoolean".to_string())],
+//                         RustType::Bool,
+//                     ))
+
+//                     // fn add_assign(&mut self, other: RustInteger<T>) {
+//                     //     self.js_number.0 += other.js_number.0;
+//                     // }
+//                 } else if target_item.ident == "RustInteger"
+//                     && item_impl_fn.sig.ident == "add_assign"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsNumber += other.inner()".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustInteger"
+//                     && item_impl_fn.sig.ident == "deref_assign"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsNumber = other.inner()".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustString"
+//                     && item_impl_fn.sig.ident == "add_assign"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsString += other.inner()".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustString" && item_impl_fn.sig.ident == "push_str"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsString += other.jsString".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustString"
+//                     && item_impl_fn.sig.ident == "deref_assign"
+//                 {
+//                     Some((
+//                         vec![JsStmt::Raw("this.jsString = other.jsString".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "Option" && item_impl_fn.sig.ident == "eq" {
+//                     let s = "return this.id === other.id && JSON.stringify(this.data) === JSON.stringify(other.data)";
+//                     Some((vec![JsStmt::Raw(s.to_string())], RustType::Todo))
+//                 } else if target_item.ident == "Option" && item_impl_fn.sig.ident == "ne" {
+//                     Some((
+//                         vec![JsStmt::Raw(
+//                             "return this.id !== other.id || this.data.ne(other.data)".to_string(),
+//                         )],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustBool" && item_impl_fn.sig.ident == "eq" {
+//                     Some((
+//                         vec![JsStmt::Raw(
+//                             "return this.jsBoolean === other.jsBoolean".to_string(),
+//                         )],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustBool" && item_impl_fn.sig.ident == "ne" {
+//                     Some((
+//                         vec![JsStmt::Raw(
+//                             "return this.jsBoolean !== other.jsBoolean".to_string(),
+//                         )],
+//                         RustType::Todo,
+//                     ))
+//                 } else if target_item.ident == "RustString" && item_impl_fn.sig.ident == "clone" {
+//                     Some((
+//                         vec![JsStmt::Raw("return this.jsString".to_string())],
+//                         RustType::Todo,
+//                     ))
+//                 }
 
 pub fn handle_item_struct(
     item_struct: &ItemStruct,
@@ -1634,77 +1526,80 @@ pub fn handle_item_struct(
         Meta::NameValue(_) => todo!(),
     });
 
-    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
-    if !at_module_top_level {
-        let generics = item_struct
-            .generics
-            .params
-            .iter()
-            .map(|p| match p {
-                GenericParam::Lifetime(_) => todo!(),
-                GenericParam::Type(type_param) => type_param.ident.to_string(),
-                GenericParam::Const(_) => todo!(),
-            })
-            .collect::<Vec<_>>();
+    let generics = item_struct
+        .generics
+        .params
+        .iter()
+        .map(|p| match p {
+            GenericParam::Lifetime(_) => todo!(),
+            GenericParam::Type(type_param) => type_param.ident.to_string(),
+            GenericParam::Const(_) => todo!(),
+        })
+        .collect::<Vec<_>>();
 
-        let generics_type_params = generics
-            .iter()
-            .map(|name| RustTypeParam {
-                name: name.clone(),
-                type_: RustTypeParamValue::Unresolved,
-            })
-            .collect::<Vec<_>>();
+    let generics_type_params = generics
+        .iter()
+        .map(|name| RustTypeParam {
+            name: name.clone(),
+            type_: RustTypeParamValue::Unresolved,
+        })
+        .collect::<Vec<_>>();
 
-        let fields = if item_struct.fields.len() == 0 {
-            StructFieldInfo::UnitStruct
-        } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-            StructFieldInfo::RegularStruct(
-                item_struct
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        (
-                            f.ident.as_ref().unwrap().to_string(),
-                            parse_fn_input_or_field(
-                                &f.ty,
-                                // NOTE cannot make struct arg definitions mut
-                                false,
-                                &generics_type_params,
-                                current_module_path,
-                                global_data,
-                            ),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            StructFieldInfo::TupleStruct(
-                item_struct
-                    .fields
-                    .iter()
-                    .map(|f| {
+    let fields = if item_struct.fields.len() == 0 {
+        StructFieldInfo::UnitStruct
+    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+        StructFieldInfo::RegularStruct(
+            item_struct
+                .fields
+                .iter()
+                .map(|f| {
+                    (
+                        f.ident.as_ref().unwrap().to_string(),
                         parse_fn_input_or_field(
                             &f.ty,
+                            // NOTE cannot make struct arg definitions mut
                             false,
                             &generics_type_params,
                             current_module_path,
                             global_data,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        };
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        StructFieldInfo::TupleStruct(
+            item_struct
+                .fields
+                .iter()
+                .map(|f| {
+                    parse_fn_input_or_field(
+                        &f.ty,
+                        false,
+                        &generics_type_params,
+                        current_module_path,
+                        global_data,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
 
+    let item_def = ItemDefinition {
+        ident: item_struct.ident.to_string(),
+        is_copy,
+        generics,
+        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+            fields,
+            syn_object: Some(item_struct.clone()),
+        }),
+    };
+
+    // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
+    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
+    if !at_module_top_level {
         let global_data_scope = global_data.scopes.last_mut().unwrap();
-        global_data_scope.item_definitons.push(ItemDefinition {
-            ident: item_struct.ident.to_string(),
-            is_copy,
-            generics,
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields,
-                syn_object: Some(item_struct.clone()),
-            }),
-        });
+        global_data_scope.item_definitons.push(item_def.clone());
     }
 
     let mut methods = Vec::new();
@@ -1794,6 +1689,9 @@ pub fn handle_item_struct(
         inputs,
         static_fields: Vec::new(),
         methods,
+        rust_name: item_struct.ident.to_string(),
+        module_path: at_module_top_level.then_some(current_module_path.clone()),
+        is_impl_block: false,
     })
 }
 
@@ -1833,7 +1731,12 @@ pub fn handle_item(
         }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
-            handle_item_impl(&item_impl, true, global_data, current_module_path)
+            js_stmts.push(handle_item_impl(
+                &item_impl,
+                true,
+                global_data,
+                current_module_path,
+            ));
         }
         Item::Macro(_) => todo!(),
         Item::Mod(item_mod) => {
@@ -1844,7 +1747,7 @@ pub fn handle_item(
                 current_module_path,
                 // current_file_path,
             )
-        },
+        }
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
             let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module_path);
@@ -1948,6 +1851,7 @@ pub fn handle_item_trait(
 ) {
     debug!("handle_item_trait");
 
+    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     if !at_module_top_level {
         let scope = global_data.scopes.last_mut().unwrap();
         scope.trait_definitons.push(RustTraitDefinition {

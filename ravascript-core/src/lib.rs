@@ -7,6 +7,7 @@ use handle_syn_stmt::handle_stmt;
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use js_ast::{
     DestructureObject, DestructureValue, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, LocalName,
+    LocalType,
 };
 use quote::quote;
 use std::{
@@ -2006,6 +2007,8 @@ enum StructOrEnumDefitionInfo {
 #[derive(Debug, Clone)]
 struct ItemDefinition {
     ident: String,
+    // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
+    // module_path: Option<Vec<String>>,
     is_copy: bool,
     // /// Fields and enum variants. Methods etc are stored in impl blocks?
     // members: Vec<StructFieldInfo>,
@@ -2148,6 +2151,25 @@ struct RustImplBlock {
     // Note this can a generic param
     target: RustType,
     items: Vec<RustImplItem>,
+}
+impl RustImplBlock {
+    fn js_name(&self) -> String {
+        let trait_name = match &self.trait_ {
+            Some((module_path, name)) => name,
+            None => todo!(),
+        };
+        let target_name = match &self.target {
+            RustType::StructOrEnum(_, _, name) => {
+                // TODO get proper deduplicated js name
+                camel(name.clone())
+            }
+            RustType::TypeParam(rust_type_param) => {
+                format!("for__{}", rust_type_param.name)
+            }
+            _ => todo!(),
+        };
+        format!("{trait_name}__{target_name}")
+    }
 }
 
 // TODO clean up these types since eg there is duplication of the fn ident
@@ -2825,6 +2847,8 @@ impl GlobalData {
         };
         impl_method
     }
+
+    // TODO method should just take a RustType rather than specifically an item/struct
     fn lookup_impl_item_item(
         &self,
         item_generics: &Vec<RustTypeParam>,
@@ -2843,7 +2867,7 @@ impl GlobalData {
         // First look for method in direct (non-trait) impls
         // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
         let scoped_impls = self.scopes.iter().map(|s| s.impl_blocks.iter()).flatten();
-        let scoped_impl_method =
+        let scoped_non_trait_impl_method =
             self.impl_blocks
                 .iter()
                 .chain(scoped_impls)
@@ -2867,28 +2891,19 @@ impl GlobalData {
                     }
                 });
 
-        // Now look for method in trait impls
-        // First we need to know which Traits are impl'd for the struct because we need to know it's "trait bounds" to know whether it matches eg:
-        // `impl<T: OtherTrait> MyTrait for T {}`
-        // Note this could be recursive, ie in the above example our type would impl both OtherTrait and MyTrait, but we need to first determine that it impls OtherTrait, and only then can we determine that it therefore also impls MyTrait. For example
-        // impl Trait1 for MyStruct
-        // impl<T: Trait1> Trait2 for T
-        // impl<T: Trait2> Trait3 for T
-        // impl<T: Trait3> Trait4 for T
-        // etc
-        // To know MyStruct impls Trait3 we have to already know it impls Trait2, which I think means every time we match a trait we must do at least 1 more pass to check if any other traits now match, and repeat this until no news traits are matched.
-        // Also note it doesn't work this out upfront eg in the first pass, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
+        // Now look for the method in trait impls
+        // NOTE that while we are looking up a method for a particular `item_def`, we are matching on both concrete impls like `impl<T> Foo for Bar`, and generic impls like `impl<T> Foo for T` or `impl<T: Bar> Foo for T` in which case we need to check if our concrete `item_def` meets the trait bounds of `T`.
+        // Say we have an impl block like `impl<T> Foo for T`, then we know our item/struct impls Foo and we can add the `impl<T> Foo for T` impl block to the list of impl blocks in which to look for the method.
+        // However, for an impl block like `impl<T: Bar> Foo for T`, then we first need to determine whether our item/struct implements Bar.
+        // So the first thing we do is find *all* the traits our item/struct implements
+        // Note that this is a recursive process, ie once we have found that impl Foo via `impl<T: Bar> Foo for T`, we then assuming that `impl<T: Foo> Baz for T` appears before `impl<T: Bar> Foo for T` in the list of impl blocks, we would need to do another pass of the impl blocks to match it, now that we know we impl Foo. And we should repeatedly do another pass every time we match a new trait impl, until no new trait impls were matched.
 
-        // (trait module path (None for scoped), trait name)
-        let mut found_traits_previous: Vec<(Option<Vec<String>>, String)> = Vec::new();
-        let mut found_traits: Vec<(Option<Vec<String>>, String)> = Vec::new();
-        let mut matched_trait_impl_blocks: Vec<RustImplBlock> = Vec::new();
+        // Also note it isn't possible to calculate this out upfront eg in the first pass in `process_items`, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
 
         // Only need to look in the same or child scopes of the item definition since an impl on an item cannot be in a parent scope
         let possible_scopes = self.scopes.iter().rev().take_while(|s| {
             s.item_definitons
                 .iter()
-                // .any(|item_def| item_def.ident == item_path_seg.ident)
                 .any(|item_def| &item_def.ident == item_name)
         });
         let mut all_impl_blocks = possible_scopes
@@ -2896,24 +2911,18 @@ impl GlobalData {
             .flatten()
             .collect::<Vec<_>>();
         all_impl_blocks.extend(self.impl_blocks.iter().cloned());
-        // dbg!(&all_impl_blocks);
-
-        let mut prev_found_traits_length = found_traits.len();
 
         // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
-        let mut start = true;
-        // while found_traits_previous.len() < found_traits.len() || start {
-        // TODO this works fine for `impl Foo for Bar`, need to fix for `impl Foo for T`
-        while start {
-            start = false;
-            found_traits_previous = found_traits.clone();
+        let mut found_traits_count = 0;
+        // (trait module path (None for scoped), trait name)
+        let mut found_traits: Vec<(Option<Vec<String>>, String)> = Vec::new();
+        loop {
             found_traits.clear();
 
             for impl_block in &all_impl_blocks {
                 // TODO this needs extending to handle matching any target type, rather than just user structs
                 match &impl_block.target {
                     RustType::TypeParam(rust_type_param) => {
-                        todo!();
                         // If the target is a type param then we must be implementing a trait
                         let rust_trait = impl_block.trait_.clone().unwrap();
 
@@ -2931,7 +2940,6 @@ impl GlobalData {
                             .all(|type_param_bound| found_traits.contains(type_param_bound));
                         if struct_impls_all_bounds {
                             found_traits.push(rust_trait);
-                            matched_trait_impl_blocks.push(impl_block.clone());
                         }
                     }
                     RustType::StructOrEnum(struct_type_params, struct_module_path, struct_name) => {
@@ -2945,7 +2953,6 @@ impl GlobalData {
 
                             if types_match {
                                 found_traits.push(impl_trait.clone());
-                                matched_trait_impl_blocks.push(impl_block.clone());
                             }
                             // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
                         }
@@ -2955,7 +2962,76 @@ impl GlobalData {
                     _ => todo!(),
                 }
             }
+
+            if found_traits_count == found_traits.len() {
+                break;
+            } else {
+                found_traits_count = found_traits.len();
+            }
         }
+
+        // Now we know all the traits the item/struct impls, we can go through all the impl blocks and find the one (if any)
+        let trait_impl_method = all_impl_blocks
+            .iter()
+            .find_map(|impl_block| {
+                // TODO this needs extending to handle matching any target type, rather than just user structs
+                match &impl_block.target {
+                    RustType::TypeParam(rust_type_param) => {
+                        // TODO should we be looking for/matching on found_traits in the `Foo` or `Bar` of `impl<T: Foo> Bar for T`??? I don't think it actually matter since we seem to be duplicating some work we already did in creating found_traits. NOTE but we must ensure we are matching the correct block, eg Bar might be in found_traits, but doesn't mean we should match because Foo might not be and we might actually get Bar from `impl<T: Baz> Bar for T`, so it is the trait bounds that we must match on.
+
+                        // Get bounds on type param
+                        let type_param_bounds = &impl_block
+                            .generics
+                            .iter()
+                            .find(|generic| generic.ident == rust_type_param.name)
+                            .unwrap()
+                            .trait_bounds;
+
+                        // If there are no trait bounds ie `impl<T> Foo for T` we always match
+                        // Does our struct impl all of these traits?
+                        let struct_impls_all_bounds = type_param_bounds
+                            .iter()
+                            .all(|type_param_bound| found_traits.contains(type_param_bound));
+
+                        // If so then look for method in impl block
+                        if struct_impls_all_bounds {
+                            impl_block
+                                .items
+                                .iter()
+                                .find(|impl_item| impl_item.ident == sub_path.ident)
+                        } else {
+                            None
+                        }
+                    }
+                    RustType::StructOrEnum(struct_type_params, struct_module_path, struct_name) => {
+                        if let Some(impl_trait) = &impl_block.trait_ {
+                            let types_match = struct_or_enum_types_match(
+                                &impl_block.target,
+                                &item_generics,
+                                &item_module_path,
+                                &item_def.ident,
+                            );
+
+                            // If types match then look for method in impl block
+                            if types_match {
+                                impl_block
+                                    .items
+                                    .iter()
+                                    .find(|impl_item| impl_item.ident == sub_path.ident)
+                            } else {
+                                None
+                            }
+                            // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
+                        } else {
+                            None
+                        }
+                    }
+                    RustType::MutRef(_) => todo!(),
+                    RustType::Ref(_) => todo!(),
+                    _ => todo!(),
+                }
+            })
+            .cloned();
 
         // Now we have all the impl blocks, we can look for the method in said impl blocks
         // We also need to check the traits themselves incase the method is a default implementation
@@ -2991,30 +3067,30 @@ impl GlobalData {
 
         // It is not possible to have impls with the same method name, so we should at most match 1 impl item/method
         // dbg!(&matched_trait_impl_blocks);
-        assert!(
-            matched_trait_impl_blocks
-                .iter()
-                .filter_map(|impl_block| {
-                    impl_block
-                        .items
-                        .iter()
-                        .find(|impl_item| impl_item.ident == sub_path.ident)
-                })
-                .count()
-                <= 1
-        );
-        let module_level_impl_method = matched_trait_impl_blocks
-            .iter()
-            .find_map(|impl_block| {
-                impl_block
-                    .items
-                    .iter()
-                    .find(|impl_item| impl_item.ident == sub_path.ident)
-            })
-            .cloned();
+        // assert!(
+        //     matched_trait_impl_blocks
+        //         .iter()
+        //         .filter_map(|impl_block| {
+        //             impl_block
+        //                 .items
+        //                 .iter()
+        //                 .find(|impl_item| impl_item.ident == sub_path.ident)
+        //         })
+        //         .count()
+        //         <= 1
+        // );
+        // let module_level_impl_method = matched_trait_impl_blocks
+        //     .iter()
+        //     .find_map(|impl_block| {
+        //         impl_block
+        //             .items
+        //             .iter()
+        //             .find(|impl_item| impl_item.ident == sub_path.ident)
+        //     })
+        //     .cloned();
 
         // Use xor because we should not have both a scoped and module level impl method, only either or
-        let impl_method = scoped_impl_method.xor(module_level_impl_method);
+        let impl_method = scoped_non_trait_impl_method.xor(trait_impl_method);
         impl_method
     }
 }
@@ -3056,7 +3132,76 @@ fn update_classes(
     }
 }
 
+fn get_traits_implemented_for_item(
+    impl_items: &Vec<RustImplBlock>,
+    item_module_path: &Option<Vec<String>>,
+    item_name: &String,
+) -> Vec<(Option<Vec<String>>, String)> {
+    // Does class implement the trait bounds of the impl block
+
+    // TODO this code is duplicated from elsewhere
+    // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
+    let mut found_traits_count = 0;
+    // (trait module path (None for scoped), trait name)
+    let mut found_traits: Vec<(Option<Vec<String>>, String)> = Vec::new();
+    loop {
+        found_traits.clear();
+
+        for impl_block in impl_items {
+            // TODO this needs extending to handle matching any target type, rather than just user structs
+            match &impl_block.target {
+                RustType::TypeParam(rust_type_param) => {
+                    // If the target is a type param then we must be implementing a trait
+                    let rust_trait = impl_block.trait_.clone().unwrap();
+
+                    // Get bounds on type param
+                    let type_param_bounds = &impl_block
+                        .generics
+                        .iter()
+                        .find(|generic| generic.ident == rust_type_param.name)
+                        .unwrap()
+                        .trait_bounds;
+
+                    // Does our struct impl all of these traits?
+                    let struct_impls_all_bounds = type_param_bounds
+                        .iter()
+                        .all(|type_param_bound| found_traits.contains(type_param_bound));
+                    if struct_impls_all_bounds {
+                        found_traits.push(rust_trait);
+                    }
+                }
+                RustType::StructOrEnum(_, _, _) => {
+                    if let Some(impl_trait) = &impl_block.trait_ {
+                        let types_match = match &impl_block.target {
+                            RustType::StructOrEnum(_type_params, module_path, name) => {
+                                module_path == item_module_path && name == item_name
+                            }
+                            _ => todo!(),
+                        };
+
+                        if types_match {
+                            found_traits.push(impl_trait.clone());
+                        }
+                    }
+                }
+                RustType::MutRef(_) => todo!(),
+                RustType::Ref(_) => todo!(),
+                _ => todo!(),
+            }
+        }
+
+        if found_traits_count == found_traits.len() {
+            break;
+        } else {
+            found_traits_count = found_traits.len();
+        }
+    }
+
+    found_traits
+}
+
 // For impl blocks targetting a concrete type (including when implementing a trait), we want to add the items directly to the JS class, because no other types/classes are using the same implementation. For blocks targetting a generic type eg `Foo<T>` or `T`, we need to check if multiple classes are using the same method impls and if so keep the impl standalone and point to the impl from a class method.
+// IMPORTANT NOTE remember that when matching a struct/enum/class, we need more than just the item definition, we need it's scope/module path because we don't want to match any struct with the same name, we want to match the actual same definition so we need it's path.
 fn update_classes_js_stmts(
     js_stmts: &mut Vec<JsStmt>,
     impl_items: &Vec<RustImplBlock>,
@@ -3065,53 +3210,106 @@ fn update_classes_js_stmts(
 ) {
     for stmt in js_stmts {
         match stmt {
-            JsStmt::Class(js_class) => {
+            JsStmt::Class(js_class) if !js_class.is_impl_block => {
                 let span = debug_span!("update_classes for js_class", name = ?js_class.name);
                 let _guard = span.enter();
-                // dbg!(&js_class);
-                // dbg!(&impl_items);
-                // add impl methods to class
+
+                // First get the traits which the struct impls, to avoid doing it for every impl block
+                let traits_impld_for_class = get_traits_implemented_for_item(
+                    impl_items,
+                    &js_class.module_path,
+                    &js_class.rust_name,
+                );
+
                 for impl_block in impl_items.clone() {
                     // TODO impl could be in another module?
-                    let impl_target_name = match impl_block.target {
-                        RustType::StructOrEnum(_, _, name) => name,
-                        _ => todo!(),
-                    };
-                    if js_class.name == impl_target_name {
-                        for impl_item in impl_block.items {
-                            match impl_item.item {
-                                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-                                    let FnInfo {
-                                        ident,
-                                        inputs_types,
-                                        generics,
-                                        return_type,
-                                    } = fn_info;
+                    match &impl_block.target {
+                        // add impl methods to class
+                        RustType::StructOrEnum(_, impl_target_module_path, impl_target_name) => {
+                            if &js_class.rust_name == impl_target_name
+                                && &js_class.module_path == impl_target_module_path
+                            {
+                                for impl_item in impl_block.items {
+                                    match impl_item.item {
+                                        RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                            let FnInfo { ident, .. } = fn_info;
 
-                                    // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct
-                                    if js_class.methods.iter().any(|method| method.0 == ident) {
-                                        todo!("need to monomorphize");
-                                    } else {
-                                        js_class.methods.push((ident, private, static_, js_fn));
+                                            // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct
+                                            if js_class
+                                                .methods
+                                                .iter()
+                                                .any(|method| method.0 == ident)
+                                            {
+                                                todo!("need to monomorphize");
+                                            } else {
+                                                js_class
+                                                    .methods
+                                                    .push((ident, private, static_, js_fn));
+                                            }
+                                        }
+                                        RustImplItemItem::Const(js_local) => {
+                                            js_class.static_fields.push(js_local);
+                                        }
                                     }
-                                }
-                                RustImplItemItem::Const(js_local) => {
-                                    js_class.static_fields.push(js_local);
                                 }
                             }
                         }
-                        // match impl_item.item_stmt {
-                        //     JsImplItem::ClassStatic(js_local) => {
-                        //         js_class.static_fields.push(js_local);
-                        //     }
-                        //     JsImplItem::ClassMethod(name, private, static_, js_fn) => {
-                        //         js_class.methods.push((name, private, static_, js_fn));
-                        //     }
-                        //     stmt => {
-                        //         dbg!(stmt);
-                        //         panic!("this JsStmt cannot be an impl item")
-                        //     }
-                        // }
+                        RustType::TypeParam(rust_type_param) => {
+                            // Get bounds on type param
+                            let type_param_bounds = &impl_block
+                                .generics
+                                .iter()
+                                .find(|generic| generic.ident == rust_type_param.name)
+                                .unwrap()
+                                .trait_bounds;
+
+                            // Does our struct impl all of these traits?
+                            let struct_impls_all_bounds =
+                                type_param_bounds.iter().all(|type_param_bound| {
+                                    traits_impld_for_class.contains(type_param_bound)
+                                });
+
+                            if struct_impls_all_bounds {
+                                for impl_item in &impl_block.items {
+                                    match &impl_item.item {
+                                        RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                            let FnInfo { ident, .. } = fn_info;
+
+                                            // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct. TODO maybe it is better to check the need for monomorphization explicitly, in an early pass of process_items?
+
+                                            if js_class
+                                                .methods
+                                                .iter()
+                                                .any(|method| &method.0 == ident)
+                                            {
+                                                todo!("need to monomorphize");
+                                            } else {
+                                                js_class.static_fields.push(JsLocal {
+                                                    public: false,
+                                                    export: false,
+                                                    type_: LocalType::None,
+                                                    lhs: LocalName::Single(camel(ident.clone())),
+                                                    value: JsExpr::Path(
+                                                        [
+                                                            impl_block.js_name(),
+                                                            "prototype".to_string(),
+                                                            camel(ident.clone()),
+                                                        ]
+                                                        .to_vec(),
+                                                    ),
+                                                });
+                                            }
+                                        }
+                                        RustImplItemItem::Const(js_local) => {
+                                            // js_class.static_fields.push(js_local);
+                                            todo!()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and took down vscode with it
+                        _ => {}
                     }
                 }
 
@@ -3752,6 +3950,9 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             inputs: vec!["inner".to_string()],
             static_fields: Vec::new(),
             methods: Vec::new(),
+            rust_name: "donotuse".to_string(),
+            module_path: Some(vec!["donotuse".to_string()]),
+            is_impl_block: false,
         });
         prelude_stmts.push(js_class);
     }
@@ -3764,6 +3965,9 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             inputs: vec!["inner".to_string()],
             static_fields: Vec::new(),
             methods: Vec::new(),
+            rust_name: "donotuse".to_string(),
+            module_path: Some(vec!["donotuse".to_string()]),
+            is_impl_block: false,
         });
         prelude_stmts.push(js_class);
     }
@@ -3819,6 +4023,9 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             inputs: Vec::new(),
             static_fields: Vec::new(),
             methods,
+            rust_name: "donotuse".to_string(),
+            module_path: Some(vec!["donotuse".to_string()]),
+            is_impl_block: false,
         }));
     }
 
@@ -4087,10 +4294,10 @@ pub fn process_items(
     global_data.modules = modules;
 
     // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
-    // 1. Only use syn for resolving types. Currently we use `get_path_without_namespacing()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
-    // 2. Do another pass. Leave the types empty in the definitions for `extract_data()` and then do another pass to populate them once we have all the item defs etc so `get_path_without_namespacing()` will work.
-    // NOTE `get_path_without_namespacing()` shouldn't need full `ItemDefinition`s etc, it should only need the names of each item in each module. Given having partially completed `ItemDefinition`s etc will be a pain without using Option<T> or something (eg FnInfo has `return_type: RustType`, though could just use eg RustType::Todo or something), maybe we should update `get_path_without_namespacing()` to only use eg ModuleData.pub_definitions instead of `ItemDefinition`s... NO:
-    // So `get_path_without_namespacing()` doesn't actually use `ItemDefinition`s etc, only ModuleData.pub_definitions etc...
+    // 1. Only use syn for resolving types. Currently we use `get_path()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
+    // 2. Do another pass. Leave the types empty in the definitions for `extract_data()` and then do another pass to populate them once we have all the item defs etc so `get_path()` will work.
+    // NOTE `get_path()` shouldn't need full `ItemDefinition`s etc, it should only need the names of each item in each module. Given having partially completed `ItemDefinition`s etc will be a pain without using Option<T> or something (eg FnInfo has `return_type: RustType`, though could just use eg RustType::Todo or something), maybe we should update `get_path()` to only use eg ModuleData.pub_definitions instead of `ItemDefinition`s... NO:
+    // So `get_path()` doesn't actually use `ItemDefinition`s etc, only ModuleData.pub_definitions etc...
     // So we can just entirely populate .item_definitions etc in the second pass, as parse_input... whatever is not using item_definitions...
 
     // So, we are using `parse_fn_input_or_field()` to parse: struct fields, and probably more stuff when finished like fn inputs and return, maybe trait bound?, etc
@@ -4098,6 +4305,28 @@ pub fn process_items(
     // let gen_arg_name = item_definition.generics[i].clone();
     //
     extract_data_populate_item_definitions(&mut global_data);
+
+    // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
+    // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
+    // Or... we can do the JS parsing first, retain the item definition for each JsClass produced... and *then* handle matching of scoped items and impl blocks
+
+    // We will however still need to also do the same/similar handling for scope items or impl blocks in js_stmts_from_syn_items, specifically, at the end of any scope (technically we only need to if a new item definition or impl block has been added), we must:
+    // 1. If we have a new item definition in the scope, iterate through every impl block, both module level impl blocks, all of which will already exist, and all the impl blocks in the scopes, and check whether any of them have impld items which should be added to the item definition.
+    // 2. If we a have a new impl block in the scope, if it is a trait impl we have to check *everything* again because it might for example impl a new trait for a module level struct, which means that now a different impl block might match the struct, so the methods from that block need to be added to the struct item definition and so on. For example:
+    {
+        // module top level
+        trait Foo {
+            fn get_foo(&self) -> i32 {
+                4
+            }
+        }
+        struct Bar {}
+        {
+            impl<T> Foo for T {}
+        }
+        let bar = Bar {};
+        bar.get_foo();
+    }
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
@@ -4958,7 +5187,6 @@ fn get_path(
         .iter()
         .find(|m| &m.path == current_mod)
         .unwrap();
-    // dbg!(&module);
 
     let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
         current_mod

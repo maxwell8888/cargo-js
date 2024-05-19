@@ -14,12 +14,11 @@ use utils::*;
 async fn it_transpiles_struct_no_new() {
     setup_tracing();
 
-    #[module_as_str]
-    mod wrapper {
+    let actual = r2j_block_with_prelude!({
         struct MyStruct {
             my_field: i32,
         }
-    }
+    });
     let expected = format_js(
         r#"
             class MyStruct {
@@ -29,7 +28,7 @@ async fn it_transpiles_struct_no_new() {
             }
         "#,
     );
-    assert_eq!(expected, generated_js());
+    assert_eq!(expected, actual);
 }
 
 // #[ignore = "wait to support impl Trait for T"]
