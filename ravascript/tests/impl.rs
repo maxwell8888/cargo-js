@@ -106,6 +106,7 @@ fn notes() {
     // This is a pretty niche and speficic case so we will leave it as a TODO but it is worth bearing in mind when considering the design.
 }
 
+#[ignore = "need to implement js class methods taking self as an arguemnt, probs using bind this"]
 #[tokio::test]
 async fn full_qualified_method_call() {
     setup_tracing();
@@ -146,7 +147,7 @@ async fn full_qualified_method_call() {
         "#,
     );
     assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "todo"]
@@ -200,10 +201,10 @@ async fn full_qualified_trait_method_call() {
         "#,
     );
     assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "reason"]
+#[ignore = "need to move creation of rust_impl_block from handle_item_impl to extract_data_populate_item_definitions"]
 #[tokio::test]
 async fn call_method_before_impl_block_definition() {
     setup_tracing();
@@ -243,7 +244,305 @@ async fn call_method_before_impl_block_definition() {
         "#,
     );
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn inherent_impl_in_different_module() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        mod bar {
+            use super::Foo;
+
+            impl Foo {
+                pub fn get_num(&self) -> i32 {
+                    5
+                }
+            }
+        }
+
+        fn main() {
+            let foo = Foo {};
+            assert!(foo.get_num() == 5);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                getNum() {
+                    return 5;
+                }
+            }
+            function main() {
+                var foo = new Foo();
+                console.assert(foo.getNum() === 5);
+            }
+
+            // bar
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// #[ignore = "todo"]
+#[tokio::test]
+async fn scoped_inherent_impl_in_different_module() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        mod bar {
+            use super::Foo;
+
+            fn baz() {
+                impl Foo {
+                    pub fn get_num(&self) -> i32 {
+                        5
+                    }
+                }
+            }
+        }
+
+        fn main() {
+            let foo = Foo {};
+            assert!(foo.get_num() == 5);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                getNum() {
+                    return 5;
+                }
+            }
+            function main() {
+                var foo = new Foo();
+                console.assert(foo.getNum() === 5);
+            }
+
+            // bar
+            function baz() {}
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// There doesn't seem any reason to implement this given that if a method is impl'd on a Struct then we expect it to be used somewhere, even if it is not accessible from certain places, so will always need it on the struct. See test private_method_in_scoped_impl below for an example.
+#[ignore = "dont implement"]
+#[tokio::test]
+async fn dont_need_to_impl_private_method() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        mod bar {
+            use super::Foo;
+
+            fn baz() {
+                impl Foo {
+                    fn get_num(&self) -> i32 {
+                        5
+                    }
+                }
+            }
+        }
+
+        fn main() {
+            let foo = Foo {};
+            // `.get_num()` is not accessible so shouldn't appear in `class Foo {}`, even though it wouldn't cause any problems given that even private method names implented in scopes in different modules must be unique.
+            // assert!(foo.get_num() == 5);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {}
+            function main() {
+                var foo = new Foo();
+            }
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
     // let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// TODO move assert! to before impl to check this works or make another test for this
+#[tokio::test]
+async fn private_method_in_scoped_impl() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        mod bar {
+            use super::Foo;
+
+            pub fn baz() {
+                let foo = Foo {};
+                impl Foo {
+                    fn get_num(&self) -> i32 {
+                        5
+                    }
+                }
+                assert!(foo.get_num() == 5);
+            }
+        }
+
+        fn main() {
+            let foo = Foo {};
+            // `.get_num()` private and so not accessible here.
+            // assert!(foo.get_num() == 5);
+            bar::baz();
+        }
+    );
+
+    let expected = format_js(
+        r#"
+        // crate
+        class Foo {
+            getNum() {
+                return 5;
+            }
+        }
+        function main() {
+            var foo = new Foo();
+            baz();
+        }
+        
+        // bar
+        function baz() {
+            var foo = new Foo();
+        
+            console.assert(foo.getNum() === 5);
+        }
+        
+        main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+
+#[ignore = "problems transpiling class names"]
+#[tokio::test]
+async fn module_level_shadowing_of_struct_name() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        impl Foo {
+            pub fn get_num(&self) -> i32 {
+                4
+            }
+        }
+        mod bar {
+            pub struct Foo {}
+
+            impl Foo {
+                pub fn get_num(&self) -> i32 {
+                    5
+                }
+            }
+        }
+
+        fn main() {
+            let foo1 = Foo {};
+            assert!(foo1.get_num() == 4);
+            let foo2 = bar::Foo {};
+            assert!(foo2.get_num() == 5);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                getNum() {
+                    return 4;
+                }
+            }
+
+            function main() {
+                var foo1 = new Foo();
+                console.assert(foo1.getNum() === 4);
+                var foo2 = new bar__Foo();
+                console.assert(foo2.getNum() === 5);
+            }
+
+            // bar
+            class bar__Foo {
+                getNum() {
+                    return 5;
+                }
+            }
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn scoped_shadowing_of_struct_name() {
+    setup_tracing();
+    let actual = r2j_block_with_prelude!({
+        struct Foo {}
+        impl Foo {
+            pub fn get_num(&self) -> i32 {
+                4
+            }
+        }
+        {
+            pub struct Foo {}
+
+            impl Foo {
+                pub fn get_num(&self) -> i32 {
+                    5
+                }
+            }
+            let foo = Foo {};
+            assert!(foo.get_num() == 5);
+        }
+        let foo = Foo {};
+        assert!(foo.get_num() == 4);
+    });
+
+    // TODO need to replace var with let because let is block scoped but var is not, but then how to handle Rust variable shadowing?
+    let expected = format_js(
+        r#"
+            class Foo {
+                getNum() {
+                    return 4;
+                }
+            }
+
+            {
+                class Foo {
+                    getNum() {
+                        return 5;
+                    }
+                }
+
+                var foo = new Foo();
+                console.assert(foo.getNum() === 5);
+            }
+            var foo = new Foo();
+            console.assert(foo.getNum() === 4);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "reason"]

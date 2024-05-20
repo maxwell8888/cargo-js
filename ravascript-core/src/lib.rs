@@ -2017,6 +2017,16 @@ struct ItemDefinition {
     generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     struct_or_enum_info: StructOrEnumDefitionInfo,
+    impl_items: Vec<ItemDefintionImplItems>,
+}
+
+#[derive(Debug, Clone)]
+enum ItemDefintionImplItems {
+    /// For impls like `impl<T> Foo for T {}` where multiple types use the same impl so we transpile the impl block itself into a class, and point to this classes methods using eg `getFoo = impl__Foo__for__T.prototype.getFoo` or whatever.
+    ///
+    /// (method name, unique identifier/js_name?)
+    GenericImpl(String, String),
+    UniqueImpl(ImplItem),
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
@@ -2335,9 +2345,15 @@ struct GlobalData {
     // impl_items_for_js: Vec<ImplItemTemp>,
     /// For looking up return types of methods etc
     // impl_items_for_types: Vec<(RustType, RustImplItem)>,
-    // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
+    // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. I believe this is also the case for scoped impls? This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
     // impl_blocks: Vec<ItemImpl>,
     impl_blocks: Vec<RustImplBlock>,
+    /// The purpose of having this here is so that all crate scoped impl blocks are immeditately available when parsing the syn to JS, eg if we come across a class (module level or scoped), we want to be able to add the methods which are implemented for it at that point, but these impls might not appear until later in the code, so instead we popualte scoped_impl_blocks in extract_data_populate_item_definitions to ensure it is available
+    /// Given method names (impld for the same item) must be unqiue across the crate, for module level impls, we can just store all impl blocks in a big list, and add all their methods to all matching classes/items/enums/structs, whether the method is private/public is irrelevant since if it has been defined it must/should get used at some point.
+    /// Scoped impls are a litte more complicated though, because in the same way we distinguish between different module level structs with the same name by taking into account their module path, for scoped structs we need to take into account the scope, ie a scoped `impl Foo { ... }` should only be applied to the first `Foo` that is found in parent scopes, else any module (of course taking into account the full module path used in `impl Foo { ... }`), because there might be another `Foo` in a higher scope with the same method impld, so we must not apply it there.
+    /// We don't have to
+    /// ((module path, scope id), rust impl block))
+    scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), RustImplBlock)>,
     duplicates: Vec<Duplicate>,
     transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
@@ -2355,6 +2371,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
+            impl_items: Vec::new(),
         };
         // TODO should the ident be `String` or `str`???
         let string_def = ItemDefinition {
@@ -2365,6 +2382,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
+            impl_items: Vec::new(),
         };
         let str_def = ItemDefinition {
             ident: "str".to_string(),
@@ -2374,6 +2392,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
+            impl_items: Vec::new(),
         };
 
         // let ravascript_prelude_crate = CrateData {
@@ -2402,6 +2421,7 @@ impl GlobalData {
             duplicates,
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
+            scoped_impl_blocks: Vec::new(),
             // at_module_top_level: false,
         }
     }
@@ -3755,6 +3775,7 @@ fn extract_data_populate_item_definitions(
                             members: members_for_scope,
                             syn_object: item_enum.clone(),
                         }),
+                        impl_items: Vec::new(),
                     });
                 }
                 Item::ExternCrate(_) => todo!(),
@@ -3805,7 +3826,7 @@ fn extract_data_populate_item_definitions(
                     })
                 }
                 Item::ForeignMod(_) => todo!(),
-                Item::Impl(_) => {
+                Item::Impl(item_impl) => {
                     // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
                 }
                 Item::Macro(_) => {}
@@ -3902,6 +3923,7 @@ fn extract_data_populate_item_definitions(
                                 syn_object: Some(item_struct.clone()),
                             },
                         ),
+                        impl_items: Vec::new(),
                     });
                 }
                 Item::Trait(item_trait) => module.trait_definitons.push(RustTraitDefinition {
