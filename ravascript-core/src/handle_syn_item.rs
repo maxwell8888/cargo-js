@@ -576,7 +576,7 @@ pub fn handle_item_enum(
             members: members_for_scope,
             syn_object: item_enum.clone(),
         }),
-        impl_items: Vec::new(),
+        impl_blocks: Vec::new(),
     };
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
@@ -586,6 +586,8 @@ pub fn handle_item_enum(
     }
 
     let class_name = item_enum.ident.to_string();
+
+    // Populate methods and fields
 
     let mut static_fields = Vec::new();
     for variant in &item_enum.variants {
@@ -759,6 +761,15 @@ pub fn handle_item_enum(
             ))
         }
     }
+
+    populate_fields_and_methods(
+        global_data,
+        current_module,
+        item_enum.ident.to_string(),
+        &generics,
+        &mut methods,
+        &mut static_fields,
+    );
 
     if let Some(dup) = global_data
         .duplicates
@@ -1601,25 +1612,34 @@ pub fn handle_item_struct(
         )
     };
 
-    let item_def = ItemDefinition {
-        ident: item_struct.ident.to_string(),
-        is_copy,
-        generics,
-        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-            fields,
-            syn_object: Some(item_struct.clone()),
-        }),
-        impl_items: Vec::new(),
-    };
-
     // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     if !at_module_top_level {
+        let item_def = ItemDefinition {
+            ident: item_struct.ident.to_string(),
+            is_copy,
+            generics,
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                fields,
+                syn_object: Some(item_struct.clone()),
+            }),
+            impl_blocks: Vec::new(),
+        };
         let global_data_scope = global_data.scopes.last_mut().unwrap();
         global_data_scope.item_definitons.push(item_def.clone());
     }
 
+    // Populate methods and fields
     let mut methods = Vec::new();
+    let mut static_fields = Vec::new();
+    populate_fields_and_methods(
+        global_data,
+        current_module_path,
+        item_struct.ident.to_string(),
+        &generics_type_params,
+        &mut methods,
+        &mut static_fields,
+    );
 
     if is_copy {
         let stmt = JsStmt::Raw("return JSON.parse(JSON.stringify(this));".to_string());
@@ -1704,12 +1724,104 @@ pub fn handle_item_struct(
         name,
         tuple_struct,
         inputs,
-        static_fields: Vec::new(),
+        static_fields,
         methods,
         rust_name: item_struct.ident.to_string(),
         module_path: at_module_top_level.then_some(current_module_path.clone()),
         is_impl_block: false,
     })
+}
+
+/// -> (methods, static_fields)
+fn populate_fields_and_methods(
+    global_data: &mut GlobalData,
+    current_module_path: &Vec<String>,
+    // Remember JsClass expects JS names but class names are identical for Rust and JS
+    item_name: String,
+    generics_type_params: &Vec<RustTypeParam>,
+    methods: &mut Vec<(String, bool, bool, JsFn)>,
+    static_fields: &mut Vec<JsLocal>,
+) {
+    // TODO to avoid mut and immut ref clashing - fix this
+    let global_data_copy = global_data.clone();
+    let module = global_data_copy
+        .modules
+        .iter()
+        .find(|m| &m.path == current_module_path)
+        .unwrap();
+    let item_def = module
+        .item_definitons
+        .iter()
+        .find(|item_def| item_def.ident == item_name);
+    if let Some(item_def) = item_def {
+        for impl_blocky in &item_def.impl_blocks {
+            match impl_blocky {
+                crate::ItemDefintionImpls::GenericImpl(unique_name, method_name) => {
+                    // Find impl block
+                    // TODO this should be filter because there might be multiple impl blocks with the same "signature"
+                    let impl_block = global_data
+                        .impl_blocks
+                        .iter()
+                        .find(|impl_block| &impl_block.js_name() == unique_name)
+                        .unwrap();
+                    for rust_impl_item in &impl_block.items {
+                        match &rust_impl_item.item {
+                            RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                methods.push((
+                                    item_name.clone(),
+                                    *private,
+                                    *static_,
+                                    js_fn.clone(),
+                                ));
+                            }
+                            RustImplItemItem::Const(_) => todo!(),
+                        }
+                    }
+                }
+                crate::ItemDefintionImpls::ConcreteImpl(impl_items) => {
+                    for impl_item in impl_items {
+                        match impl_item {
+                            ImplItem::Const(_) => todo!(),
+                            ImplItem::Fn(impl_item_fn) => {
+                                let mut rust_impl_items = Vec::new();
+                                let target_rust_type = RustType::StructOrEnum(
+                                    generics_type_params.clone(),
+                                    Some(current_module_path.clone()),
+                                    item_name.clone(),
+                                );
+
+                                handle_impl_item_fn(
+                                    &mut rust_impl_items,
+                                    impl_item,
+                                    impl_item_fn,
+                                    global_data,
+                                    current_module_path,
+                                    &target_rust_type,
+                                );
+                                assert!(rust_impl_items.len() == 1);
+                                let rust_impl_item = rust_impl_items.remove(0);
+                                match &rust_impl_item.item {
+                                    RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                        methods.push((
+                                            item_name.clone(),
+                                            *private,
+                                            *static_,
+                                            js_fn.clone(),
+                                        ));
+                                    }
+                                    RustImplItemItem::Const(_) => todo!(),
+                                }
+                            }
+                            ImplItem::Type(_) => todo!(),
+                            ImplItem::Macro(_) => todo!(),
+                            ImplItem::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn handle_item(

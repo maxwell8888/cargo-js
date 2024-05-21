@@ -247,6 +247,52 @@ async fn call_method_before_impl_block_definition() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[ignore = "todo"]
+#[tokio::test]
+async fn multiple_impls_with_same_signature() {
+    setup_tracing();
+    let actual = r2j_file_run_main!(
+        struct Foo {}
+        impl Foo {
+            fn bar(&self) -> i32 {
+                4
+            }
+        }
+        impl Foo {
+            fn baz(&self) -> i32 {
+                5
+            }
+        }
+
+        fn main() {
+            let foo = Foo {};
+            assert!(foo.bar() == 4);
+            assert!(foo.baz() == 5);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                getNum() {
+                    return 5;
+                }
+            }
+            function main() {
+                var foo = new Foo();
+                console.assert(foo.getNum() === 5);
+            }
+
+            // bar
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
 #[tokio::test]
 async fn inherent_impl_in_different_module() {
     setup_tracing();

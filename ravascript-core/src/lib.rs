@@ -2017,11 +2017,11 @@ struct ItemDefinition {
     generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     struct_or_enum_info: StructOrEnumDefitionInfo,
-    impl_items: Vec<ItemDefintionImplItems>,
+    impl_blocks: Vec<ItemDefintionImpls>,
 }
 
 #[derive(Debug, Clone)]
-enum ItemDefintionImplItems {
+enum ItemDefintionImpls {
     /// For impls like `impl<T> Foo for T {}` where multiple types use the same impl so we transpile the impl block itself into a class, and point to this classes methods using eg `getFoo = impl__Foo__for__T.prototype.getFoo` or whatever.
     ///
     /// (module path, unique identifier/js_name?, method name)
@@ -2029,7 +2029,7 @@ enum ItemDefintionImplItems {
     /// I think we don't need a module path because we don't care what module the impl is in, as long as the target matches, we want to implement it
     /// (unique identifier/js_name?, method name)
     GenericImpl(String, String),
-    ConcreteImpl(ImplItem),
+    ConcreteImpl(Vec<ImplItem>),
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
@@ -2385,7 +2385,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
-            impl_items: Vec::new(),
+            impl_blocks: Vec::new(),
         };
         // TODO should the ident be `String` or `str`???
         let string_def = ItemDefinition {
@@ -2396,7 +2396,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
-            impl_items: Vec::new(),
+            impl_blocks: Vec::new(),
         };
         let str_def = ItemDefinition {
             ident: "str".to_string(),
@@ -2406,7 +2406,7 @@ impl GlobalData {
                 fields: StructFieldInfo::RegularStruct(Vec::new()),
                 syn_object: None,
             }),
-            impl_items: Vec::new(),
+            impl_blocks: Vec::new(),
         };
 
         // let ravascript_prelude_crate = CrateData {
@@ -2693,6 +2693,8 @@ impl GlobalData {
         if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
             return Some((None, item_def));
         } else {
+            // dbg!(path);
+            // dbg!(current_module_path);
             let (item_module_path, item_path, _is_scoped) = get_path(
                 false,
                 false,
@@ -2707,6 +2709,8 @@ impl GlobalData {
                 current_module_path,
                 current_module_path,
             );
+            // dbg!(&item_module_path);
+            // dbg!(&item_path);
 
             if item_module_path == vec!["prelude_special_case".to_string()] {
                 // Get prelude item definitions
@@ -2723,14 +2727,17 @@ impl GlobalData {
                 .iter()
                 .find(|m| &m.path == &item_module_path)
                 .unwrap();
+            // dbg!(&item_module);
+            // dbg!(&item_path[0].ident);
 
             // TODO if the path is eg an associated fn, should we return the item or the fn? ie se or RustType?
-            let se = item_module
+            let item_def = item_module
                 .item_definitons
                 .iter()
                 .find(|se| se.ident == item_path[0].ident);
-            if let Some(se) = se {
-                return Some((Some(item_module_path), se.clone()));
+
+            if let Some(item_def) = item_def {
+                return Some((Some(item_module_path), item_def.clone()));
             } else {
                 todo!()
             }
@@ -3470,11 +3477,9 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                         if &item_def.ident == impl_target_name
                             && &Some(module.path.clone()) == impl_target_module_path
                         {
-                            for impl_item in &impl_block.items {
-                                item_def
-                                    .impl_items
-                                    .push(ItemDefintionImplItems::ConcreteImpl(impl_item.clone()));
-                            }
+                            item_def
+                                .impl_blocks
+                                .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
                         }
                     }
                     RustType::TypeParam(rust_type_param) => {
@@ -3502,9 +3507,10 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                                     ImplItem::Verbatim(_) => todo!(),
                                     _ => todo!(),
                                 };
-                                item_def
-                                    .impl_items
-                                    .push(ItemDefintionImplItems::GenericImpl("helo".to_string(), item_name));
+                                item_def.impl_blocks.push(ItemDefintionImpls::GenericImpl(
+                                    "helo".to_string(),
+                                    item_name,
+                                ));
                             }
                         }
                     }
@@ -3512,118 +3518,6 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                     _ => {}
                 }
             }
-        }
-    }
-}
-
-fn update_classes_js_stmts2(js_stmts: &mut Vec<JsStmt>, impl_items: &Vec<RustImplBlock>) {
-    for stmt in js_stmts {
-        match stmt {
-            JsStmt::Class(js_class) if !js_class.is_impl_block => {
-                let span = debug_span!("update_classes for js_class", name = ?js_class.name);
-                let _guard = span.enter();
-
-                // First get the traits which the struct impls, to avoid doing it for every impl block
-                let traits_impld_for_class = get_traits_implemented_for_item(
-                    impl_items,
-                    &js_class.module_path,
-                    &js_class.rust_name,
-                );
-
-                for impl_block in impl_items.clone() {
-                    // TODO impl could be in another module?
-                    match &impl_block.target {
-                        // add impl methods to class
-                        RustType::StructOrEnum(_, impl_target_module_path, impl_target_name) => {
-                            if &js_class.rust_name == impl_target_name
-                                && &js_class.module_path == impl_target_module_path
-                            {
-                                for impl_item in impl_block.items {
-                                    match impl_item.item {
-                                        RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-                                            let FnInfo { ident, .. } = fn_info;
-
-                                            // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct
-                                            if js_class
-                                                .methods
-                                                .iter()
-                                                .any(|method| method.0 == ident)
-                                            {
-                                                todo!("need to monomorphize");
-                                            } else {
-                                                js_class
-                                                    .methods
-                                                    .push((ident, private, static_, js_fn));
-                                            }
-                                        }
-                                        RustImplItemItem::Const(js_local) => {
-                                            js_class.static_fields.push(js_local);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        RustType::TypeParam(rust_type_param) => {
-                            // Get bounds on type param
-                            let type_param_bounds = &impl_block
-                                .generics
-                                .iter()
-                                .find(|generic| generic.ident == rust_type_param.name)
-                                .unwrap()
-                                .trait_bounds;
-
-                            // Does our struct impl all of these traits?
-                            let struct_impls_all_bounds =
-                                type_param_bounds.iter().all(|type_param_bound| {
-                                    traits_impld_for_class.contains(type_param_bound)
-                                });
-
-                            if struct_impls_all_bounds {
-                                for impl_item in &impl_block.items {
-                                    match &impl_item.item {
-                                        RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-                                            let FnInfo { ident, .. } = fn_info;
-
-                                            // If the struct is generic *and* already has a method with the same name as one in the impl block, then we need to monomorphize the struct. TODO maybe it is better to check the need for monomorphization explicitly, in an early pass of process_items?
-
-                                            if js_class
-                                                .methods
-                                                .iter()
-                                                .any(|method| &method.0 == ident)
-                                            {
-                                                todo!("need to monomorphize");
-                                            } else {
-                                                js_class.static_fields.push(JsLocal {
-                                                    public: false,
-                                                    export: false,
-                                                    type_: LocalType::None,
-                                                    lhs: LocalName::Single(camel(ident.clone())),
-                                                    value: JsExpr::Path(
-                                                        [
-                                                            impl_block.js_name(),
-                                                            "prototype".to_string(),
-                                                            camel(ident.clone()),
-                                                        ]
-                                                        .to_vec(),
-                                                    ),
-                                                });
-                                            }
-                                        }
-                                        RustImplItemItem::Const(js_local) => {
-                                            // js_class.static_fields.push(js_local);
-                                            todo!()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and took down vscode with it
-                        _ => {}
-                    }
-                }
-            }
-            // JsStmt::Module(js_stmt_module) => update_classes(js_stmt_module, impl_items.clone()),
-            _ => {}
         }
     }
 }
@@ -3929,16 +3823,7 @@ fn extract_data(
     }
 }
 
-fn extract_data_populate_item_definitions(
-    // items: &Vec<Item>,
-    // None if we are extracted data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
-    // crate_path: Option<&PathBuf>,
-    // module_path: &mut Vec<String>,
-    // (module path, name)
-    // names: &mut Vec<(Vec<String>, String)>,
-    // modules: &mut Vec<ModuleData>,
-    global_data: &mut GlobalData,
-) {
+fn extract_data_populate_item_definitions(global_data: &mut GlobalData) {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
 
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
@@ -4036,7 +3921,7 @@ fn extract_data_populate_item_definitions(
                             members: members_for_scope,
                             syn_object: item_enum.clone(),
                         }),
-                        impl_items: Vec::new(),
+                        impl_blocks: Vec::new(),
                     });
                 }
                 Item::ExternCrate(_) => todo!(),
@@ -4086,6 +3971,135 @@ fn extract_data_populate_item_definitions(
                         return_type,
                     })
                 }
+                Item::ForeignMod(_) => todo!(),
+                Item::Impl(item_impl) => {
+                    // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
+                }
+                Item::Macro(_) => {}
+                Item::Mod(item_mod) => {}
+                Item::Static(_) => todo!(),
+                Item::Struct(item_struct) => {
+                    let struct_name = item_struct.ident.to_string();
+
+                    // Make ItemDefinition
+                    let generics = item_struct
+                        .generics
+                        .params
+                        .iter()
+                        .map(|p| match p {
+                            GenericParam::Lifetime(_) => todo!(),
+                            GenericParam::Type(type_param) => type_param.ident.to_string(),
+                            GenericParam::Const(_) => todo!(),
+                        })
+                        .collect::<Vec<_>>();
+
+                    let generics_type_params = generics
+                        .iter()
+                        .map(|name| RustTypeParam {
+                            name: name.clone(),
+                            type_: RustTypeParamValue::Unresolved,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let fields = if item_struct.fields.len() == 0 {
+                        StructFieldInfo::UnitStruct
+                    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                        StructFieldInfo::RegularStruct(
+                            item_struct
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        f.ident.as_ref().unwrap().to_string(),
+                                        parse_types_for_populate_item_definitions(
+                                            &f.ty,
+                                            &generics,
+                                            &module.path,
+                                            &global_data_copy,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        StructFieldInfo::TupleStruct(
+                            item_struct
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    parse_types_for_populate_item_definitions(
+                                        &f.ty,
+                                        &generics,
+                                        &module.path,
+                                        &global_data_copy,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+
+                    module.item_definitons.push(ItemDefinition {
+                        ident: item_struct.ident.to_string(),
+                        is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
+                            Meta::Path(_) => todo!(),
+                            Meta::List(meta_list) => {
+                                let segs = &meta_list.path.segments;
+                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                                    let tokens = format!("({})", meta_list.tokens);
+                                    let trait_tuple =
+                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                                    trait_tuple.elems.iter().any(|elem| match elem {
+                                        Type::Path(type_path) => {
+                                            let segs = &type_path.path.segments;
+                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                                        }
+                                        _ => todo!(),
+                                    })
+                                } else {
+                                    false
+                                }
+                            }
+                            Meta::NameValue(_) => todo!(),
+                        }),
+                        generics,
+                        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
+                            StructDefinitionInfo {
+                                fields,
+                                syn_object: Some(item_struct.clone()),
+                            },
+                        ),
+                        impl_blocks: Vec::new(),
+                    });
+                }
+                Item::Trait(item_trait) => module.trait_definitons.push(RustTraitDefinition {
+                    name: item_trait.ident.to_string(),
+                }),
+                Item::TraitAlias(_) => todo!(),
+                Item::Type(_) => todo!(),
+                Item::Union(_) => todo!(),
+                Item::Use(_) => {}
+                Item::Verbatim(_) => todo!(),
+                _ => todo!(),
+            }
+        }
+    }
+}
+
+fn populate_impl_blocks(global_data: &mut GlobalData) {
+    let global_data_copy = global_data.clone();
+
+    for module in &mut global_data.modules {
+        debug_span!(
+            "extract_data_populate_item_definitions module: {:?}",
+            module_path = ?module.path
+        );
+        for item in &module.items {
+            match item {
+                Item::Const(item_const) => {}
+                Item::Enum(item_enum) => {}
+                Item::ExternCrate(_) => todo!(),
+                Item::Fn(item_fn) => {}
                 Item::ForeignMod(_) => todo!(),
                 Item::Impl(item_impl) => {
                     // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
@@ -4233,103 +4247,8 @@ fn extract_data_populate_item_definitions(
                 Item::Macro(_) => {}
                 Item::Mod(item_mod) => {}
                 Item::Static(_) => todo!(),
-                Item::Struct(item_struct) => {
-                    let struct_name = item_struct.ident.to_string();
-
-                    // Make ItemDefinition
-                    let generics = item_struct
-                        .generics
-                        .params
-                        .iter()
-                        .map(|p| match p {
-                            GenericParam::Lifetime(_) => todo!(),
-                            GenericParam::Type(type_param) => type_param.ident.to_string(),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>();
-
-                    let generics_type_params = generics
-                        .iter()
-                        .map(|name| RustTypeParam {
-                            name: name.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>();
-
-                    let fields = if item_struct.fields.len() == 0 {
-                        StructFieldInfo::UnitStruct
-                    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-                        StructFieldInfo::RegularStruct(
-                            item_struct
-                                .fields
-                                .iter()
-                                .map(|f| {
-                                    (
-                                        f.ident.as_ref().unwrap().to_string(),
-                                        parse_types_for_populate_item_definitions(
-                                            &f.ty,
-                                            &generics,
-                                            &module.path,
-                                            &global_data_copy,
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        StructFieldInfo::TupleStruct(
-                            item_struct
-                                .fields
-                                .iter()
-                                .map(|f| {
-                                    parse_types_for_populate_item_definitions(
-                                        &f.ty,
-                                        &generics,
-                                        &module.path,
-                                        &global_data_copy,
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                    };
-
-                    module.item_definitons.push(ItemDefinition {
-                        ident: item_struct.ident.to_string(),
-                        is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
-                            Meta::Path(_) => todo!(),
-                            Meta::List(meta_list) => {
-                                let segs = &meta_list.path.segments;
-                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                                    let tokens = format!("({})", meta_list.tokens);
-                                    let trait_tuple =
-                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                                    trait_tuple.elems.iter().any(|elem| match elem {
-                                        Type::Path(type_path) => {
-                                            let segs = &type_path.path.segments;
-                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                                        }
-                                        _ => todo!(),
-                                    })
-                                } else {
-                                    false
-                                }
-                            }
-                            Meta::NameValue(_) => todo!(),
-                        }),
-                        generics,
-                        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
-                            StructDefinitionInfo {
-                                fields,
-                                syn_object: Some(item_struct.clone()),
-                            },
-                        ),
-                        impl_items: Vec::new(),
-                    });
-                }
-                Item::Trait(item_trait) => module.trait_definitons.push(RustTraitDefinition {
-                    name: item_trait.ident.to_string(),
-                }),
+                Item::Struct(item_struct) => {}
+                Item::Trait(item_trait) => {}
                 Item::TraitAlias(_) => todo!(),
                 Item::Type(_) => todo!(),
                 Item::Union(_) => todo!(),
@@ -4730,6 +4649,8 @@ pub fn process_items(
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
     extract_data_populate_item_definitions(&mut global_data);
 
+    populate_impl_blocks(&mut global_data);
+
     populate_impl_items(&mut global_data);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
@@ -4789,6 +4710,7 @@ pub fn process_items(
         .unwrap();
     crate_module.stmts = stmts;
 
+    // 5 failed in test "impl" when commenting out update_classes
     // update_classes(
     //     &mut global_data.transpiled_modules,
     //     &global_data.impl_blocks,
@@ -5629,10 +5551,16 @@ fn get_path(
     );
     // dbg!(&item_defined_in_module);
 
+    // dbg!(&module.path);
+    // dbg!(&module.name);
+    // dbg!(&segs);
+    // dbg!(&module.pub_submodules);
+    // dbg!(&module.private_submodules);
     let path_starts_with_sub_module = module.path_starts_with_sub_module(
         use_private_items || is_parent_or_same_module,
         &segs[0].ident,
     );
+    // dbg!(&path_starts_with_sub_module);
 
     // TODO only look through transparent scopes
     let scoped_use_mapping = global_data
