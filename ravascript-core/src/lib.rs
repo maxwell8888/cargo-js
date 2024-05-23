@@ -1630,6 +1630,10 @@ struct ModuleData {
 
     // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but is populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
     items: Vec<Item>,
+
+    // (scope number, definitions)
+    // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
+    scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
 }
 impl ModuleData {
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
@@ -2739,6 +2743,9 @@ impl GlobalData {
             if let Some(item_def) = item_def {
                 return Some((Some(item_module_path), item_def.clone()));
             } else {
+                dbg!(&item_module_path);
+                dbg!(&item_path);
+                dbg!(&_is_scoped);
                 todo!()
             }
 
@@ -3717,6 +3724,7 @@ fn extract_data(
                     trait_definitons: Vec::new(),
                     consts: Vec::new(),
                     items: Vec::new(),
+                    scoped_various_definitions: Vec::new(),
                 };
 
                 // NOTE we do the `modules.push(ModuleData { ...` below because we need to get the module items from the different content/no content branches
@@ -3823,7 +3831,7 @@ fn extract_data(
     }
 }
 
-fn extract_data_populate_item_definitions(global_data: &mut GlobalData) {
+fn populate_item_definitions(global_data: &mut GlobalData) {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
 
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
@@ -3835,376 +3843,493 @@ fn extract_data_populate_item_definitions(global_data: &mut GlobalData) {
             "extract_data_populate_item_definitions module: {:?}",
             module_path = ?module.path
         );
-        for item in &module.items {
-            match item {
-                Item::Const(item_const) => {
-                    let const_name = item_const.ident.to_string();
-                    let rust_type = parse_types_for_populate_item_definitions(
-                        &item_const.ty,
-                        &Vec::new(),
-                        &module.path,
-                        &global_data_copy,
-                    );
-                    module.consts.push(ConstDef {
-                        name: const_name,
-                        type_: rust_type,
-                        syn_object: item_const.clone(),
-                    });
-                }
-                Item::Enum(item_enum) => {
-                    let enum_name = item_enum.ident.to_string();
 
-                    // Make ItemDefinition
-                    let generics = item_enum
-                        .generics
-                        .params
-                        .iter()
-                        .map(|p| match p {
-                            GenericParam::Lifetime(_) => todo!(),
-                            GenericParam::Type(type_param) => type_param.ident.to_string(),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>();
-                    let members_for_scope = item_enum
-                        .variants
-                        .iter()
-                        .map(|v| EnumVariantInfo {
-                            ident: v.ident.to_string(),
-                            inputs: v
-                                .fields
-                                .iter()
-                                .map(|f| {
-                                    let input_type = parse_types_for_populate_item_definitions(
-                                        &f.ty,
-                                        &generics,
-                                        &module.path,
-                                        &global_data_copy,
-                                    );
-                                    match &f.ident {
-                                        Some(input_name) => EnumVariantInputsInfo::Named {
-                                            ident: input_name.to_string(),
-                                            input_type,
-                                        },
-                                        None => EnumVariantInputsInfo::Unnamed(input_type),
-                                    }
-                                })
-                                .collect::<Vec<_>>(),
-                        })
-                        .collect::<Vec<_>>();
+        // TODO Gymnastics to reconcile needing to mutate 4 different vectors which are stored differently for modules and scopes. Should probably have `module.various_defs` and `scope.various_defs` fields
+        let mut var_defs = VariousDefintions::default();
+        let items = module.items.clone();
+        let module_path = module.path.clone();
+        let mut scope_number = Vec::new();
+        populate_item_definitions_items(
+            &items,
+            &global_data_copy,
+            &module_path,
+            &mut var_defs,
+            module,
+            &mut scope_number,
+        );
+        module.fn_info.extend(var_defs.fn_info);
+        module.item_definitons.extend(var_defs.item_definitons);
+        module.consts.extend(var_defs.consts);
+        module.trait_definitons.extend(var_defs.trait_definitons);
+    }
+}
 
-                    module.item_definitons.push(ItemDefinition {
-                        ident: enum_name,
-                        is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
-                            Meta::Path(_) => todo!(),
-                            Meta::List(meta_list) => {
-                                let segs = &meta_list.path.segments;
-                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                                    let tokens = format!("({})", meta_list.tokens);
-                                    let trait_tuple =
-                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                                    trait_tuple.elems.iter().any(|elem| match elem {
-                                        Type::Path(type_path) => {
-                                            let segs = &type_path.path.segments;
-                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                                        }
-                                        _ => todo!(),
-                                    })
-                                } else {
-                                    false
-                                }
-                            }
-                            Meta::NameValue(_) => todo!(),
-                        }),
-                        generics,
-                        struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                            members: members_for_scope,
-                            syn_object: item_enum.clone(),
-                        }),
-                        impl_blocks: Vec::new(),
-                    });
-                }
-                Item::ExternCrate(_) => todo!(),
-                Item::Fn(item_fn) => {
-                    let generics = item_fn
-                        .sig
-                        .generics
-                        .params
-                        .iter()
-                        .filter_map(|g| match g {
-                            GenericParam::Lifetime(_) => None,
-                            GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>();
+#[derive(Debug, Clone, Default)]
+struct VariousDefintions {
+    fn_info: Vec<FnInfo>,
+    item_definitons: Vec<ItemDefinition>,
+    consts: Vec<ConstDef>,
+    trait_definitons: Vec<RustTraitDefinition>,
+}
 
-                    let inputs_types = item_fn
-                        .sig
-                        .inputs
-                        .iter()
-                        .filter_map(|input| match input {
-                            FnArg::Receiver(_) => None,
-                            FnArg::Typed(pat_type) => {
-                                Some(parse_types_for_populate_item_definitions(
-                                    &*pat_type.ty,
-                                    &generics,
-                                    &module.path,
-                                    &global_data_copy,
-                                ))
-                            }
-                        })
-                        .collect::<Vec<_>>();
+fn populate_item_definitions_items(
+    items: &Vec<Item>,
+    global_data: &GlobalData,
+    module_path: &Vec<String>,
+    various_defs: &mut VariousDefintions,
+    module: &mut ModuleData,
+    scope_id: &mut Vec<usize>,
+) {
+    let mut scope_count = 0;
 
-                    let return_type = match &item_fn.sig.output {
-                        ReturnType::Default => RustType::Unit,
-                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                            &*type_,
-                            &generics,
-                            &module.path,
-                            &global_data_copy,
-                        ),
-                    };
-                    module.fn_info.push(FnInfo {
-                        ident: item_fn.sig.ident.to_string(),
-                        inputs_types,
-                        generics,
-                        return_type,
+    for item in items {
+        match item {
+            Item::Const(item_const) => {
+                let const_name = item_const.ident.to_string();
+                let rust_type = parse_types_for_populate_item_definitions(
+                    &item_const.ty,
+                    &Vec::new(),
+                    module_path,
+                    global_data,
+                );
+
+                various_defs.consts.push(ConstDef {
+                    name: const_name,
+                    type_: rust_type,
+                    syn_object: item_const.clone(),
+                });
+            }
+            Item::Enum(item_enum) => {
+                let enum_name = item_enum.ident.to_string();
+
+                // Make ItemDefinition
+                let generics = item_enum
+                    .generics
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        GenericParam::Lifetime(_) => todo!(),
+                        GenericParam::Type(type_param) => type_param.ident.to_string(),
+                        GenericParam::Const(_) => todo!(),
                     })
-                }
-                Item::ForeignMod(_) => todo!(),
-                Item::Impl(item_impl) => {
-                    // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
-                }
-                Item::Macro(_) => {}
-                Item::Mod(item_mod) => {}
-                Item::Static(_) => todo!(),
-                Item::Struct(item_struct) => {
-                    let struct_name = item_struct.ident.to_string();
+                    .collect::<Vec<_>>();
+                let members_for_scope = item_enum
+                    .variants
+                    .iter()
+                    .map(|v| EnumVariantInfo {
+                        ident: v.ident.to_string(),
+                        inputs: v
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                let input_type = parse_types_for_populate_item_definitions(
+                                    &f.ty,
+                                    &generics,
+                                    module_path,
+                                    global_data,
+                                );
+                                match &f.ident {
+                                    Some(input_name) => EnumVariantInputsInfo::Named {
+                                        ident: input_name.to_string(),
+                                        input_type,
+                                    },
+                                    None => EnumVariantInputsInfo::Unnamed(input_type),
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                    .collect::<Vec<_>>();
 
-                    // Make ItemDefinition
-                    let generics = item_struct
-                        .generics
-                        .params
-                        .iter()
-                        .map(|p| match p {
-                            GenericParam::Lifetime(_) => todo!(),
-                            GenericParam::Type(type_param) => type_param.ident.to_string(),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>();
-
-                    let generics_type_params = generics
-                        .iter()
-                        .map(|name| RustTypeParam {
-                            name: name.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>();
-
-                    let fields = if item_struct.fields.len() == 0 {
-                        StructFieldInfo::UnitStruct
-                    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-                        StructFieldInfo::RegularStruct(
-                            item_struct
-                                .fields
-                                .iter()
-                                .map(|f| {
-                                    (
-                                        f.ident.as_ref().unwrap().to_string(),
-                                        parse_types_for_populate_item_definitions(
-                                            &f.ty,
-                                            &generics,
-                                            &module.path,
-                                            &global_data_copy,
-                                        ),
-                                    )
+                various_defs.item_definitons.push(ItemDefinition {
+                    ident: enum_name,
+                    is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
+                        Meta::Path(_) => todo!(),
+                        Meta::List(meta_list) => {
+                            let segs = &meta_list.path.segments;
+                            if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                                let tokens = format!("({})", meta_list.tokens);
+                                let trait_tuple =
+                                    syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                                trait_tuple.elems.iter().any(|elem| match elem {
+                                    Type::Path(type_path) => {
+                                        let segs = &type_path.path.segments;
+                                        // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                        segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                                    }
+                                    _ => todo!(),
                                 })
-                                .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        StructFieldInfo::TupleStruct(
-                            item_struct
-                                .fields
-                                .iter()
-                                .map(|f| {
+                            } else {
+                                false
+                            }
+                        }
+                        Meta::NameValue(_) => todo!(),
+                    }),
+                    generics,
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                        members: members_for_scope,
+                        syn_object: item_enum.clone(),
+                    }),
+                    impl_blocks: Vec::new(),
+                });
+            }
+            Item::ExternCrate(_) => todo!(),
+            Item::Fn(item_fn) => {
+                let generics = item_fn
+                    .sig
+                    .generics
+                    .params
+                    .iter()
+                    .filter_map(|g| match g {
+                        GenericParam::Lifetime(_) => None,
+                        GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                        GenericParam::Const(_) => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+
+                let inputs_types = item_fn
+                    .sig
+                    .inputs
+                    .iter()
+                    .filter_map(|input| match input {
+                        FnArg::Receiver(_) => None,
+                        FnArg::Typed(pat_type) => Some(parse_types_for_populate_item_definitions(
+                            &*pat_type.ty,
+                            &generics,
+                            module_path,
+                            &global_data,
+                        )),
+                    })
+                    .collect::<Vec<_>>();
+
+                let return_type = match &item_fn.sig.output {
+                    ReturnType::Default => RustType::Unit,
+                    ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                        &*type_,
+                        &generics,
+                        module_path,
+                        global_data,
+                    ),
+                };
+                various_defs.fn_info.push(FnInfo {
+                    ident: item_fn.sig.ident.to_string(),
+                    inputs_types,
+                    generics,
+                    return_type,
+                });
+
+                // Get scoped definitions
+
+                scope_count += 1;
+
+                let mut itemms = Vec::new();
+                for stmt in item_fn.block.stmts.clone().into_iter() {
+                    append_items_from_stmt(&mut itemms, stmt);
+                }
+
+                // *scope_number.last_mut().unwrap() += 1;
+
+                let mut scoped_various_defs = VariousDefintions::default();
+
+                // We are now processing the items within the fn block, so are no longer at the module level and now in a scope (or in a new child scope), so push a new scope level
+                scope_id.push(scope_count);
+                populate_item_definitions_items(
+                    &itemms,
+                    global_data,
+                    module_path,
+                    &mut scoped_various_defs,
+                    module,
+                    scope_id,
+                );
+                module.scoped_various_definitions.push((
+                    scope_id.clone(),
+                    scoped_various_defs,
+                    Vec::new(),
+                ));
+                scope_id.pop();
+            }
+            Item::ForeignMod(_) => todo!(),
+            Item::Impl(item_impl) => {
+                // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
+
+                // TODO also need to go through scopes in impl fns, like with standalone fns
+            }
+            Item::Macro(_) => {}
+            Item::Mod(item_mod) => {}
+            Item::Static(_) => todo!(),
+            Item::Struct(item_struct) => {
+                let struct_name = item_struct.ident.to_string();
+
+                // Make ItemDefinition
+                let generics = item_struct
+                    .generics
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        GenericParam::Lifetime(_) => todo!(),
+                        GenericParam::Type(type_param) => type_param.ident.to_string(),
+                        GenericParam::Const(_) => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+
+                let generics_type_params = generics
+                    .iter()
+                    .map(|name| RustTypeParam {
+                        name: name.clone(),
+                        type_: RustTypeParamValue::Unresolved,
+                    })
+                    .collect::<Vec<_>>();
+
+                let fields = if item_struct.fields.len() == 0 {
+                    StructFieldInfo::UnitStruct
+                } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                    StructFieldInfo::RegularStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                (
+                                    f.ident.as_ref().unwrap().to_string(),
                                     parse_types_for_populate_item_definitions(
                                         &f.ty,
                                         &generics,
-                                        &module.path,
-                                        &global_data_copy,
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                    };
+                                        module_path,
+                                        global_data,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    StructFieldInfo::TupleStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                parse_types_for_populate_item_definitions(
+                                    &f.ty,
+                                    &generics,
+                                    module_path,
+                                    global_data,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
 
-                    module.item_definitons.push(ItemDefinition {
-                        ident: item_struct.ident.to_string(),
-                        is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
-                            Meta::Path(_) => todo!(),
-                            Meta::List(meta_list) => {
-                                let segs = &meta_list.path.segments;
-                                if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                                    let tokens = format!("({})", meta_list.tokens);
-                                    let trait_tuple =
-                                        syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                                    trait_tuple.elems.iter().any(|elem| match elem {
-                                        Type::Path(type_path) => {
-                                            let segs = &type_path.path.segments;
-                                            // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                            segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                                        }
-                                        _ => todo!(),
-                                    })
-                                } else {
-                                    false
-                                }
+                various_defs.item_definitons.push(ItemDefinition {
+                    ident: item_struct.ident.to_string(),
+                    is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
+                        Meta::Path(_) => todo!(),
+                        Meta::List(meta_list) => {
+                            let segs = &meta_list.path.segments;
+                            if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                                let tokens = format!("({})", meta_list.tokens);
+                                let trait_tuple =
+                                    syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                                trait_tuple.elems.iter().any(|elem| match elem {
+                                    Type::Path(type_path) => {
+                                        let segs = &type_path.path.segments;
+                                        // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                        segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                                    }
+                                    _ => todo!(),
+                                })
+                            } else {
+                                false
                             }
-                            Meta::NameValue(_) => todo!(),
-                        }),
-                        generics,
-                        struct_or_enum_info: StructOrEnumDefitionInfo::Struct(
-                            StructDefinitionInfo {
-                                fields,
-                                syn_object: Some(item_struct.clone()),
-                            },
-                        ),
-                        impl_blocks: Vec::new(),
-                    });
-                }
-                Item::Trait(item_trait) => module.trait_definitons.push(RustTraitDefinition {
-                    name: item_trait.ident.to_string(),
-                }),
-                Item::TraitAlias(_) => todo!(),
-                Item::Type(_) => todo!(),
-                Item::Union(_) => todo!(),
-                Item::Use(_) => {}
-                Item::Verbatim(_) => todo!(),
-                _ => todo!(),
+                        }
+                        Meta::NameValue(_) => todo!(),
+                    }),
+                    generics,
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                        fields,
+                        syn_object: Some(item_struct.clone()),
+                    }),
+                    impl_blocks: Vec::new(),
+                });
             }
+            Item::Trait(item_trait) => various_defs.trait_definitons.push(RustTraitDefinition {
+                name: item_trait.ident.to_string(),
+            }),
+            Item::TraitAlias(_) => todo!(),
+            Item::Type(_) => todo!(),
+            Item::Union(_) => todo!(),
+            Item::Use(_) => {}
+            Item::Verbatim(_) => todo!(),
+            _ => todo!(),
         }
     }
 }
 
 fn populate_impl_blocks(global_data: &mut GlobalData) {
     let global_data_copy = global_data.clone();
-
     for module in &mut global_data.modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
             module_path = ?module.path
         );
-        for item in &module.items {
-            match item {
-                Item::Const(item_const) => {}
-                Item::Enum(item_enum) => {}
-                Item::ExternCrate(_) => todo!(),
-                Item::Fn(item_fn) => {}
-                Item::ForeignMod(_) => todo!(),
-                Item::Impl(item_impl) => {
-                    // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
+        let module_path = module.path.clone();
+        populate_impl_blocks_items(
+            &module.items,
+            &global_data_copy,
+            &module_path,
+            &mut global_data.impl_blocks_simpl,
+            &mut module.scoped_various_definitions,
+        );
+    }
+}
 
-                    let impl_item_target_path = match &*item_impl.self_ty {
-                        Type::Path(type_path) => type_path
-                            .path
-                            .segments
-                            .iter()
-                            .map(|s| s.ident.to_string())
-                            .collect::<Vec<_>>(),
-                        _ => todo!(),
-                    };
+// IMPORTANT TODO also need to iterate through all `expr`s that can contain items eg blocks, loops, match expressions, etc.
+fn append_items_from_expr(items: &mut Vec<Item>, expr: Expr) {
+    match expr {
+        Expr::Block(expr_block) => {
+            for stmt in expr_block.block.stmts {
+                append_items_from_stmt(items, stmt);
+            }
+        }
+        _ => {}
+    }
+}
+fn append_items_from_stmt(items: &mut Vec<Item>, stmt: Stmt) {
+    match stmt {
+        Stmt::Local(_) => {}
+        Stmt::Item(item) => {
+            items.push(item);
+        }
+        Stmt::Expr(_, _) => {}
+        Stmt::Macro(_) => {}
+    }
+}
 
-                    let rust_impl_block_generics = item_impl
-                        .generics
-                        .params
+fn populate_impl_blocks_items(
+    items: &Vec<Item>,
+    global_data_copy: &GlobalData,
+    module_path: &Vec<String>,
+    global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
+    scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+) {
+    for item in items {
+        match item {
+            Item::Const(item_const) => {}
+            Item::Enum(item_enum) => {}
+            Item::ExternCrate(_) => todo!(),
+            Item::Fn(item_fn) => {
+                let mut items = Vec::new();
+                for stmt in item_fn.block.stmts.clone() {
+                    append_items_from_stmt(&mut items, stmt);
+                }
+                populate_impl_blocks_items(
+                    &items,
+                    &global_data_copy,
+                    &module_path,
+                    global_impl_blocks_simpl,
+                    scoped_various_definitions,
+                );
+            }
+            Item::ForeignMod(_) => todo!(),
+            Item::Impl(item_impl) => {
+                // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
+
+                let impl_item_target_path = match &*item_impl.self_ty {
+                    Type::Path(type_path) => type_path
+                        .path
+                        .segments
                         .iter()
-                        .filter_map(|gen| match gen {
-                            GenericParam::Lifetime(_) => None,
-                            GenericParam::Type(type_param) => Some(RustGeneric {
-                                ident: type_param.ident.to_string(),
-                                trait_bounds: type_param
-                                    .bounds
-                                    .iter()
-                                    .filter_map(|bound| {
-                                        // First lookup trait
-                                        match bound {
-                                            TypeParamBound::Trait(trait_bound) => {
-                                                let trait_path = trait_bound
-                                                    .path
-                                                    .segments
-                                                    .iter()
-                                                    .map(|seg| seg.ident.to_string())
-                                                    .collect::<Vec<_>>();
-                                                let (module_path, trait_def) = global_data_copy
-                                                    .lookup_trait_definition_any_module(
-                                                        &module.path,
-                                                        &trait_path,
-                                                    )
-                                                    .unwrap();
-                                                Some((module_path, trait_def.name))
-                                            }
-                                            TypeParamBound::Lifetime(_) => None,
-                                            TypeParamBound::Verbatim(_) => todo!(),
-                                            _ => todo!(),
-                                        }
-                                    })
-                                    .collect::<Vec<_>>(),
-                            }),
-                            GenericParam::Const(_) => todo!(),
-                        })
-                        .collect::<Vec<_>>();
+                        .map(|s| s.ident.to_string())
+                        .collect::<Vec<_>>(),
+                    _ => todo!(),
+                };
 
-                    let target_type_param = match &*item_impl.self_ty {
-                        Type::Path(type_path) => {
-                            if type_path.path.segments.len() == 1 {
-                                rust_impl_block_generics
-                                    .iter()
-                                    .find(|generic| {
-                                        generic.ident
-                                            == type_path
+                let rust_impl_block_generics = item_impl
+                    .generics
+                    .params
+                    .iter()
+                    .filter_map(|gen| match gen {
+                        GenericParam::Lifetime(_) => None,
+                        GenericParam::Type(type_param) => Some(RustGeneric {
+                            ident: type_param.ident.to_string(),
+                            trait_bounds: type_param
+                                .bounds
+                                .iter()
+                                .filter_map(|bound| {
+                                    // First lookup trait
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            let trait_path = trait_bound
                                                 .path
                                                 .segments
-                                                .first()
-                                                .unwrap()
-                                                .ident
-                                                .to_string()
-                                    })
-                                    .cloned()
-                            } else {
-                                None
-                            }
+                                                .iter()
+                                                .map(|seg| seg.ident.to_string())
+                                                .collect::<Vec<_>>();
+                                            let (module_path, trait_def) = global_data_copy
+                                                .lookup_trait_definition_any_module(
+                                                    module_path,
+                                                    &trait_path,
+                                                )
+                                                .unwrap();
+                                            Some((module_path, trait_def.name))
+                                        }
+                                        TypeParamBound::Lifetime(_) => None,
+                                        TypeParamBound::Verbatim(_) => todo!(),
+                                        _ => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        }),
+                        GenericParam::Const(_) => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+
+                let target_type_param = match &*item_impl.self_ty {
+                    Type::Path(type_path) => {
+                        if type_path.path.segments.len() == 1 {
+                            rust_impl_block_generics
+                                .iter()
+                                .find(|generic| {
+                                    generic.ident
+                                        == type_path
+                                            .path
+                                            .segments
+                                            .first()
+                                            .unwrap()
+                                            .ident
+                                            .to_string()
+                                })
+                                .cloned()
+                        } else {
+                            None
                         }
-                        // TODO handle other `Type`s properly
-                        _ => None,
-                    };
+                    }
+                    // TODO handle other `Type`s properly
+                    _ => None,
+                };
 
-                    let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-                        let (module_path, trait_def) = global_data_copy
-                            .lookup_trait_definition_any_module(
-                                &module.path,
-                                &trait_
-                                    .segments
-                                    .iter()
-                                    .map(|seg| seg.ident.to_string())
-                                    .collect::<Vec<_>>(),
-                            )
-                            .unwrap();
-                        (module_path, trait_def.name)
-                    });
+                let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
+                    let (module_path, trait_def) = global_data_copy
+                        .lookup_trait_definition_any_module(
+                            module_path,
+                            &trait_
+                                .segments
+                                .iter()
+                                .map(|seg| seg.ident.to_string())
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    (module_path, trait_def.name)
+                });
 
-                    // if let Some(trait_) = &item_impl.trait_ {
-                    //     if trait_.1.segments.len() != 1 {
-                    //         todo!()
-                    //     }
-                    //     global_data.default_trait_impls_class_mapping.push((
-                    //         target_item.ident.clone(),
-                    //         trait_.1.segments.first().unwrap().ident.to_string(),
-                    //     ));
-                    // }
+                // if let Some(trait_) = &item_impl.trait_ {
+                //     if trait_.1.segments.len() != 1 {
+                //         todo!()
+                //     }
+                //     global_data.default_trait_impls_class_mapping.push((
+                //         target_item.ident.clone(),
+                //         trait_.1.segments.first().unwrap().ident.to_string(),
+                //     ));
+                // }
 
-                    let (target_rust_type, is_target_type_param) = if let Some(target_type_param) =
-                        target_type_param
-                    {
+                let (target_rust_type, is_target_type_param) =
+                    if let Some(target_type_param) = target_type_param {
                         (
                             RustType::TypeParam(RustTypeParam {
                                 name: target_type_param.ident.clone(),
@@ -4215,7 +4340,7 @@ fn populate_impl_blocks(global_data: &mut GlobalData) {
                     } else {
                         // Get type of impl target
                         let (target_item_module, target_item) = global_data_copy
-                            .lookup_item_definition_any_module(&module.path, &impl_item_target_path)
+                            .lookup_item_definition_any_module(module_path, &impl_item_target_path)
                             .unwrap();
 
                         (
@@ -4235,27 +4360,30 @@ fn populate_impl_blocks(global_data: &mut GlobalData) {
                         )
                     };
 
-                    global_data.impl_block_target_type.pop();
+                // global_data.impl_block_target_type.pop();
 
-                    global_data.impl_blocks_simpl.push(RustImplBlockSimple {
-                        generics: rust_impl_block_generics,
-                        trait_: trait_path_and_name,
-                        target: target_rust_type.clone(),
-                        items: item_impl.items.clone(),
-                    });
-                }
-                Item::Macro(_) => {}
-                Item::Mod(item_mod) => {}
-                Item::Static(_) => todo!(),
-                Item::Struct(item_struct) => {}
-                Item::Trait(item_trait) => {}
-                Item::TraitAlias(_) => todo!(),
-                Item::Type(_) => todo!(),
-                Item::Union(_) => todo!(),
-                Item::Use(_) => {}
-                Item::Verbatim(_) => todo!(),
-                _ => todo!(),
+                global_impl_blocks_simpl.push(RustImplBlockSimple {
+                    generics: rust_impl_block_generics,
+                    trait_: trait_path_and_name,
+                    target: target_rust_type.clone(),
+                    items: item_impl.items.clone(),
+                });
             }
+            Item::Macro(_) => {}
+            Item::Mod(item_mod) => {
+                // Modules should have already been converted to `ModuleData`s
+                // TODO Can't assert because these items will still exist even though we now have `ModuleData`s, should clean this up so we can assert or be more confident from simplicity
+                // assert!(item_mod.content.is_none());
+            }
+            Item::Static(_) => todo!(),
+            Item::Struct(item_struct) => {}
+            Item::Trait(item_trait) => {}
+            Item::TraitAlias(_) => todo!(),
+            Item::Type(_) => todo!(),
+            Item::Union(_) => todo!(),
+            Item::Use(_) => {}
+            Item::Verbatim(_) => todo!(),
+            _ => todo!(),
         }
     }
 }
@@ -4526,6 +4654,7 @@ pub fn process_items(
         trait_definitons: Vec::new(),
         consts: Vec::new(),
         items: items.clone(),
+        scoped_various_definitions: Vec::new(),
     });
     let get_names_module_path = vec!["crate".to_string()];
 
@@ -4572,6 +4701,7 @@ pub fn process_items(
         trait_definitons: Vec::new(),
         consts: Vec::new(),
         items: prelude_items.clone(),
+        scoped_various_definitions: Vec::new(),
     });
 
     extract_data(
@@ -4647,10 +4777,15 @@ pub fn process_items(
     // let gen_arg_name = item_definition.generics[i].clone();
     //
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
-    extract_data_populate_item_definitions(&mut global_data);
+    // ie populate module and scope `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
+    populate_item_definitions(&mut global_data);
 
+    // populates `global_data.impl_blocks_simpl` with `RustImplBlockSimple`s
+    // TODO need to also populate module scopes with `RustImplBlockSimple`s
     populate_impl_blocks(&mut global_data);
 
+    // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
+    // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     populate_impl_items(&mut global_data);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
@@ -4812,6 +4947,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         trait_definitons: Vec::new(),
         consts: Vec::new(),
         items: Vec::new(),
+        scoped_various_definitions: Vec::new(),
     });
     let mut get_names_module_path = vec!["crate".to_string()];
 
