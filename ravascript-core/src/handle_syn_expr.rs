@@ -2369,7 +2369,11 @@ fn handle_expr_path_inner(
     //     var.is_some() || func.is_some() || item_def.is_some()
     // });
 
-    // TODO can we not use get_path_without_namespacing() for everything?
+    let scope_id_temp = if global_data.scope_id.is_empty() {
+        None
+    } else {
+        Some(global_data.scope_id.clone())
+    };
     let (segs_copy_module_path, segs_copy_item_path, is_scoped) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
@@ -2379,6 +2383,7 @@ fn handle_expr_path_inner(
         global_data,
         current_module,
         current_module,
+        &scope_id_temp,
     );
     // dbg!(&segs_copy_module_path);
     // dbg!(&segs_copy_item_path);

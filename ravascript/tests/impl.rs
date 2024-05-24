@@ -414,19 +414,26 @@ async fn shadowed_structs_with_shadowed_methods() {
     let expected = format_js(
         r#"
             // crate
-            class Foo {
-                getNum() {
-                    return 5;
-                }
-            }
             function main() {
+                class Foo {
+                    bar() {
+                        return 4;
+                    }
+                }
+                function cool() {
+                    class Foo {
+                        bar() {
+                            return 5;
+                        }
+                    }
+                    var foo = new Foo();
+                    console.assert(foo.bar() === 5);
+                }
                 var foo = new Foo();
-                console.assert(foo.getNum() === 5);
+                console.assert(foo.bar() === 4);
+                cool();
             }
-
-            // bar
-            function baz() {}
-
+            
             main();
         "#,
     );

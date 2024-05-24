@@ -3,6 +3,10 @@ use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 use handle_syn_expr::{handle_expr, handle_expr_block, handle_expr_match};
+use handle_syn_item::{
+    handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_mod,
+    handle_item_struct, handle_item_trait,
+};
 use handle_syn_stmt::handle_stmt;
 use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use js_ast::{
@@ -28,7 +32,7 @@ use tracing::{debug, debug_span, info, span, warn};
 
 mod handle_syn_expr;
 mod handle_syn_item;
-use crate::handle_syn_item::handle_item;
+// use crate::handle_syn_item::handle_item;
 mod handle_syn_stmt;
 mod js_ast;
 pub mod prelude;
@@ -1060,6 +1064,7 @@ fn parse_types_for_populate_item_definitions(
                                 global_data,
                                 current_module,
                                 current_module,
+                                &None,
                             );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
@@ -1223,6 +1228,7 @@ fn parse_types_for_populate_item_definitions(
                         global_data,
                         current_module,
                         current_module,
+                        &None,
                     );
                     let item_seg = &item_path_seg[0];
 
@@ -1510,9 +1516,60 @@ fn js_stmts_from_syn_items(
 
     // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
-
+    global_data.scope_id.push(0);
     for item in items {
-        handle_item(item, global_data, current_module, &mut js_stmts);
+        // handle_item(item, global_data, current_module, &mut js_stmts);
+        match item {
+            Item::Const(item_const) => {
+                js_stmts.push(handle_item_const(
+                    &item_const,
+                    true,
+                    global_data,
+                    current_module,
+                ));
+            }
+            Item::Enum(item_enum) => {
+                js_stmts.push(handle_item_enum(
+                    item_enum,
+                    true,
+                    global_data,
+                    current_module,
+                ));
+            }
+            Item::ExternCrate(_) => todo!(),
+            Item::Fn(item_fn) => {
+                js_stmts.push(handle_item_fn(&item_fn, true, global_data, current_module));
+            }
+            Item::ForeignMod(_) => todo!(),
+            Item::Impl(item_impl) => {
+                js_stmts.push(handle_item_impl(
+                    &item_impl,
+                    true,
+                    global_data,
+                    current_module,
+                ));
+            }
+            Item::Macro(_) => todo!(),
+            Item::Mod(item_mod) => {
+                // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
+                handle_item_mod(item_mod, global_data, current_module)
+            }
+            Item::Static(_) => todo!(),
+            Item::Struct(item_struct) => {
+                let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module);
+                js_stmts.push(js_stmt);
+            }
+            Item::Trait(item_trait) => {
+                handle_item_trait(&item_trait, true, global_data, current_module);
+                js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
+            }
+            Item::TraitAlias(_) => todo!(),
+            Item::Type(_) => todo!(),
+            Item::Union(_) => todo!(),
+            Item::Use(_) => {}
+            Item::Verbatim(_) => todo!(),
+            _ => todo!(),
+        }
     }
 
     js_stmts
@@ -2376,6 +2433,7 @@ struct GlobalData {
     transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
+    scope_id: Vec<usize>,
 }
 impl GlobalData {
     fn new(crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
@@ -2441,6 +2499,7 @@ impl GlobalData {
             impl_blocks: Vec::new(),
             scoped_impl_blocks: Vec::new(),
             impl_blocks_simpl: Vec::new(),
+            scope_id: Vec::new(),
             // at_module_top_level: false,
         }
     }
@@ -2609,6 +2668,7 @@ impl GlobalData {
                 self,
                 current_module,
                 current_module,
+                &None,
             );
             assert!(item_path.len() == 1);
             // dbg!("yes");
@@ -2712,6 +2772,7 @@ impl GlobalData {
                 self,
                 current_module_path,
                 current_module_path,
+                &None,
             );
             // dbg!(&item_module_path);
             // dbg!(&item_path);
@@ -2743,9 +2804,6 @@ impl GlobalData {
             if let Some(item_def) = item_def {
                 return Some((Some(item_module_path), item_def.clone()));
             } else {
-                dbg!(&item_module_path);
-                dbg!(&item_path);
-                dbg!(&_is_scoped);
                 todo!()
             }
 
@@ -2760,6 +2818,71 @@ impl GlobalData {
             // } else {
             //     None
             // }
+        }
+    }
+
+    /// NOTE to be used pre syn -> JS parsing, ie self.scopes won't have been populated
+    // -> (module path, scope id (even if we are in a scope so `Some` scope id is provided, the item being looked up might still be module level. Of course if None scope id is provided it is impossible for a Some scope id to be returned), item definition)
+    fn lookup_item_definition_any_module_or_scope(
+        &self,
+        current_module_path: &Vec<String>,
+        scope_id: &Option<Vec<usize>>,
+        path: &Vec<String>,
+    ) -> (Vec<String>, Option<Vec<usize>>, ItemDefinition) {
+
+        let (item_module_path, item_path, is_scoped) = get_path(
+            false,
+            true,
+            true,
+            path.iter()
+                .map(|seg| RustPathSegment {
+                    ident: seg.clone(),
+                    turbofish: Vec::new(),
+                })
+                .collect::<Vec<_>>(),
+            self,
+            current_module_path,
+            current_module_path,
+            scope_id,
+        );
+
+        if item_module_path == vec!["prelude_special_case".to_string()] {
+            // Get prelude item definitions
+            let (_name, def) = self
+                .rust_prelude_definitions
+                .iter()
+                .find(|(name, def)| name == &item_path[0].ident)
+                .unwrap();
+            return (item_module_path, None, def.clone());
+        }
+
+        let item_module = self
+            .modules
+            .iter()
+            .find(|m| &m.path == &item_module_path)
+            .unwrap();
+
+        // TODO if the path is eg an associated fn, should we return the item or the fn? ie se or RustType?
+        let item_defintions = if is_scoped {
+            &item_module
+                .scoped_various_definitions
+                .iter()
+                .find(|svd| svd.0 == scope_id.clone().unwrap())
+                .unwrap()
+                .1
+                .item_definitons
+        } else {
+            &item_module.item_definitons
+        };
+        let item_def = item_defintions
+            .iter()
+            .find(|se| se.ident == item_path[0].ident)
+            .unwrap();
+
+        if is_scoped {
+            (item_module_path, scope_id.clone(), item_def.clone())
+        } else {
+            (item_module_path, None, item_def.clone())
         }
     }
 
@@ -2802,6 +2925,7 @@ impl GlobalData {
                 self,
                 current_module_path,
                 current_module_path,
+                &None,
             );
             let item_module = self
                 .modules
@@ -4169,12 +4293,14 @@ fn populate_impl_blocks(global_data: &mut GlobalData) {
             module_path = ?module.path
         );
         let module_path = module.path.clone();
+        let mut scope_id = Vec::new();
         populate_impl_blocks_items(
             &module.items,
             &global_data_copy,
             &module_path,
             &mut global_data.impl_blocks_simpl,
             &mut module.scoped_various_definitions,
+            &mut scope_id,
         );
     }
 }
@@ -4207,24 +4333,31 @@ fn populate_impl_blocks_items(
     module_path: &Vec<String>,
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
     scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+    scope_id: &mut Vec<usize>,
 ) {
+    let mut scope_count = 0;
     for item in items {
         match item {
             Item::Const(item_const) => {}
             Item::Enum(item_enum) => {}
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
+                scope_count += 1;
                 let mut items = Vec::new();
                 for stmt in item_fn.block.stmts.clone() {
                     append_items_from_stmt(&mut items, stmt);
                 }
+
+                scope_id.push(scope_count);
                 populate_impl_blocks_items(
                     &items,
                     &global_data_copy,
                     &module_path,
                     global_impl_blocks_simpl,
                     scoped_various_definitions,
+                    scope_id,
                 );
+                scope_id.pop();
             }
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
@@ -4286,14 +4419,9 @@ fn populate_impl_blocks_items(
                             rust_impl_block_generics
                                 .iter()
                                 .find(|generic| {
-                                    generic.ident
-                                        == type_path
-                                            .path
-                                            .segments
-                                            .first()
-                                            .unwrap()
-                                            .ident
-                                            .to_string()
+                                    let first_seg =
+                                        type_path.path.segments.first().unwrap().ident.to_string();
+                                    generic.ident == first_seg
                                 })
                                 .cloned()
                         } else {
@@ -4339,9 +4467,17 @@ fn populate_impl_blocks_items(
                         )
                     } else {
                         // Get type of impl target
-                        let (target_item_module, target_item) = global_data_copy
-                            .lookup_item_definition_any_module(module_path, &impl_item_target_path)
-                            .unwrap();
+                        let temp_scope_id = if scope_id.is_empty() {
+                            None
+                        } else {
+                            Some(scope_id.clone())
+                        };
+                        let (target_item_module, resolved_scope_id, target_item) = global_data_copy
+                            .lookup_item_definition_any_module_or_scope(
+                                module_path,
+                                &temp_scope_id,
+                                &impl_item_target_path,
+                            );
 
                         (
                             RustType::StructOrEnum(
@@ -4353,7 +4489,11 @@ fn populate_impl_blocks_items(
                                         type_: RustTypeParamValue::Unresolved,
                                     })
                                     .collect::<Vec<_>>(),
-                                target_item_module.clone(),
+                                if resolved_scope_id.is_some() {
+                                    None
+                                } else {
+                                    Some(target_item_module.clone())
+                                },
                                 target_item.ident.to_string(),
                             ),
                             false,
@@ -4361,13 +4501,26 @@ fn populate_impl_blocks_items(
                     };
 
                 // global_data.impl_block_target_type.pop();
+                if scope_id.is_empty() {
+                    global_impl_blocks_simpl.push(RustImplBlockSimple {
+                        generics: rust_impl_block_generics,
+                        trait_: trait_path_and_name,
+                        target: target_rust_type.clone(),
+                        items: item_impl.items.clone(),
+                    });
+                } else {
+                    let svd = scoped_various_definitions
+                        .iter_mut()
+                        .find(|svd| svd.0 == *scope_id)
+                        .unwrap();
 
-                global_impl_blocks_simpl.push(RustImplBlockSimple {
-                    generics: rust_impl_block_generics,
-                    trait_: trait_path_and_name,
-                    target: target_rust_type.clone(),
-                    items: item_impl.items.clone(),
-                });
+                    svd.2.push(RustImplBlockSimple {
+                        generics: rust_impl_block_generics,
+                        trait_: trait_path_and_name,
+                        target: target_rust_type.clone(),
+                        items: item_impl.items.clone(),
+                    });
+                }
             }
             Item::Macro(_) => {}
             Item::Mod(item_mod) => {
@@ -4777,11 +4930,10 @@ pub fn process_items(
     // let gen_arg_name = item_definition.generics[i].clone();
     //
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
-    // ie populate module and scope `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
+    // ie populate module and scoped `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
     populate_item_definitions(&mut global_data);
 
     // populates `global_data.impl_blocks_simpl` with `RustImplBlockSimple`s
-    // TODO need to also populate module scopes with `RustImplBlockSimple`s
     populate_impl_blocks(&mut global_data);
 
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
@@ -5658,6 +5810,7 @@ fn get_path(
     current_mod: &Vec<String>,
     // Only used to determine if current module is the original module
     orig_mod: &Vec<String>,
+    scope_id: &Option<Vec<usize>>,
 ) -> (Vec<String>, Vec<RustPathSegment>, bool) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
@@ -5721,6 +5874,30 @@ fn get_path(
     let external_crate_names = vec!["web_prelude"];
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
+    // TODO IMPORTANT we have two `is_scoped` vars here because we are using `get_path` in different contexts. `is_scoped_static` is for getting the path from static data, before syn -> JS parsing, and `is_scoped` is for use during the syn -> JS parsing. This needs thinking about, reconciling and simplifying.
+    let is_scoped_static = scope_id
+        .as_ref()
+        .and_then(|scope_id| {
+            module
+                .scoped_various_definitions
+                .iter()
+                .find(|svd| &svd.0 == scope_id)
+        })
+        .is_some_and(|svd| {
+            let scope = &svd.1;
+            let is_func = look_for_scoped_items
+                && scope.fn_info.iter().any(|func| func.ident == segs[0].ident);
+            let is_item_def = look_for_scoped_items
+                && scope
+                    .item_definitons
+                    .iter()
+                    .any(|item_def| item_def.ident == segs[0].ident);
+
+            // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
+            // TODO I don't think `&& current_mod == orig_mod` is necessary given look_for_scoped_vars and look_for_scoped_items
+            (is_func || is_item_def) && current_mod == orig_mod
+        });
+
     let is_scoped = global_data.scopes.iter().rev().any(|scope| {
         let is_func =
             look_for_scoped_items && scope.fns.iter().any(|func| func.ident == segs[0].ident);
@@ -5770,7 +5947,7 @@ fn get_path(
 
     // TODO not sure why we need use_private_items here
     // if use_private_items && is_scoped {
-    if is_scoped {
+    if is_scoped || is_scoped_static {
         // Variables and scoped items
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
 
@@ -5794,6 +5971,7 @@ fn get_path(
             global_data,
             &current_module,
             orig_mod,
+            &None,
         )
     } else if segs[0].ident == "self" {
         // NOTE private items are still accessible from the module via self
@@ -5807,6 +5985,7 @@ fn get_path(
             global_data,
             &current_mod,
             orig_mod,
+            &None,
         )
     } else if segs[0].ident == "crate" {
         let current_module = vec!["crate".to_string()];
@@ -5821,6 +6000,7 @@ fn get_path(
             global_data,
             &current_module,
             orig_mod,
+            &None,
         )
     } else if path_starts_with_sub_module {
         // Path starts with a submodule of the current module
@@ -5837,6 +6017,7 @@ fn get_path(
             global_data,
             &submod_path,
             orig_mod,
+            &None,
         )
     } else if let Some(use_mapping) = matched_use_mapping {
         // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
@@ -5885,6 +6066,7 @@ fn get_path(
             current_mod,
             // &use_mapping.1.clone(),
             orig_mod,
+            &None,
         )
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
@@ -5904,6 +6086,7 @@ fn get_path(
             global_data,
             &current_module,
             orig_mod,
+            &None,
         )
     } else {
         // Handle third party crates

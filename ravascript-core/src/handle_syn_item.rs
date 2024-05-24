@@ -333,6 +333,9 @@ pub fn handle_item_fn(
             },
         };
         // dbg!(&item_fn.block.stmts);
+        let current_scope_id = global_data.scope_id.last_mut().unwrap();
+        *current_scope_id += 1;
+        global_data.scope_id.push(0);
         let (body_stmts, return_type) = parse_fn_body_stmts(
             false,
             returns_non_mut_ref_val,
@@ -340,6 +343,8 @@ pub fn handle_item_fn(
             global_data,
             current_module,
         );
+        global_data.scope_id.pop();
+
         copy_stmts.extend(body_stmts);
         // let iife = item_fn.sig.ident == "main";
         // wrapping main in an iffe means we need to move it to the end of the JS file, given we have the crate module appear first, and even if it appears last, main() can appear anywhere within the crate module so the easist thing is to just append a `main();` call to the end of the JS file
@@ -1824,76 +1829,77 @@ fn populate_fields_and_methods(
     }
 }
 
-pub fn handle_item(
-    item: Item,
-    // is_module: bool,
-    global_data: &mut GlobalData,
-    current_module_path: &mut Vec<String>,
-    js_stmts: &mut Vec<JsStmt>,
-    // current_file_path: &mut Option<PathBuf>,
-) {
-    match item {
-        Item::Const(item_const) => {
-            js_stmts.push(handle_item_const(
-                &item_const,
-                true,
-                global_data,
-                current_module_path,
-            ));
-        }
-        Item::Enum(item_enum) => {
-            js_stmts.push(handle_item_enum(
-                item_enum,
-                true,
-                global_data,
-                current_module_path,
-            ));
-        }
-        Item::ExternCrate(_) => todo!(),
-        Item::Fn(item_fn) => {
-            js_stmts.push(handle_item_fn(
-                &item_fn,
-                true,
-                global_data,
-                current_module_path,
-            ));
-        }
-        Item::ForeignMod(_) => todo!(),
-        Item::Impl(item_impl) => {
-            js_stmts.push(handle_item_impl(
-                &item_impl,
-                true,
-                global_data,
-                current_module_path,
-            ));
-        }
-        Item::Macro(_) => todo!(),
-        Item::Mod(item_mod) => {
-            // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
-            handle_item_mod(
-                item_mod,
-                global_data,
-                current_module_path,
-                // current_file_path,
-            )
-        }
-        Item::Static(_) => todo!(),
-        Item::Struct(item_struct) => {
-            let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module_path);
-            js_stmts.push(js_stmt);
-        }
-        Item::Trait(item_trait) => {
-            handle_item_trait(&item_trait, true, global_data, current_module_path);
-            js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
-        }
-        Item::TraitAlias(_) => todo!(),
-        Item::Type(_) => todo!(),
-        Item::Union(_) => todo!(),
-        Item::Use(_) => {}
-        Item::Verbatim(_) => todo!(),
-        _ => todo!(),
-    }
-}
+// pub fn handle_item(
+//     item: Item,
+//     // is_module: bool,
+//     global_data: &mut GlobalData,
+//     current_module_path: &mut Vec<String>,
+//     js_stmts: &mut Vec<JsStmt>,
+//     // current_file_path: &mut Option<PathBuf>,
+// ) {
+
+//     match item {
+//         Item::Const(item_const) => {
+//             js_stmts.push(handle_item_const(
+//                 &item_const,
+//                 true,
+//                 global_data,
+//                 current_module_path,
+//             ));
+//         }
+//         Item::Enum(item_enum) => {
+//             js_stmts.push(handle_item_enum(
+//                 item_enum,
+//                 true,
+//                 global_data,
+//                 current_module_path,
+//             ));
+//         }
+//         Item::ExternCrate(_) => todo!(),
+//         Item::Fn(item_fn) => {
+//             js_stmts.push(handle_item_fn(
+//                 &item_fn,
+//                 true,
+//                 global_data,
+//                 current_module_path,
+//             ));
+//         }
+//         Item::ForeignMod(_) => todo!(),
+//         Item::Impl(item_impl) => {
+//             js_stmts.push(handle_item_impl(
+//                 &item_impl,
+//                 true,
+//                 global_data,
+//                 current_module_path,
+//             ));
+//         }
+//         Item::Macro(_) => todo!(),
+//         Item::Mod(item_mod) => {
+//             // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
+//             handle_item_mod(
+//                 item_mod,
+//                 global_data,
+//                 current_module_path,
+//                 // current_file_path,
+//             )
+//         }
+//         Item::Static(_) => todo!(),
+//         Item::Struct(item_struct) => {
+//             let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module_path);
+//             js_stmts.push(js_stmt);
+//         }
+//         Item::Trait(item_trait) => {
+//             handle_item_trait(&item_trait, true, global_data, current_module_path);
+//             js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
+//         }
+//         Item::TraitAlias(_) => todo!(),
+//         Item::Type(_) => todo!(),
+//         Item::Union(_) => todo!(),
+//         Item::Use(_) => {}
+//         Item::Verbatim(_) => todo!(),
+//         _ => todo!(),
+//     }
+// }
 
 pub fn handle_item_mod(
     item_mod: ItemMod,
