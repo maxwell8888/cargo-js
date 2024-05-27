@@ -152,9 +152,13 @@ fn handle_local(
                         RustType::String => todo!(),
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
-                        RustType::StructOrEnum(type_params, module_path, name) => {
+                        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
                             let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func(&module_path, &name);
+                                .lookup_item_def_known_module_assert_not_func2(
+                                    &module_path,
+                                    &global_data.scope_id_as_option(),
+                                    &name,
+                                );
                             item_def.is_copy && var.mut_ && !mut_ref_taken
                         }
                         RustType::Vec(_) => todo!(),
@@ -166,10 +170,16 @@ fn handle_local(
                                 LocalName::DestructureArray(_) => {
                                     // If element_type is `Copy` struct/enum then should add `.copy()` to rhs array
                                     match &**element_type {
-                                        RustType::StructOrEnum(type_params, module_path, name) => {
+                                        RustType::StructOrEnum(
+                                            type_params,
+                                            module_path,
+                                            scope_id,
+                                            name,
+                                        ) => {
                                             let item_def = global_data
-                                                .lookup_item_def_known_module_assert_not_func(
+                                                .lookup_item_def_known_module_assert_not_func2(
                                                     module_path,
+                                                    &global_data.scope_id_as_option(),
                                                     name,
                                                 );
                                             if item_def.is_copy {
@@ -192,7 +202,7 @@ fn handle_local(
                             handle_type(&*inner, global_data, var, lhs, true)
                         }
                         RustType::Ref(_) => todo!(),
-                        RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Fn(_, _, _, _, _) => todo!(),
                         RustType::Closure(_) => todo!(),
                         _ => todo!(),
                     }
@@ -276,14 +286,14 @@ fn handle_local(
             }
             RustType::Option(_) => todo!(),
             RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _) => todo!(),
+            RustType::StructOrEnum(_, _, _, _) => todo!(),
             RustType::Vec(_) => todo!(),
             RustType::Array(_) => todo!(),
             RustType::Tuple(_) => todo!(),
             RustType::UserType(_, _) => todo!(),
             RustType::MutRef(_) => rhs_expr,
             RustType::Ref(_) => todo!(),
-            RustType::Fn(_, _, _, _) => todo!(),
+            RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => rhs_expr,
         }
     }

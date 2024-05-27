@@ -27,9 +27,9 @@ use crate::{
     js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType},
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, JsImplItem, RustGeneric, RustImplBlock, RustImplItem,
-    RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
-    StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
+    GlobalDataScope, ItemDefinition, ItemDefintionImpls, JsImplItem, RustGeneric, RustImplBlock,
+    RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
+    RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
 pub fn handle_item_fn(
@@ -40,9 +40,12 @@ pub fn handle_item_fn(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
+    global_data.scope_count += 1;
+
     let name = item_fn.sig.ident.to_string();
     let span = debug_span!("handle_item_fn", name = ?name);
     let _guard = span.enter();
+
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
             Meta::Path(path) => {
@@ -136,26 +139,29 @@ pub fn handle_item_fn(
         },
     };
 
-    // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
-    // if !global_data.at_module_top_level {
-    if !at_module_top_level {
-        // Record this fn in the *parent* scope
+    // // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
+    // // if !global_data.at_module_top_level {
+    // if !at_module_top_level {
+    //     // Record this fn in the *parent* scope
 
-        // let fn_info = FnInfo {
-        //     ident: name,
-        //     rust_type: match &item_fn.sig.output {
-        //         ReturnType::Default => RustType::Fn((), RustType::Unit,),
-        //         ReturnType::Type(_, type_) => {
-        //             parse_fn_input_or_field(&*type_, &Vec::new(), current_module, &global_data)
-        //         }
-        //     },
-        // };
+    //     // let fn_info = FnInfo {
+    //     //     ident: name,
+    //     //     rust_type: match &item_fn.sig.output {
+    //     //         ReturnType::Default => RustType::Fn((), RustType::Unit,),
+    //     //         ReturnType::Type(_, type_) => {
+    //     //             parse_fn_input_or_field(&*type_, &Vec::new(), current_module, &global_data)
+    //     //         }
+    //     //     },
+    //     // };
 
-        global_data.scopes.last_mut().unwrap().fns.push(fn_info);
-    }
+    //     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
+    // }
 
     // Create new scope for fn vars
-    global_data.scopes.push(GlobalDataScope::default());
+    global_data.scope_id.push(global_data.scope_count);
+    let mut var_scope = GlobalDataScope::default();
+    var_scope.scope_id = global_data.scope_id.clone();
+    global_data.scopes.push(var_scope);
 
     // record which vars are mut and/or &mut
     let mut copy_stmts = Vec::new();
@@ -223,7 +229,7 @@ pub fn handle_item_fn(
                         RustType::String => {
                             scoped_var.type_ = input_type.clone();
                         }
-                        RustType::StructOrEnum(_, _, _) => {
+                        RustType::StructOrEnum(_, _, _, _) => {
                             scoped_var.type_ = input_type.clone();
                         }
                         // RustType::Enum(_,_,_) => {
@@ -241,7 +247,7 @@ pub fn handle_item_fn(
                         RustType::MutRef(rust_type) => {
                             scoped_var.type_ = RustType::MutRef(rust_type.clone());
                         }
-                        RustType::Fn(_, _, _, _) => todo!(),
+                        RustType::Fn(_, _, _, _, _) => todo!(),
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
                         RustType::TypeParam(_) => todo!(),
@@ -294,7 +300,7 @@ pub fn handle_item_fn(
                                 RustType::F32 => todo!(),
                                 RustType::Bool => todo!(),
                                 RustType::String => todo!(),
-                                RustType::StructOrEnum(_, _, _) => todo!(),
+                                RustType::StructOrEnum(_, _, _, _) => todo!(),
                                 // RustType::Enum(_,_,_) => todo!(),
                                 RustType::NotAllowed => todo!(),
                                 RustType::Unknown => todo!(),
@@ -303,7 +309,7 @@ pub fn handle_item_fn(
                                 RustType::Array(_) => todo!(),
                                 RustType::Tuple(_) => todo!(),
                                 RustType::MutRef(_) => todo!(),
-                                RustType::Fn(_, _, _, _) => todo!(),
+                                RustType::Fn(_, _, _, _, _) => todo!(),
                                 RustType::Option(_) => todo!(),
                                 RustType::Result(_) => todo!(),
                                 RustType::TypeParam(_) => todo!(),
@@ -333,9 +339,7 @@ pub fn handle_item_fn(
             },
         };
         // dbg!(&item_fn.block.stmts);
-        let current_scope_id = global_data.scope_id.last_mut().unwrap();
-        *current_scope_id += 1;
-        global_data.scope_id.push(0);
+
         let (body_stmts, return_type) = parse_fn_body_stmts(
             false,
             returns_non_mut_ref_val,
@@ -343,7 +347,6 @@ pub fn handle_item_fn(
             global_data,
             current_module,
         );
-        global_data.scope_id.pop();
 
         copy_stmts.extend(body_stmts);
         // let iife = item_fn.sig.ident == "main";
@@ -386,6 +389,8 @@ pub fn handle_item_fn(
     // pop fn scope
     global_data.scopes.pop();
 
+    global_data.scope_id.pop();
+
     stmt
 }
 
@@ -399,42 +404,42 @@ pub fn handle_item_const(
     debug!(name = ?name, "handle_item_const");
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
-    if !at_module_top_level {
-        let generics = item_const
-            .generics
-            .params
-            .iter()
-            .map(|p| match p {
-                GenericParam::Lifetime(_) => todo!(),
-                GenericParam::Type(type_param) => type_param.ident.to_string(),
-                GenericParam::Const(_) => todo!(),
-            })
-            .collect::<Vec<_>>();
+    // if !at_module_top_level {
+    //     let generics = item_const
+    //         .generics
+    //         .params
+    //         .iter()
+    //         .map(|p| match p {
+    //             GenericParam::Lifetime(_) => todo!(),
+    //             GenericParam::Type(type_param) => type_param.ident.to_string(),
+    //             GenericParam::Const(_) => todo!(),
+    //         })
+    //         .collect::<Vec<_>>();
 
-        let generics_type_params = generics
-            .iter()
-            .map(|name| RustTypeParam {
-                name: name.clone(),
-                type_: RustTypeParamValue::Unresolved,
-            })
-            .collect::<Vec<_>>();
+    //     let generics_type_params = generics
+    //         .iter()
+    //         .map(|name| RustTypeParam {
+    //             name: name.clone(),
+    //             type_: RustTypeParamValue::Unresolved,
+    //         })
+    //         .collect::<Vec<_>>();
 
-        let rust_type = parse_fn_input_or_field(
-            &item_const.ty,
-            // TODO note mut isn't allowed for const so has_mut_keyword is false
-            false,
-            &generics_type_params,
-            current_module,
-            global_data,
-        );
+    //     let rust_type = parse_fn_input_or_field(
+    //         &item_const.ty,
+    //         // TODO note mut isn't allowed for const so has_mut_keyword is false
+    //         false,
+    //         &generics_type_params,
+    //         current_module,
+    //         global_data,
+    //     );
 
-        let global_data_scope = global_data.scopes.last_mut().unwrap();
-        global_data_scope.consts.push(ConstDef {
-            name: name.clone(),
-            type_: rust_type,
-            syn_object: item_const.clone(),
-        });
-    }
+    //     let global_data_scope = global_data.scopes.last_mut().unwrap();
+    //     global_data_scope.consts.push(ConstDef {
+    //         name: name.clone(),
+    //         type_: rust_type,
+    //         syn_object: item_const.clone(),
+    //     });
+    // }
 
     // What is this doing?
     if let Some(dup) = global_data
@@ -585,10 +590,10 @@ pub fn handle_item_enum(
     };
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
-    if !at_module_top_level {
-        let global_data_scope = global_data.scopes.last_mut().unwrap();
-        global_data_scope.item_definitons.push(item_def.clone());
-    }
+    // if !at_module_top_level {
+    //     let global_data_scope = global_data.scopes.last_mut().unwrap();
+    //     global_data_scope.item_definitons.push(item_def.clone());
+    // }
 
     let class_name = item_enum.ident.to_string();
 
@@ -801,7 +806,6 @@ pub fn handle_item_enum(
         static_fields,
         methods,
         rust_name: item_enum.ident.to_string(),
-        module_path: at_module_top_level.then_some(current_module.clone()),
         is_impl_block: false,
         // struct_or_enum: StructOrEnumSynObject::Enum(item_enum.clone()),
         // impld_methods: methods,
@@ -817,6 +821,8 @@ pub fn handle_impl_item_fn(
     current_module_path: &Vec<String>,
     target_rust_type: &RustType,
 ) {
+    global_data.scope_count += 1;
+
     let static_ = match impl_item_fn.sig.inputs.first() {
         Some(FnArg::Receiver(_)) => false,
         _ => true,
@@ -975,14 +981,15 @@ pub fn handle_impl_item_fn(
     info!("handle_item_impl new scope");
     // dbg!(&global_data.scopes);
     global_data.scopes.push(GlobalDataScope {
+        scope_id: global_data.scope_id.clone(),
         variables: vars,
-        fns: Vec::new(),
-        generics: fn_generics,
-        item_definitons: Vec::new(),
+        // fns: Vec::new(),
+        // generics: fn_generics,
+        // item_definitons: Vec::new(),
         look_in_outer_scope: false,
-        impl_blocks: Vec::new(),
-        trait_definitons: Vec::new(),
-        consts: Vec::new(),
+        // impl_blocks: Vec::new(),
+        // trait_definitons: Vec::new(),
+        // consts: Vec::new(),
         use_mappings: Vec::new(),
     });
 
@@ -1139,6 +1146,10 @@ pub fn handle_item_impl(
     };
     let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
     let _guard = span.enter();
+    dbg!(format!(
+        "handle_impl_item: {:?}, {:?}",
+        &item_impl.trait_, &item_impl.self_ty
+    ));
 
     let impl_item_target_path = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path
@@ -1171,13 +1182,13 @@ pub fn handle_item_impl(
                                     .iter()
                                     .map(|seg| seg.ident.to_string())
                                     .collect::<Vec<_>>();
-                                let (module_path, trait_def) = global_data
+                                let (module_path, scope_id, trait_def) = global_data
                                     .lookup_trait_definition_any_module(
                                         current_module_path,
+                                        &global_data.scope_id_as_option(),
                                         &trait_path,
-                                    )
-                                    .unwrap();
-                                Some((module_path, trait_def.name))
+                                    );
+                                Some((module_path, scope_id, trait_def.name))
                             }
                             TypeParamBound::Lifetime(_) => None,
                             TypeParamBound::Verbatim(_) => todo!(),
@@ -1208,17 +1219,16 @@ pub fn handle_item_impl(
     };
 
     let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-        let (module_path, trait_def) = global_data
-            .lookup_trait_definition_any_module(
-                current_module_path,
-                &trait_
-                    .segments
-                    .iter()
-                    .map(|seg| seg.ident.to_string())
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        (module_path, trait_def.name)
+        let (module_path, scope_id, trait_def) = global_data.lookup_trait_definition_any_module(
+            current_module_path,
+            &global_data.scope_id_as_option(),
+            &trait_
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>(),
+        );
+        (module_path, scope_id, trait_def.name)
     });
 
     // if let Some(trait_) = &item_impl.trait_ {
@@ -1242,9 +1252,17 @@ pub fn handle_item_impl(
             )
         } else {
             // Get type of impl target
-            let (target_item_module, target_item) = global_data
-                .lookup_item_definition_any_module(current_module_path, &impl_item_target_path)
-                .unwrap();
+            let opt_scope_id = if global_data.scope_id.is_empty() {
+                None
+            } else {
+                Some(global_data.scope_id.clone())
+            };
+            let (target_item_module, resolved_scope_id, target_item) = global_data
+                .lookup_item_definition_any_module_or_scope(
+                    current_module_path,
+                    &opt_scope_id,
+                    &impl_item_target_path,
+                );
 
             (
                 RustType::StructOrEnum(
@@ -1256,7 +1274,8 @@ pub fn handle_item_impl(
                             type_: RustTypeParamValue::Unresolved,
                         })
                         .collect::<Vec<_>>(),
-                    target_item_module.clone(),
+                    target_item_module,
+                    resolved_scope_id,
                     target_item.ident.to_string(),
                 ),
                 false,
@@ -1310,75 +1329,80 @@ pub fn handle_item_impl(
 
     // If the block gets pushed to `global_data.impl_blocks` then `update_clases()` should add the method to the appropriate class, however if the block is added to a scope then we need to do what `update_classes()` does here.
 
-    // TODO note that unlike other items, we push both scoped and module level impl blocks here, need to move them.
-    if !at_module_top_level {
-        // a scoped impl block must at least be in the same scope or a child scope of any types used in the impl definition, ie the target/self type, the trait if it is a trait impl, and any types used in the generics of the target/self and trait. So we can/should hoist the impl block to the "lowest common denominator.
-        // IMPORTANT NOTE This approach seems flawed given that the methods impl'd can be used in higher scopes than the impl.
-        // Get lowest scope
-        // NOTE we enumerate the scopes in reverse so that we can determine whether the found scope is the current scope (ie the impl is in the same scope as it's target and other definitions it uses)
-        let scope = global_data
-            .scopes
-            .iter_mut()
-            .rev()
-            .enumerate()
-            .find(|(i, s)| {
-                // Is target type scoped?
-                let is_target_item_scope = match &target_rust_type {
-                    RustType::TypeParam(_) => {
-                        // NOTE if target is a type param then is potentially applies to all type, in which case it seems to make sense to hoist to the module level *(or trait scope leve) (so that it's methods are accessible from everywhere) by doing `global_data.impl_blocks.push(rust_impl_block);` not `scope.impl_blocks.push(rust_impl_block);`
-                        false
-                    }
-                    RustType::StructOrEnum(_, target_item_module, target_item_name) => {
-                        if target_item_module.is_none() {
-                            s.item_definitons
-                                .iter()
-                                .any(|item_def| &item_def.ident == target_item_name)
-                        } else {
-                            false
-                        }
-                    }
-                    _ => todo!(),
-                };
-                let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
-                    let trait_path = &trait_.1.segments;
-                    if trait_path.len() == 1 {
-                        s.trait_definitons.iter().any(|trait_def| {
-                            trait_def.name == trait_path.first().unwrap().ident.to_string()
-                        })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                // IMPORTANT TODO what about all the other types used in the impl'd items? We can't be in a higher scope than these without capturing them
-                // let is_other_items_scope = ...
-                // *NOTE even a `impl<T> Foo for T` method *cannot* be called in a parent scope of the trait, so it only makes sense to hoist the impl to the same scope as the trait (given `is_target_item_scope` will always be false in this case)
+    // // TODO note that unlike other items, we push both scoped and module level impl blocks here, need to move them.
+    // if !at_module_top_level {
+    //     // a scoped impl block must at least be in the same scope or a child scope of any types used in the impl definition, ie the target/self type, the trait if it is a trait impl, and any types used in the generics of the target/self and trait. So we can/should hoist the impl block to the "lowest common denominator.
+    //     // IMPORTANT NOTE This approach seems flawed given that the methods impl'd can be used in higher scopes than the impl.
+    //     // Get lowest scope
+    //     // NOTE we enumerate the scopes in reverse so that we can determine whether the found scope is the current scope (ie the impl is in the same scope as it's target and other definitions it uses)
+    //     let scope = global_data
+    //         .scopes
+    //         .iter_mut()
+    //         .rev()
+    //         .enumerate()
+    //         .find(|(i, s)| {
+    //             // Is target type scoped?
+    //             let is_target_item_scope = match &target_rust_type {
+    //                 RustType::TypeParam(_) => {
+    //                     // NOTE if target is a type param then is potentially applies to all type, in which case it seems to make sense to hoist to the module level *(or trait scope leve) (so that it's methods are accessible from everywhere) by doing `global_data.impl_blocks.push(rust_impl_block);` not `scope.impl_blocks.push(rust_impl_block);`
+    //                     false
+    //                 }
+    //                 RustType::StructOrEnum(
+    //                     _,
+    //                     target_item_module,
+    //                     target_item_scope,
+    //                     target_item_name,
+    //                 ) => {
+    //                     if target_item_module.is_none() {
+    //                         s.item_definitons
+    //                             .iter()
+    //                             .any(|item_def| &item_def.ident == target_item_name)
+    //                     } else {
+    //                         false
+    //                     }
+    //                 }
+    //                 _ => todo!(),
+    //             };
+    //             let is_trait_scope = if let Some(trait_) = &item_impl.trait_ {
+    //                 let trait_path = &trait_.1.segments;
+    //                 if trait_path.len() == 1 {
+    //                     s.trait_definitons.iter().any(|trait_def| {
+    //                         trait_def.name == trait_path.first().unwrap().ident.to_string()
+    //                     })
+    //                 } else {
+    //                     false
+    //                 }
+    //             } else {
+    //                 false
+    //             };
+    //             // IMPORTANT TODO what about all the other types used in the impl'd items? We can't be in a higher scope than these without capturing them
+    //             // let is_other_items_scope = ...
+    //             // *NOTE even a `impl<T> Foo for T` method *cannot* be called in a parent scope of the trait, so it only makes sense to hoist the impl to the same scope as the trait (given `is_target_item_scope` will always be false in this case)
 
-                is_target_item_scope || is_trait_scope
-            });
+    //             is_target_item_scope || is_trait_scope
+    //         });
 
-        if let Some((scope_idx, scope)) = scope {
-            if rust_impl_block.trait_.is_some() {
-                // NOTE haven't though this through, just seeing if it works
-                scope.impl_blocks.push(rust_impl_block.clone());
-            } else {
-                // Here we simply store the rust impl block on the appropriate scope, at the end of parsing a block of statements we will iterate through any `.impl_blocks` for the current scope and update the classes in the parsed stmts accordingly before returning the statements
+    //     if let Some((scope_idx, scope)) = scope {
+    //         if rust_impl_block.trait_.is_some() {
+    //             // NOTE haven't though this through, just seeing if it works
+    //             scope.impl_blocks.push(rust_impl_block.clone());
+    //         } else {
+    //             // Here we simply store the rust impl block on the appropriate scope, at the end of parsing a block of statements we will iterate through any `.impl_blocks` for the current scope and update the classes in the parsed stmts accordingly before returning the statements
 
-                if scope_idx > 0 {
-                    todo!()
-                } else {
-                    scope.impl_blocks.push(rust_impl_block.clone());
-                }
-            }
-        } else {
-            // If the types used are all module level, then we can hoist the impl block to module level
-            global_data.impl_blocks.push(rust_impl_block.clone());
-        }
-    } else {
-        // TODO IMPORTANT what if the methods from this impl block are used before we've added the impl block to global_data.impl_blocks???
-        global_data.impl_blocks.push(rust_impl_block.clone());
-    }
+    //             if scope_idx > 0 {
+    //                 todo!()
+    //             } else {
+    //                 scope.impl_blocks.push(rust_impl_block.clone());
+    //             }
+    //         }
+    //     } else {
+    //         // If the types used are all module level, then we can hoist the impl block to module level
+    //         global_data.impl_blocks.push(rust_impl_block.clone());
+    //     }
+    // } else {
+    //     // TODO IMPORTANT what if the methods from this impl block are used before we've added the impl block to global_data.impl_blocks???
+    //     global_data.impl_blocks.push(rust_impl_block.clone());
+    // }
 
     global_data.impl_block_target_type.pop();
 
@@ -1414,7 +1438,6 @@ pub fn handle_item_impl(
             methods,
             // TODO this is good evidence why we shouldn't be storing Rust stuff in a JS type
             rust_name: "implblockdonotuse".to_string(),
-            module_path: Some(["implblockdonotuse".to_string()].to_vec()),
             is_impl_block: true,
         })
     } else {
@@ -1577,62 +1600,62 @@ pub fn handle_item_struct(
         })
         .collect::<Vec<_>>();
 
-    let fields = if item_struct.fields.len() == 0 {
-        StructFieldInfo::UnitStruct
-    } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-        StructFieldInfo::RegularStruct(
-            item_struct
-                .fields
-                .iter()
-                .map(|f| {
-                    (
-                        f.ident.as_ref().unwrap().to_string(),
-                        parse_fn_input_or_field(
-                            &f.ty,
-                            // NOTE cannot make struct arg definitions mut
-                            false,
-                            &generics_type_params,
-                            current_module_path,
-                            global_data,
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        StructFieldInfo::TupleStruct(
-            item_struct
-                .fields
-                .iter()
-                .map(|f| {
-                    parse_fn_input_or_field(
-                        &f.ty,
-                        false,
-                        &generics_type_params,
-                        current_module_path,
-                        global_data,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-    };
+    // let fields = if item_struct.fields.len() == 0 {
+    //     StructFieldInfo::UnitStruct
+    // } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+    //     StructFieldInfo::RegularStruct(
+    //         item_struct
+    //             .fields
+    //             .iter()
+    //             .map(|f| {
+    //                 (
+    //                     f.ident.as_ref().unwrap().to_string(),
+    //                     parse_fn_input_or_field(
+    //                         &f.ty,
+    //                         // NOTE cannot make struct arg definitions mut
+    //                         false,
+    //                         &generics_type_params,
+    //                         current_module_path,
+    //                         global_data,
+    //                     ),
+    //                 )
+    //             })
+    //             .collect::<Vec<_>>(),
+    //     )
+    // } else {
+    //     StructFieldInfo::TupleStruct(
+    //         item_struct
+    //             .fields
+    //             .iter()
+    //             .map(|f| {
+    //                 parse_fn_input_or_field(
+    //                     &f.ty,
+    //                     false,
+    //                     &generics_type_params,
+    //                     current_module_path,
+    //                     global_data,
+    //                 )
+    //             })
+    //             .collect::<Vec<_>>(),
+    //     )
+    // };
 
     // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
-    if !at_module_top_level {
-        let item_def = ItemDefinition {
-            ident: item_struct.ident.to_string(),
-            is_copy,
-            generics,
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields,
-                syn_object: Some(item_struct.clone()),
-            }),
-            impl_blocks: Vec::new(),
-        };
-        let global_data_scope = global_data.scopes.last_mut().unwrap();
-        global_data_scope.item_definitons.push(item_def.clone());
-    }
+    // if !at_module_top_level {
+    //     let item_def = ItemDefinition {
+    //         ident: item_struct.ident.to_string(),
+    //         is_copy,
+    //         generics,
+    //         struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+    //             fields,
+    //             syn_object: Some(item_struct.clone()),
+    //         }),
+    //         impl_blocks: Vec::new(),
+    //     };
+    //     let global_data_scope = global_data.scopes.last_mut().unwrap();
+    //     global_data_scope.item_definitons.push(item_def.clone());
+    // }
 
     // Populate methods and fields
     let mut methods = Vec::new();
@@ -1732,7 +1755,6 @@ pub fn handle_item_struct(
         static_fields,
         methods,
         rust_name: item_struct.ident.to_string(),
-        module_path: at_module_top_level.then_some(current_module_path.clone()),
         is_impl_block: false,
     })
 }
@@ -1754,14 +1776,21 @@ fn populate_fields_and_methods(
         .iter()
         .find(|m| &m.path == current_module_path)
         .unwrap();
-    let item_def = module
+    let module_item_def = module
         .item_definitons
         .iter()
         .find(|item_def| item_def.ident == item_name);
+    let scoped_item_def = module.scoped_various_definitions.iter().find_map(|svd| {
+        svd.1
+            .item_definitons
+            .iter()
+            .find(|item_def| item_def.ident == item_name)
+    });
+    let item_def = scoped_item_def.or(module_item_def);
     if let Some(item_def) = item_def {
         for impl_blocky in &item_def.impl_blocks {
             match impl_blocky {
-                crate::ItemDefintionImpls::GenericImpl(unique_name, method_name) => {
+                ItemDefintionImpls::GenericImpl(unique_name, method_name) => {
                     // Find impl block
                     // TODO this should be filter because there might be multiple impl blocks with the same "signature"
                     let impl_block = global_data
@@ -1783,7 +1812,7 @@ fn populate_fields_and_methods(
                         }
                     }
                 }
-                crate::ItemDefintionImpls::ConcreteImpl(impl_items) => {
+                ItemDefintionImpls::ConcreteImpl(impl_items) => {
                     for impl_item in impl_items {
                         match impl_item {
                             ImplItem::Const(_) => todo!(),
@@ -1791,7 +1820,8 @@ fn populate_fields_and_methods(
                                 let mut rust_impl_items = Vec::new();
                                 let target_rust_type = RustType::StructOrEnum(
                                     generics_type_params.clone(),
-                                    Some(current_module_path.clone()),
+                                    current_module_path.clone(),
+                                    global_data.scope_id_as_option(),
                                     item_name.clone(),
                                 );
 
@@ -1987,12 +2017,12 @@ pub fn handle_item_trait(
     debug!("handle_item_trait");
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.trait_definitons.push(RustTraitDefinition {
-            name: item_trait.ident.to_string(),
-        });
-    }
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.trait_definitons.push(RustTraitDefinition {
+    //         name: item_trait.ident.to_string(),
+    //     });
+    // }
 
     // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not
     for trait_item in &item_trait.items {
