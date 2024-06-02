@@ -30,7 +30,7 @@ use crate::{
     js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType},
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplItem, RustGeneric, RustImplBlock,
+    GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplBlock2, JsImplItem, RustGeneric,
     RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
     RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
@@ -111,6 +111,8 @@ fn handle_local(
         panic!("uninitialized variables not supported")
     };
 
+    dbg!("handle_local");
+    println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
     let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
 

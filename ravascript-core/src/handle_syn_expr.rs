@@ -30,7 +30,7 @@ use crate::{
     },
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, JsImplItem, PartialRustType, RustGeneric, RustImplBlock,
+    GlobalDataScope, ItemDefinition, JsImplBlock2, JsImplItem, PartialRustType, RustGeneric,
     RustImplItem, RustImplItemItem, RustPathSegment, RustTraitDefinition, RustType, RustTypeFnType,
     RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo,
     StructOrEnumDefitionInfo,
@@ -508,7 +508,7 @@ pub fn handle_expr(
                                 let item_definition = global_data
                                     .lookup_item_def_known_module_assert_not_func2(
                                         &module_path,
-                                        &global_data.scope_id_as_option(),
+                                        &scope_id,
                                         &name,
                                     );
                                 match item_definition.struct_or_enum_info {
@@ -1601,7 +1601,7 @@ fn handle_expr_method_call(
                     }
                 }
 
-                match impl_method.item {
+                match impl_method.1.item {
                     RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
                         // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
                         let return_type = fn_info.return_type.clone();
@@ -2174,7 +2174,7 @@ fn handle_expr_call(
                                             &item_definition,
                                         )
                                         .unwrap();
-                                    match impl_method.item {
+                                    match impl_method.1.item {
                                         RustImplItemItem::Fn(_, _, fn_info, _) => fn_info,
                                         RustImplItemItem::Const(_) => todo!(),
                                     }
@@ -2358,6 +2358,9 @@ fn handle_expr_path_inner(
     // TODO clean this up
     // get_path doesn't handle vars, it just resolves paths to *items*
 
+    dbg!("handle_expr_path_inner");
+    println!("{}", quote! { #expr_path });
+    dbg!(global_data.scope_id_as_option());
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
@@ -2651,7 +2654,9 @@ fn handle_expr_path_inner(
         js_segs[0] = "document".to_string();
     }
 
-    if segs_copy_item_scope.is_some() {
+    // TODO Surely this should be `.is_none()`?
+    // if segs_copy_item_scope.is_some() {
+    if segs_copy_item_scope.is_none() {
         if let Some(dup) = global_data.duplicates.iter().find(|dup| {
             dup.name == segs_copy_item_path[0].ident
                 && &dup.original_module_path == &segs_copy_module_path

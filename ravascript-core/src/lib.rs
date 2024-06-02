@@ -2093,7 +2093,9 @@ struct ItemDefinition {
     generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     struct_or_enum_info: StructOrEnumDefitionInfo,
-    impl_blocks: Vec<ItemDefintionImpls>,
+    // impl_blocks: Vec<ItemDefintionImpls>,
+    /// (unique impl id)
+    impl_blocks: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2235,22 +2237,58 @@ struct RustGeneric {
 
 #[derive(Debug, Clone)]
 struct RustImplBlockSimple {
+    unique_id: String,
     generics: Vec<RustGeneric>,
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
     target: RustType,
     items: Vec<ImplItem>,
 }
+fn get_item_impl_unique_id(item_impl: &ItemImpl) -> String {
+    let params = item_impl
+        .generics
+        .params
+        .iter()
+        .map(|p| match p {
+            GenericParam::Lifetime(_) => todo!(),
+            GenericParam::Type(type_param) => type_param.ident.to_string(),
+            GenericParam::Const(_) => todo!(),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let trait_ = match &item_impl.trait_ {
+        Some((_, trait_, _)) => trait_
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+        None => "".to_string(),
+    };
+    let target = match &*item_impl.self_ty {
+        Type::Path(type_path) => type_path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+        _ => todo!(),
+    };
+    format!("type params: {params}, trait: {trait_}, target: {target}")
+}
 
 #[derive(Debug, Clone)]
-struct RustImplBlock {
+struct JsImplBlock2 {
+    unique_id: String,
     generics: Vec<RustGeneric>,
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
     target: RustType,
-    items: Vec<RustImplItem>,
+    /// Vec<(TODO whether the method actually gets used (for some eg `impl<T> Foo for T {}` blocks that apply to everything, it is hard to work out for which items the methods are actually used, since the criteria is whether the impl'd trait ie Foo is in scope/accessible at the point that the method is called, so the easiest approach is to just add everything and then track which methods actually get called), JS method/field)>
+    items: Vec<(bool, RustImplItem)>,
 }
-impl RustImplBlock {
+impl JsImplBlock2 {
     fn js_name(&self) -> String {
         let trait_name = match &self.trait_ {
             Some((module_path, scope_id, name)) => name,
@@ -2437,13 +2475,13 @@ struct GlobalData {
     // impl_items_for_types: Vec<(RustType, RustImplItem)>,
     // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. I believe this is also the case for scoped impls? This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
     // impl_blocks: Vec<ItemImpl>,
-    impl_blocks: Vec<RustImplBlock>,
+    impl_blocks: Vec<JsImplBlock2>,
     /// The purpose of having this here is so that all crate scoped impl blocks are immeditately available when parsing the syn to JS, eg if we come across a class (module level or scoped), we want to be able to add the methods which are implemented for it at that point, but these impls might not appear until later in the code, so instead we popualte scoped_impl_blocks in extract_data_populate_item_definitions to ensure it is available
     /// Given method names (impld for the same item) must be unqiue across the crate, for module level impls, we can just store all impl blocks in a big list, and add all their methods to all matching classes/items/enums/structs, whether the method is private/public is irrelevant since if it has been defined it must/should get used at some point.
     /// Scoped impls are a litte more complicated though, because in the same way we distinguish between different module level structs with the same name by taking into account their module path, for scoped structs we need to take into account the scope, ie a scoped `impl Foo { ... }` should only be applied to the first `Foo` that is found in parent scopes, else any module (of course taking into account the full module path used in `impl Foo { ... }`), because there might be another `Foo` in a higher scope with the same method impld, so we must not apply it there.
     /// We don't have to
     /// ((module path, scope id), rust impl block))
-    scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), RustImplBlock)>,
+    scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     impl_blocks_simpl: Vec<RustImplBlockSimple>,
     duplicates: Vec<Duplicate>,
@@ -2451,7 +2489,7 @@ struct GlobalData {
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
     scope_id: Vec<usize>,
-    scope_count: usize,
+    scope_count: Vec<usize>,
 }
 impl GlobalData {
     fn new(crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
@@ -2518,7 +2556,7 @@ impl GlobalData {
             scoped_impl_blocks: Vec::new(),
             impl_blocks_simpl: Vec::new(),
             scope_id: Vec::new(),
-            scope_count: 0,
+            scope_count: vec![0],
             // at_module_top_level: false,
         }
     }
@@ -2933,7 +2971,6 @@ impl GlobalData {
         path: &Vec<String>,
         // current_module: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, RustTraitDefinition) {
-        dbg!(&current_scope_id);
         let (item_module_path, item_path, item_scope) = get_path(
             false,
             true,
@@ -2955,15 +2992,12 @@ impl GlobalData {
             .find(|m| &m.path == &item_module_path)
             .unwrap();
 
-        dbg!(&item_scope);
         let trait_definiton = if let Some(item_scope) = &item_scope {
             let svd = item_module
                 .scoped_various_definitions
                 .iter()
                 .find(|svd| &svd.0 == item_scope)
                 .unwrap();
-            dbg!(&svd.1.trait_definitons);
-            dbg!(&item_path[0].ident);
             svd.1
                 .trait_definitons
                 .iter()
@@ -3008,7 +3042,7 @@ impl GlobalData {
             item_path_seg,
             item_def,
         );
-        let impl_method = if let Some(impl_method) = impl_method {
+        let impl_method = if let Some((used, impl_method)) = impl_method {
             match impl_method.item {
                 RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
@@ -3072,7 +3106,7 @@ impl GlobalData {
         item_name: &String,
         item_def: &ItemDefinition,
         // ) -> Option<PartialRustType> {
-    ) -> Option<RustImplItem> {
+    ) -> Option<(bool, RustImplItem)> {
         // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
 
         // Look for associated fn of item (struct or enum)
@@ -3199,7 +3233,7 @@ impl GlobalData {
                             impl_block
                                 .items
                                 .iter()
-                                .find(|impl_item| impl_item.ident == sub_path.ident)
+                                .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
                         } else {
                             None
                         }
@@ -3224,7 +3258,7 @@ impl GlobalData {
                                 impl_block
                                     .items
                                     .iter()
-                                    .find(|impl_item| impl_item.ident == sub_path.ident)
+                                    .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
                             } else {
                                 None
                             }
@@ -3341,7 +3375,7 @@ enum VarItemFn {
 // }
 
 fn get_traits_implemented_for_item(
-    impl_items: &Vec<RustImplBlock>,
+    impl_items: &Vec<JsImplBlock2>,
     item_module_path: &Vec<String>,
     item_scope_id: &Option<Vec<usize>>,
     item_name: &String,
@@ -3643,8 +3677,25 @@ fn populate_impl_items(global_data: &mut GlobalData) {
             .map(|svd| &svd.2)
             .flatten();
 
+        // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
+
+        let scoped_item_defs = module
+            .scoped_various_definitions
+            .iter_mut()
+            .map(|svd| {
+                svd.1
+                    .item_definitons
+                    .iter_mut()
+                    .map(|item_def| (item_def, Some(svd.0.clone())))
+            })
+            .flatten();
+        let module_item_defs = module
+            .item_definitons
+            .iter_mut()
+            .map(|item_def| (item_def, None));
+
         // module level items/classes
-        for item_def in &mut module.item_definitons {
+        for (item_def, item_def_scope_id) in module_item_defs.chain(scoped_item_defs) {
             let traits_impld_for_class = get_traits_implemented_for_item2(
                 &global_data.impl_blocks_simpl,
                 &module.path.clone(),
@@ -3652,8 +3703,9 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                 &item_def.ident,
             );
             for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
+                // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds
                 match &impl_block.target {
-                    // add impl methods to class
+                    // Concrete type target
                     RustType::StructOrEnum(
                         _,
                         impl_target_module_path,
@@ -3662,14 +3714,16 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                     ) => {
                         if &item_def.ident == impl_target_name
                             && &module.path == impl_target_module_path
-                            // NOTE we are trying to match the impl target to an item def we know is module level, so if the target item is scoped then we do not have the correct match
-                            && impl_target_scope_id.is_none()
+                            && &item_def_scope_id == impl_target_scope_id
                         {
-                            item_def
-                                .impl_blocks
-                                .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
+                            // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
+                            // item_def
+                            //     .impl_blocks
+                            //     .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
+                            item_def.impl_blocks.push(impl_block.unique_id.clone());
                         }
                     }
+                    // For a generic impl like `impl<T> Foo for T {}`, remember this will add methods to matching items in *all* scopes, both parent and children, the only restriction is the the `impl`d trait must be in accessible/in scope *when the method is called*
                     RustType::TypeParam(rust_type_param) => {
                         // Get bounds on type param
                         let type_param_bounds = &impl_block
@@ -3685,98 +3739,13 @@ fn populate_impl_items(global_data: &mut GlobalData) {
                                 traits_impld_for_class.contains(type_param_bound)
                             });
 
-                        if struct_impls_all_bounds {
-                            for impl_item in &impl_block.items {
-                                let item_name = match impl_item {
-                                    ImplItem::Const(_) => todo!(),
-                                    ImplItem::Fn(impl_item_fn) => "impl_item_fn.".to_string(),
-                                    ImplItem::Type(_) => todo!(),
-                                    ImplItem::Macro(_) => todo!(),
-                                    ImplItem::Verbatim(_) => todo!(),
-                                    _ => todo!(),
-                                };
-                                item_def.impl_blocks.push(ItemDefintionImpls::GenericImpl(
-                                    "helo".to_string(),
-                                    item_name,
-                                ));
-                            }
-                        }
-                    }
-                    // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and took down vscode with it
-                    _ => {}
-                }
-            }
-        }
-
-        // Scoped items/classes
-        for (item_def, item_def_scope_id) in module
-            .scoped_various_definitions
-            .iter_mut()
-            .map(|svd| {
-                svd.1
-                    .item_definitons
-                    .iter_mut()
-                    .map(|item_def| (item_def, svd.0.clone()))
-            })
-            .flatten()
-        {
-            let traits_impld_for_class = get_traits_implemented_for_item2(
-                &global_data.impl_blocks_simpl,
-                &module.path,
-                &Some(item_def_scope_id.clone()),
-                &item_def.ident,
-            );
-            for impl_block in scoped_impl_blocks.clone() {
-                match &impl_block.target {
-                    // add impl methods to class
-                    RustType::StructOrEnum(
-                        _,
-                        impl_target_module_path,
-                        impl_target_scope_id,
-                        impl_target_name,
-                    ) => {
-                        if &item_def.ident == impl_target_name
-                            && &module.path == impl_target_module_path
-                            && &Some(item_def_scope_id.clone()) == impl_target_scope_id
-                        {
-                            item_def
-                                .impl_blocks
-                                .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
-                        }
-                    }
-                    RustType::TypeParam(rust_type_param) => {
-                        // Get bounds on type param
-                        let type_param_bounds = &impl_block
-                            .generics
-                            .iter()
-                            .find(|generic| generic.ident == rust_type_param.name)
-                            .unwrap()
-                            .trait_bounds;
-
-                        // Does our struct impl all of these traits?
-                        let struct_impls_all_bounds =
-                            type_param_bounds.iter().all(|type_param_bound| {
-                                traits_impld_for_class.contains(type_param_bound)
-                            });
+                        // TODO we might be adding this impl to items that meet the trait bound, but methods from the impl'd trait are not acutally called. There doesn't seem to be any easy, direct way to check this, the best approach is possibly for each method stored on the `ItemDefinition` to have a flag which get's set to true when the method is called/looked up, and otherwise remains false and is not used/output when the item/class is written to JS.
 
                         if struct_impls_all_bounds {
-                            for impl_item in &impl_block.items {
-                                let item_name = match impl_item {
-                                    ImplItem::Const(_) => todo!(),
-                                    ImplItem::Fn(impl_item_fn) => "impl_item_fn.".to_string(),
-                                    ImplItem::Type(_) => todo!(),
-                                    ImplItem::Macro(_) => todo!(),
-                                    ImplItem::Verbatim(_) => todo!(),
-                                    _ => todo!(),
-                                };
-                                item_def.impl_blocks.push(ItemDefintionImpls::GenericImpl(
-                                    "helo".to_string(),
-                                    item_name,
-                                ));
-                            }
+                            item_def.impl_blocks.push(impl_block.unique_id.clone());
                         }
                     }
-                    // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and took down vscode with it
+                    // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and take down vscode with it
                     _ => {}
                 }
             }
@@ -4287,6 +4256,8 @@ fn populate_item_definitions_items(
 
                 // We are now processing the items within the fn block, so are no longer at the module level and now in a scope (or in a new child scope), so push a new scope level
                 scope_id.push(scope_count);
+                dbg!("populate item fn");
+                dbg!(&scope_id);
                 populate_item_definitions_items(
                     &itemms,
                     global_data,
@@ -4312,6 +4283,16 @@ fn populate_item_definitions_items(
                         ImplItem::Const(_) => todo!(),
                         ImplItem::Fn(_) => {
                             scope_count += 1;
+                            scope_id.push(scope_count);
+                            dbg!("populate item impl fn");
+                            dbg!(&scope_id);
+                            let scoped_various_defs = VariousDefintions::default();
+                            module.scoped_various_definitions.push((
+                                scope_id.clone(),
+                                scoped_various_defs,
+                                Vec::new(),
+                            ));
+                            scope_id.pop();
                         }
                         ImplItem::Type(_) => todo!(),
                         ImplItem::Macro(_) => todo!(),
@@ -4321,7 +4302,8 @@ fn populate_item_definitions_items(
                 }
             }
             Item::Macro(_) => {}
-            Item::Mod(item_mod) => {}
+            // We have already split up the modules in individual `ModuleData`s (which we are currently iterating through) so should ignore `Item::Mod`s
+            Item::Mod(_) => {}
             Item::Static(_) => todo!(),
             Item::Struct(item_struct) => {
                 let struct_name = item_struct.ident.to_string();
@@ -4652,8 +4634,11 @@ fn populate_impl_blocks_items(
                     };
 
                 // global_data.impl_block_target_type.pop();
+
+                // TODO I don't think there is any value in storing module and scoped `RustImplBlockSimple`s separately, they should be stored in a single Vec with a `scope_id: Option<Vec<usize>>` field
                 if scope_id.is_empty() {
                     global_impl_blocks_simpl.push(RustImplBlockSimple {
+                        unique_id: get_item_impl_unique_id(item_impl),
                         generics: rust_impl_block_generics,
                         trait_: trait_path_and_name,
                         target: target_rust_type.clone(),
@@ -4666,6 +4651,7 @@ fn populate_impl_blocks_items(
                         .unwrap();
 
                     svd.2.push(RustImplBlockSimple {
+                        unique_id: get_item_impl_unique_id(item_impl),
                         generics: rust_impl_block_generics,
                         trait_: trait_path_and_name,
                         target: target_rust_type.clone(),
@@ -4726,6 +4712,8 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             methods: Vec::new(),
             rust_name: "donotuse".to_string(),
             is_impl_block: false,
+            module_path: vec!["rust_std_prelude".to_string()],
+            scope_id: None,
         });
         prelude_stmts.push(js_class);
     }
@@ -4740,6 +4728,8 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             methods: Vec::new(),
             rust_name: "donotuse".to_string(),
             is_impl_block: false,
+            module_path: vec!["rust_std_prelude".to_string()],
+            scope_id: None,
         });
         prelude_stmts.push(js_class);
     }
@@ -4797,6 +4787,8 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
             methods,
             rust_name: "donotuse".to_string(),
             is_impl_block: false,
+            module_path: vec!["rust_std_prelude".to_string()],
+            scope_id: None,
         }));
     }
 
@@ -4978,43 +4970,51 @@ pub fn process_items(
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
     // Currently this is only the web prelude for which we need to `extract_data` for deduplicating/namespacing and getting use mappings for resolving paths, and `extract_data_populate_item_definitions` for getting item definitions to eg lookup methods etc, but we do not actually need to parse to a JS AST.
-    let web_prelude_crate_path = "../web-prelude";
-    let web_prelude_entry_point_path = PathBuf::new()
-        .join(web_prelude_crate_path)
-        .join("src")
-        .join("lib.rs");
-    let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
-    let file = syn::parse_file(&code).unwrap();
-    let prelude_items = file.items;
-    modules.push(ModuleData {
-        name: "web_prelude".to_string(),
-        parent_name: None,
-        path: vec!["web_prelude".to_string()],
-        pub_definitions: Vec::new(),
-        private_definitions: Vec::new(),
-        pub_submodules: Vec::new(),
-        private_submodules: Vec::new(),
-        pub_use_mappings: Vec::new(),
-        private_use_mappings: Vec::new(),
-        resolved_mappings: Vec::new(),
-        fn_info: Vec::new(),
-        item_definitons: Vec::new(),
-        trait_definitons: Vec::new(),
-        consts: Vec::new(),
-        items: prelude_items.clone(),
-        scoped_various_definitions: Vec::new(),
-    });
 
-    extract_data(
-        true,
-        &prelude_items,
-        &Some(web_prelude_crate_path.into()),
-        // &mut get_names_module_path.clone(),
-        &mut vec!["web_prelude".to_string()],
-        &mut names_for_finding_duplicates,
-        &mut scoped_names_for_finding_duplicates,
-        &mut modules,
-    );
+    let include_web = false;
+
+    let prelude_items = if include_web {
+        let web_prelude_crate_path = "../web-prelude";
+        let web_prelude_entry_point_path = PathBuf::new()
+            .join(web_prelude_crate_path)
+            .join("src")
+            .join("lib.rs");
+        let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
+        let file = syn::parse_file(&code).unwrap();
+        let prelude_items = file.items;
+        modules.push(ModuleData {
+            name: "web_prelude".to_string(),
+            parent_name: None,
+            path: vec!["web_prelude".to_string()],
+            pub_definitions: Vec::new(),
+            private_definitions: Vec::new(),
+            pub_submodules: Vec::new(),
+            private_submodules: Vec::new(),
+            pub_use_mappings: Vec::new(),
+            private_use_mappings: Vec::new(),
+            resolved_mappings: Vec::new(),
+            fn_info: Vec::new(),
+            item_definitons: Vec::new(),
+            trait_definitons: Vec::new(),
+            consts: Vec::new(),
+            items: prelude_items.clone(),
+            scoped_various_definitions: Vec::new(),
+        });
+
+        extract_data(
+            true,
+            &prelude_items,
+            &Some(web_prelude_crate_path.into()),
+            // &mut get_names_module_path.clone(),
+            &mut vec!["web_prelude".to_string()],
+            &mut names_for_finding_duplicates,
+            &mut scoped_names_for_finding_duplicates,
+            &mut modules,
+        );
+        prelude_items
+    } else {
+        Vec::new()
+    };
     // dbg!(&modules);
 
     // find duplicates
@@ -5080,10 +5080,23 @@ pub fn process_items(
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
     // ie populate module and scoped `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
     populate_item_definitions(&mut global_data);
+    dbg!("populate_item_definitions scope_ids");
+    let scope_ids = global_data
+        .modules
+        .iter()
+        .map(|m| {
+            m.scoped_various_definitions
+                .iter()
+                .map(|svd| svd.0.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    dbg!(scope_ids);
 
-    // populates `global_data.impl_blocks_simpl` with `RustImplBlockSimple`s
+    // populates `global_data.impl_blocks_simpl` and `module.scoped_various_definitions` with `RustImplBlockSimple`s
     populate_impl_blocks(&mut global_data);
 
+    // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class.
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     populate_impl_items(&mut global_data);
@@ -5110,17 +5123,19 @@ pub fn process_items(
         bar.get_foo();
     }
 
-    global_data.transpiled_modules.push(JsModule {
-        public: true,
-        name: "web_prelude".to_string(),
-        module_path: vec!["web_prelude".to_string()],
-        stmts: Vec::new(),
-    });
-    let stmts = js_stmts_from_syn_items(
-        prelude_items,
-        &mut vec!["web_prelude".to_string()],
-        &mut global_data,
-    );
+    if include_web {
+        global_data.transpiled_modules.push(JsModule {
+            public: true,
+            name: "web_prelude".to_string(),
+            module_path: vec!["web_prelude".to_string()],
+            stmts: Vec::new(),
+        });
+        let stmts = js_stmts_from_syn_items(
+            prelude_items,
+            &mut vec!["web_prelude".to_string()],
+            &mut global_data,
+        );
+    }
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
@@ -5131,13 +5146,14 @@ pub fn process_items(
 
     // NOTE IMPORTANT item impls are populated in js_stmts_from_syn_items, which we don't run for web_prelude, which means create_element method is not found
     let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
-
+    
     let stmts = if with_rust_types {
         push_rust_types(&global_data, stmts)
     } else {
         stmts
     };
-
+    
+    // TODO IMPORTANT this doesn't seem to make sense. `js_stmts_from_syn_items` starts with the "crate" module items, but then reads the items for each module it encounters, so `stmts` contains the entire crates items, but ten we are adding it to the `crate_module.stmts`, so all the other module's `.stmt`s will be empty. We could handle the `Item`s for each module separately since we do actually store them on `ModuleData`, which would mean we don't have to save the `GlobalData` scope state between modules, but it would be better to avoid storing syn `Item`s on `ModuleData` anyway because it is not good for testing. How does the module name comments added below work then since they are added to `.stmts`??
     let crate_module = global_data
         .transpiled_modules
         .iter_mut()
@@ -5146,12 +5162,8 @@ pub fn process_items(
     crate_module.stmts = stmts;
 
     // 5 failed in test "impl" when commenting out update_classes
-    // update_classes(
-    //     &mut global_data.transpiled_modules,
-    //     &global_data.impl_blocks,
-    //     &global_data.default_trait_impls_class_mapping,
-    //     &global_data.default_trait_impls,
-    // );
+    let global_data_copy = global_data.clone();
+    update_classes2(&mut global_data.transpiled_modules, &global_data_copy);
     // dbg!(&global_data.transpiled_modules);
 
     // resolve paths to get canonical path to item
@@ -5193,6 +5205,181 @@ pub fn process_items(
     global_data.transpiled_modules.clone()
 }
 
+fn update_classes2(js_stmt_modules: &mut Vec<JsModule>, global_data: &GlobalData) {
+    for js_module in js_stmt_modules {
+        let module = global_data
+            .modules
+            .iter()
+            .find(|m| &m.path == &js_module.module_path)
+            .unwrap();
+        update_classes_stmts(&mut js_module.stmts, global_data);
+    }
+}
+
+fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
+    for stmt in js_stmts {
+        match stmt {
+            // JsStmt::Class(js_class) if !js_class.is_impl_block => {
+            JsStmt::Function(js_fn) => {
+                update_classes_stmts(&mut js_fn.body_stmts, global_data);
+            }
+            JsStmt::Class(js_class) => {
+                let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
+                    &js_class.module_path,
+                    &js_class.scope_id,
+                    &js_class.rust_name,
+                );
+                for impl_block_id in &item_def.impl_blocks {
+                    // dbg!(&global_data.impl_blocks_simpl);
+                    // dbg!(impl_block_id);
+                    // let module_rust_impl_block = global_data
+                    //     .impl_blocks_simpl
+                    //     .iter()
+                    //     .find(|rib| &rib.unique_id == impl_block_id)
+                    //     .unwrap();
+                    // let scoped_rust_impl_block = global_data
+                    //     .s
+                    //     .impl_blocks_simpl
+                    //     .iter()
+                    //     .find(|rib| &rib.unique_id == impl_block_id)
+                    //     .unwrap();
+                    let js_impl_block = global_data
+                        .impl_blocks
+                        .iter()
+                        .find(|jib| &jib.unique_id == impl_block_id)
+                        .unwrap();
+                    let is_generic_impl = match js_impl_block.target {
+                        RustType::TypeParam(_) => true,
+                        _ => false,
+                    };
+
+                    for (used, impl_item) in &js_impl_block.items {
+                        // TODO implement used
+                        // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
+                        match &impl_item.item {
+                            RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                if is_generic_impl {
+                                    js_class.static_fields.push(JsLocal {
+                                        public: false,
+                                        export: false,
+                                        type_: LocalType::None,
+                                        lhs: LocalName::Single(js_fn.name.clone()),
+                                        value: JsExpr::Path(
+                                            [
+                                                js_impl_block.js_name(),
+                                                "prototype".to_string(),
+                                                js_fn.name.clone(),
+                                            ]
+                                            .to_vec(),
+                                        ),
+                                    });
+                                } else {
+                                    js_class.methods.push((
+                                        item_def.ident.clone(),
+                                        *private,
+                                        *static_,
+                                        js_fn.clone(),
+                                    ));
+                                }
+                            }
+                            RustImplItemItem::Const(_) => todo!(),
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// /// Called from handle_item_struct and handle_item_enum, for the given item_def, loop through it's matched impl blocks, convert the method/const/etc to JS and push that to the methods/static_fields &mut Vec
+// ///
+// /// NOTE the big problem with this is that we are doing the syn -> JS parsing for the methods/static_fields out of order from original tree, so we will be calculating the scope id for handle_impl_item_fn incorrectly.
+// /// For GenericImpl this doesn't seem t be a problem because we are grabbing the JS from `global_data.impl_blocks`.
+// /// We can't just because a struct which needs the impl method can appear before the method.
+// /// I believe we can just do an `update_js_classes` type operation after all the JS parsing, since now we are using scope_id's it will actually only be for the JS, and whereas before this would could problems when trying to lookup methods before the impl has been parsed, now we (or should) preprocess the impls and add the requried method info to the item definitions before the JS parsing
+// ///
+// /// -> (methods, static_fields)
+// fn populate_fields_and_methods(
+//     global_data: &mut GlobalData,
+//     current_module_path: &Vec<String>,
+//     // Remember JsClass expects JS names but class names are identical for Rust and JS
+//     // item_name: String,
+//     item_def: &ItemDefinition,
+//     generics_type_params: &Vec<RustTypeParam>,
+//     methods: &mut Vec<(String, bool, bool, JsFn)>,
+//     static_fields: &mut Vec<JsLocal>,
+// ) {
+//     for impl_blocky in &item_def.impl_blocks {
+//         match impl_blocky {
+//             ItemDefintionImpls::GenericImpl(unique_name, method_name) => {
+//                 // Find impl block
+//                 // TODO this should be filter because there might be multiple impl blocks with the same "signature"
+//                 let impl_block = global_data
+//                     .impl_blocks
+//                     .iter()
+//                     .find(|impl_block| &impl_block.js_name() == unique_name)
+//                     .unwrap();
+//                 for rust_impl_item in &impl_block.items {
+//                     match &rust_impl_item.item {
+//                         RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+//                             methods.push((
+//                                 item_def.ident.clone(),
+//                                 *private,
+//                                 *static_,
+//                                 js_fn.clone(),
+//                             ));
+//                         }
+//                         RustImplItemItem::Const(_) => todo!(),
+//                     }
+//                 }
+//             }
+//             ItemDefintionImpls::ConcreteImpl(impl_items) => {
+//                 for impl_item in impl_items {
+//                     match impl_item {
+//                         ImplItem::Const(_) => todo!(),
+//                         ImplItem::Fn(impl_item_fn) => {
+//                             let mut rust_impl_items = Vec::new();
+//                             let target_rust_type = RustType::StructOrEnum(
+//                                 generics_type_params.clone(),
+//                                 current_module_path.clone(),
+//                                 global_data.scope_id_as_option(),
+//                                 item_def.ident.clone(),
+//                             );
+
+//                             handle_impl_item_fn(
+//                                 &mut rust_impl_items,
+//                                 impl_item,
+//                                 impl_item_fn,
+//                                 global_data,
+//                                 current_module_path,
+//                                 &target_rust_type,
+//                             );
+//                             assert!(rust_impl_items.len() == 1);
+//                             let rust_impl_item = rust_impl_items.remove(0);
+//                             match &rust_impl_item.item {
+//                                 RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+//                                     methods.push((
+//                                         item_def.ident.clone(),
+//                                         *private,
+//                                         *static_,
+//                                         js_fn.clone(),
+//                                     ));
+//                                 }
+//                                 RustImplItemItem::Const(_) => todo!(),
+//                             }
+//                         }
+//                         ImplItem::Type(_) => todo!(),
+//                         ImplItem::Macro(_) => todo!(),
+//                         ImplItem::Verbatim(_) => todo!(),
+//                         _ => todo!(),
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
+
 pub fn modules_to_string(modules: &Vec<JsModule>, run_main: bool) -> String {
     let mut module_strings = modules
         .iter()
@@ -5227,8 +5414,14 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
     let modules = process_items(vec![item_fn], None, with_rust_types);
     assert!(modules.len() == 1);
-    let module = modules.into_iter().next().unwrap();
-    module.stmts
+    let mut module = modules.into_iter().next().unwrap();
+    assert!(module.stmts.len() == 1);
+    let temp_fn_wrapper = module.stmts.remove(0);
+    let body_stmts = match temp_fn_wrapper {
+        JsStmt::Function(js_fn) => js_fn.body_stmts,
+        _ => todo!(),
+    };
+    body_stmts
 }
 
 pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
@@ -5982,6 +6175,12 @@ fn get_path(
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
+
+    dbg!(&segs);
+    dbg!(&current_mod);
+    dbg!(&orig_mod);
+    dbg!(&current_scope_id);
+
     let module = global_data
         .modules
         .iter()
@@ -6032,6 +6231,7 @@ fn get_path(
 
     // TODO IMPORTANT we have two `is_scoped` vars here because we are using `get_path` in different contexts. `is_scoped_static` is for getting the path from static data, before syn -> JS parsing, and `is_scoped` is for use during the syn -> JS parsing. This needs thinking about, reconciling and simplifying. Should just stop using get_path for vars.
     let is_scoped_static = if let Some(scope_id) = current_scope_id {
+        // dbg!(scope_id);
         let mut temp_scope_id = scope_id.clone();
         // TODO initially wanted to not handle vars in this fn (`get_path`) but it doesn't seem possible without duplicating work given that an items and vars can shadow each other, we need to look through both the static and var scopes simultaneously to check if we have a var
         let mut is_var = false;
@@ -6041,12 +6241,14 @@ fn get_path(
         while !temp_scope_id.is_empty() {
             dbg!(&module.scoped_various_definitions);
             dbg!(scope_id);
-            dbg!(&segs);
+            // dbg!(&segs);
             let svd = module
                 .scoped_various_definitions
                 .iter()
+                // TODO should this be `&svd.0 == temp_scope_id` ???
                 .find(|svd| &svd.0 == scope_id)
                 .unwrap();
+            // dbg!(&svd);
 
             let static_scope = &svd.1;
 
@@ -6055,17 +6257,19 @@ fn get_path(
                 dbg!(&scope_id);
                 dbg!(&segs[0].ident);
                 dbg!(&look_for_scoped_vars);
+
                 let var_scope = global_data
                     .scopes
                     .iter()
                     .find(|s| &s.scope_id == scope_id)
                     .unwrap();
+                // dbg!(&global_data.scopes);
                 var_scope
                     .variables
                     .iter()
                     .any(|var| var.name == segs[0].ident)
             };
-            dbg!(is_var);
+            // dbg!(is_var);
             is_func = look_for_scoped_items
                 && static_scope
                     .fn_info
@@ -6149,7 +6353,6 @@ fn get_path(
     // TODO not sure why we need use_private_items here
     // if use_private_items && is_scoped {
     // if is_scoped || is_scoped_static {
-    dbg!(&is_scoped_static);
     if is_scoped_static.is_some() {
         // Variables and scoped items
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
