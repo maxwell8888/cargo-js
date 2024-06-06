@@ -1179,10 +1179,10 @@ pub fn handle_item_impl(
     };
     let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
     let _guard = span.enter();
-    dbg!(format!(
-        "handle_impl_item: {:?}, {:?}",
-        &item_impl.trait_, &item_impl.self_ty
-    ));
+    // dbg!(format!(
+    //     "handle_impl_item: {:?}, {:?}",
+    //     &item_impl.trait_, &item_impl.self_ty
+    // ));
 
     let impl_item_target_path = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path

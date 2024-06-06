@@ -31,9 +31,9 @@ use crate::{
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
     GlobalDataScope, ItemDefinition, JsImplBlock2, JsImplItem, PartialRustType, RustGeneric,
-    RustImplItem, RustImplItemItem, RustPathSegment, RustTraitDefinition, RustType, RustTypeFnType,
-    RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo,
-    StructOrEnumDefitionInfo,
+    RustImplItem, RustImplItemItem, RustImplItemItemNoJs, RustPathSegment, RustTraitDefinition,
+    RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo,
+    StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
 fn handle_expr_assign(
@@ -1538,19 +1538,47 @@ fn handle_expr_method_call(
                     turbofish: method_turbofish_rust_types.clone().unwrap_or(Vec::new()),
                 };
 
-                let impl_method = if let Some(impl_method) = global_data.lookup_impl_item_item(
-                    &item_type_params,
-                    &item_module_path,
-                    &item_scope_id,
-                    &sub_path,
-                    &item_name,
-                    &item_def,
-                ) {
+                // let impl_method = if let Some(impl_method) = global_data.lookup_impl_item_item(
+                //     &item_type_params,
+                //     &item_module_path,
+                //     &item_scope_id,
+                //     &sub_path,
+                //     &item_name,
+                //     &item_def,
+                // ) {
+                //     impl_method
+                // } else {
+                //     // dbg!(&global_data.scopes);
+                //     dbg!(&item_type_params);
+                //     dbg!(&item_module_path);
+                //     dbg!(&item_scope_id);
+                //     dbg!(&sub_path);
+                //     dbg!(&item_name);
+                //     dbg!(&item_def);
+                //     panic!()
+                // };
+                let impl_method = item_def.impl_blocks.iter().find_map(|impl_block_id| {
+                    // TODO also look for scoped impl blocks
+                    // TODO take into account item type params for generic impls
+                    global_data
+                        .impl_blocks_simpl
+                        .iter()
+                        .find(|ibs| &ibs.unique_id == impl_block_id)
+                        .and_then(|rust_impl_block_simple| {
+                            rust_impl_block_simple
+                                .rust_items
+                                .iter()
+                                .find(|rust_item| rust_item.ident == sub_path.ident)
+                                .cloned()
+                        })
+                });
+                let impl_method = if let Some(impl_method) = impl_method {
                     impl_method
                 } else {
                     // dbg!(&global_data.scopes);
                     dbg!(&item_type_params);
                     dbg!(&item_module_path);
+                    dbg!(&item_scope_id);
                     dbg!(&sub_path);
                     dbg!(&item_name);
                     dbg!(&item_def);
@@ -1601,8 +1629,8 @@ fn handle_expr_method_call(
                     }
                 }
 
-                match impl_method.1.item {
-                    RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                match impl_method.item {
+                    RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
                         // If return type has generics, replace them with the concretised generics that exist on the receiver item, the method's turbofish, or the methods arguments
                         let return_type = fn_info.return_type.clone();
                         fn resolve_generics_for_return_type(
@@ -1716,7 +1744,7 @@ fn handle_expr_method_call(
                             &args_rust_types,
                         )
                     }
-                    RustImplItemItem::Const(_) => todo!(),
+                    RustImplItemItemNoJs::Const => todo!(),
                 }
             }
             RustType::Vec(element) => {
@@ -2174,9 +2202,9 @@ fn handle_expr_call(
                                             &item_definition,
                                         )
                                         .unwrap();
-                                    match impl_method.1.item {
-                                        RustImplItemItem::Fn(_, _, fn_info, _) => fn_info,
-                                        RustImplItemItem::Const(_) => todo!(),
+                                    match impl_method.item {
+                                        RustImplItemItemNoJs::Fn(_, _, fn_info) => fn_info,
+                                        RustImplItemItemNoJs::Const => todo!(),
                                     }
                                 }
                             };
@@ -2358,9 +2386,9 @@ fn handle_expr_path_inner(
     // TODO clean this up
     // get_path doesn't handle vars, it just resolves paths to *items*
 
-    dbg!("handle_expr_path_inner");
-    println!("{}", quote! { #expr_path });
-    dbg!(global_data.scope_id_as_option());
+    // dbg!("handle_expr_path_inner");
+    // println!("{}", quote! { #expr_path });
+    // dbg!(global_data.scope_id_as_option());
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,

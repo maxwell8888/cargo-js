@@ -1509,7 +1509,7 @@ fn js_stmts_from_syn_items2(
 fn js_stmts_from_syn_items(
     items: Vec<Item>,
     // Need to keep track of which module we are currently in, for constructing the boilerplate
-    current_module: &mut Vec<String>,
+    current_module: &Vec<String>,
     global_data: &mut GlobalData,
 ) -> Vec<JsStmt> {
     let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
@@ -1529,8 +1529,8 @@ fn js_stmts_from_syn_items(
 
     // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
-    dbg!("js_stmts_from_syn_items");
-    dbg!(&global_data.scope_id);
+    // dbg!("js_stmts_from_syn_items");
+    // dbg!(&global_data.scope_id);
     for item in items {
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
@@ -1566,7 +1566,7 @@ fn js_stmts_from_syn_items(
             Item::Macro(_) => todo!(),
             Item::Mod(item_mod) => {
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
-                handle_item_mod(item_mod, global_data, current_module)
+                // handle_item_mod(item_mod, global_data, current_module)
             }
             Item::Static(_) => todo!(),
             Item::Struct(item_struct) => {
@@ -2242,6 +2242,7 @@ struct RustImplBlockSimple {
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
     target: RustType,
+    rust_items: Vec<RustImplItemNoJs>,
     items: Vec<ImplItem>,
 }
 fn get_item_impl_unique_id(item_impl: &ItemImpl) -> String {
@@ -2308,6 +2309,14 @@ impl JsImplBlock2 {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RustImplItemNoJs {
+    ident: String,
+    item: RustImplItemItemNoJs,
+    // return_type: RustType,
+    syn_object: ImplItem,
+}
+
 // TODO clean up these types since eg there is duplication of the fn ident
 #[derive(Debug, Clone)]
 struct RustImplItem {
@@ -2316,6 +2325,14 @@ struct RustImplItem {
     // return_type: RustType,
     syn_object: ImplItem,
 }
+
+#[derive(Debug, Clone)]
+enum RustImplItemItemNoJs {
+    /// (private, static, fn info, js fn),
+    Fn(bool, bool, FnInfo),
+    Const,
+}
+
 #[derive(Debug, Clone)]
 enum RustImplItemItem {
     /// (private, static, fn info, js fn),
@@ -3042,9 +3059,61 @@ impl GlobalData {
             item_path_seg,
             item_def,
         );
-        let impl_method = if let Some((used, impl_method)) = impl_method {
+
+        // let impl_method = if let Some((used, impl_method)) = impl_method {
+        //     match impl_method.item {
+        //         RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+        //             // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
+        //             let fn_generics = if sub_path.turbofish.len() > 0 {
+        //                 sub_path
+        //                     .turbofish
+        //                     .iter()
+        //                     .enumerate()
+        //                     .map(|(i, g)| RustTypeParam {
+        //                         name: fn_info.generics[i].clone(),
+        //                         type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+        //                     })
+        //                     .collect::<Vec<_>>()
+        //             } else {
+        //                 // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+        //                 assert!(fn_info.generics.len() == 0);
+        //                 fn_info
+        //                     .generics
+        //                     .iter()
+        //                     .map(|g| RustTypeParam {
+        //                         name: g.clone(),
+        //                         type_: RustTypeParamValue::Unresolved,
+        //                     })
+        //                     .collect::<Vec<_>>()
+        //             };
+
+        //             // Some(PartialRustType::RustType(RustType::Fn(
+        //             //     Some(item_generics.clone()),
+        //             //     fn_generics,
+        //             //     item_module_path.clone(),
+        //             //     RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
+        //             // )))
+        //             Some(RustType::Fn(
+        //                 Some(item_generics.clone()),
+        //                 fn_generics,
+        //                 item_module_path.clone(),
+        //                 item_scope_id.clone(),
+        //                 RustTypeFnType::AssociatedFn(
+        //                     item_def.ident.clone(),
+        //                     sub_path.ident.clone(),
+        //                 ),
+        //             ))
+        //         }
+        //         RustImplItemItem::Const(_) => todo!(),
+        //     }
+        // } else {
+        //     None
+        // };
+        // impl_method
+
+        let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                     let fn_generics = if sub_path.turbofish.len() > 0 {
                         sub_path
@@ -3086,7 +3155,7 @@ impl GlobalData {
                         ),
                     ))
                 }
-                RustImplItemItem::Const(_) => todo!(),
+                RustImplItemItemNoJs::Const => todo!(),
             }
         } else {
             None
@@ -3106,7 +3175,8 @@ impl GlobalData {
         item_name: &String,
         item_def: &ItemDefinition,
         // ) -> Option<PartialRustType> {
-    ) -> Option<(bool, RustImplItem)> {
+        // ) -> Option<(bool, RustImplItem)> {
+    ) -> Option<RustImplItemNoJs> {
         // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
 
         // Look for associated fn of item (struct or enum)
@@ -3196,7 +3266,8 @@ impl GlobalData {
         };
         let mut all_impl_blocks = possible_scopes;
         all_impl_blocks.extend(self.impl_blocks_simpl.clone().into_iter());
-        let all_impl_blocks = self.impl_blocks.clone();
+        // let all_impl_blocks = self.impl_blocks.clone();
+        dbg!(&all_impl_blocks);
 
         let found_traits = get_traits_implemented_for_item(
             &all_impl_blocks,
@@ -3231,9 +3302,11 @@ impl GlobalData {
                         // If so then look for method in impl block
                         if struct_impls_all_bounds {
                             impl_block
-                                .items
+                                // .items
+                                .rust_items
                                 .iter()
-                                .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+                                // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+                                .find(|impl_item| impl_item.ident == sub_path.ident)
                         } else {
                             None
                         }
@@ -3256,9 +3329,11 @@ impl GlobalData {
                             // If types match then look for method in impl block
                             if types_match {
                                 impl_block
-                                    .items
+                                    // .items
+                                    .rust_items
                                     .iter()
-                                    .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+                                    // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+                                    .find(|impl_item| impl_item.ident == sub_path.ident)
                             } else {
                                 None
                             }
@@ -3273,6 +3348,8 @@ impl GlobalData {
                 }
             })
             .cloned();
+
+        dbg!(&trait_impl_method);
 
         // Now we have all the impl blocks, we can look for the method in said impl blocks
         // We also need to check the traits themselves incase the method is a default implementation
@@ -3375,7 +3452,7 @@ enum VarItemFn {
 // }
 
 fn get_traits_implemented_for_item(
-    impl_items: &Vec<JsImplBlock2>,
+    impl_items: &Vec<RustImplBlockSimple>,
     item_module_path: &Vec<String>,
     item_scope_id: &Option<Vec<usize>>,
     item_name: &String,
@@ -3665,7 +3742,8 @@ fn get_traits_implemented_for_item2(
 //     }
 // }
 
-fn populate_impl_items(global_data: &mut GlobalData) {
+/// Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
+fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
     let span = debug_span!("update_classes");
     let _guard = span.enter();
 
@@ -4256,8 +4334,8 @@ fn populate_item_definitions_items(
 
                 // We are now processing the items within the fn block, so are no longer at the module level and now in a scope (or in a new child scope), so push a new scope level
                 scope_id.push(scope_count);
-                dbg!("populate item fn");
-                dbg!(&scope_id);
+                // dbg!("populate item fn");
+                // dbg!(&scope_id);
                 populate_item_definitions_items(
                     &itemms,
                     global_data,
@@ -4284,8 +4362,8 @@ fn populate_item_definitions_items(
                         ImplItem::Fn(_) => {
                             scope_count += 1;
                             scope_id.push(scope_count);
-                            dbg!("populate item impl fn");
-                            dbg!(&scope_id);
+                            // dbg!("populate item impl fn");
+                            // dbg!(&scope_id);
                             let scoped_various_defs = VariousDefintions::default();
                             module.scoped_various_definitions.push((
                                 scope_id.clone(),
@@ -4635,6 +4713,101 @@ fn populate_impl_blocks_items(
 
                 // global_data.impl_block_target_type.pop();
 
+                let rust_items = item_impl
+                    .items
+                    .iter()
+                    .map(|syn_item| {
+                        let item_name = match syn_item {
+                            ImplItem::Const(_) => todo!(),
+                            ImplItem::Fn(impl_item_fn) => impl_item_fn.sig.ident.to_string(),
+                            ImplItem::Type(_) => todo!(),
+                            ImplItem::Macro(_) => todo!(),
+                            ImplItem::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        };
+
+                        let rust_impl_item_item = match syn_item {
+                            ImplItem::Const(_) => todo!(),
+                            ImplItem::Fn(impl_item_fn) => {
+                                let generics = impl_item_fn
+                                    .sig
+                                    .generics
+                                    .params
+                                    .iter()
+                                    .filter_map(|g| match g {
+                                        GenericParam::Lifetime(_) => None,
+                                        GenericParam::Type(type_param) => {
+                                            Some(type_param.ident.to_string())
+                                        }
+                                        GenericParam::Const(_) => todo!(),
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let inputs_types = impl_item_fn
+                                    .sig
+                                    .inputs
+                                    .iter()
+                                    .filter_map(|input| match input {
+                                        FnArg::Receiver(_) => None,
+                                        FnArg::Typed(pat_type) => {
+                                            Some(parse_types_for_populate_item_definitions(
+                                                &*pat_type.ty,
+                                                &generics,
+                                                module_path,
+                                                &global_data_copy,
+                                            ))
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let return_type = match &impl_item_fn.sig.output {
+                                    ReturnType::Default => RustType::Unit,
+                                    ReturnType::Type(_, type_) => {
+                                        parse_types_for_populate_item_definitions(
+                                            &*type_,
+                                            &generics,
+                                            module_path,
+                                            global_data_copy,
+                                        )
+                                    }
+                                };
+                                RustImplItemItemNoJs::Fn(
+                                    match impl_item_fn.vis {
+                                        Visibility::Public(_) => false,
+                                        Visibility::Restricted(_) => todo!(),
+                                        Visibility::Inherited => true,
+                                    },
+                                    {
+                                        if let Some(input) = impl_item_fn.sig.inputs.first() {
+                                            match input {
+                                                FnArg::Receiver(_) => true,
+                                                FnArg::Typed(_) => false,
+                                            }
+                                        } else {
+                                            false
+                                        }
+                                    },
+                                    FnInfo {
+                                        ident: item_name.clone(),
+                                        inputs_types,
+                                        generics,
+                                        return_type,
+                                    },
+                                )
+                            }
+                            ImplItem::Type(_) => todo!(),
+                            ImplItem::Macro(_) => todo!(),
+                            ImplItem::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        };
+                        RustImplItemNoJs {
+                            ident: item_name.clone(),
+                            item: rust_impl_item_item,
+                            syn_object: syn_item.clone(),
+                        }
+                    })
+                    .collect();
+
                 // TODO I don't think there is any value in storing module and scoped `RustImplBlockSimple`s separately, they should be stored in a single Vec with a `scope_id: Option<Vec<usize>>` field
                 if scope_id.is_empty() {
                     global_impl_blocks_simpl.push(RustImplBlockSimple {
@@ -4642,6 +4815,7 @@ fn populate_impl_blocks_items(
                         generics: rust_impl_block_generics,
                         trait_: trait_path_and_name,
                         target: target_rust_type.clone(),
+                        rust_items,
                         items: item_impl.items.clone(),
                     });
                 } else {
@@ -4655,6 +4829,7 @@ fn populate_impl_blocks_items(
                         generics: rust_impl_block_generics,
                         trait_: trait_path_and_name,
                         target: target_rust_type.clone(),
+                        rust_items,
                         items: item_impl.items.clone(),
                     });
                 }
@@ -5080,7 +5255,7 @@ pub fn process_items(
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
     // ie populate module and scoped `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
     populate_item_definitions(&mut global_data);
-    dbg!("populate_item_definitions scope_ids");
+    // dbg!("populate_item_definitions scope_ids");
     let scope_ids = global_data
         .modules
         .iter()
@@ -5091,7 +5266,7 @@ pub fn process_items(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    dbg!(scope_ids);
+    // dbg!(scope_ids);
 
     // populates `global_data.impl_blocks_simpl` and `module.scoped_various_definitions` with `RustImplBlockSimple`s
     populate_impl_blocks(&mut global_data);
@@ -5099,7 +5274,8 @@ pub fn process_items(
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class.
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
-    populate_impl_items(&mut global_data);
+    // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
+    populate_item_def_impl_blocks(&mut global_data);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -5137,29 +5313,45 @@ pub fn process_items(
         );
     }
 
-    global_data.transpiled_modules.push(JsModule {
-        public: true,
-        name: "crate".to_string(),
-        module_path: vec!["crate".to_string()],
-        stmts: Vec::new(),
-    });
+    for module_data in global_data.modules.clone() {
+        global_data.scope_count.clear();
+        global_data.scope_count.push(0);
+        global_data.scope_id.clear();
+        global_data.scopes.clear();
+        let stmts = js_stmts_from_syn_items(module_data.items, &module_data.path, &mut global_data);
+
+        let stmts = if with_rust_types && module_data.path.is_empty() && module_data.name == "crate"
+        {
+            push_rust_types(&global_data, stmts)
+        } else {
+            stmts
+        };
+
+        global_data.transpiled_modules.push(JsModule {
+            public: true,
+            name: camel(module_data.name.clone()),
+            module_path: module_data.path.clone(),
+            stmts,
+        });
+    }
+
+    // global_data.transpiled_modules.push(JsModule {
+    //     public: true,
+    //     name: "crate".to_string(),
+    //     module_path: vec!["crate".to_string()],
+    //     stmts: Vec::new(),
+    // });
 
     // NOTE IMPORTANT item impls are populated in js_stmts_from_syn_items, which we don't run for web_prelude, which means create_element method is not found
-    let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
-    
-    let stmts = if with_rust_types {
-        push_rust_types(&global_data, stmts)
-    } else {
-        stmts
-    };
-    
+    // let stmts = js_stmts_from_syn_items(items, &mut vec!["crate".to_string()], &mut global_data);
+
     // TODO IMPORTANT this doesn't seem to make sense. `js_stmts_from_syn_items` starts with the "crate" module items, but then reads the items for each module it encounters, so `stmts` contains the entire crates items, but ten we are adding it to the `crate_module.stmts`, so all the other module's `.stmt`s will be empty. We could handle the `Item`s for each module separately since we do actually store them on `ModuleData`, which would mean we don't have to save the `GlobalData` scope state between modules, but it would be better to avoid storing syn `Item`s on `ModuleData` anyway because it is not good for testing. How does the module name comments added below work then since they are added to `.stmts`??
-    let crate_module = global_data
-        .transpiled_modules
-        .iter_mut()
-        .find(|tm| tm.module_path == vec!["crate".to_string()])
-        .unwrap();
-    crate_module.stmts = stmts;
+    // let crate_module = global_data
+    //     .transpiled_modules
+    //     .iter_mut()
+    //     .find(|tm| tm.module_path == vec!["crate".to_string()])
+    //     .unwrap();
+    // crate_module.stmts = stmts;
 
     // 5 failed in test "impl" when commenting out update_classes
     let global_data_copy = global_data.clone();
@@ -5179,6 +5371,12 @@ pub fn process_items(
 
     // TODO can this not just be done automatically in JsModule.js_string() ??
     // add module name comments when there is more than 1 module
+
+    // for m in &global_data.transpiled_modules {
+    //     dbg!(&m.module_path);
+    //     dbg!(&m.name);
+    //     dbg!(&m.stmts.len());
+    // }
     if global_data.transpiled_modules.len() > 1 {
         for module in global_data
             .transpiled_modules
@@ -5497,7 +5695,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
 
     populate_item_definitions(&mut global_data);
     populate_impl_blocks(&mut global_data);
-    populate_impl_items(&mut global_data);
+    populate_item_def_impl_blocks(&mut global_data);
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
@@ -5767,8 +5965,8 @@ fn parse_fn_body_stmts(
                             js_stmts.push(stmt);
                             return_type = Some(type_);
                         } else {
-                            dbg!("print expr");
-                            println!("{}", quote! { #expr });
+                            // dbg!("print expr");
+                            // println!("{}", quote! { #expr });
                             let (mut js_expr, type_) =
                                 handle_expr(expr, global_data, current_module);
                             // Is the thing being returned a JS primative mut var or &mut (ie has a RustInteger wrapper)? in which case we need to get the inner value if `returns_non_mut_ref_val` is true
@@ -5800,8 +5998,8 @@ fn parse_fn_body_stmts(
                 }
             }
         } else {
-            dbg!("print the stmt");
-            println!("{}", quote! { #stmt }.to_string());
+            // dbg!("print the stmt");
+            // println!("{}", quote! { #stmt }.to_string());
             let (stmt, type_) = handle_stmt(stmt, global_data, current_module);
             js_stmts.push(stmt);
             return_type = Some(type_);
@@ -6176,10 +6374,10 @@ fn get_path(
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    dbg!(&segs);
-    dbg!(&current_mod);
-    dbg!(&orig_mod);
-    dbg!(&current_scope_id);
+    // dbg!(&segs);
+    // dbg!(&current_mod);
+    // dbg!(&orig_mod);
+    // dbg!(&current_scope_id);
 
     let module = global_data
         .modules
@@ -6239,8 +6437,8 @@ fn get_path(
         let mut is_item_def = false;
         let mut is_trait_def = false;
         while !temp_scope_id.is_empty() {
-            dbg!(&module.scoped_various_definitions);
-            dbg!(scope_id);
+            // dbg!(&module.scoped_various_definitions);
+            // dbg!(scope_id);
             // dbg!(&segs);
             let svd = module
                 .scoped_various_definitions
@@ -6253,10 +6451,10 @@ fn get_path(
             let static_scope = &svd.1;
 
             is_var = look_for_scoped_vars && {
-                dbg!(&global_data.scopes);
-                dbg!(&scope_id);
-                dbg!(&segs[0].ident);
-                dbg!(&look_for_scoped_vars);
+                // dbg!(&global_data.scopes);
+                // dbg!(&scope_id);
+                // dbg!(&segs[0].ident);
+                // dbg!(&look_for_scoped_vars);
 
                 let var_scope = global_data
                     .scopes

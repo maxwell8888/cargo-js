@@ -111,8 +111,8 @@ fn handle_local(
         panic!("uninitialized variables not supported")
     };
 
-    dbg!("handle_local");
-    println!("{}", quote! { #local });
+    // dbg!("handle_local");
+    // println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
     let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
 
