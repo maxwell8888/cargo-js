@@ -1557,12 +1557,24 @@ fn handle_expr_method_call(
                 //     dbg!(&item_def);
                 //     panic!()
                 // };
+
+                let module = global_data
+                    .modules
+                    .iter()
+                    .find(|m| &m.path == current_module)
+                    .unwrap();
+
                 let impl_method = item_def.impl_blocks.iter().find_map(|impl_block_id| {
                     // TODO also look for scoped impl blocks
                     // TODO take into account item type params for generic impls
-                    global_data
-                        .impl_blocks_simpl
+                    let module_impl_blocks = global_data.impl_blocks_simpl.iter();
+                    let scoped_impl_blocks = module
+                        .scoped_various_definitions
                         .iter()
+                        .map(|svd| &svd.2)
+                        .flatten();
+                    module_impl_blocks
+                        .chain(scoped_impl_blocks)
                         .find(|ibs| &ibs.unique_id == impl_block_id)
                         .and_then(|rust_impl_block_simple| {
                             rust_impl_block_simple
