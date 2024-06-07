@@ -1558,44 +1558,15 @@ fn handle_expr_method_call(
                 //     panic!()
                 // };
 
-                let module = global_data
-                    .modules
-                    .iter()
-                    .find(|m| &m.path == current_module)
+                let impl_method = global_data
+                    .lookup_impl_item_item2(
+                        &item_type_params,
+                        &item_module_path,
+                        &item_scope_id,
+                        &item_def,
+                        &sub_path,
+                    )
                     .unwrap();
-
-                let impl_method = item_def.impl_blocks.iter().find_map(|impl_block_id| {
-                    // TODO also look for scoped impl blocks
-                    // TODO take into account item type params for generic impls
-                    let module_impl_blocks = global_data.impl_blocks_simpl.iter();
-                    let scoped_impl_blocks = module
-                        .scoped_various_definitions
-                        .iter()
-                        .map(|svd| &svd.2)
-                        .flatten();
-                    module_impl_blocks
-                        .chain(scoped_impl_blocks)
-                        .find(|ibs| &ibs.unique_id == impl_block_id)
-                        .and_then(|rust_impl_block_simple| {
-                            rust_impl_block_simple
-                                .rust_items
-                                .iter()
-                                .find(|rust_item| rust_item.ident == sub_path.ident)
-                                .cloned()
-                        })
-                });
-                let impl_method = if let Some(impl_method) = impl_method {
-                    impl_method
-                } else {
-                    // dbg!(&global_data.scopes);
-                    dbg!(&item_type_params);
-                    dbg!(&item_module_path);
-                    dbg!(&item_scope_id);
-                    dbg!(&sub_path);
-                    dbg!(&item_name);
-                    dbg!(&item_def);
-                    panic!()
-                };
 
                 fn method_return_type_generic_resolve_to_rust_type(
                     item_type_params: &Vec<RustTypeParam>,
@@ -2201,17 +2172,16 @@ fn handle_expr_call(
                                             &item_name.clone(),
                                         );
                                     let impl_method = global_data
-                                        .lookup_impl_item_item(
+                                        .lookup_impl_item_item2(
                                             &item_type_params,
                                             &module_path,
                                             &scope_id,
+                                            &item_definition,
                                             // TODO IMPORTANT not populating turbofish correctly
                                             &RustPathSegment {
                                                 ident: fn_name.clone(),
                                                 turbofish: Vec::new(),
                                             },
-                                            &item_name.clone(),
-                                            &item_definition,
                                         )
                                         .unwrap();
                                     match impl_method.item {
@@ -2531,14 +2501,16 @@ fn handle_expr_path_inner(
 
         // Get struct/enum item definition
         // dbg!("here");
-        // dbg!(&segs_copy_module_path);
-        // dbg!(&item_path_seg.ident);
+        dbg!(&segs_copy_module_path);
+        dbg!(&segs_copy_item_scope);
+        dbg!(&item_path_seg.ident);
+        dbg!(&sub_path.ident);
         let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
             &segs_copy_module_path,
             &segs_copy_item_scope,
             &item_path_seg.ident,
         );
-        // dbg!(&item_def);
+        dbg!(&item_def);
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
         let item_generics = if item_path_seg.turbofish.len() > 0 {
@@ -2573,7 +2545,7 @@ fn handle_expr_path_inner(
             &item_path_seg.ident,
             &item_def,
         );
-        // dbg!(&impl_method);
+        dbg!(&impl_method);
         let impl_method = impl_method.map(|impl_method| PartialRustType::RustType(impl_method));
 
         let enum_variant = match item_def.struct_or_enum_info {

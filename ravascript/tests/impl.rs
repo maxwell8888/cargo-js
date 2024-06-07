@@ -127,7 +127,6 @@ async fn full_qualified_method_call() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;
@@ -181,7 +180,6 @@ async fn full_qualified_trait_method_call() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;
@@ -225,7 +223,6 @@ async fn call_method_before_impl_block_definition() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;
@@ -273,7 +270,6 @@ async fn multiple_impls_with_same_signature() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 getNum() {
                     return 5;
@@ -283,8 +279,6 @@ async fn multiple_impls_with_same_signature() {
                 var foo = new Foo();
                 console.assert(foo.getNum() === 5);
             }
-
-            // bar
 
             main();
         "#,
@@ -413,7 +407,6 @@ async fn shadowed_structs_with_shadowed_methods() {
 
     let expected = format_js(
         r#"
-            // crate
             function main() {
                 class Foo {
                     bar() {
@@ -717,7 +710,6 @@ async fn call_method_in_same_impl_block_before_method_definition() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;
@@ -767,7 +759,6 @@ async fn simple_inherent_impl() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;
@@ -821,7 +812,6 @@ async fn module_level_struct_scoped_inherent_impl() {
 
     let expected = format_js(
         r#"
-            // crate
             class Foo {
                 constructor(num) {
                     this.num = num;

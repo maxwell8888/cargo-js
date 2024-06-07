@@ -1704,7 +1704,8 @@ struct ModuleData {
 
     // (scope number, definitions)
     // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
-    scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+    // scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+    scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
 }
 impl ModuleData {
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
@@ -3051,13 +3052,21 @@ impl GlobalData {
         item_def: &ItemDefinition,
         // ) -> Option<PartialRustType> {
     ) -> Option<RustType> {
-        let impl_method = self.lookup_impl_item_item(
+        // let impl_method = self.lookup_impl_item_item(
+        //     item_generics,
+        //     item_module_path,
+        //     item_scope_id,
+        //     sub_path,
+        //     item_path_seg,
+        //     item_def,
+        // );
+
+        let impl_method = self.lookup_impl_item_item2(
             item_generics,
             item_module_path,
             item_scope_id,
-            sub_path,
-            item_path_seg,
             item_def,
+            sub_path,
         );
 
         // let impl_method = if let Some((used, impl_method)) = impl_method {
@@ -3163,255 +3172,308 @@ impl GlobalData {
         impl_method
     }
 
-    // TODO method should just take a RustType rather than specifically an item/struct
-    // Looks up the `RustImplItem` eg method for a given item
-    // TODO IMPORTANT not handling scoped impls for now for simplicity
-    fn lookup_impl_item_item(
+    fn lookup_impl_item_item2(
         &self,
         item_generics: &Vec<RustTypeParam>,
         item_module_path: &Vec<String>,
         item_scope_id: &Option<Vec<usize>>,
-        sub_path: &RustPathSegment,
-        item_name: &String,
         item_def: &ItemDefinition,
-        // ) -> Option<PartialRustType> {
-        // ) -> Option<(bool, RustImplItem)> {
+        sub_path: &RustPathSegment,
     ) -> Option<RustImplItemNoJs> {
-        // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
-
-        // Look for associated fn of item (struct or enum)
-
-        // Look through all impl blocks which match item to find impl item which matches subpath name
-
-        // First look for method in direct (non-trait) impls
-        // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
-        // let scoped_impls = self.scopes.iter().map(|s| s.impl_blocks.iter()).flatten();
-
-        let module = self
-            .modules
-            .iter()
-            .find(|m| &m.path == item_module_path)
-            .unwrap();
-        // let scoped_impls = module.scoped_various_definitions.iter().find_map(|svd| {
-        //     if let Some(scope_id) = &item_scope_id {
-        //         if &svd.0 == scope_id {
-        //             Some(svd.2)
-        //         } else {
-        //             None
-        //         }
-        //     } else {
-        //         None
-        //     }
-        // });
-        // let scoped_impls = if let Some(scoped_impls) = scoped_impls {
-        //     scoped_impls
-        // } else {
-        //     Vec::new()
-        // };
-        // let scoped_non_trait_impl_method = self
-        //     .impl_blocks
+        // let module = self
+        //     .modules
         //     .iter()
-        //     // .chain(scoped_impls.iter())
-        //     .find_map(|impl_block| {
-        //         let types_match = struct_or_enum_types_match(
-        //             &impl_block.target,
-        //             &item_generics,
-        //             &item_module_path,
-        //             &item_scope_id,
-        //             &item_def.ident,
-        //         );
+        //     // .find(|m| &m.path == current_module)
+        //     .find(|m| &m.path == item_module_path)
+        //     .unwrap();
 
-        //         // If we have a matching, non-trait impl block, look to see if it contains the method
-        //         if types_match && impl_block.trait_.is_none() {
-        //             impl_block
-        //                 .items
-        //                 .iter()
-        //                 .find(|impl_item| impl_item.ident == sub_path.ident)
-        //                 .cloned()
-        //         } else {
-        //             None
-        //         }
-        //     });
+        let impl_method = item_def.impl_blocks.iter().find_map(|impl_block_id| {
+            // TODO also look for scoped impl blocks
+            // TODO take into account item type params for generic impls
 
-        // Now look for the method in trait impls
-        // NOTE that while we are looking up a method for a particular `item_def`, we are matching on both concrete impls like `impl<T> Foo for Bar`, and generic impls like `impl<T> Foo for T` or `impl<T: Bar> Foo for T` in which case we need to check if our concrete `item_def` meets the trait bounds of `T`.
-        // Say we have an impl block like `impl<T> Foo for T`, then we know our item/struct impls Foo and we can add the `impl<T> Foo for T` impl block to the list of impl blocks in which to look for the method.
-        // However, for an impl block like `impl<T: Bar> Foo for T`, then we first need to determine whether our item/struct implements Bar.
-        // So the first thing we do is find *all* the traits our item/struct implements
-        // Note that this is a recursive process, ie once we have found that impl Foo via `impl<T: Bar> Foo for T`, we then assuming that `impl<T: Foo> Baz for T` appears before `impl<T: Bar> Foo for T` in the list of impl blocks, we would need to do another pass of the impl blocks to match it, now that we know we impl Foo. And we should repeatedly do another pass every time we match a new trait impl, until no new trait impls were matched.
-
-        // Also note it isn't possible to calculate this out upfront eg in the first pass in `process_items`, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
-
-        // Only need to look in the same or child scopes of the item definition since an impl on an item cannot be in a parent scope
-        // let possible_scopes = self.scopes.iter().rev().take_while(|s| {
-        //     s.item_definitons
-        //         .iter()
-        //         .any(|item_def| &item_def.ident == item_name)
-        // });
-        let possible_scopes = if let Some(item_scope_id) = item_scope_id {
-            let mut temp_scope_id = item_scope_id.clone();
-            let mut scopes = Vec::new();
-            while !temp_scope_id.is_empty() {
-                let scope = module
-                    .scoped_various_definitions
-                    .iter()
-                    .find(|svd| svd.0 == temp_scope_id)
-                    .unwrap();
-                scopes.push(scope.2.clone());
-                temp_scope_id.pop();
-            }
-            scopes.into_iter().flatten().collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let mut all_impl_blocks = possible_scopes;
-        all_impl_blocks.extend(self.impl_blocks_simpl.clone().into_iter());
-        // let all_impl_blocks = self.impl_blocks.clone();
-        dbg!(&all_impl_blocks);
-
-        let found_traits = get_traits_implemented_for_item(
-            &all_impl_blocks,
-            item_module_path,
-            item_scope_id,
-            item_name,
-        );
-
-        // Now we know all the traits the item/struct impls, we can go through all the impl blocks and find the one (if any)
-        let trait_impl_method = all_impl_blocks
-            .iter()
-            .find_map(|impl_block| {
-                // TODO this needs extending to handle matching any target type, rather than just user structs
-                match &impl_block.target {
-                    RustType::TypeParam(rust_type_param) => {
-                        // TODO should we be looking for/matching on found_traits in the `Foo` or `Bar` of `impl<T: Foo> Bar for T`??? I don't think it actually matter since we seem to be duplicating some work we already did in creating found_traits. NOTE but we must ensure we are matching the correct block, eg Bar might be in found_traits, but doesn't mean we should match because Foo might not be and we might actually get Bar from `impl<T: Baz> Bar for T`, so it is the trait bounds that we must match on.
-
-                        // Get bounds on type param
-                        let type_param_bounds = &impl_block
-                            .generics
-                            .iter()
-                            .find(|generic| generic.ident == rust_type_param.name)
-                            .unwrap()
-                            .trait_bounds;
-
-                        // If there are no trait bounds ie `impl<T> Foo for T` we always match
-                        // Does our struct impl all of these traits?
-                        let struct_impls_all_bounds = type_param_bounds
-                            .iter()
-                            .all(|type_param_bound| found_traits.contains(type_param_bound));
-
-                        // If so then look for method in impl block
-                        if struct_impls_all_bounds {
-                            impl_block
-                                // .items
-                                .rust_items
-                                .iter()
-                                // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
-                                .find(|impl_item| impl_item.ident == sub_path.ident)
-                        } else {
-                            None
-                        }
-                    }
-                    RustType::StructOrEnum(
-                        struct_type_params,
-                        struct_module_path,
-                        struct_scope_id,
-                        struct_name,
-                    ) => {
-                        if let Some(impl_trait) = &impl_block.trait_ {
-                            let types_match = struct_or_enum_types_match(
-                                &impl_block.target,
-                                &item_generics,
-                                &item_module_path,
-                                item_scope_id,
-                                &item_def.ident,
-                            );
-
-                            // If types match then look for method in impl block
-                            if types_match {
-                                impl_block
-                                    // .items
-                                    .rust_items
-                                    .iter()
-                                    // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
-                                    .find(|impl_item| impl_item.ident == sub_path.ident)
-                            } else {
-                                None
-                            }
-                            // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
-                        } else {
-                            None
-                        }
-                    }
-                    RustType::MutRef(_) => todo!(),
-                    RustType::Ref(_) => todo!(),
-                    _ => todo!(),
-                }
-            })
-            .cloned();
-
-        dbg!(&trait_impl_method);
-
-        // Now we have all the impl blocks, we can look for the method in said impl blocks
-        // We also need to check the traits themselves incase the method is a default implementation
-        // let scoped_traits = self
-        //     .scopes
-        //     .iter()
-        //     .rev()
-        //     .map(|s| {
-        //         s.trait_definitons
-        //             .iter()
-        //             .filter(|trait_def| found_traits.contains(&(None, trait_def.name.clone())))
-        //     })
-        //     .flatten();
-        let module_level_traits = self
-            .modules
-            .iter()
-            .map(|module| {
-                module.trait_definitons.iter().filter(|trait_def| {
-                    found_traits.contains(&(module.path.clone(), None, trait_def.name.clone()))
+            // let module_impl_blocks = self.impl_blocks_simpl.iter();
+            // let scoped_impl_blocks = module
+            //     .scoped_various_definitions
+            //     .iter()
+            //     .map(|svd| &svd.2)
+            //     .flatten();
+            // module_impl_blocks
+            //     .chain(scoped_impl_blocks)
+            self.impl_blocks_simpl
+                .iter()
+                .find(|ibs| &ibs.unique_id == impl_block_id)
+                .and_then(|rust_impl_block_simple| {
+                    rust_impl_block_simple
+                        .rust_items
+                        .iter()
+                        .find(|rust_item| rust_item.ident == sub_path.ident)
+                        .cloned()
                 })
-            })
-            .flatten();
-        // TODO add default impl items to traits
-        // let default_trait_method = scoped_traits
-        //     .chain(module_level_traits)
-        //     .find_map(|trait_def| {
-        //         trait_def
-        //             .items
-        //             .iter()
-        //             .find(|impl_item| impl_item.ident == sub_path.ident)
-        //             .cloned()
-        //     });
-
-        // It is not possible to have impls with the same method name, so we should at most match 1 impl item/method
-        // dbg!(&matched_trait_impl_blocks);
-        // assert!(
-        //     matched_trait_impl_blocks
-        //         .iter()
-        //         .filter_map(|impl_block| {
-        //             impl_block
-        //                 .items
-        //                 .iter()
-        //                 .find(|impl_item| impl_item.ident == sub_path.ident)
-        //         })
-        //         .count()
-        //         <= 1
-        // );
-        // let module_level_impl_method = matched_trait_impl_blocks
-        //     .iter()
-        //     .find_map(|impl_block| {
-        //         impl_block
-        //             .items
-        //             .iter()
-        //             .find(|impl_item| impl_item.ident == sub_path.ident)
-        //     })
-        //     .cloned();
-
-        // Use xor because we should not have both a scoped and module level impl method, only either or
-        // let impl_method = scoped_non_trait_impl_method.xor(trait_impl_method);
-        let impl_method = trait_impl_method;
+        });
+        // let impl_method = if let Some(impl_method) = impl_method {
+        //     impl_method
+        // } else {
+        //     // dbg!(&global_data.scopes);
+        //     dbg!(&item_generics);
+        //     dbg!(&item_module_path);
+        //     dbg!(&item_scope_id);
+        //     dbg!(&sub_path);
+        //     // dbg!(&item_name);
+        //     dbg!(&item_def);
+        //     panic!()
+        // };
         impl_method
     }
+
+    // TODO method should just take a RustType rather than specifically an item/struct
+    // Looks up the `RustImplItem` eg method for a given item
+    // TODO IMPORTANT not handling scoped impls for now for simplicity
+    // fn lookup_impl_item_item(
+    //     &self,
+    //     item_generics: &Vec<RustTypeParam>,
+    //     item_module_path: &Vec<String>,
+    //     item_scope_id: &Option<Vec<usize>>,
+    //     sub_path: &RustPathSegment,
+    //     item_name: &String,
+    //     item_def: &ItemDefinition,
+    //     // ) -> Option<PartialRustType> {
+    //     // ) -> Option<(bool, RustImplItem)> {
+    // ) -> Option<RustImplItemNoJs> {
+    //     // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
+
+    //     // Look for associated fn of item (struct or enum)
+
+    //     // Look through all impl blocks which match item to find impl item which matches subpath name
+
+    //     // First look for method in direct (non-trait) impls
+    //     // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
+    //     // let scoped_impls = self.scopes.iter().map(|s| s.impl_blocks.iter()).flatten();
+
+    //     let module = self
+    //         .modules
+    //         .iter()
+    //         .find(|m| &m.path == item_module_path)
+    //         .unwrap();
+    //     // let scoped_impls = module.scoped_various_definitions.iter().find_map(|svd| {
+    //     //     if let Some(scope_id) = &item_scope_id {
+    //     //         if &svd.0 == scope_id {
+    //     //             Some(svd.2)
+    //     //         } else {
+    //     //             None
+    //     //         }
+    //     //     } else {
+    //     //         None
+    //     //     }
+    //     // });
+    //     // let scoped_impls = if let Some(scoped_impls) = scoped_impls {
+    //     //     scoped_impls
+    //     // } else {
+    //     //     Vec::new()
+    //     // };
+    //     // let scoped_non_trait_impl_method = self
+    //     //     .impl_blocks
+    //     //     .iter()
+    //     //     // .chain(scoped_impls.iter())
+    //     //     .find_map(|impl_block| {
+    //     //         let types_match = struct_or_enum_types_match(
+    //     //             &impl_block.target,
+    //     //             &item_generics,
+    //     //             &item_module_path,
+    //     //             &item_scope_id,
+    //     //             &item_def.ident,
+    //     //         );
+
+    //     //         // If we have a matching, non-trait impl block, look to see if it contains the method
+    //     //         if types_match && impl_block.trait_.is_none() {
+    //     //             impl_block
+    //     //                 .items
+    //     //                 .iter()
+    //     //                 .find(|impl_item| impl_item.ident == sub_path.ident)
+    //     //                 .cloned()
+    //     //         } else {
+    //     //             None
+    //     //         }
+    //     //     });
+
+    //     // Now look for the method in trait impls
+    //     // NOTE that while we are looking up a method for a particular `item_def`, we are matching on both concrete impls like `impl<T> Foo for Bar`, and generic impls like `impl<T> Foo for T` or `impl<T: Bar> Foo for T` in which case we need to check if our concrete `item_def` meets the trait bounds of `T`.
+    //     // Say we have an impl block like `impl<T> Foo for T`, then we know our item/struct impls Foo and we can add the `impl<T> Foo for T` impl block to the list of impl blocks in which to look for the method.
+    //     // However, for an impl block like `impl<T: Bar> Foo for T`, then we first need to determine whether our item/struct implements Bar.
+    //     // So the first thing we do is find *all* the traits our item/struct implements
+    //     // Note that this is a recursive process, ie once we have found that impl Foo via `impl<T: Bar> Foo for T`, we then assuming that `impl<T: Foo> Baz for T` appears before `impl<T: Bar> Foo for T` in the list of impl blocks, we would need to do another pass of the impl blocks to match it, now that we know we impl Foo. And we should repeatedly do another pass every time we match a new trait impl, until no new trait impls were matched.
+
+    //     // Also note it isn't possible to calculate this out upfront eg in the first pass in `process_items`, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
+
+    //     // Only need to look in the same or child scopes of the item definition since an impl on an item cannot be in a parent scope
+    //     // let possible_scopes = self.scopes.iter().rev().take_while(|s| {
+    //     //     s.item_definitons
+    //     //         .iter()
+    //     //         .any(|item_def| &item_def.ident == item_name)
+    //     // });
+    //     let possible_scopes = if let Some(item_scope_id) = item_scope_id {
+    //         let mut temp_scope_id = item_scope_id.clone();
+    //         let mut scopes = Vec::new();
+    //         while !temp_scope_id.is_empty() {
+    //             let scope = module
+    //                 .scoped_various_definitions
+    //                 .iter()
+    //                 .find(|svd| svd.0 == temp_scope_id)
+    //                 .unwrap();
+    //             scopes.push(scope.2.clone());
+    //             temp_scope_id.pop();
+    //         }
+    //         scopes.into_iter().flatten().collect::<Vec<_>>()
+    //     } else {
+    //         Vec::new()
+    //     };
+    //     let mut all_impl_blocks = possible_scopes;
+    //     all_impl_blocks.extend(self.impl_blocks_simpl.clone().into_iter());
+    //     // let all_impl_blocks = self.impl_blocks.clone();
+    //     dbg!(&all_impl_blocks);
+
+    //     let found_traits = get_traits_implemented_for_item(
+    //         &all_impl_blocks,
+    //         item_module_path,
+    //         item_scope_id,
+    //         item_name,
+    //     );
+
+    //     // Now we know all the traits the item/struct impls, we can go through all the impl blocks and find the one (if any)
+    //     let trait_impl_method = all_impl_blocks
+    //         .iter()
+    //         .find_map(|impl_block| {
+    //             // TODO this needs extending to handle matching any target type, rather than just user structs
+    //             match &impl_block.target {
+    //                 RustType::TypeParam(rust_type_param) => {
+    //                     // TODO should we be looking for/matching on found_traits in the `Foo` or `Bar` of `impl<T: Foo> Bar for T`??? I don't think it actually matter since we seem to be duplicating some work we already did in creating found_traits. NOTE but we must ensure we are matching the correct block, eg Bar might be in found_traits, but doesn't mean we should match because Foo might not be and we might actually get Bar from `impl<T: Baz> Bar for T`, so it is the trait bounds that we must match on.
+
+    //                     // Get bounds on type param
+    //                     let type_param_bounds = &impl_block
+    //                         .generics
+    //                         .iter()
+    //                         .find(|generic| generic.ident == rust_type_param.name)
+    //                         .unwrap()
+    //                         .trait_bounds;
+
+    //                     // If there are no trait bounds ie `impl<T> Foo for T` we always match
+    //                     // Does our struct impl all of these traits?
+    //                     let struct_impls_all_bounds = type_param_bounds
+    //                         .iter()
+    //                         .all(|type_param_bound| found_traits.contains(type_param_bound));
+
+    //                     // If so then look for method in impl block
+    //                     if struct_impls_all_bounds {
+    //                         impl_block
+    //                             // .items
+    //                             .rust_items
+    //                             .iter()
+    //                             // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+    //                             .find(|impl_item| impl_item.ident == sub_path.ident)
+    //                     } else {
+    //                         None
+    //                     }
+    //                 }
+    //                 RustType::StructOrEnum(
+    //                     struct_type_params,
+    //                     struct_module_path,
+    //                     struct_scope_id,
+    //                     struct_name,
+    //                 ) => {
+    //                     if let Some(impl_trait) = &impl_block.trait_ {
+    //                         let types_match = struct_or_enum_types_match(
+    //                             &impl_block.target,
+    //                             &item_generics,
+    //                             &item_module_path,
+    //                             item_scope_id,
+    //                             &item_def.ident,
+    //                         );
+
+    //                         // If types match then look for method in impl block
+    //                         if types_match {
+    //                             impl_block
+    //                                 // .items
+    //                                 .rust_items
+    //                                 .iter()
+    //                                 // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
+    //                                 .find(|impl_item| impl_item.ident == sub_path.ident)
+    //                         } else {
+    //                             None
+    //                         }
+    //                         // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
+    //                     } else {
+    //                         None
+    //                     }
+    //                 }
+    //                 RustType::MutRef(_) => todo!(),
+    //                 RustType::Ref(_) => todo!(),
+    //                 _ => todo!(),
+    //             }
+    //         })
+    //         .cloned();
+
+    //     dbg!(&trait_impl_method);
+
+    //     // Now we have all the impl blocks, we can look for the method in said impl blocks
+    //     // We also need to check the traits themselves incase the method is a default implementation
+    //     // let scoped_traits = self
+    //     //     .scopes
+    //     //     .iter()
+    //     //     .rev()
+    //     //     .map(|s| {
+    //     //         s.trait_definitons
+    //     //             .iter()
+    //     //             .filter(|trait_def| found_traits.contains(&(None, trait_def.name.clone())))
+    //     //     })
+    //     //     .flatten();
+    //     let module_level_traits = self
+    //         .modules
+    //         .iter()
+    //         .map(|module| {
+    //             module.trait_definitons.iter().filter(|trait_def| {
+    //                 found_traits.contains(&(module.path.clone(), None, trait_def.name.clone()))
+    //             })
+    //         })
+    //         .flatten();
+    //     // TODO add default impl items to traits
+    //     // let default_trait_method = scoped_traits
+    //     //     .chain(module_level_traits)
+    //     //     .find_map(|trait_def| {
+    //     //         trait_def
+    //     //             .items
+    //     //             .iter()
+    //     //             .find(|impl_item| impl_item.ident == sub_path.ident)
+    //     //             .cloned()
+    //     //     });
+
+    //     // It is not possible to have impls with the same method name, so we should at most match 1 impl item/method
+    //     // dbg!(&matched_trait_impl_blocks);
+    //     // assert!(
+    //     //     matched_trait_impl_blocks
+    //     //         .iter()
+    //     //         .filter_map(|impl_block| {
+    //     //             impl_block
+    //     //                 .items
+    //     //                 .iter()
+    //     //                 .find(|impl_item| impl_item.ident == sub_path.ident)
+    //     //         })
+    //     //         .count()
+    //     //         <= 1
+    //     // );
+    //     // let module_level_impl_method = matched_trait_impl_blocks
+    //     //     .iter()
+    //     //     .find_map(|impl_block| {
+    //     //         impl_block
+    //     //             .items
+    //     //             .iter()
+    //     //             .find(|impl_item| impl_item.ident == sub_path.ident)
+    //     //     })
+    //     //     .cloned();
+
+    //     // Use xor because we should not have both a scoped and module level impl method, only either or
+    //     // let impl_method = scoped_non_trait_impl_method.xor(trait_impl_method);
+    //     let impl_method = trait_impl_method;
+    //     impl_method
+    // }
 }
 
 enum VarItemFn {
@@ -3750,10 +3812,10 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
     let impl_blocks = global_data.impl_blocks_simpl.clone();
     for module in &mut global_data.modules {
         let clone_scoped_various_definitions = module.scoped_various_definitions.clone();
-        let scoped_impl_blocks = clone_scoped_various_definitions
-            .iter()
-            .map(|svd| &svd.2)
-            .flatten();
+        // let scoped_impl_blocks = clone_scoped_various_definitions
+        //     .iter()
+        //     .map(|svd| &svd.2)
+        //     .flatten();
 
         // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
 
@@ -3780,7 +3842,8 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
                 &None,
                 &item_def.ident,
             );
-            for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
+            // for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
+            for impl_block in &impl_blocks {
                 // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds
                 match &impl_block.target {
                     // Concrete type target
@@ -4347,7 +4410,7 @@ fn populate_item_definitions_items(
                 module.scoped_various_definitions.push((
                     scope_id.clone(),
                     scoped_various_defs,
-                    Vec::new(),
+                    // Vec::new(),
                 ));
                 scope_id.pop();
             }
@@ -4368,7 +4431,7 @@ fn populate_item_definitions_items(
                             module.scoped_various_definitions.push((
                                 scope_id.clone(),
                                 scoped_various_defs,
-                                Vec::new(),
+                                // Vec::new(),
                             ));
                             scope_id.pop();
                         }
@@ -4502,7 +4565,7 @@ fn populate_impl_blocks(global_data: &mut GlobalData) {
             &global_data_copy,
             &module_path,
             &mut global_data.impl_blocks_simpl,
-            &mut module.scoped_various_definitions,
+            // &mut module.scoped_various_definitions,
             &mut scope_id,
         );
     }
@@ -4535,7 +4598,7 @@ fn populate_impl_blocks_items(
     global_data_copy: &GlobalData,
     module_path: &Vec<String>,
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
-    scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+    // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
     scope_id: &mut Vec<usize>,
 ) {
     let mut scope_count = 0;
@@ -4557,7 +4620,7 @@ fn populate_impl_blocks_items(
                     &global_data_copy,
                     &module_path,
                     global_impl_blocks_simpl,
-                    scoped_various_definitions,
+                    // scoped_various_definitions,
                     scope_id,
                 );
                 scope_id.pop();
@@ -4809,30 +4872,38 @@ fn populate_impl_blocks_items(
                     .collect();
 
                 // TODO I don't think there is any value in storing module and scoped `RustImplBlockSimple`s separately, they should be stored in a single Vec with a `scope_id: Option<Vec<usize>>` field
-                if scope_id.is_empty() {
-                    global_impl_blocks_simpl.push(RustImplBlockSimple {
-                        unique_id: get_item_impl_unique_id(item_impl),
-                        generics: rust_impl_block_generics,
-                        trait_: trait_path_and_name,
-                        target: target_rust_type.clone(),
-                        rust_items,
-                        items: item_impl.items.clone(),
-                    });
-                } else {
-                    let svd = scoped_various_definitions
-                        .iter_mut()
-                        .find(|svd| svd.0 == *scope_id)
-                        .unwrap();
+                // if scope_id.is_empty() {
+                //     global_impl_blocks_simpl.push(RustImplBlockSimple {
+                //         unique_id: get_item_impl_unique_id(item_impl),
+                //         generics: rust_impl_block_generics,
+                //         trait_: trait_path_and_name,
+                //         target: target_rust_type.clone(),
+                //         rust_items,
+                //         items: item_impl.items.clone(),
+                //     });
+                // } else {
+                //     let svd = scoped_various_definitions
+                //         .iter_mut()
+                //         .find(|svd| svd.0 == *scope_id)
+                //         .unwrap();
 
-                    svd.2.push(RustImplBlockSimple {
-                        unique_id: get_item_impl_unique_id(item_impl),
-                        generics: rust_impl_block_generics,
-                        trait_: trait_path_and_name,
-                        target: target_rust_type.clone(),
-                        rust_items,
-                        items: item_impl.items.clone(),
-                    });
-                }
+                //     svd.2.push(RustImplBlockSimple {
+                //         unique_id: get_item_impl_unique_id(item_impl),
+                //         generics: rust_impl_block_generics,
+                //         trait_: trait_path_and_name,
+                //         target: target_rust_type.clone(),
+                //         rust_items,
+                //         items: item_impl.items.clone(),
+                //     });
+                // }
+                global_impl_blocks_simpl.push(RustImplBlockSimple {
+                    unique_id: get_item_impl_unique_id(item_impl),
+                    generics: rust_impl_block_generics,
+                    trait_: trait_path_and_name,
+                    target: target_rust_type.clone(),
+                    rust_items,
+                    items: item_impl.items.clone(),
+                });
             }
             Item::Macro(_) => {}
             Item::Mod(item_mod) => {
