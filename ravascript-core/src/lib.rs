@@ -2795,6 +2795,31 @@ impl GlobalData {
     //     }
     // }
 
+    fn lookup_fn_info_known_module(
+        &self,
+        module_path: &Vec<String>,
+        scope_id: &Option<Vec<usize>>,
+        name: &String,
+    ) -> FnInfo {
+        let module = self
+            .modules
+            .iter()
+            .find(|m| &m.path == module_path)
+            .unwrap();
+        let scoped_fn_info = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                module
+                    .scoped_various_definitions
+                    .iter()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| svd.1.fn_info.iter().find(|fn_info| &fn_info.ident == name));
+        let module_fn_info = module.fn_info.iter().find(|fn_info| &fn_info.ident == name);
+
+        scoped_fn_info.or(module_fn_info).unwrap().clone()
+    }
+
     fn lookup_item_def_known_module_assert_not_func2(
         &self,
         module_path: &Vec<String>,

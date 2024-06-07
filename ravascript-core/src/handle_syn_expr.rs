@@ -2150,19 +2150,12 @@ fn handle_expr_call(
                             type_params,
                             module_path,
                             scope_id,
-                            name,
+                            rust_type_fn_type,
                         ) => {
                             // let name = match name {
-                            let fn_info = match name {
-                                RustTypeFnType::Standalone(name) => {
-                                    //
-                                    // global_data.lookup_fn_definition_known_module(
-                                    //     &module_path,
-                                    //     &scope_id,
-                                    //     name,
-                                    // )
-                                    todo!()
-                                }
+                            let fn_info = match rust_type_fn_type {
+                                RustTypeFnType::Standalone(name) => global_data
+                                    .lookup_fn_info_known_module(&module_path, &scope_id, &name),
                                 RustTypeFnType::AssociatedFn(item_name, fn_name) => {
                                     let item_type_params = item_type_params.unwrap();
                                     let item_definition = global_data
@@ -2368,8 +2361,8 @@ fn handle_expr_path_inner(
     // TODO clean this up
     // get_path doesn't handle vars, it just resolves paths to *items*
 
-    // dbg!("handle_expr_path_inner");
-    // println!("{}", quote! { #expr_path });
+    dbg!("handle_expr_path_inner");
+    println!("{}", quote! { #expr_path });
     // dbg!(global_data.scope_id_as_option());
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
@@ -2382,6 +2375,9 @@ fn handle_expr_path_inner(
         current_module,
         &global_data.scope_id_as_option(),
     );
+    dbg!(&segs_copy_module_path);
+    dbg!(&segs_copy_item_scope);
+    dbg!(&segs_copy_item_path);
 
     assert!(segs_copy_item_path.len() <= 2);
 
@@ -2462,15 +2458,20 @@ fn handle_expr_path_inner(
                 scoped_partial_rust_type
             } else {
                 // We don't have a scoped match so path must be a module level definiton
-                let func = module
+                let item_module = global_data
+                    .modules
+                    .iter()
+                    .find(|module| &module.path == &segs_copy_module_path)
+                    .unwrap();
+                let func = item_module
                     .fn_info
                     .iter()
                     .find(|se| se.ident == item_path_seg.ident);
-                let item_def = module
+                let item_def = item_module
                     .item_definitons
                     .iter()
                     .find(|se| se.ident == item_path_seg.ident);
-                let const_def = module
+                let const_def = item_module
                     .consts
                     .iter()
                     .find(|const_def| const_def.name == item_path_seg.ident);
