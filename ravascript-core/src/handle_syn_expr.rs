@@ -2502,16 +2502,16 @@ fn handle_expr_path_inner(
 
         // Get struct/enum item definition
         // dbg!("here");
-        dbg!(&segs_copy_module_path);
-        dbg!(&segs_copy_item_scope);
-        dbg!(&item_path_seg.ident);
-        dbg!(&sub_path.ident);
+        // dbg!(&segs_copy_module_path);
+        // dbg!(&segs_copy_item_scope);
+        // dbg!(&item_path_seg.ident);
+        // dbg!(&sub_path.ident);
         let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
             &segs_copy_module_path,
             &segs_copy_item_scope,
             &item_path_seg.ident,
         );
-        dbg!(&item_def);
+        // dbg!(&item_def);
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
         let item_generics = if item_path_seg.turbofish.len() > 0 {
@@ -2546,7 +2546,7 @@ fn handle_expr_path_inner(
             &item_path_seg.ident,
             &item_def,
         );
-        dbg!(&impl_method);
+        // dbg!(&impl_method);
         let impl_method = impl_method.map(|impl_method| PartialRustType::RustType(impl_method));
 
         let enum_variant = match item_def.struct_or_enum_info {

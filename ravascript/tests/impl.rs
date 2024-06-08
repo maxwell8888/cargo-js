@@ -413,12 +413,14 @@ async fn shadowed_structs_with_shadowed_methods() {
                         return 4;
                     }
                 }
+
                 function cool() {
                     class Foo {
                         bar() {
                             return 5;
                         }
                     }
+                    
                     var foo = new Foo();
                     console.assert(foo.bar() === 5);
                 }
