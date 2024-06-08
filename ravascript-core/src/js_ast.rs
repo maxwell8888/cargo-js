@@ -510,6 +510,7 @@ pub struct JsClass {
     pub public: bool,
     pub export: bool,
     pub tuple_struct: bool,
+    // This should be camel cased because it is too late to get the deduped "fully qualified" name at this point
     pub name: String,
     /// we are assuming input names is equivalent to field names
     pub inputs: Vec<String>,
@@ -659,6 +660,7 @@ pub struct JsFn {
     pub export: bool,
     pub async_: bool,
     pub is_method: bool,
+    // Camel case?
     pub name: String,
     pub input_names: Vec<String>,
     pub body_stmts: Vec<JsStmt>,

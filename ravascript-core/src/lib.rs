@@ -2946,6 +2946,10 @@ impl GlobalData {
         scope_id: &Option<Vec<usize>>,
         path: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, ItemDefinition) {
+        dbg!(&path);
+        dbg!(&current_module_path);
+        dbg!(&scope_id);
+        dbg!("get_path");
         let (item_module_path, item_path, item_scope) = get_path(
             false,
             true,
@@ -2961,6 +2965,9 @@ impl GlobalData {
             current_module_path,
             scope_id,
         );
+        dbg!(&item_module_path);
+        dbg!(&item_path);
+        dbg!(&item_scope);
 
         if item_module_path == vec!["prelude_special_case".to_string()] {
             // Get prelude item definitions
@@ -4400,6 +4407,7 @@ fn populate_item_definitions_items(
                         global_data,
                     ),
                 };
+
                 various_defs.fn_info.push(FnInfo {
                     ident: item_fn.sig.ident.to_string(),
                     inputs_types,
@@ -4410,6 +4418,10 @@ fn populate_item_definitions_items(
                 // Get scoped definitions
 
                 scope_count += 1;
+                dbg!("populate_item_definitions_items");
+                let sig = &item_fn.sig;
+                println!("{}", quote! { #sig });
+                dbg!(scope_count);
 
                 let mut itemms = Vec::new();
                 for stmt in item_fn.block.stmts.clone().into_iter() {
@@ -4628,6 +4640,8 @@ fn populate_impl_blocks_items(
 ) {
     let mut scope_count = 0;
     for item in items {
+        dbg!("populate_impl_blocks_items");
+        println!("{}", quote! { #item });
         match item {
             Item::Const(item_const) => {}
             Item::Enum(item_enum) => {}
@@ -4774,13 +4788,16 @@ fn populate_impl_blocks_items(
                         } else {
                             Some(scope_id.clone())
                         };
+                        dbg!(&module_path);
+                        dbg!(&temp_scope_id);
+                        dbg!(&impl_item_target_path);
                         let (target_item_module, resolved_scope_id, target_item) = global_data_copy
                             .lookup_item_definition_any_module_or_scope(
                                 module_path,
                                 &temp_scope_id,
                                 &impl_item_target_path,
                             );
-
+                        dbg!("here");
                         (
                             RustType::StructOrEnum(
                                 target_item
@@ -4817,6 +4834,8 @@ fn populate_impl_blocks_items(
                         let rust_impl_item_item = match syn_item {
                             ImplItem::Const(_) => todo!(),
                             ImplItem::Fn(impl_item_fn) => {
+                                scope_count += 1;
+                                
                                 let generics = impl_item_fn
                                     .sig
                                     .generics
@@ -5364,7 +5383,8 @@ pub fn process_items(
         .collect::<Vec<_>>();
     // dbg!(scope_ids);
 
-    // populates `global_data.impl_blocks_simpl` and `module.scoped_various_definitions` with `RustImplBlockSimple`s
+    // // populates `global_data.impl_blocks_simpl` and `module.scoped_various_definitions` with `RustImplBlockSimple`s
+    // populates `global_data.impl_blocks_simpl`
     populate_impl_blocks(&mut global_data);
 
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class.
@@ -6470,16 +6490,17 @@ fn get_path(
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    // dbg!(&segs);
-    // dbg!(&current_mod);
-    // dbg!(&orig_mod);
-    // dbg!(&current_scope_id);
-
     let module = global_data
         .modules
         .iter()
         .find(|m| &m.path == current_mod)
         .unwrap();
+
+    dbg!(&segs);
+    dbg!(&current_mod);
+    dbg!(&orig_mod);
+    dbg!(&current_scope_id);
+    dbg!(&module.scoped_various_definitions);
 
     let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
         current_mod
@@ -6542,7 +6563,7 @@ fn get_path(
                 // TODO should this be `&svd.0 == temp_scope_id` ???
                 .find(|svd| &svd.0 == scope_id)
                 .unwrap();
-            // dbg!(&svd);
+            // dbg!(&look_for_scoped_items);
 
             let static_scope = &svd.1;
 

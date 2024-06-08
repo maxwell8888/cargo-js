@@ -641,7 +641,7 @@ async fn scoped_shadowing_of_struct_name() {
                 4
             }
         }
-        {
+        fn another_scope() {
             pub struct Foo {}
 
             impl Foo {
@@ -652,6 +652,7 @@ async fn scoped_shadowing_of_struct_name() {
             let foo = Foo {};
             assert!(foo.get_num() == 5);
         }
+        another_scope();
         let foo = Foo {};
         assert!(foo.get_num() == 4);
     });
@@ -665,7 +666,7 @@ async fn scoped_shadowing_of_struct_name() {
                 }
             }
 
-            {
+            function anotherScope() {
                 class Foo {
                     getNum() {
                         return 5;
@@ -675,6 +676,7 @@ async fn scoped_shadowing_of_struct_name() {
                 var foo = new Foo();
                 console.assert(foo.getNum() === 5);
             }
+            anotherScope();
             var foo = new Foo();
             console.assert(foo.getNum() === 4);
         "#,

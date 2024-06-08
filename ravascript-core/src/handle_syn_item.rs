@@ -1768,18 +1768,25 @@ pub fn handle_item_struct(
         ));
     }
 
-    if let Some(dup) = global_data
-        .duplicates
-        .iter()
-        .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
-    {
-        name = dup
-            .namespace
+    let mut js_name = name.clone();
+    dbg!(&global_data.duplicates);
+    dbg!(&name);
+    dbg!(&current_module_path);
+    if at_module_top_level {
+        if let Some(dup) = global_data
+            .duplicates
             .iter()
-            .map(|seg| camel(seg))
-            .collect::<Vec<_>>()
-            .join("__");
+            .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
+        {
+            js_name = dup
+                .namespace
+                .iter()
+                .map(|seg| camel(seg))
+                .collect::<Vec<_>>()
+                .join("__");
+        }
     }
+    dbg!(&js_name);
 
     let (tuple_struct, inputs) = match &item_struct.fields {
         Fields::Named(fields_named) => (
@@ -1808,7 +1815,7 @@ pub fn handle_item_struct(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name,
+        name: js_name,
         tuple_struct,
         inputs,
         static_fields,
