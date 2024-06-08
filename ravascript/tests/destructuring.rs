@@ -169,6 +169,9 @@ async fn destructure_array_of_copy_structs() {
     // include_str!("number_prototype_extensions.js"),
     
     // TODO might be better to add the `.copy()`s to the destructured vars, but would need to do this in subsequent statements which is a faff so leave for now
+    // copy() {
+    //     return JSON.parse(JSON.stringify(this));
+    // }
     let expected = format_js(concat!(
         r#"
             Array.prototype.copy = function () {
@@ -178,10 +181,6 @@ async fn destructure_array_of_copy_structs() {
             class Foo {
                 constructor(num) {
                     this.num = num;
-                }
-
-                copy() {
-                    return JSON.parse(JSON.stringify(this));
                 }
             }
             var foo = new Foo(1);

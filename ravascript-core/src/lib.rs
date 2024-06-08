@@ -1659,6 +1659,7 @@ struct CrateData {
 struct ModuleData {
     name: String,
     parent_name: Option<String>,
+    /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
     path: Vec<String>,
     pub_definitions: Vec<String>,
     private_definitions: Vec<String>,
@@ -4997,9 +4998,10 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
     }
 }
 
-fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<JsStmt> {
+fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     // We want to insert prelude stmts at the beginning of js_stmts, but if we do that per item we will reverse the order they appear in the source files. Instead we push them to `prelude_stmts` and then insert that in one go
     let mut prelude_stmts = Vec::new();
+    dbg!("push rust types");
 
     let rust_prelude_types = &global_data.rust_prelude_types;
 
@@ -5222,8 +5224,10 @@ fn push_rust_types(global_data: &GlobalData, mut js_stmts: Vec<JsStmt>) -> Vec<J
                 .to_string(),
         ))
     }
-    prelude_stmts.append(&mut js_stmts);
-    prelude_stmts
+
+    // Add prelude_stmts to beginning of js_stmts
+    prelude_stmts.append(js_stmts);
+    js_stmts.append(&mut prelude_stmts);
 }
 
 pub fn process_items(
@@ -5231,6 +5235,8 @@ pub fn process_items(
     crate_path: Option<PathBuf>,
     // TODO I don't think there is much point in supporting generation without "Rust types" so remove this flag
     with_rust_types: bool,
+    // We use this to know whether we should insert eg
+    is_block: bool,
 ) -> Vec<JsModule> {
     let mut modules = Vec::new();
     modules.push(ModuleData {
@@ -5446,13 +5452,20 @@ pub fn process_items(
         global_data.scope_count.push(0);
         global_data.scope_id.clear();
         global_data.scopes.clear();
-        let stmts = js_stmts_from_syn_items(module_data.items, &module_data.path, &mut global_data);
+        let mut stmts =
+            js_stmts_from_syn_items(module_data.items, &module_data.path, &mut global_data);
 
-        let stmts = if with_rust_types && module_data.path.is_empty() && module_data.name == "crate"
-        {
-            push_rust_types(&global_data, stmts)
-        } else {
-            stmts
+        if with_rust_types && module_data.path == ["crate"] {
+            let stmts = if is_block {
+                assert_eq!(stmts.len(), 1);
+                match stmts.first_mut().unwrap() {
+                    JsStmt::Function(js_fn) if js_fn.name == "temp" => &mut js_fn.body_stmts,
+                    _ => todo!(),
+                }
+            } else {
+                &mut stmts
+            };
+            push_rust_types(&global_data, stmts);
         };
 
         global_data.transpiled_modules.push(JsModule {
@@ -5723,26 +5736,29 @@ pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, run_main: bool) ->
     let items = file.items;
 
     // Crate path is eg "../for-testing/"
-    let modules = process_items(items, Some(crate_path.clone()), with_rust_types);
+    let modules = process_items(items, Some(crate_path.clone()), with_rust_types, false);
     modules_to_string(&modules, run_main)
 }
 
 // Given every file *is* a module, and we concatenate all modules, including inline ones, into a single file, we should treat transpiling individual files *or* module blocks the same way
 // Modules defined within a scope, eg a block, are not global and only accessible from that scope, but are treated the same way as other modules in that they are made global to the scope in which they are defined
+// TODO really this should be `from_module_file` to be clear, since technically a file doesn't need to be a legitimate rust file, ie a module.
 pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     let file = syn::parse_file(code).unwrap();
     let items = file.items;
 
-    process_items(items, None, with_rust_types)
+    process_items(items, None, with_rust_types, false)
 }
 
 pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
-    let modules = process_items(vec![item_fn], None, with_rust_types);
+    let modules = process_items(vec![item_fn], None, with_rust_types, true);
     assert!(modules.len() == 1);
     let mut module = modules.into_iter().next().unwrap();
-    assert!(module.stmts.len() == 1);
-    let temp_fn_wrapper = module.stmts.remove(0);
+    // If we have inserted prelude statements, the len will be > 1. Ideally we would insert the prelude stmts inside `fn temp`. For now we are just assuming any added stmts are inserted before `fn temp`
+    // assert!(module.stmts.len() == 1);
+    // let temp_fn_wrapper = module.stmts.remove(0);
+    let temp_fn_wrapper = module.stmts.remove(module.stmts.len() - 1);
     let body_stmts = match temp_fn_wrapper {
         JsStmt::Function(js_fn) => js_fn.body_stmts,
         _ => todo!(),
@@ -5853,11 +5869,11 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         _ => todo!(),
     };
 
-    let stmts = if with_rust_types {
-        push_rust_types(&global_data, stmts)
-    } else {
-        stmts
-    };
+    // let stmts = if with_rust_types {
+    //     push_rust_types(&global_data, stmts)
+    // } else {
+    //     stmts
+    // };
 
     let crate_module = global_data
         .transpiled_modules
