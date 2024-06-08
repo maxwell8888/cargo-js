@@ -5549,7 +5549,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
             JsStmt::Function(js_fn) => {
                 update_classes_stmts(&mut js_fn.body_stmts, global_data);
             }
-            JsStmt::Class(js_class) => {
+            JsStmt::Class(js_class) if js_class.rust_name != "implblockdonotuse" => {
                 let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
                     &js_class.module_path,
                     &js_class.scope_id,
