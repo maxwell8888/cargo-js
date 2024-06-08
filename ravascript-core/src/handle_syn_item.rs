@@ -1354,7 +1354,11 @@ pub fn handle_item_impl(
     }
 
     let rust_impl_block = JsImplBlock2 {
-        unique_id: get_item_impl_unique_id(item_impl),
+        unique_id: get_item_impl_unique_id(
+            current_module_path,
+            &global_data.scope_id_as_option(),
+            item_impl,
+        ),
         generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
         target: target_rust_type.clone(),
@@ -1769,9 +1773,9 @@ pub fn handle_item_struct(
     }
 
     let mut js_name = name.clone();
-    dbg!(&global_data.duplicates);
-    dbg!(&name);
-    dbg!(&current_module_path);
+    // dbg!(&global_data.duplicates);
+    // dbg!(&name);
+    // dbg!(&current_module_path);
     if at_module_top_level {
         if let Some(dup) = global_data
             .duplicates
@@ -1786,7 +1790,7 @@ pub fn handle_item_struct(
                 .join("__");
         }
     }
-    dbg!(&js_name);
+    // dbg!(&js_name);
 
     let (tuple_struct, inputs) = match &item_struct.fields {
         Fields::Named(fields_named) => (

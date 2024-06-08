@@ -2246,7 +2246,11 @@ struct RustImplBlockSimple {
     rust_items: Vec<RustImplItemNoJs>,
     items: Vec<ImplItem>,
 }
-fn get_item_impl_unique_id(item_impl: &ItemImpl) -> String {
+fn get_item_impl_unique_id(
+    module_path: &Vec<String>,
+    scope_id: &Option<Vec<usize>>,
+    item_impl: &ItemImpl,
+) -> String {
     let params = item_impl
         .generics
         .params
@@ -2277,7 +2281,10 @@ fn get_item_impl_unique_id(item_impl: &ItemImpl) -> String {
             .join("::"),
         _ => todo!(),
     };
-    format!("type params: {params}, trait: {trait_}, target: {target}")
+    format!(
+        "module path: {:?}, scope id: {:?}, type params: {params}, trait: {trait_}, target: {target}",
+        module_path, scope_id
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -2946,10 +2953,10 @@ impl GlobalData {
         scope_id: &Option<Vec<usize>>,
         path: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, ItemDefinition) {
-        dbg!(&path);
-        dbg!(&current_module_path);
-        dbg!(&scope_id);
-        dbg!("get_path");
+        // dbg!(&path);
+        // dbg!(&current_module_path);
+        // dbg!(&scope_id);
+        // dbg!("get_path");
         let (item_module_path, item_path, item_scope) = get_path(
             false,
             true,
@@ -2965,9 +2972,9 @@ impl GlobalData {
             current_module_path,
             scope_id,
         );
-        dbg!(&item_module_path);
-        dbg!(&item_path);
-        dbg!(&item_scope);
+        // dbg!(&item_module_path);
+        // dbg!(&item_path);
+        // dbg!(&item_scope);
 
         if item_module_path == vec!["prelude_special_case".to_string()] {
             // Get prelude item definitions
@@ -4418,10 +4425,10 @@ fn populate_item_definitions_items(
                 // Get scoped definitions
 
                 scope_count += 1;
-                dbg!("populate_item_definitions_items");
-                let sig = &item_fn.sig;
-                println!("{}", quote! { #sig });
-                dbg!(scope_count);
+                // dbg!("populate_item_definitions_items");
+                // let sig = &item_fn.sig;
+                // println!("{}", quote! { #sig });
+                // dbg!(scope_count);
 
                 let mut itemms = Vec::new();
                 for stmt in item_fn.block.stmts.clone().into_iter() {
@@ -4640,8 +4647,8 @@ fn populate_impl_blocks_items(
 ) {
     let mut scope_count = 0;
     for item in items {
-        dbg!("populate_impl_blocks_items");
-        println!("{}", quote! { #item });
+        // dbg!("populate_impl_blocks_items");
+        // println!("{}", quote! { #item });
         match item {
             Item::Const(item_const) => {}
             Item::Enum(item_enum) => {}
@@ -4788,16 +4795,16 @@ fn populate_impl_blocks_items(
                         } else {
                             Some(scope_id.clone())
                         };
-                        dbg!(&module_path);
-                        dbg!(&temp_scope_id);
-                        dbg!(&impl_item_target_path);
+                        // dbg!(&module_path);
+                        // dbg!(&temp_scope_id);
+                        // dbg!(&impl_item_target_path);
                         let (target_item_module, resolved_scope_id, target_item) = global_data_copy
                             .lookup_item_definition_any_module_or_scope(
                                 module_path,
                                 &temp_scope_id,
                                 &impl_item_target_path,
                             );
-                        dbg!("here");
+                        // dbg!("here");
                         (
                             RustType::StructOrEnum(
                                 target_item
@@ -4835,7 +4842,7 @@ fn populate_impl_blocks_items(
                             ImplItem::Const(_) => todo!(),
                             ImplItem::Fn(impl_item_fn) => {
                                 scope_count += 1;
-                                
+
                                 let generics = impl_item_fn
                                     .sig
                                     .generics
@@ -4940,8 +4947,13 @@ fn populate_impl_blocks_items(
                 //         items: item_impl.items.clone(),
                 //     });
                 // }
+                let scope_id2 = if scope_id.is_empty() {
+                    None
+                } else {
+                    Some(scope_id.clone())
+                };
                 global_impl_blocks_simpl.push(RustImplBlockSimple {
-                    unique_id: get_item_impl_unique_id(item_impl),
+                    unique_id: get_item_impl_unique_id(module_path, &scope_id2, item_impl),
                     generics: rust_impl_block_generics,
                     trait_: trait_path_and_name,
                     target: target_rust_type.clone(),
@@ -6496,11 +6508,11 @@ fn get_path(
         .find(|m| &m.path == current_mod)
         .unwrap();
 
-    dbg!(&segs);
-    dbg!(&current_mod);
-    dbg!(&orig_mod);
-    dbg!(&current_scope_id);
-    dbg!(&module.scoped_various_definitions);
+    // dbg!(&segs);
+    // dbg!(&current_mod);
+    // dbg!(&orig_mod);
+    // dbg!(&current_scope_id);
+    // dbg!(&module.scoped_various_definitions);
 
     let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
         current_mod

@@ -2361,8 +2361,8 @@ fn handle_expr_path_inner(
     // TODO clean this up
     // get_path doesn't handle vars, it just resolves paths to *items*
 
-    dbg!("handle_expr_path_inner");
-    println!("{}", quote! { #expr_path });
+    // dbg!("handle_expr_path_inner");
+    // println!("{}", quote! { #expr_path });
     // dbg!(global_data.scope_id_as_option());
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
@@ -2375,9 +2375,9 @@ fn handle_expr_path_inner(
         current_module,
         &global_data.scope_id_as_option(),
     );
-    dbg!(&segs_copy_module_path);
-    dbg!(&segs_copy_item_scope);
-    dbg!(&segs_copy_item_path);
+    // dbg!(&segs_copy_module_path);
+    // dbg!(&segs_copy_item_scope);
+    // dbg!(&segs_copy_item_path);
 
     assert!(segs_copy_item_path.len() <= 2);
 
