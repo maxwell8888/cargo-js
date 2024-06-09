@@ -2976,8 +2976,18 @@ pub fn handle_expr_match(
             // }
             cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
 
-            global_data.scopes.push(GlobalDataScope {
-                scope_id: vec![9, 9, 9, 9, 9, 9, 9, 9],
+            // Create new scope for match arm block
+            // NOTE even if there is no curly braces it is still a scope
+            let scope_count = {
+                let scope_count = global_data.scope_count.last_mut().unwrap();
+                *scope_count += 1;
+                *scope_count
+            };
+
+            global_data.scope_count.push(0);
+            global_data.scope_id.push(scope_count);
+            let mut var_scope = GlobalDataScope {
+                scope_id: global_data.scope_id.clone(),
                 variables: scoped_vars,
                 // fns: Vec::new(),
                 // generics: Vec::new(),
@@ -2987,7 +2997,8 @@ pub fn handle_expr_match(
                 // trait_definitons: Vec::new(),
                 // consts: Vec::new(),
                 use_mappings: Vec::new(),
-            });
+            };
+            global_data.scopes.push(var_scope);
 
             let (body_js_stmts, body_return_type) = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -3011,7 +3022,11 @@ pub fn handle_expr_match(
                     (vec![JsStmt::Expr(js_expr, false)], rust_type)
                 }
             };
+
+            // pop match arm scope stuff
             global_data.scopes.pop();
+            global_data.scope_count.pop();
+            global_data.scope_id.pop();
 
             body_data_destructure.extend(body_js_stmts.into_iter());
             let body = body_data_destructure;

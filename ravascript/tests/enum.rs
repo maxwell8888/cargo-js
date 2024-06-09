@@ -26,6 +26,7 @@ async fn enum_match() {
         // TODO need to use a better pretty printer cos the current one messes up the the destructure formatting
         let match_result = match my_data {
             MyEnum::FooBar => 1,
+            // NOTE how even though there is no block to allow eg a struct to be defined, we still have a scope because we var x is used which is only available in this scope, not the outer scope.
             MyEnum::Bar { x, y } => x,
             MyEnum::Baz(text, num) => {
                 // Comment to force block
@@ -118,20 +119,20 @@ async fn enum_methods() {
         let baz = Animal::Baz("hibaz", 5);
 
         let bar_y = bar.bar_y();
-        assert_eq!(bar_y, "hibar");
+        assert!(bar_y == "hibar");
 
         let bar_y_two = baz.bar_y();
-        assert_eq!(bar_y_two, "hibaz");
+        assert!(bar_y_two == "hibaz");
 
         // Redeclare vars because they have been moved
         let bar = Animal::Bar { x: 1, y: "hibar" };
         let baz = Animal::Baz("hibaz", 5);
 
         let baz_num = bar.baz_num();
-        assert_eq!(baz_num, 0);
+        assert!(baz_num == 0);
 
         let baz_num = baz.baz_num();
-        assert_eq!(baz_num, 5);
+        assert!(baz_num == 5);
     });
 
     // include_str!("option_prelude.js"),

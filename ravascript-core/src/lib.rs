@@ -319,6 +319,9 @@ fn handle_destructure_pat(
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                            // dbg!(&module_path);
+                            // dbg!(&scope_id);
+                            // dbg!(&name);
                             let item_def = global_data
                                 .lookup_item_def_known_module_assert_not_func2(
                                     &module_path,
@@ -451,6 +454,9 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                         _ => todo!(),
                     };
 
+                    // dbg!(&field.pat);
+                    // dbg!(&field.member);
+                    // dbg!(&field_type);
                     handle_destructure_pat(&field.pat, &field.member, global_data, field_type)
                 })
                 .collect::<Vec<_>>();
@@ -1006,6 +1012,7 @@ fn parse_types_for_populate_item_definitions(
     root_parent_item_definition_generics: &Vec<String>,
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &Vec<String>,
+    current_scope_id: &Option<Vec<usize>>,
     global_data: &GlobalData,
 ) -> RustType {
     // let current_module_data = global_data
@@ -1052,6 +1059,7 @@ fn parse_types_for_populate_item_definitions(
                                                         arg_type_,
                                                         root_parent_item_definition_generics,
                                                         current_module,
+                                                        current_scope_id,
                                                         global_data,
                                                     )
                                                 }
@@ -1075,7 +1083,7 @@ fn parse_types_for_populate_item_definitions(
                                 global_data,
                                 current_module,
                                 current_module,
-                                &None,
+                                current_scope_id,
                             );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
@@ -1085,7 +1093,7 @@ fn parse_types_for_populate_item_definitions(
                             //     .unwrap();
                             Some((
                                 trait_module_path,
-                                None,
+                                trait_item_scope,
                                 RustTypeImplTrait::SimpleTrait(trait_item_path[0].ident.clone()),
                             ))
                         }
@@ -1162,6 +1170,7 @@ fn parse_types_for_populate_item_definitions(
                                         type_,
                                         root_parent_item_definition_generics,
                                         current_module,
+                                        current_scope_id,
                                         global_data,
                                     )
                                 }
@@ -1205,6 +1214,7 @@ fn parse_types_for_populate_item_definitions(
                                                         arg_type_,
                                                         root_parent_item_definition_generics,
                                                         current_module,
+                                                        current_scope_id,
                                                         global_data,
                                                     );
 
@@ -1232,7 +1242,7 @@ fn parse_types_for_populate_item_definitions(
                         })
                         .collect::<Vec<_>>();
 
-                    let (item_module_path, item_path_seg, _is_scoped) = get_path(
+                    let (item_module_path, item_path_seg, item_scope) = get_path(
                         false,
                         true,
                         true,
@@ -1240,7 +1250,7 @@ fn parse_types_for_populate_item_definitions(
                         global_data,
                         current_module,
                         current_module,
-                        &None,
+                        current_scope_id,
                     );
                     let item_seg = &item_path_seg[0];
 
@@ -1255,7 +1265,7 @@ fn parse_types_for_populate_item_definitions(
                             })
                             .collect::<Vec<_>>(),
                         item_module_path,
-                        None,
+                        item_scope,
                         item_seg.ident.clone(),
                     )
                 }
@@ -1278,6 +1288,7 @@ fn parse_types_for_populate_item_definitions(
                 &type_reference.elem,
                 root_parent_item_definition_generics,
                 current_module,
+                current_scope_id,
                 global_data,
             );
             if type_reference.mutability.is_some() {
@@ -1729,6 +1740,110 @@ impl ModuleData {
             submodules.any(|submodule_name| submodule_name == item)
         }
     }
+
+    fn lookup_item_def_known_module_assert_not_func2(
+        &mut self,
+        scope_id: &Option<Vec<usize>>,
+        name: &String,
+    ) -> &mut ItemDefinition {
+        let scoped_item_def = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                self.scoped_various_definitions
+                    .iter_mut()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| {
+                svd.1
+                    .item_definitons
+                    .iter_mut()
+                    .find(|item_def| &item_def.ident == name)
+            });
+        let module_item_def = self
+            .item_definitons
+            .iter_mut()
+            .find(|item_def| &item_def.ident == name);
+
+        scoped_item_def.or(module_item_def).unwrap()
+    }
+
+    fn lookup_const_known_module(
+        &mut self,
+        scope_id: &Option<Vec<usize>>,
+        name: &String,
+    ) -> &mut ConstDef {
+        let scoped_const_def = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                self.scoped_various_definitions
+                    .iter_mut()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| {
+                svd.1
+                    .consts
+                    .iter_mut()
+                    .find(|const_def| &const_def.name == name)
+            });
+        let module_const_def = self
+            .consts
+            .iter_mut()
+            .find(|const_def| &const_def.name == name);
+
+        scoped_const_def.or(module_const_def).unwrap()
+    }
+
+    fn lookup_fn_known_module(
+        &mut self,
+        scope_id: &Option<Vec<usize>>,
+        name: &String,
+    ) -> &mut FnInfo {
+        let scoped_fn_info = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                self.scoped_various_definitions
+                    .iter_mut()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| {
+                svd.1
+                    .fn_info
+                    .iter_mut()
+                    .find(|const_def| &const_def.ident == name)
+            });
+        let module_fn_info = self
+            .fn_info
+            .iter_mut()
+            .find(|const_def| &const_def.ident == name);
+
+        scoped_fn_info.or(module_fn_info).unwrap()
+    }
+
+    fn _lookup_trait_known_module(
+        &mut self,
+        scope_id: &Option<Vec<usize>>,
+        name: &String,
+    ) -> &mut RustTraitDefinition {
+        let scoped_trait_def = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                self.scoped_various_definitions
+                    .iter_mut()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| {
+                svd.1
+                    .trait_definitons
+                    .iter_mut()
+                    .find(|trait_def| &trait_def.name == name)
+            });
+        let module_trait_def = self
+            .trait_definitons
+            .iter_mut()
+            .find(|trait_def| &trait_def.name == name);
+
+        scoped_trait_def.or(module_trait_def).unwrap()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1830,6 +1945,8 @@ enum RustType {
     NotAllowed,
     /// Can't be known at this point in analysis, eg the type is inferred somewhere else in the code
     Unknown,
+    // /// Unitialized/null
+    // Uninit,
     /// Needs implementing
     Todo,
     // Self_,
@@ -2043,6 +2160,7 @@ impl ScopedVar {
 enum StructFieldInfo {
     UnitStruct,
     TupleStruct(Vec<RustType>),
+    /// (name, type)
     RegularStruct(Vec<(String, RustType)>),
 }
 
@@ -4040,6 +4158,7 @@ fn extract_data(
                 }
 
                 // Record scoped ident names so we can ensure any module level items with the same name are namespaced
+                // TODO also need to be looking for names in blocks, if expressions, etc
                 let items = item_fn
                     .clone()
                     .block
@@ -4253,15 +4372,28 @@ fn populate_item_definitions(global_data: &mut GlobalData) {
         let mut var_defs = VariousDefintions::default();
         let items = module.items.clone();
         let module_path = module.path.clone();
-        let mut scope_number = Vec::new();
-        populate_item_definitions_items(
-            &items,
-            &global_data_copy,
-            &module_path,
-            &mut var_defs,
-            module,
-            &mut scope_number,
-        );
+        let mut scope_id = Vec::new();
+        // let mut scope_number = Vec::new();
+        // populate_item_definitions_items(
+        //     &items,
+        //     &global_data_copy,
+        //     &module_path,
+        //     &mut var_defs,
+        //     module,
+        //     &mut scope_number,
+        // );
+        let mut scope_count = 0;
+        for item in &items {
+            populate_item_definitions_items_individual_item(
+                item,
+                &global_data_copy,
+                &module_path,
+                &mut var_defs,
+                module,
+                &mut scope_id,
+                &mut scope_count,
+            )
+        }
         module.fn_info.extend(var_defs.fn_info);
         module.item_definitons.extend(var_defs.item_definitons);
         module.consts.extend(var_defs.consts);
@@ -4277,326 +4409,467 @@ struct VariousDefintions {
     trait_definitons: Vec<RustTraitDefinition>,
 }
 
-fn populate_item_definitions_items(
-    items: &Vec<Item>,
+// fn populate_item_definitions_items(
+//     items: &Vec<Item>,
+//     global_data: &GlobalData,
+//     module_path: &Vec<String>,
+//     module_level_various_defs: &mut VariousDefintions,
+//     module: &mut ModuleData,
+//     scope_id: &mut Vec<usize>,
+// ) {
+//     let mut scope_count = 0;
+
+//     for item in items {
+//         populate_item_definitions_items_individual_item(
+//             item,
+//             global_data,
+//             module_path,
+//             module_level_various_defs,
+//             module,
+//             scope_id,
+//             &mut scope_count,
+//         )
+//     }
+// }
+
+fn populate_item_definitions_items_individual_item(
+    item: &Item,
     global_data: &GlobalData,
     module_path: &Vec<String>,
+    // These `various_defs` are will either be added to a module if this fn is called when iterating over module level items, or a scope is it is called when iterating over stmts
     various_defs: &mut VariousDefintions,
+    module: &mut ModuleData,
+    scope_id: &mut Vec<usize>,
+    scope_count: &mut usize,
+) {
+    // let current_scope_id = if scope_id.is_empty() {
+    //     None
+    // } else {
+    //     Some(scope_id.clone())
+    // };
+
+    match item {
+        Item::Const(item_const) => {
+            let const_name = item_const.ident.to_string();
+
+            various_defs.consts.push(ConstDef {
+                name: const_name,
+                type_: RustType::Todo,
+                syn_object: item_const.clone(),
+            });
+        }
+        Item::Enum(item_enum) => {
+            let enum_name = item_enum.ident.to_string();
+
+            // Make ItemDefinition
+            let generics = item_enum
+                .generics
+                .params
+                .iter()
+                .map(|p| match p {
+                    GenericParam::Lifetime(_) => todo!(),
+                    GenericParam::Type(type_param) => type_param.ident.to_string(),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+            let members_for_scope = item_enum
+                .variants
+                .iter()
+                .map(|v| EnumVariantInfo {
+                    ident: v.ident.to_string(),
+                    inputs: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+
+            let is_copy = item_enum.attrs.iter().any(|attr| match &attr.meta {
+                Meta::Path(_) => todo!(),
+                Meta::List(meta_list) => {
+                    let segs = &meta_list.path.segments;
+                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                        let tokens = format!("({})", meta_list.tokens);
+                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                        trait_tuple.elems.iter().any(|elem| match elem {
+                            Type::Path(type_path) => {
+                                let segs = &type_path.path.segments;
+                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                            }
+                            _ => todo!(),
+                        })
+                    } else {
+                        false
+                    }
+                }
+                Meta::NameValue(_) => todo!(),
+            });
+
+            various_defs.item_definitons.push(ItemDefinition {
+                ident: enum_name,
+                is_copy,
+                generics,
+                struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                    members: members_for_scope,
+                    syn_object: item_enum.clone(),
+                }),
+                impl_blocks: Vec::new(),
+            });
+        }
+        Item::ExternCrate(_) => todo!(),
+        Item::Fn(item_fn) => {
+            let generics = item_fn
+                .sig
+                .generics
+                .params
+                .iter()
+                .filter_map(|g| match g {
+                    GenericParam::Lifetime(_) => None,
+                    GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
+            various_defs.fn_info.push(FnInfo {
+                ident: item_fn.sig.ident.to_string(),
+                inputs_types: Vec::new(),
+                generics,
+                // return_type: RustType::Uninit,
+                return_type: RustType::Todo,
+            });
+
+            // Get scoped definitions
+
+            *scope_count += 1;
+            // dbg!("populate_item_definitions_items");
+            // let sig = &item_fn.sig;
+            // println!("{}", quote! { #sig });
+            // dbg!(scope_count);
+
+            // let mut itemms = Vec::new();
+            // for stmt in item_fn.block.stmts.clone().into_iter() {
+            //     append_items_from_stmt(&mut itemms, stmt);
+            // }
+
+            // *scope_number.last_mut().unwrap() += 1;
+
+            let mut scoped_various_defs = VariousDefintions::default();
+
+            // We are now processing the items within the fn block, so are no longer at the module level and now in a scope (or in a new child scope), so push a new scope level
+            scope_id.push(*scope_count);
+            // dbg!("populate item fn");
+            // dbg!(item_fn.sig.ident.to_string());
+            // dbg!(&scope_id);
+            // populate_item_definitions_items(
+            //     &itemms,
+            //     global_data,
+            //     module_path,
+            //     &mut scoped_various_defs,
+            //     module,
+            //     scope_id,
+            // );
+            populate_item_definitions_stmts(
+                &item_fn.block.stmts,
+                global_data,
+                module_path,
+                &mut scoped_various_defs,
+                module,
+                scope_id,
+            );
+
+            // TODO it seems like it would be more simple and intuitive to create the `VariousDefinitions` scope and add it to the `module.scoped_various_definitions` in the `populate_item_definitions_stmts()` fn rather than doing it outside like this. Will wait until we have all tests passing before attempting to make this change.
+            module.scoped_various_definitions.push((
+                scope_id.clone(),
+                scoped_various_defs,
+                // Vec::new(),
+            ));
+            scope_id.pop();
+        }
+        Item::ForeignMod(_) => todo!(),
+        Item::Impl(item_impl) => {
+            // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
+
+            // TODO also need to go through scopes in impl fns, like with standalone fns
+            for item in &item_impl.items {
+                match item {
+                    ImplItem::Const(_) => todo!(),
+                    ImplItem::Fn(impl_item_fn) => {
+                        *scope_count += 1;
+                        scope_id.push(*scope_count);
+                        // dbg!("populate item impl fn");
+                        // dbg!(&scope_id);
+                        let mut scoped_various_defs = VariousDefintions::default();
+                        populate_item_definitions_stmts(
+                            &impl_item_fn.block.stmts,
+                            global_data,
+                            module_path,
+                            &mut scoped_various_defs,
+                            module,
+                            scope_id,
+                        );
+                        module.scoped_various_definitions.push((
+                            scope_id.clone(),
+                            scoped_various_defs,
+                            // Vec::new(),
+                        ));
+                        scope_id.pop();
+                    }
+                    ImplItem::Type(_) => todo!(),
+                    ImplItem::Macro(_) => todo!(),
+                    ImplItem::Verbatim(_) => todo!(),
+                    _ => todo!(),
+                }
+            }
+        }
+        Item::Macro(_) => {}
+        // We have already split up the modules in individual `ModuleData`s (which we are currently iterating through) so should ignore `Item::Mod`s
+        Item::Mod(_) => {}
+        Item::Static(_) => todo!(),
+        Item::Struct(item_struct) => {
+            let struct_name = item_struct.ident.to_string();
+
+            // Make ItemDefinition
+            let generics = item_struct
+                .generics
+                .params
+                .iter()
+                .map(|p| match p {
+                    GenericParam::Lifetime(_) => todo!(),
+                    GenericParam::Type(type_param) => type_param.ident.to_string(),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
+            let generics_type_params = generics
+                .iter()
+                .map(|name| RustTypeParam {
+                    name: name.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>();
+
+            let fields = if item_struct.fields.len() == 0 {
+                StructFieldInfo::UnitStruct
+            } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                StructFieldInfo::RegularStruct(Vec::new())
+            } else {
+                StructFieldInfo::TupleStruct(Vec::new())
+            };
+
+            let is_copy = item_struct.attrs.iter().any(|attr| match &attr.meta {
+                Meta::Path(_) => todo!(),
+                Meta::List(meta_list) => {
+                    let segs = &meta_list.path.segments;
+                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                        let tokens = format!("({})", meta_list.tokens);
+                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                        trait_tuple.elems.iter().any(|elem| match elem {
+                            Type::Path(type_path) => {
+                                let segs = &type_path.path.segments;
+                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                            }
+                            _ => todo!(),
+                        })
+                    } else {
+                        false
+                    }
+                }
+                Meta::NameValue(_) => todo!(),
+            });
+
+            various_defs.item_definitons.push(ItemDefinition {
+                ident: item_struct.ident.to_string(),
+                is_copy,
+                generics,
+                struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                    fields,
+                    syn_object: Some(item_struct.clone()),
+                }),
+                impl_blocks: Vec::new(),
+            });
+        }
+        Item::Trait(item_trait) => various_defs.trait_definitons.push(RustTraitDefinition {
+            name: item_trait.ident.to_string(),
+        }),
+        Item::TraitAlias(_) => todo!(),
+        Item::Type(_) => todo!(),
+        Item::Union(_) => todo!(),
+        Item::Use(_) => {}
+        Item::Verbatim(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
+fn populate_item_definitions_stmts(
+    stmts: &Vec<Stmt>,
+    global_data: &GlobalData,
+    module_path: &Vec<String>,
+    current_scope_various_defs: &mut VariousDefintions,
     module: &mut ModuleData,
     scope_id: &mut Vec<usize>,
 ) {
     let mut scope_count = 0;
 
-    for item in items {
-        match item {
-            Item::Const(item_const) => {
-                let const_name = item_const.ident.to_string();
-                let rust_type = parse_types_for_populate_item_definitions(
-                    &item_const.ty,
-                    &Vec::new(),
-                    module_path,
-                    global_data,
-                );
-
-                various_defs.consts.push(ConstDef {
-                    name: const_name,
-                    type_: rust_type,
-                    syn_object: item_const.clone(),
-                });
-            }
-            Item::Enum(item_enum) => {
-                let enum_name = item_enum.ident.to_string();
-
-                // Make ItemDefinition
-                let generics = item_enum
-                    .generics
-                    .params
-                    .iter()
-                    .map(|p| match p {
-                        GenericParam::Lifetime(_) => todo!(),
-                        GenericParam::Type(type_param) => type_param.ident.to_string(),
-                        GenericParam::Const(_) => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-                let members_for_scope = item_enum
-                    .variants
-                    .iter()
-                    .map(|v| EnumVariantInfo {
-                        ident: v.ident.to_string(),
-                        inputs: v
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                let input_type = parse_types_for_populate_item_definitions(
-                                    &f.ty,
-                                    &generics,
-                                    module_path,
-                                    global_data,
-                                );
-                                match &f.ident {
-                                    Some(input_name) => EnumVariantInputsInfo::Named {
-                                        ident: input_name.to_string(),
-                                        input_type,
-                                    },
-                                    None => EnumVariantInputsInfo::Unnamed(input_type),
-                                }
-                            })
-                            .collect::<Vec<_>>(),
-                    })
-                    .collect::<Vec<_>>();
-
-                various_defs.item_definitons.push(ItemDefinition {
-                    ident: enum_name,
-                    is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
-                        Meta::Path(_) => todo!(),
-                        Meta::List(meta_list) => {
-                            let segs = &meta_list.path.segments;
-                            if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                                let tokens = format!("({})", meta_list.tokens);
-                                let trait_tuple =
-                                    syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                                trait_tuple.elems.iter().any(|elem| match elem {
-                                    Type::Path(type_path) => {
-                                        let segs = &type_path.path.segments;
-                                        // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                        segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                                    }
-                                    _ => todo!(),
-                                })
-                            } else {
-                                false
-                            }
-                        }
-                        Meta::NameValue(_) => todo!(),
-                    }),
-                    generics,
-                    struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                        members: members_for_scope,
-                        syn_object: item_enum.clone(),
-                    }),
-                    impl_blocks: Vec::new(),
-                });
-            }
-            Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => {
-                let generics = item_fn
-                    .sig
-                    .generics
-                    .params
-                    .iter()
-                    .filter_map(|g| match g {
-                        GenericParam::Lifetime(_) => None,
-                        GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
-                        GenericParam::Const(_) => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-
-                let inputs_types = item_fn
-                    .sig
-                    .inputs
-                    .iter()
-                    .filter_map(|input| match input {
-                        FnArg::Receiver(_) => None,
-                        FnArg::Typed(pat_type) => Some(parse_types_for_populate_item_definitions(
-                            &*pat_type.ty,
-                            &generics,
-                            module_path,
-                            &global_data,
-                        )),
-                    })
-                    .collect::<Vec<_>>();
-
-                let return_type = match &item_fn.sig.output {
-                    ReturnType::Default => RustType::Unit,
-                    ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                        &*type_,
-                        &generics,
-                        module_path,
-                        global_data,
-                    ),
-                };
-
-                various_defs.fn_info.push(FnInfo {
-                    ident: item_fn.sig.ident.to_string(),
-                    inputs_types,
-                    generics,
-                    return_type,
-                });
-
-                // Get scoped definitions
-
-                scope_count += 1;
-                // dbg!("populate_item_definitions_items");
-                // let sig = &item_fn.sig;
-                // println!("{}", quote! { #sig });
-                // dbg!(scope_count);
-
-                let mut itemms = Vec::new();
-                for stmt in item_fn.block.stmts.clone().into_iter() {
-                    append_items_from_stmt(&mut itemms, stmt);
-                }
-
-                // *scope_number.last_mut().unwrap() += 1;
-
-                let mut scoped_various_defs = VariousDefintions::default();
-
-                // We are now processing the items within the fn block, so are no longer at the module level and now in a scope (or in a new child scope), so push a new scope level
-                scope_id.push(scope_count);
-                // dbg!("populate item fn");
-                // dbg!(&scope_id);
-                populate_item_definitions_items(
-                    &itemms,
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let init = local.init.as_ref().unwrap();
+                populate_item_definitions_expr(
+                    &init.expr,
                     global_data,
                     module_path,
-                    &mut scoped_various_defs,
+                    // current_scope_various_defs,
                     module,
                     scope_id,
+                    &mut scope_count,
+                    false,
                 );
-                module.scoped_various_definitions.push((
-                    scope_id.clone(),
-                    scoped_various_defs,
-                    // Vec::new(),
-                ));
-                scope_id.pop();
             }
-            Item::ForeignMod(_) => todo!(),
-            Item::Impl(item_impl) => {
-                // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
-
-                // TODO also need to go through scopes in impl fns, like with standalone fns
-                for item in &item_impl.items {
-                    match item {
-                        ImplItem::Const(_) => todo!(),
-                        ImplItem::Fn(_) => {
-                            scope_count += 1;
-                            scope_id.push(scope_count);
-                            // dbg!("populate item impl fn");
-                            // dbg!(&scope_id);
-                            let scoped_various_defs = VariousDefintions::default();
-                            module.scoped_various_definitions.push((
-                                scope_id.clone(),
-                                scoped_various_defs,
-                                // Vec::new(),
-                            ));
-                            scope_id.pop();
-                        }
-                        ImplItem::Type(_) => todo!(),
-                        ImplItem::Macro(_) => todo!(),
-                        ImplItem::Verbatim(_) => todo!(),
-                        _ => todo!(),
-                    }
-                }
-            }
-            Item::Macro(_) => {}
-            // We have already split up the modules in individual `ModuleData`s (which we are currently iterating through) so should ignore `Item::Mod`s
-            Item::Mod(_) => {}
-            Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {
-                let struct_name = item_struct.ident.to_string();
-
-                // Make ItemDefinition
-                let generics = item_struct
-                    .generics
-                    .params
-                    .iter()
-                    .map(|p| match p {
-                        GenericParam::Lifetime(_) => todo!(),
-                        GenericParam::Type(type_param) => type_param.ident.to_string(),
-                        GenericParam::Const(_) => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-
-                let generics_type_params = generics
-                    .iter()
-                    .map(|name| RustTypeParam {
-                        name: name.clone(),
-                        type_: RustTypeParamValue::Unresolved,
-                    })
-                    .collect::<Vec<_>>();
-
-                let fields = if item_struct.fields.len() == 0 {
-                    StructFieldInfo::UnitStruct
-                } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-                    StructFieldInfo::RegularStruct(
-                        item_struct
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                (
-                                    f.ident.as_ref().unwrap().to_string(),
-                                    parse_types_for_populate_item_definitions(
-                                        &f.ty,
-                                        &generics,
-                                        module_path,
-                                        global_data,
-                                    ),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                } else {
-                    StructFieldInfo::TupleStruct(
-                        item_struct
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                parse_types_for_populate_item_definitions(
-                                    &f.ty,
-                                    &generics,
-                                    module_path,
-                                    global_data,
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
-
-                various_defs.item_definitons.push(ItemDefinition {
-                    ident: item_struct.ident.to_string(),
-                    is_copy: item_struct.attrs.iter().any(|attr| match &attr.meta {
-                        Meta::Path(_) => todo!(),
-                        Meta::List(meta_list) => {
-                            let segs = &meta_list.path.segments;
-                            if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                                let tokens = format!("({})", meta_list.tokens);
-                                let trait_tuple =
-                                    syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-                                trait_tuple.elems.iter().any(|elem| match elem {
-                                    Type::Path(type_path) => {
-                                        let segs = &type_path.path.segments;
-                                        // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-                                        segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-                                    }
-                                    _ => todo!(),
-                                })
-                            } else {
-                                false
-                            }
-                        }
-                        Meta::NameValue(_) => todo!(),
-                    }),
-                    generics,
-                    struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                        fields,
-                        syn_object: Some(item_struct.clone()),
-                    }),
-                    impl_blocks: Vec::new(),
-                });
-            }
-            Item::Trait(item_trait) => various_defs.trait_definitons.push(RustTraitDefinition {
-                name: item_trait.ident.to_string(),
-            }),
-            Item::TraitAlias(_) => todo!(),
-            Item::Type(_) => todo!(),
-            Item::Union(_) => todo!(),
-            Item::Use(_) => {}
-            Item::Verbatim(_) => todo!(),
-            _ => todo!(),
+            Stmt::Item(item) => populate_item_definitions_items_individual_item(
+                item,
+                global_data,
+                module_path,
+                current_scope_various_defs,
+                module,
+                scope_id,
+                &mut scope_count,
+            ),
+            Stmt::Expr(expr, _) => populate_item_definitions_expr(
+                expr,
+                global_data,
+                module_path,
+                // current_scope_various_defs,
+                module,
+                scope_id,
+                &mut scope_count,
+                false,
+            ),
+            Stmt::Macro(_) => {}
         }
     }
 }
 
-fn populate_impl_blocks(global_data: &mut GlobalData) {
+fn populate_item_definitions_expr(
+    expr: &Expr,
+    global_data: &GlobalData,
+    module_path: &Vec<String>,
+    // various_defs: &mut VariousDefintions,
+    module: &mut ModuleData,
+    scope_id: &mut Vec<usize>,
+    // NOTE when we are iterating through some stmts for a given scope like a fn, we need to be able to increment the scope count each time we come across an expression that create a new child scope eg a block. So for a fn body with 3 blocks, by the time we reach the final block, the scope_count will have been incremented to 2 (0 based) so we can then push the scope_count onto scope_id to create a new scope for processing the statement in that block.
+    scope_count: &mut usize,
+    // In some cases, eg the body of a match arm like `Foo(x) => x`, we need to ensure a new scope is created even though we wouldn't normally create one for the give `Expr` variant, ie an `Expr::Path` in this case.
+    // NOTE both here and in the JS parsing code, we create a new scope even if we don't need to eg for match arms like `Foo => 5`.
+    force_new_scope: bool,
+) {
+    fn make_forced_empty_scope(
+        force_new_scope: bool,
+        scope_count: &mut usize,
+        scope_id: &mut Vec<usize>,
+        module: &mut ModuleData,
+    ) {
+        if force_new_scope {
+            *scope_count += 1;
+            scope_id.push(*scope_count);
+
+            let empty_various_defs = VariousDefintions::default();
+            module
+                .scoped_various_definitions
+                .push((scope_id.clone(), empty_various_defs));
+
+            scope_id.pop();
+        }
+    }
+
+    // We only want to create a new scope for the below expressions
+    // TODO IMPORTANT call `make_forced_empty_scope` for all variants
+    match expr {
+        Expr::Array(_) => {}
+        Expr::Assign(_) => {}
+        Expr::Async(_) => {}
+        Expr::Await(_) => {}
+        Expr::Binary(_) => {}
+        Expr::Block(expr_block) => {
+            *scope_count += 1;
+            scope_id.push(*scope_count);
+
+            let mut scoped_various_defs = VariousDefintions::default();
+            populate_item_definitions_stmts(
+                &expr_block.block.stmts,
+                global_data,
+                module_path,
+                &mut scoped_various_defs,
+                module,
+                scope_id,
+            );
+
+            module.scoped_various_definitions.push((
+                scope_id.clone(),
+                scoped_various_defs,
+                // Vec::new(),
+            ));
+
+            scope_id.pop();
+        }
+        Expr::Break(_) => {}
+        Expr::Call(_) => {}
+        Expr::Cast(_) => {}
+        Expr::Closure(_) => {}
+        Expr::Const(_) => {}
+        Expr::Continue(_) => {}
+        Expr::Field(_) => {}
+        Expr::ForLoop(_) => {}
+        Expr::Group(_) => {}
+        Expr::If(_) => {}
+        Expr::Index(_) => {}
+        Expr::Infer(_) => {}
+        Expr::Let(_) => {}
+        Expr::Lit(_) => make_forced_empty_scope(force_new_scope, scope_count, scope_id, module),
+        Expr::Loop(_) => {}
+        Expr::Macro(_) => {}
+        Expr::Match(expr_match) => {
+            populate_item_definitions_expr(
+                &expr_match.expr,
+                global_data,
+                module_path,
+                module,
+                scope_id,
+                scope_count,
+                false,
+            );
+            for arm in &expr_match.arms {
+                // In this case, even if the arm body is simply a path like `x`, we still need to create a scope because the `x` can be an argument of eg the enum variant for this match arm.
+                populate_item_definitions_expr(
+                    &arm.body,
+                    global_data,
+                    module_path,
+                    module,
+                    scope_id,
+                    scope_count,
+                    true,
+                );
+            }
+        }
+        Expr::MethodCall(_) => {}
+        Expr::Paren(_) => {}
+        Expr::Path(_) => make_forced_empty_scope(force_new_scope, scope_count, scope_id, module),
+        Expr::Range(_) => {}
+        Expr::Reference(_) => {}
+        Expr::Repeat(_) => {}
+        Expr::Return(_) => {}
+        Expr::Struct(_) => {}
+        Expr::Try(_) => {}
+        Expr::TryBlock(_) => {}
+        Expr::Tuple(_) => {}
+        Expr::Unary(_) => {}
+        Expr::Unsafe(_) => {}
+        Expr::Verbatim(_) => {}
+        Expr::While(_) => {}
+        Expr::Yield(_) => {}
+        _ => {}
+    }
+}
+
+fn populate_impl_blocks_and_item_def_fields(global_data: &mut GlobalData) {
     let global_data_copy = global_data.clone();
     for module in &mut global_data.modules {
         debug_span!(
@@ -4605,8 +4878,10 @@ fn populate_impl_blocks(global_data: &mut GlobalData) {
         );
         let module_path = module.path.clone();
         let mut scope_id = Vec::new();
-        populate_impl_blocks_items(
-            &module.items,
+        let items = module.items.clone();
+        populate_impl_blocks_items_and_item_def_fields(
+            &items,
+            module,
             &global_data_copy,
             &module_path,
             &mut global_data.impl_blocks_simpl,
@@ -4638,8 +4913,9 @@ fn append_items_from_stmt(items: &mut Vec<Item>, stmt: Stmt) {
     }
 }
 
-fn populate_impl_blocks_items(
+fn populate_impl_blocks_items_and_item_def_fields(
     items: &Vec<Item>,
+    module: &mut ModuleData,
     global_data_copy: &GlobalData,
     module_path: &Vec<String>,
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
@@ -4647,14 +4923,109 @@ fn populate_impl_blocks_items(
     scope_id: &mut Vec<usize>,
 ) {
     let mut scope_count = 0;
+
+    let current_scope_id = if scope_id.is_empty() {
+        None
+    } else {
+        Some(scope_id.clone())
+    };
+
     for item in items {
         // dbg!("populate_impl_blocks_items");
         // println!("{}", quote! { #item });
         match item {
-            Item::Const(item_const) => {}
-            Item::Enum(item_enum) => {}
+            Item::Const(item_const) => {
+                let const_def = module
+                    .lookup_const_known_module(&current_scope_id, &item_const.ident.to_string());
+
+                let rust_type = parse_types_for_populate_item_definitions(
+                    &item_const.ty,
+                    &Vec::new(),
+                    module_path,
+                    &current_scope_id,
+                    global_data_copy,
+                );
+
+                const_def.type_ = rust_type;
+            }
+            Item::Enum(item_enum) => {
+                let item_def = module.lookup_item_def_known_module_assert_not_func2(
+                    &current_scope_id,
+                    &item_enum.ident.to_string(),
+                );
+
+                let members_for_scope = item_enum
+                    .variants
+                    .iter()
+                    .map(|v| EnumVariantInfo {
+                        ident: v.ident.to_string(),
+                        inputs: v
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                let input_type = parse_types_for_populate_item_definitions(
+                                    &f.ty,
+                                    &item_def.generics,
+                                    module_path,
+                                    &current_scope_id,
+                                    global_data_copy,
+                                );
+                                match &f.ident {
+                                    Some(input_name) => EnumVariantInputsInfo::Named {
+                                        ident: input_name.to_string(),
+                                        input_type,
+                                    },
+                                    None => EnumVariantInputsInfo::Unnamed(input_type),
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                    .collect::<Vec<_>>();
+
+                match &mut item_def.struct_or_enum_info {
+                    StructOrEnumDefitionInfo::Struct(_) => {
+                        todo!()
+                    }
+                    StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                        enum_def_info.members = members_for_scope;
+                    }
+                }
+            }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
+                let fn_info = module
+                    .lookup_fn_known_module(&current_scope_id, &item_fn.sig.ident.to_string());
+
+                let inputs_types = item_fn
+                    .sig
+                    .inputs
+                    .iter()
+                    .filter_map(|input| match input {
+                        FnArg::Receiver(_) => None,
+                        FnArg::Typed(pat_type) => Some(parse_types_for_populate_item_definitions(
+                            &*pat_type.ty,
+                            &fn_info.generics,
+                            module_path,
+                            &current_scope_id,
+                            global_data_copy,
+                        )),
+                    })
+                    .collect::<Vec<_>>();
+
+                let return_type = match &item_fn.sig.output {
+                    ReturnType::Default => RustType::Unit,
+                    ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                        &*type_,
+                        &fn_info.generics,
+                        module_path,
+                        &current_scope_id,
+                        global_data_copy,
+                    ),
+                };
+
+                fn_info.inputs_types = inputs_types;
+                fn_info.return_type = return_type;
+
                 scope_count += 1;
                 let mut items = Vec::new();
                 for stmt in item_fn.block.stmts.clone() {
@@ -4662,8 +5033,9 @@ fn populate_impl_blocks_items(
                 }
 
                 scope_id.push(scope_count);
-                populate_impl_blocks_items(
+                populate_impl_blocks_items_and_item_def_fields(
                     &items,
+                    module,
                     &global_data_copy,
                     &module_path,
                     global_impl_blocks_simpl,
@@ -4707,16 +5079,12 @@ fn populate_impl_blocks_items(
                                                 .iter()
                                                 .map(|seg| seg.ident.to_string())
                                                 .collect::<Vec<_>>();
-                                            let temp_scope_id = if scope_id.is_empty() {
-                                                None
-                                            } else {
-                                                Some(scope_id.clone())
-                                            };
+
                                             let (module_path, scope_id, trait_def) =
                                                 global_data_copy
                                                     .lookup_trait_definition_any_module(
                                                         module_path,
-                                                        &temp_scope_id,
+                                                        &current_scope_id,
                                                         &trait_path,
                                                     );
                                             Some((module_path, scope_id, trait_def.name))
@@ -4752,15 +5120,10 @@ fn populate_impl_blocks_items(
                 };
 
                 let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-                    let temp_scope_id = if scope_id.is_empty() {
-                        None
-                    } else {
-                        Some(scope_id.clone())
-                    };
                     let (module_path, trait_scope_id, trait_def) = global_data_copy
                         .lookup_trait_definition_any_module(
                             module_path,
-                            &temp_scope_id,
+                            &current_scope_id,
                             &trait_
                                 .segments
                                 .iter()
@@ -4791,18 +5154,14 @@ fn populate_impl_blocks_items(
                         )
                     } else {
                         // Get type of impl target
-                        let temp_scope_id = if scope_id.is_empty() {
-                            None
-                        } else {
-                            Some(scope_id.clone())
-                        };
+
                         // dbg!(&module_path);
                         // dbg!(&temp_scope_id);
                         // dbg!(&impl_item_target_path);
                         let (target_item_module, resolved_scope_id, target_item) = global_data_copy
                             .lookup_item_definition_any_module_or_scope(
                                 module_path,
-                                &temp_scope_id,
+                                &current_scope_id,
                                 &impl_item_target_path,
                             );
                         // dbg!("here");
@@ -4869,6 +5228,7 @@ fn populate_impl_blocks_items(
                                                 &*pat_type.ty,
                                                 &generics,
                                                 module_path,
+                                                &current_scope_id,
                                                 &global_data_copy,
                                             ))
                                         }
@@ -4882,6 +5242,7 @@ fn populate_impl_blocks_items(
                                             &*type_,
                                             &generics,
                                             module_path,
+                                            &current_scope_id,
                                             global_data_copy,
                                         )
                                     }
@@ -4948,13 +5309,9 @@ fn populate_impl_blocks_items(
                 //         items: item_impl.items.clone(),
                 //     });
                 // }
-                let scope_id2 = if scope_id.is_empty() {
-                    None
-                } else {
-                    Some(scope_id.clone())
-                };
+
                 global_impl_blocks_simpl.push(RustImplBlockSimple {
-                    unique_id: get_item_impl_unique_id(module_path, &scope_id2, item_impl),
+                    unique_id: get_item_impl_unique_id(module_path, &current_scope_id, item_impl),
                     generics: rust_impl_block_generics,
                     trait_: trait_path_and_name,
                     target: target_rust_type.clone(),
@@ -4969,8 +5326,66 @@ fn populate_impl_blocks_items(
                 // assert!(item_mod.content.is_none());
             }
             Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {}
-            Item::Trait(item_trait) => {}
+            Item::Struct(item_struct) => {
+                let item_def = module.lookup_item_def_known_module_assert_not_func2(
+                    &current_scope_id,
+                    &item_struct.ident.to_string(),
+                );
+
+                let fields = if item_struct.fields.len() == 0 {
+                    StructFieldInfo::UnitStruct
+                } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
+                    StructFieldInfo::RegularStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                // dbg!(&f.ty);
+                                // dbg!(&module_path);
+                                // dbg!(&current_scope_id);
+                                // dbg!(&scope_id);
+                                (
+                                    f.ident.as_ref().unwrap().to_string(),
+                                    parse_types_for_populate_item_definitions(
+                                        &f.ty,
+                                        &item_def.generics,
+                                        module_path,
+                                        &current_scope_id,
+                                        global_data_copy,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    StructFieldInfo::TupleStruct(
+                        item_struct
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                parse_types_for_populate_item_definitions(
+                                    &f.ty,
+                                    &item_def.generics,
+                                    module_path,
+                                    &current_scope_id,
+                                    global_data_copy,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                match &mut item_def.struct_or_enum_info {
+                    StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                        struct_def_info.fields = fields;
+                    }
+                    StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                }
+            }
+            Item::Trait(item_trait) => {
+                let _item_def = module
+                    ._lookup_trait_known_module(&current_scope_id, &item_trait.ident.to_string());
+                // Currently trait defs don't store any info other than the name, so we don't need to do anything
+            }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
@@ -5001,7 +5416,6 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
 fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     // We want to insert prelude stmts at the beginning of js_stmts, but if we do that per item we will reverse the order they appear in the source files. Instead we push them to `prelude_stmts` and then insert that in one go
     let mut prelude_stmts = Vec::new();
-    dbg!("push rust types");
 
     let rust_prelude_types = &global_data.rust_prelude_types;
 
@@ -5387,6 +5801,7 @@ pub fn process_items(
     //
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
     // ie populate module and scoped `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
+    // We need to only populate the idents of the `ItemDefinition`s etc here, and then in a subsequent pass populate all the fields which use types and therefore might require other `ItemDefinition`s to already exist even though they may appear later in the code.
     populate_item_definitions(&mut global_data);
     // dbg!("populate_item_definitions scope_ids");
     let scope_ids = global_data
@@ -5402,8 +5817,9 @@ pub fn process_items(
     // dbg!(scope_ids);
 
     // // populates `global_data.impl_blocks_simpl` and `module.scoped_various_definitions` with `RustImplBlockSimple`s
-    // populates `global_data.impl_blocks_simpl`
-    populate_impl_blocks(&mut global_data);
+    // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
+    // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
+    populate_impl_blocks_and_item_def_fields(&mut global_data);
 
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class.
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
@@ -5838,7 +6254,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     global_data.modules = modules;
 
     populate_item_definitions(&mut global_data);
-    populate_impl_blocks(&mut global_data);
+    populate_impl_blocks_and_item_def_fields(&mut global_data);
     populate_item_def_impl_blocks(&mut global_data);
 
     global_data.transpiled_modules.push(JsModule {
@@ -6582,15 +6998,21 @@ fn get_path(
         let mut is_item_def = false;
         let mut is_trait_def = false;
         while !temp_scope_id.is_empty() {
-            // dbg!(&module.scoped_various_definitions);
-            // dbg!(scope_id);
-            // dbg!(&segs);
             let svd = module
                 .scoped_various_definitions
                 .iter()
                 // TODO should this be `&svd.0 == temp_scope_id` ???
-                .find(|svd| &svd.0 == scope_id)
-                .unwrap();
+                .find(|svd| &svd.0 == scope_id);
+
+            let svd = if let Some(svd) = svd {
+                svd
+            } else {
+                println!("oh no, in get_path we couldn't find a scoped VariousDefinitions for one of the parent scopes of:");
+                dbg!(scope_id);
+                dbg!(&segs);
+                dbg!(&module.scoped_various_definitions);
+                panic!("");
+            };
             // dbg!(&look_for_scoped_items);
 
             let static_scope = &svd.1;
@@ -6606,7 +7028,7 @@ fn get_path(
                     .iter()
                     .find(|s| &s.scope_id == scope_id)
                     .unwrap();
-                // dbg!(&global_data.scopes);
+                // dbg!(&var_scope.variables);
                 var_scope
                     .variables
                     .iter()
@@ -6861,6 +7283,7 @@ fn get_path(
         } else {
             // dbg!(module);
             dbg!(current_mod);
+            dbg!(current_scope_id);
             dbg!(segs);
             panic!()
         }

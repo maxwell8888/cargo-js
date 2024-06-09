@@ -167,11 +167,9 @@ async fn destructure_array_of_copy_structs() {
     // include_str!("string_prototype_extensions.js"),
     // "\n",
     // include_str!("number_prototype_extensions.js"),
-    
+
     // TODO might be better to add the `.copy()`s to the destructured vars, but would need to do this in subsequent statements which is a faff so leave for now
-    // copy() {
-    //     return JSON.parse(JSON.stringify(this));
-    // }
+    // TODO the Foo.copy() isn't needed but we add it to all structs which are marked as copy. We can remove it if it isn't needed using tracking of which methods are called but haven't implemented this yet.
     let expected = format_js(concat!(
         r#"
             Array.prototype.copy = function () {
@@ -181,6 +179,10 @@ async fn destructure_array_of_copy_structs() {
             class Foo {
                 constructor(num) {
                     this.num = num;
+                }
+
+                copy() {
+                    return JSON.parse(JSON.stringify(this));
                 }
             }
             var foo = new Foo(1);
