@@ -854,6 +854,9 @@ fn parse_fn_input_or_field(
                     // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
                     // "RustBool" => RustType::Struct(StructOrEnum { ident: "RustBool".to_string(), members: (), generics: (), syn_object: () }),
                     struct_or_enum_name => {
+                        // dbg!(current_module);
+                        // dbg!(&global_data.scope_id_as_option());
+                        // dbg!(&vec![struct_or_enum_name.to_string()]);
                         let (item_definition_module_path, resolved_scope_id, item_definition) =
                             global_data.lookup_item_definition_any_module_or_scope(
                                 current_module,
@@ -2542,7 +2545,8 @@ impl FnInfo {
 /// fns: Vec<FnInfo>,
 /// generics: Vec<MyGeneric>,
 /// structs_enums: Vec<StructOrEnumMethods>,
-#[derive(Debug, Default, Clone)]
+/// TODO remove `Default` to prevent accidentally creating `GlobalDataScope`s with a scope_id of []
+#[derive(Debug, Clone)]
 struct GlobalDataScope {
     // NOTE techincally we don't need this but it is useful to be able to reconcile with the static/preprocessed scopes to ensure we are talking about the same thing
     scope_id: Vec<usize>,
@@ -2632,7 +2636,9 @@ struct GlobalData {
     transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
+    // 1 based
     scope_id: Vec<usize>,
+    // 1 based
     scope_count: Vec<usize>,
 }
 impl GlobalData {
@@ -2681,7 +2687,12 @@ impl GlobalData {
             // crates: vec![ravascript_prelude_crate],
             crates: vec![],
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
-            scopes: vec![GlobalDataScope::default()],
+            scopes: vec![GlobalDataScope {
+                scope_id: Vec::new(),
+                variables: Vec::new(),
+                look_in_outer_scope: false,
+                use_mappings: Vec::new(),
+            }],
             // struct_or_enum_methods: Vec::new(),
             impl_block_target_type: Vec::new(),
             // scoped_fns: vec![],
@@ -2711,6 +2722,28 @@ impl GlobalData {
         } else {
             Some(self.scope_id.clone())
         }
+    }
+
+    fn push_new_scope(&mut self, look_in_outer_scope: bool, variables: Vec<ScopedVar>) {
+        let scope_count = {
+            let scope_count = self.scope_count.last_mut().unwrap();
+            *scope_count += 1;
+            *scope_count
+        };
+        self.scope_id.push(scope_count);
+        let var_scope = GlobalDataScope {
+            scope_id: self.scope_id.clone(),
+            variables,
+            look_in_outer_scope,
+            use_mappings: Vec::new(),
+        };
+        self.scopes.push(var_scope);
+        self.scope_count.push(0);
+    }
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+        self.scope_count.pop();
+        self.scope_id.pop();
     }
 
     // handling paths:
@@ -4761,7 +4794,7 @@ fn populate_item_definitions_expr(
     // NOTE both here and in the JS parsing code, we create a new scope even if we don't need to eg for match arms like `Foo => 5`.
     force_new_scope: bool,
 ) {
-    fn make_forced_empty_scope(
+    fn forced_inc_scope_count_and_id_and_push_empty_scope(
         force_new_scope: bool,
         scope_count: &mut usize,
         scope_id: &mut Vec<usize>,
@@ -4775,7 +4808,10 @@ fn populate_item_definitions_expr(
             module
                 .scoped_various_definitions
                 .push((scope_id.clone(), empty_various_defs));
-
+        }
+    }
+    fn drop_forced_empty_scope(force_new_scope: bool, scope_id: &mut Vec<usize>) {
+        if force_new_scope {
             scope_id.pop();
         }
     }
@@ -4813,7 +4849,17 @@ fn populate_item_definitions_expr(
         Expr::Break(_) => {}
         Expr::Call(_) => {}
         Expr::Cast(_) => {}
-        Expr::Closure(_) => {}
+        Expr::Closure(expr_closure) => {
+            populate_item_definitions_expr(
+                &expr_closure.body,
+                global_data,
+                module_path,
+                module,
+                scope_id,
+                scope_count,
+                true,
+            );
+        }
         Expr::Const(_) => {}
         Expr::Continue(_) => {}
         Expr::Field(_) => {}
@@ -4823,10 +4869,26 @@ fn populate_item_definitions_expr(
         Expr::Index(_) => {}
         Expr::Infer(_) => {}
         Expr::Let(_) => {}
-        Expr::Lit(_) => make_forced_empty_scope(force_new_scope, scope_count, scope_id, module),
+        Expr::Lit(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Loop(_) => {}
         Expr::Macro(_) => {}
         Expr::Match(expr_match) => {
+            // We wouldn't normally create a new scope for a match expression but if it is the body of eg a closure or a another match expression's arm body, then force_new_scope will be true and we must create an empty scope (NOTE this is different to the arm body scopes which are created below, this is a single empty scope for the entire match expression)
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+
             populate_item_definitions_expr(
                 &expr_match.expr,
                 global_data,
@@ -4836,7 +4898,8 @@ fn populate_item_definitions_expr(
                 scope_count,
                 false,
             );
-            for arm in &expr_match.arms {
+            // TODO We count in reverse to match the JS parsing but should probably try and fix this so we don't have to remember that match arm body scopes are counted backwards
+            for arm in expr_match.arms.iter().rev() {
                 // In this case, even if the arm body is simply a path like `x`, we still need to create a scope because the `x` can be an argument of eg the enum variant for this match arm.
                 populate_item_definitions_expr(
                     &arm.body,
@@ -4848,10 +4911,19 @@ fn populate_item_definitions_expr(
                     true,
                 );
             }
+            drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::MethodCall(_) => {}
         Expr::Paren(_) => {}
-        Expr::Path(_) => make_forced_empty_scope(force_new_scope, scope_count, scope_id, module),
+        Expr::Path(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Range(_) => {}
         Expr::Reference(_) => {}
         Expr::Repeat(_) => {}
@@ -6989,7 +7061,7 @@ fn get_path(
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     // TODO IMPORTANT we have two `is_scoped` vars here because we are using `get_path` in different contexts. `is_scoped_static` is for getting the path from static data, before syn -> JS parsing, and `is_scoped` is for use during the syn -> JS parsing. This needs thinking about, reconciling and simplifying. Should just stop using get_path for vars.
-    let is_scoped_static = if let Some(scope_id) = current_scope_id {
+    let is_scoped_static_scope = if let Some(scope_id) = current_scope_id {
         // dbg!(scope_id);
         let mut temp_scope_id = scope_id.clone();
         // TODO initially wanted to not handle vars in this fn (`get_path`) but it doesn't seem possible without duplicating work given that an items and vars can shadow each other, we need to look through both the static and var scopes simultaneously to check if we have a var
@@ -7002,7 +7074,7 @@ fn get_path(
                 .scoped_various_definitions
                 .iter()
                 // TODO should this be `&svd.0 == temp_scope_id` ???
-                .find(|svd| &svd.0 == scope_id);
+                .find(|svd| &svd.0 == &temp_scope_id);
 
             let svd = if let Some(svd) = svd {
                 svd
@@ -7040,6 +7112,11 @@ fn get_path(
                     .fn_info
                     .iter()
                     .any(|func| func.ident == segs[0].ident);
+
+            // dbg!(&static_scope.item_definitons);
+            // dbg!(&module.scoped_various_definitions);
+            // dbg!(&segs[0].ident);
+            // dbg!(&look_for_scoped_items);
             is_item_def = look_for_scoped_items
                 && static_scope
                     .item_definitons
@@ -7118,14 +7195,14 @@ fn get_path(
     // TODO not sure why we need use_private_items here
     // if use_private_items && is_scoped {
     // if is_scoped || is_scoped_static {
-    if is_scoped_static.is_some() {
+    if is_scoped_static_scope.is_some() {
         // Variables and scoped items
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
 
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
-        (current_mod.clone(), segs, is_scoped_static)
+        (current_mod.clone(), segs, is_scoped_static_scope)
     } else if item_defined_in_module {
         (current_mod.clone(), segs, None)
     } else if segs[0].ident == "super" {

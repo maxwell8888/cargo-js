@@ -40,12 +40,6 @@ pub fn handle_item_fn(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsStmt {
-    let scope_count = {
-        let scope_count = global_data.scope_count.last_mut().unwrap();
-        *scope_count += 1;
-        *scope_count
-    };
-
     let name = item_fn.sig.ident.to_string();
     let span = debug_span!("handle_item_fn", name = ?name);
     let _guard = span.enter();
@@ -162,11 +156,7 @@ pub fn handle_item_fn(
     // }
 
     // Create new scope for fn vars
-    global_data.scope_count.push(0);
-    global_data.scope_id.push(scope_count);
-    let mut var_scope = GlobalDataScope::default();
-    var_scope.scope_id = global_data.scope_id.clone();
-    global_data.scopes.push(var_scope);
+    global_data.push_new_scope(false, Vec::new());
 
     // record which vars are mut and/or &mut
     let mut copy_stmts = Vec::new();
@@ -392,10 +382,7 @@ pub fn handle_item_fn(
     };
 
     // pop fn scope
-    global_data.scopes.pop();
-
-    global_data.scope_count.pop();
-    global_data.scope_id.pop();
+    global_data.pop_scope();
 
     stmt
 }

@@ -29,11 +29,11 @@ use crate::{
         LocalType,
     },
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
-    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, JsImplBlock2, JsImplItem, PartialRustType, RustGeneric,
-    RustImplItem, RustImplItemItem, RustImplItemItemNoJs, RustPathSegment, RustTraitDefinition,
-    RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo,
-    StructFieldInfo, StructOrEnumDefitionInfo,
+    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, ItemDefinition,
+    JsImplBlock2, JsImplItem, PartialRustType, RustGeneric, RustImplItem, RustImplItemItem,
+    RustImplItemItemNoJs, RustPathSegment, RustTraitDefinition, RustType, RustTypeFnType,
+    RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo,
+    StructOrEnumDefitionInfo,
 };
 
 fn handle_expr_assign(
@@ -603,9 +603,7 @@ pub fn handle_expr(
                 _ => {}
             }
 
-            let mut global_data_scope = GlobalDataScope::default();
-            global_data_scope.look_in_outer_scope = true;
-            global_data.scopes.push(global_data_scope);
+            global_data.push_new_scope(true, Vec::new());
             // TODO block needs to use something like parse_fn_body to be able to return the type
 
             // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
@@ -617,7 +615,7 @@ pub fn handle_expr(
                 .map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .unzip();
 
-            let scope = global_data.scopes.pop().unwrap();
+            global_data.pop_scope();
             // update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
 
             // TODO handle same as expr::block
@@ -1012,7 +1010,7 @@ fn handle_expr_closure(
         _ => false,
     };
 
-    let block = match &*expr_closure.body {
+    let body_is_js_block = match &*expr_closure.body {
         Expr::Async(expr_async) => {
             // If we have a single statement which is an expression that has no semi so is being returned then in Rust async we have to put it in a block but in Javascript we don't need to
 
@@ -1061,7 +1059,9 @@ fn handle_expr_closure(
     // NOTE we don't add closure as a fn to scoped fns, like for fn definitions because we instead do this when the closure (or fn) is assigned to a variable
 
     // Create scope for closure body
-    global_data.scopes.push(GlobalDataScope::default());
+    // NOTE the closure arguments are added to `GlobalDataScope.variables` in the for loop below. TODO can probably clean this up.
+    // TODO IMPORTANT surely a closure body scope should look outside the scope so we should pass true??
+    global_data.push_new_scope(false, Vec::new());
 
     // Below is copied/adapted from `handle_item_fn()`. Ideally we would use the same code for both but closure inputs are just pats because they have no self/reciever and might not even have a type eg `|x| x + 1`
     // record which vars are mut and/or &mut
@@ -1210,10 +1210,10 @@ fn handle_expr_closure(
         }
     };
 
-    global_data.scopes.pop();
+    global_data.pop_scope();
 
     (
-        JsExpr::ArrowFn(async_, block, inputs, body_stmts),
+        JsExpr::ArrowFn(async_, body_is_js_block, inputs, body_stmts),
         // NOTE closures cannot be generic
         // RustType::Fn(None, Vec::new(), None, RustTypeFnType::Standalone(())),
         RustType::Closure(Box::new(return_type)),
@@ -1941,9 +1941,7 @@ pub fn handle_expr_block(
     let span = debug_span!("handle_expr_block");
     let _guard = span.enter();
 
-    let mut global_data_scope = GlobalDataScope::default();
-    global_data_scope.look_in_outer_scope = true;
-    global_data.scopes.push(global_data_scope);
+    global_data.push_new_scope(true, Vec::new());
     // TODO block needs to use something like parse_fn_body to be able to return the type
     let (mut stmts, types): (Vec<_>, Vec<_>) = expr_block
         .block
@@ -1952,7 +1950,8 @@ pub fn handle_expr_block(
         .map(|stmt| handle_stmt(stmt, global_data, current_module))
         .unzip();
 
-    let scope = global_data.scopes.pop();
+    // pop block scope
+    global_data.pop_scope();
     // update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
 
     (JsExpr::Block(stmts), types.last().unwrap().clone())
@@ -2363,7 +2362,6 @@ fn handle_expr_path_inner(
 
     // dbg!("handle_expr_path_inner");
     // println!("{}", quote! { #expr_path });
-    // dbg!(global_data.scope_id_as_option());
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
@@ -2948,6 +2946,8 @@ pub fn handle_expr_match(
 
     // Fold match arms into if else statements
     // NOTE some arms might return never/unreachable (ie throw) so we can't just rely on eg getting the type from the first or last arm, we need to look through them all until we find a type which is not never/unreachable
+    // TODO Why reveresed??
+    // let (if_expr, rust_type) = expr_match.arms.iter().fold(
     let (if_expr, rust_type) = expr_match.arms.iter().rev().fold(
         (
             JsExpr::ThrowError("couldn't match enum variant".to_string()),
@@ -2978,27 +2978,7 @@ pub fn handle_expr_match(
 
             // Create new scope for match arm block
             // NOTE even if there is no curly braces it is still a scope
-            let scope_count = {
-                let scope_count = global_data.scope_count.last_mut().unwrap();
-                *scope_count += 1;
-                *scope_count
-            };
-
-            global_data.scope_count.push(0);
-            global_data.scope_id.push(scope_count);
-            let mut var_scope = GlobalDataScope {
-                scope_id: global_data.scope_id.clone(),
-                variables: scoped_vars,
-                // fns: Vec::new(),
-                // generics: Vec::new(),
-                // item_definitons: Vec::new(),
-                look_in_outer_scope: true,
-                // impl_blocks: Vec::new(),
-                // trait_definitons: Vec::new(),
-                // consts: Vec::new(),
-                use_mappings: Vec::new(),
-            };
-            global_data.scopes.push(var_scope);
+            global_data.push_new_scope(true, scoped_vars);
 
             let (body_js_stmts, body_return_type) = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -3024,9 +3004,7 @@ pub fn handle_expr_match(
             };
 
             // pop match arm scope stuff
-            global_data.scopes.pop();
-            global_data.scope_count.pop();
-            global_data.scope_id.pop();
+            global_data.pop_scope();
 
             body_data_destructure.extend(body_js_stmts.into_iter());
             let body = body_data_destructure;
