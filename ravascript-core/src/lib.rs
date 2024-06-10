@@ -1245,6 +1245,13 @@ fn parse_types_for_populate_item_definitions(
                         })
                         .collect::<Vec<_>>();
 
+                    // TODO important should replace get_path with item lookup like below
+                    // let (item_definition_module_path, resolved_scope_id, item_definition) =
+                    //     global_data.lookup_item_definition_any_module_or_scope(
+                    //         current_module,
+                    //         &global_data.scope_id_as_option(),
+                    //         &vec![struct_or_enum_name.to_string()],
+                    //     );
                     let (item_module_path, item_path_seg, item_scope) = get_path(
                         false,
                         true,
@@ -1257,20 +1264,36 @@ fn parse_types_for_populate_item_definitions(
                     );
                     let item_seg = &item_path_seg[0];
 
-                    // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
-                    RustType::StructOrEnum(
-                        item_seg
-                            .turbofish
-                            .iter()
-                            .map(|rt| RustTypeParam {
-                                name: "unknown_todo".to_string(),
-                                type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
-                            })
-                            .collect::<Vec<_>>(),
-                        item_module_path,
-                        item_scope,
-                        item_seg.ident.clone(),
-                    )
+                    if item_module_path == vec!["prelude_special_case".to_string()] {
+                        if item_seg.ident == "i32" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_integer = true;
+                            // }
+                            RustType::I32
+                        } else if item_seg.ident == "String" || item_seg.ident == "str" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            RustType::String
+                        } else {
+                            todo!()
+                        }
+                    } else {
+                        // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
+                        RustType::StructOrEnum(
+                            item_seg
+                                .turbofish
+                                .iter()
+                                .map(|rt| RustTypeParam {
+                                    name: "unknown_todo".to_string(),
+                                    type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
+                                })
+                                .collect::<Vec<_>>(),
+                            item_module_path,
+                            item_scope,
+                            item_seg.ident.clone(),
+                        )
+                    }
                 }
             }
         }
@@ -2985,6 +3008,9 @@ impl GlobalData {
         scope_id: &Option<Vec<usize>>,
         name: &String,
     ) -> ItemDefinition {
+        // dbg!(module_path);
+        // dbg!(scope_id);
+        // dbg!(name);
         let module = self
             .modules
             .iter()
@@ -5012,28 +5038,6 @@ fn populate_impl_blocks_and_item_def_fields(global_data: &mut GlobalData) {
     }
 }
 
-// IMPORTANT TODO also need to iterate through all `expr`s that can contain items eg blocks, loops, match expressions, etc.
-fn append_items_from_expr(items: &mut Vec<Item>, expr: Expr) {
-    match expr {
-        Expr::Block(expr_block) => {
-            for stmt in expr_block.block.stmts {
-                append_items_from_stmt(items, stmt);
-            }
-        }
-        _ => {}
-    }
-}
-fn append_items_from_stmt(items: &mut Vec<Item>, stmt: Stmt) {
-    match stmt {
-        Stmt::Local(_) => {}
-        Stmt::Item(item) => {
-            items.push(item);
-        }
-        Stmt::Expr(_, _) => {}
-        Stmt::Macro(_) => {}
-    }
-}
-
 fn populate_impl_blocks_items_and_item_def_fields(
     items: &Vec<Item>,
     module: &mut ModuleData,
@@ -6218,20 +6222,25 @@ pub fn process_items(
         bar.get_foo();
     }
 
-    if include_web {
-        global_data.transpiled_modules.push(JsModule {
-            public: true,
-            name: "web_prelude".to_string(),
-            module_path: vec!["web_prelude".to_string()],
-            stmts: Vec::new(),
-        });
-        let stmts = js_stmts_from_syn_items(
-            prelude_items,
-            &mut vec!["web_prelude".to_string()],
-            &mut global_data,
-        );
-    }
+    // if include_web {
+    //     let stmts = js_stmts_from_syn_items(
+    //         prelude_items,
+    //         &mut vec!["web_prelude".to_string()],
+    //         &mut global_data,
+    //     );
+    //     global_data.transpiled_modules.push(JsModule {
+    //         public: true,
+    //         name: "web_prelude".to_string(),
+    //         module_path: vec!["web_prelude".to_string()],
+    //         stmts,
+    //     });
+    // }
 
+    // dbg!(global_data
+    //     .modules
+    //     .iter()
+    //     .map(|m| m.path.clone())
+    //     .collect::<Vec<_>>());
     for module_data in global_data.modules.clone() {
         global_data.scope_count.clear();
         global_data.scope_count.push(0);
@@ -6347,7 +6356,10 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
             JsStmt::Function(js_fn) => {
                 update_classes_stmts(&mut js_fn.body_stmts, global_data);
             }
-            JsStmt::Class(js_class) if js_class.rust_name != "implblockdonotuse" => {
+            JsStmt::Class(js_class)
+                if js_class.rust_name != "implblockdonotuse"
+                    && js_class.rust_name != "donotuse" =>
+            {
                 let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
                     &js_class.module_path,
                     &js_class.scope_id,
@@ -7396,9 +7408,8 @@ fn get_path(
                 let var_scope = global_data
                     .scopes
                     .iter()
-                    .find(|s| &s.scope_id == scope_id)
+                    .find(|s| &s.scope_id == &temp_scope_id)
                     .unwrap();
-                // dbg!(&var_scope.variables);
                 var_scope
                     .variables
                     .iter()
@@ -7654,9 +7665,11 @@ fn get_path(
         assert_eq!(segs.len(), 1);
         let seg = &segs[0];
         if seg.ident == "i32" || seg.ident == "String" || seg.ident == "str" {
+            // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, None)
         } else {
+            dbg!("get_path could find path");
             // dbg!(module);
             dbg!(current_mod);
             dbg!(current_scope_id);

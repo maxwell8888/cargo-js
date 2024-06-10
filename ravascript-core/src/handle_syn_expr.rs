@@ -748,8 +748,11 @@ pub fn handle_expr(
             (JsExpr::Paren(Box::new(expr)), type_)
         }
         Expr::Path(expr_path) => {
+            // dbg!("handle_expr expr_path:");
+            // dbg!(&expr_path);
             let (js_expr, partial_rust_type) =
                 handle_expr_path(expr_path, global_data, current_module, false);
+            // dbg!(&partial_rust_type);
             match partial_rust_type {
                 // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                 PartialRustType::StructIdent(_, _, _, _) => panic!(),
@@ -928,6 +931,16 @@ pub fn handle_expr(
         Expr::Unary(expr_unary) => match expr_unary.op {
             UnOp::Deref(_) => {
                 let (expr, rust_type) = handle_expr(&*expr_unary.expr, global_data, current_module);
+                // let thing = &*expr_unary.expr;
+                // dbg!("let (expr, rust_type) = handle_expr(&*expr_unary.expr, global_data, current_module);");
+                // println!("{}", quote! { #thing });
+                // dbg!(&rust_type);
+                // let add_one_fn_info = global_data.lookup_fn_info_known_module(
+                //     &vec!["crate".to_string()],
+                //     &Some(vec![1]),
+                //     &"add_one".to_string(),
+                // );
+                // dbg!(add_one_fn_info);
                 // If type is a mut ref, then convert to the "inner" type.
                 match rust_type {
                     RustType::MutRef(inner_type) => {
@@ -946,7 +959,13 @@ pub fn handle_expr(
                             RustType::String => true,
                             RustType::Option(_) => todo!(),
                             RustType::Result(_) => todo!(),
-                            RustType::StructOrEnum(_, _, _, _) => todo!(),
+                            RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                                dbg!(type_params);
+                                dbg!(module_path);
+                                dbg!(scope_id);
+                                dbg!(name);
+                                todo!();
+                            }
                             RustType::Vec(_) => todo!(),
                             RustType::Array(_) => todo!(),
                             RustType::Tuple(_) => todo!(),
