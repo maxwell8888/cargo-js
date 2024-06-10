@@ -4988,7 +4988,35 @@ fn populate_item_definitions_expr(
             }
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
-        Expr::MethodCall(_) => {}
+        Expr::MethodCall(expr_method_call) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            populate_item_definitions_expr(
+                &*expr_method_call.receiver,
+                global_data,
+                module_path,
+                module,
+                scope_id,
+                scope_count,
+                false,
+            );
+            for expr in &expr_method_call.args {
+                populate_item_definitions_expr(
+                    expr,
+                    global_data,
+                    module_path,
+                    module,
+                    scope_id,
+                    scope_count,
+                    false,
+                );
+            }
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Paren(_) => {}
         Expr::Path(_) => {
             forced_inc_scope_count_and_id_and_push_empty_scope(
@@ -5137,7 +5165,6 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
         force_new_scope: bool,
         scope_count: &mut usize,
         scope_id: &mut Vec<usize>,
-        module: &mut ModuleData,
     ) {
         if force_new_scope {
             *scope_count += 1;
@@ -5217,7 +5244,6 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
                 force_new_scope,
                 scope_count,
                 scope_id,
-                module,
             );
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
@@ -5229,7 +5255,6 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
                 force_new_scope,
                 scope_count,
                 scope_id,
-                module,
             );
 
             populate_impl_blocks_items_and_item_def_fields_expr(
@@ -5258,14 +5283,42 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
             }
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
-        Expr::MethodCall(_) => {}
+        Expr::MethodCall(expr_method_call) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+            );
+            populate_impl_blocks_items_and_item_def_fields_expr(
+                &*expr_method_call.receiver,
+                module,
+                global_data_copy,
+                module_path,
+                global_impl_blocks_simpl,
+                scope_id,
+                scope_count,
+                false,
+            );
+            for expr in &expr_method_call.args {
+                populate_impl_blocks_items_and_item_def_fields_expr(
+                    expr,
+                    module,
+                    global_data_copy,
+                    module_path,
+                    global_impl_blocks_simpl,
+                    scope_id,
+                    scope_count,
+                    false,
+                );
+            }
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Paren(_) => {}
         Expr::Path(_) => {
             forced_inc_scope_count_and_id_and_push_empty_scope(
                 force_new_scope,
                 scope_count,
                 scope_id,
-                module,
             );
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
@@ -7665,7 +7718,7 @@ fn get_path(
         assert_eq!(segs.len(), 1);
         let seg = &segs[0];
         if seg.ident == "i32" || seg.ident == "String" || seg.ident == "str" {
-            // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here.
+            // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, None)
         } else {
