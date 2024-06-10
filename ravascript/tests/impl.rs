@@ -243,7 +243,6 @@ async fn call_method_before_impl_block_definition() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "todo"]
 #[tokio::test]
 async fn multiple_impls_with_same_signature() {
     setup_tracing();
@@ -270,13 +269,18 @@ async fn multiple_impls_with_same_signature() {
     let expected = format_js(
         r#"
             class Foo {
-                getNum() {
+                bar() {
+                    return 4;
+                }
+                baz() {
                     return 5;
                 }
             }
+
             function main() {
                 var foo = new Foo();
-                console.assert(foo.getNum() === 5);
+                console.assert(foo.bar() === 4);
+                console.assert(foo.baz() === 5);
             }
 
             main();

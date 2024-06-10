@@ -3424,10 +3424,13 @@ impl GlobalData {
             //     .flatten();
             // module_impl_blocks
             //     .chain(scoped_impl_blocks)
+
+            // TODO should we be looking through multiple blocks here or should be deuplicate `impl_blocks_simpl` after it is created??
+            // I think we could dedupe (as long as we take into account scope) be it is impossible to have duplicate method names, however for impls like `impl<T> Foo for T` maybe we want to keep the impl blocks separate like they are in the original code??? Yes but we can still just dedupe the `RustImplBlockSimple` and keep the `JsImplBlock2` separate. It seems better to just look through multiple blocks here as that is easier than deduplicating and merging items.
             self.impl_blocks_simpl
                 .iter()
-                .find(|ibs| &ibs.unique_id == impl_block_id)
-                .and_then(|rust_impl_block_simple| {
+                .filter(|ibs| &ibs.unique_id == impl_block_id)
+                .find_map(|rust_impl_block_simple| {
                     rust_impl_block_simple
                         .rust_items
                         .iter()
@@ -3435,6 +3438,9 @@ impl GlobalData {
                         .cloned()
                 })
         });
+        // dbg!(&impl_method);
+        // dbg!(&item_def.ident);
+        // dbg!(&sub_path.ident);
         // let impl_method = if let Some(impl_method) = impl_method {
         //     impl_method
         // } else {
@@ -6415,6 +6421,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
             JsStmt::Function(js_fn) => {
                 update_classes_stmts(&mut js_fn.body_stmts, global_data);
             }
+            // TODO js_class has a `is_impl_block` field we should use here
             JsStmt::Class(js_class)
                 if js_class.rust_name != "implblockdonotuse"
                     && js_class.rust_name != "donotuse" =>
@@ -6424,7 +6431,11 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                     &js_class.scope_id,
                     &js_class.rust_name,
                 );
-                for impl_block_id in &item_def.impl_blocks {
+                // PROBLEM cant't just store the impl block id on the item def since if there are two impl blocks with the same signature we will just grab the first one twice. Need to either dedupe `global_data.impl_blocks`, store the names of the methods as a second id on the item def so we can tell them apart in `global_data.impl_blocks`, or find a better solution. Maybe we rather than loop through classes and then looking up impls, we can loop through the impls and look up classes? That way we wouldn't even need to store the impl block ids on the item defs. For now solve it with a hack and then do a proper refactor in a clean commit. Or dedup the ids in item_def.impl_blocks which is much easier then get multiple js_impl_blocks from global_data.impl_blocks.
+                let mut dedup_impl_block_ids = item_def.impl_blocks.clone();
+                dedup_impl_block_ids.sort();
+                dedup_impl_block_ids.dedup();
+                for impl_block_id in &dedup_impl_block_ids {
                     // dbg!(&global_data.impl_blocks_simpl);
                     // dbg!(impl_block_id);
                     // let module_rust_impl_block = global_data
@@ -6438,46 +6449,47 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                     //     .iter()
                     //     .find(|rib| &rib.unique_id == impl_block_id)
                     //     .unwrap();
-                    let js_impl_block = global_data
+                    for js_impl_block in global_data
                         .impl_blocks
                         .iter()
-                        .find(|jib| &jib.unique_id == impl_block_id)
-                        .unwrap();
-                    let is_generic_impl = match js_impl_block.target {
-                        RustType::TypeParam(_) => true,
-                        _ => false,
-                    };
+                        .filter(|jib| &jib.unique_id == impl_block_id)
+                    {
+                        let is_generic_impl = match js_impl_block.target {
+                            RustType::TypeParam(_) => true,
+                            _ => false,
+                        };
 
-                    for (used, impl_item) in &js_impl_block.items {
-                        // TODO implement used
-                        // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
-                        match &impl_item.item {
-                            RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-                                if is_generic_impl {
-                                    js_class.static_fields.push(JsLocal {
-                                        public: false,
-                                        export: false,
-                                        type_: LocalType::None,
-                                        lhs: LocalName::Single(js_fn.name.clone()),
-                                        value: JsExpr::Path(
-                                            [
-                                                js_impl_block.js_name(),
-                                                "prototype".to_string(),
-                                                js_fn.name.clone(),
-                                            ]
-                                            .to_vec(),
-                                        ),
-                                    });
-                                } else {
-                                    js_class.methods.push((
-                                        item_def.ident.clone(),
-                                        *private,
-                                        *static_,
-                                        js_fn.clone(),
-                                    ));
+                        for (used, impl_item) in &js_impl_block.items {
+                            // TODO implement used
+                            // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
+                            match &impl_item.item {
+                                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                    if is_generic_impl {
+                                        js_class.static_fields.push(JsLocal {
+                                            public: false,
+                                            export: false,
+                                            type_: LocalType::None,
+                                            lhs: LocalName::Single(js_fn.name.clone()),
+                                            value: JsExpr::Path(
+                                                [
+                                                    js_impl_block.js_name(),
+                                                    "prototype".to_string(),
+                                                    js_fn.name.clone(),
+                                                ]
+                                                .to_vec(),
+                                            ),
+                                        });
+                                    } else {
+                                        js_class.methods.push((
+                                            item_def.ident.clone(),
+                                            *private,
+                                            *static_,
+                                            js_fn.clone(),
+                                        ));
+                                    }
                                 }
+                                RustImplItemItem::Const(_) => todo!(),
                             }
-                            RustImplItemItem::Const(_) => todo!(),
                         }
                     }
                 }
