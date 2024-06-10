@@ -4821,7 +4821,29 @@ fn populate_item_definitions_expr(
     match expr {
         Expr::Array(_) => {}
         Expr::Assign(_) => {}
-        Expr::Async(_) => {}
+        Expr::Async(expr_async) => {
+            // This is identical to the handling of Expr::Block but we have to get the block from the `ExprAsync` first
+            *scope_count += 1;
+            scope_id.push(*scope_count);
+
+            let mut scoped_various_defs = VariousDefintions::default();
+            populate_item_definitions_stmts(
+                &expr_async.block.stmts,
+                global_data,
+                module_path,
+                &mut scoped_various_defs,
+                module,
+                scope_id,
+            );
+
+            module.scoped_various_definitions.push((
+                scope_id.clone(),
+                scoped_various_defs,
+                // Vec::new(),
+            ));
+
+            scope_id.pop();
+        }
         Expr::Await(_) => {}
         Expr::Binary(_) => {}
         Expr::Block(expr_block) => {
