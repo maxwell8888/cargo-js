@@ -202,7 +202,6 @@ async fn full_qualified_trait_method_call() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "need to move creation of rust_impl_block from handle_item_impl to extract_data_populate_item_definitions"]
 #[tokio::test]
 async fn call_method_before_impl_block_definition() {
     setup_tracing();
@@ -234,7 +233,7 @@ async fn call_method_before_impl_block_definition() {
             }
             function main() {
                 var foo = new Foo(0);
-                console.assert(Foo.bar(foo) === 0);
+                console.assert(foo.bar() === 0);
             }
 
             main();
