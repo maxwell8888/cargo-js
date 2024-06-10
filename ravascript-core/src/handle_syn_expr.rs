@@ -1236,6 +1236,9 @@ pub fn handle_expr_and_stmt_macro(
     let span = debug_span!("handle_expr_and_stmt_macro", Macro = ?quote! { #mac }.to_string());
     let _guard = span.enter();
 
+    // dbg!("handle_expr_and_stmt_macro");
+    // println!("{}", quote! { #mac });
+
     if path_segs.len() == 1 {
         if path_segs[0] == "vec" {
             let input = mac.tokens.clone().to_string();
@@ -2362,6 +2365,9 @@ fn handle_expr_path_inner(
 
     // dbg!("handle_expr_path_inner");
     // println!("{}", quote! { #expr_path });
+    // dbg!(&current_module);
+    // dbg!(&global_data.scope_id_as_option());
+    // dbg!(&segs_copy);
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,

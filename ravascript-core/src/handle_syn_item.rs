@@ -954,17 +954,18 @@ pub fn handle_impl_item_fn(
     for input in &impl_item_fn.sig.inputs {
         match input {
             FnArg::Receiver(receiver) => {
+                let type_ = if receiver.mutability.is_some() {
+                    RustType::MutRef(Box::new(target_rust_type.clone()))
+                } else {
+                    target_rust_type.clone()
+                };
                 let scoped_var = ScopedVar {
                     // TODO IMPORTANT surely this should be `self`???
                     // name: target_item.ident.clone(),
                     name: "self".to_string(),
                     // TODO how do we know if we have `foo(mut self)`?
                     mut_: false,
-                    type_: if receiver.mutability.is_some() {
-                        RustType::MutRef(Box::new(target_rust_type.clone()))
-                    } else {
-                        target_rust_type.clone()
-                    },
+                    type_,
                 };
                 vars.push(scoped_var);
             }
@@ -992,6 +993,8 @@ pub fn handle_impl_item_fn(
         };
     }
 
+    // dbg!("handle_item_impl new scope");
+    // println!("{}", quote! { #impl_item_fn });
     // Create scope for impl method/fn body
     info!("handle_item_impl new scope");
     // dbg!(&global_data.scopes);

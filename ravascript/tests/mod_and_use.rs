@@ -213,7 +213,6 @@ async fn module_self() {
     );
     let expected = format_js(
         r#"
-          // crate
           class Bar {}
           function baz() {
             var _ = new Bar();
