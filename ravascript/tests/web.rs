@@ -73,7 +73,6 @@ async fn dom_nodes_and_elements() {
     // );
     let expected = format_js(
         r#"
-        // crate
         function main() {
             var div = document.createElement("div");
         }

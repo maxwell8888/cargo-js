@@ -6119,8 +6119,9 @@ pub fn process_items(
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
     // Currently this is only the web prelude for which we need to `extract_data` for deduplicating/namespacing and getting use mappings for resolving paths, and `extract_data_populate_item_definitions` for getting item definitions to eg lookup methods etc, but we do not actually need to parse to a JS AST.
 
-    let include_web = false;
+    let include_web = true;
 
+    // NOTE We process the web-prelude module in order that we can find it's item definitions, etc, and its names are taken into account when deduplicating/qualifying idents, but we don't parse it because we obviously don't actually need it in the output because it all already exists in the browser enivronment/prelude.
     let prelude_items = if include_web {
         let web_prelude_crate_path = "../web-prelude";
         let web_prelude_entry_point_path = PathBuf::new()
@@ -6294,7 +6295,12 @@ pub fn process_items(
     //     .iter()
     //     .map(|m| m.path.clone())
     //     .collect::<Vec<_>>());
-    for module_data in global_data.modules.clone() {
+    for module_data in global_data
+        .modules
+        .clone()
+        .into_iter()
+        .filter(|m| m.path != vec!["web_prelude".to_string()])
+    {
         global_data.scope_count.clear();
         global_data.scope_count.push(0);
         global_data.scope_id.clear();
