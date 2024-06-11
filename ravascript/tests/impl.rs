@@ -333,7 +333,6 @@ async fn inherent_impl_in_different_module() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// #[ignore = "todo"]
 #[tokio::test]
 async fn scoped_inherent_impl_in_different_module() {
     setup_tracing();
@@ -439,48 +438,6 @@ async fn shadowed_structs_with_shadowed_methods() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[tokio::test]
-async fn scoped_stuff_for_testing_deleteme() {
-    setup_tracing();
-    let actual = r2j_file_run_main!(
-        struct CrateModStruct {}
-        mod bar {
-            struct ModBarStruct {}
-
-            fn baz() {
-                struct ScopedFnBazStruct {}
-                struct ScopedFnBazStruct2 {}
-
-                fn in_baz() {
-                    struct ScopedInBazFnStruct {}
-                    struct ScopedInBazFnStruct2 {}
-                }
-            }
-        }
-        fn mod_fn_one() {
-            struct ScopedInOne {}
-            struct ScopedInOne2 {}
-        }
-        fn mod_fn_two() {
-            struct ScopedTwoStruct {}
-            struct ScopedTwoStruct2 {}
-            fn scoped_in_two() {
-                struct ScopedInTwoStruct {}
-                struct ScopedInTwoStruct2 {}
-            }
-        }
-
-        fn main() {}
-    );
-
-    let expected = format_js(
-        r#"
-        "#,
-    );
-    // assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
 // There doesn't seem any reason to implement this given that if a method is impl'd on a Struct then we expect it to be used somewhere, even if it is not accessible from certain places, so will always need it on the struct. See test private_method_in_scoped_impl below for an example.
 #[ignore = "dont implement"]
 #[tokio::test]
@@ -577,7 +534,6 @@ async fn private_method_in_scoped_impl() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "problems transpiling class names"]
 #[tokio::test]
 async fn module_level_shadowing_of_struct_name() {
     setup_tracing();

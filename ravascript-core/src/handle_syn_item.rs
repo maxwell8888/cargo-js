@@ -1775,7 +1775,14 @@ pub fn handle_item_struct(
             js_name = dup
                 .namespace
                 .iter()
-                .map(|seg| camel(seg))
+                .enumerate()
+                .map(|(i, seg)| {
+                    if i == dup.namespace.len() - 1 {
+                        seg.clone()
+                    } else {
+                        camel(seg)
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("__");
         }

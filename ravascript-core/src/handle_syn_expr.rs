@@ -851,10 +851,23 @@ pub fn handle_expr(
             }
         }
         Expr::Struct(expr_struct) => {
+            // NOTE remember this handles both struct and enum variant instantiation eg `MyStruct {}` and `MyEnum::Variant { num: 0 }`
+            // dbg!("handle expr_struct");
+            // println!("{}", quote! { #expr_struct });
             let (js_path_expr, rust_partial_type) =
                 handle_expr_path_inner(&expr_struct.path, global_data, current_module, false);
+
+            // dbg!(&js_path_expr);
+            // dbg!(&rust_partial_type);
             match rust_partial_type {
                 PartialRustType::StructIdent(type_params, module_path, scope_id, name) => {
+                    let js_deduped_path = match js_path_expr.clone() {
+                        JsExpr::Path(path) => {
+                            assert_eq!(path.len(), 1);
+                            path
+                        }
+                        _ => todo!(),
+                    };
                     let rust_type =
                         RustType::StructOrEnum(type_params, module_path, scope_id, name.clone());
                     let args = expr_struct
@@ -863,7 +876,7 @@ pub fn handle_expr(
                         .map(|field| handle_expr(&field.expr, global_data, current_module).0)
                         .collect::<Vec<_>>();
                     // TODO IMPORTANT need to be using deduplicated name here
-                    (JsExpr::New(vec![name], args), rust_type)
+                    (JsExpr::New(js_deduped_path, args), rust_type)
                 }
                 PartialRustType::EnumVariantIdent(
                     type_params,
@@ -2681,10 +2694,12 @@ fn handle_expr_path_inner(
     // segs_copy_module_path, segs_copy_item_path, is_scoped
     // Lookup module path to find what it's deduplicated name is
     // Check whether it is not globally unique and so has been namespaced
+    // dbg!(&segs_copy_item_path);
     let mut js_segs = segs_copy_item_path
         .iter()
         .map(|seg| case_convert(seg.ident.to_string()))
         .collect::<Vec<_>>();
+    // dbg!(&js_segs);
 
     if segs_copy_module_path == &["web_prelude"] && segs_copy_item_path[0].ident == "Document" {
         js_segs[0] = "document".to_string();
@@ -2700,7 +2715,7 @@ fn handle_expr_path_inner(
             js_segs[0] = dup
                 .namespace
                 .iter()
-                .map(|seg| camel(seg))
+                .map(|seg| case_convert(seg))
                 .collect::<Vec<_>>()
                 .join("__");
         }
@@ -2709,6 +2724,7 @@ fn handle_expr_path_inner(
             js_segs[0] = "this".to_string();
         }
     }
+    // dbg!(&js_segs);
 
     // let segs = segs_copy.iter()
     // TODO all this logic could be cleaned up and/or made clearer
