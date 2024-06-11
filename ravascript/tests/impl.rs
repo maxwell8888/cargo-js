@@ -649,7 +649,6 @@ async fn scoped_shadowing_of_struct_name() {
 // Need to be able to lookup return type of other method call, before we have finished processing the impl block, this is a problem no matter where we do the processing, once we want to process the body to get the JS and return type, we also need to do the same for the other method, but it might appear afterwards. I think the only solutions are:
 // 1. To dynamically work out the order in which methods/fns/etc need to be parsed (they can't both call each other since that would cause an infinite loop, so there is in fact an order they should be processed in)
 // 2. To use the fn signature to determine the return type
-#[ignore = "reason"]
 #[tokio::test]
 async fn call_method_in_same_impl_block_before_method_definition() {
     setup_tracing();
@@ -659,6 +658,7 @@ async fn call_method_in_same_impl_block_before_method_definition() {
        }
        fn main () {
            let foo = Foo { num: 0 };
+           assert!(foo.bar() == 0);
            assert!(foo.baz() == 0);
        }
        impl Foo {
@@ -687,14 +687,15 @@ async fn call_method_in_same_impl_block_before_method_definition() {
             }
             function main() {
                 var foo = new Foo(0);
-                console.assert(Foo.baz(foo) === 0);
+                console.assert(foo.bar() === 0);
+                console.assert(foo.baz() === 0);
             }
 
             main();
         "#,
     );
     assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
