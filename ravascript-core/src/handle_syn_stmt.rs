@@ -728,7 +728,7 @@ pub fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
-) -> (JsStmt, RustType) {
+) -> Vec<(JsStmt, RustType)> {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
             let (mut js_expr, type_) = handle_expr(expr, global_data, current_module_path);
@@ -737,54 +737,59 @@ pub fn handle_stmt(
             //     js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());
             // }
 
-            (
+            // TODO this is the only case where the returned RustType is not RustType::Unit, specifically where there is no semi, but surely this shouldn't be considered a stmt and then we wouldn't have to worry about returning the RustType. I guess it is feasible that while me might have a stmt in *Rust*, what we want to transpile it to is merely an expression. should add a todo here to find what cases it is being used for.
+            vec![(
                 JsStmt::Expr(js_expr, closing_semi.is_some()),
                 if closing_semi.is_some() {
                     RustType::Unit
                 } else {
                     type_
                 },
-            )
+            )]
         }
-        Stmt::Local(local) => (
+        Stmt::Local(local) => vec![(
             handle_local(local, global_data, current_module_path),
             RustType::Unit,
-        ),
+        )],
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
-            Item::Const(item_const) => (
+            Item::Const(item_const) => vec![(
                 handle_item_const(item_const, false, global_data, current_module_path),
                 RustType::Unit,
-            ),
-            Item::Enum(item_enum) => (
+            )],
+            Item::Enum(item_enum) => vec![(
                 handle_item_enum(item_enum.clone(), false, global_data, current_module_path),
                 RustType::Unit,
-            ),
+            )],
             Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => (
+            Item::Fn(item_fn) => vec![(
                 handle_item_fn(item_fn, false, global_data, current_module_path),
                 RustType::Unit,
-            ),
+            )],
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
                 // handle_item_impl(item_impl, false, global_data, current_module_path);
                 // (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
-                (
-                    handle_item_impl(item_impl, false, global_data, current_module_path),
-                    RustType::Unit,
-                )
+                // (
+                //     handle_item_impl(item_impl, false, global_data, current_module_path),
+                //     RustType::Unit,
+                // )
+                handle_item_impl(item_impl, false, global_data, current_module_path)
+                    .into_iter()
+                    .map(|stmt| (stmt, RustType::Unit))
+                    .collect()
             }
             Item::Macro(_) => todo!(),
             Item::Mod(_) => todo!(),
             Item::Static(_) => todo!(),
             // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
-            Item::Struct(item_struct) => (
+            Item::Struct(item_struct) => vec![(
                 handle_item_struct(item_struct, false, global_data, current_module_path),
                 RustType::Unit,
-            ),
+            )],
             Item::Trait(item_trait) => {
                 handle_item_trait(item_trait, false, global_data, current_module_path);
-                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
+                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)]
             }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -794,17 +799,17 @@ pub fn handle_stmt(
             Item::Use(item_use) => {
                 let scope = global_data.scopes.last_mut().unwrap();
                 handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
-                (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
+                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)]
             }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Stmt::Macro(stmt_macro) => (
+        Stmt::Macro(stmt_macro) => vec![(
             JsStmt::Expr(
                 handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
                 stmt_macro.semi_token.is_some(),
             ),
             RustType::Unit,
-        ),
+        )],
     }
 }

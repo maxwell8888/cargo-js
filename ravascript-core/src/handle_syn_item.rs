@@ -1162,7 +1162,7 @@ pub fn handle_item_impl(
     at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
-) -> JsStmt {
+) -> Vec<JsStmt> {
     let debug_self_type = match &*item_impl.self_ty {
         Type::Path(type_path) => format!("{:?}", type_path.path.segments),
         _ => format!("{:?}", item_impl.self_ty),
@@ -1343,12 +1343,14 @@ pub fn handle_item_impl(
         }
     }
 
+    let unique_id = get_item_impl_unique_id(
+        current_module_path,
+        &global_data.scope_id_as_option(),
+        item_impl,
+    );
+
     let rust_impl_block = JsImplBlock2 {
-        unique_id: get_item_impl_unique_id(
-            current_module_path,
-            &global_data.scope_id_as_option(),
-            item_impl,
-        ),
+        unique_id: unique_id.clone(),
         generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
         target: target_rust_type.clone(),
@@ -1439,7 +1441,7 @@ pub fn handle_item_impl(
 
     global_data.impl_block_target_type.pop();
 
-    if is_target_type_param {
+    let class_stmt = if is_target_type_param {
         let static_fields = rust_impl_block
             .items
             .iter()
@@ -1477,7 +1479,27 @@ pub fn handle_item_impl(
         })
     } else {
         JsStmt::Expr(JsExpr::Vanish, false)
+    };
+    let mut stmts = vec![class_stmt];
+
+    let mut dedup_rust_prelude_definitions = global_data.rust_prelude_definitions.clone();
+    dedup_rust_prelude_definitions.sort_by_key(|(name, js_name, item_def)| js_name.clone());
+    dedup_rust_prelude_definitions.dedup_by_key(|(name, js_name, item_def)| js_name.clone());
+
+    for (name, js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
+        if prelude_item_def.impl_block_ids.contains(&unique_id) {
+            for (is_used, item) in &rust_impl_block.items {
+                // TODO only add if `is_used == true`
+                let item_name = camel(&item.ident);
+                let block_name = &rust_impl_block.js_name();
+                stmts.push(JsStmt::Raw(format!(
+                    "{js_name}.prototype.{item_name} = {block_name}.prototype.{item_name}"
+                )))
+            }
+        }
     }
+
+    stmts
 }
 
 // if target_item.ident == "RustBool"
@@ -2021,7 +2043,12 @@ pub fn handle_item_trait(
                         body_stmts: default
                             .stmts
                             .iter()
-                            .map(|stmt| handle_stmt(stmt, global_data, current_module_path).0)
+                            .map(|stmt| {
+                                handle_stmt(stmt, global_data, current_module_path)
+                                    .into_iter()
+                                    .map(|(stmt, type_)| stmt)
+                            })
+                            .flatten()
                             .collect::<Vec<_>>(),
                     };
                     global_data.default_trait_impls.push((

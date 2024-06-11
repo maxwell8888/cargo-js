@@ -591,7 +591,12 @@ pub fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(&stmt, global_data, current_module).0)
+                    .map(|stmt| {
+                        handle_stmt(stmt, global_data, current_module)
+                            .into_iter()
+                            .map(|(stmt, type_)| stmt)
+                    })
+                    .flatten()
                     .collect::<Vec<_>>(),
             ),
             RustType::Unit,
@@ -613,6 +618,7 @@ pub fn handle_expr(
                 .stmts
                 .iter()
                 .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                .flatten()
                 .unzip();
 
             global_data.pop_scope();
@@ -729,7 +735,12 @@ pub fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
+                    .map(|stmt| {
+                        handle_stmt(stmt, global_data, current_module)
+                            .into_iter()
+                            .map(|(stmt, type_)| stmt)
+                    })
+                    .flatten()
                     .collect::<Vec<_>>(),
             ),
             RustType::Never,
@@ -1022,7 +1033,12 @@ pub fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
+                    .map(|stmt| {
+                        handle_stmt(stmt, global_data, current_module)
+                            .into_iter()
+                            .map(|(stmt, type_)| stmt)
+                    })
+                    .flatten()
                     .collect::<Vec<_>>(),
             ),
             RustType::Unit,
@@ -1299,7 +1315,12 @@ pub fn handle_expr_and_stmt_macro(
             let stmt_vec = try_block
                 .stmts
                 .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module).0)
+                .map(|stmt| {
+                    handle_stmt(stmt, global_data, current_module)
+                        .into_iter()
+                        .map(|(stmt, type_)| stmt)
+                })
+                .flatten()
                 .collect::<Vec<_>>();
             return (JsExpr::TryBlock(stmt_vec), RustType::Unit);
         }
@@ -1316,7 +1337,12 @@ pub fn handle_expr_and_stmt_macro(
             let stmt_vec = catch_block
                 .stmts
                 .into_iter()
-                .map(|stmt| handle_stmt(&stmt, global_data, current_module).0);
+                .map(|stmt| {
+                    handle_stmt(&stmt, global_data, current_module)
+                        .into_iter()
+                        .map(|(stmt, type_)| stmt)
+                })
+                .flatten();
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType::Unit);
         }
@@ -1514,7 +1540,49 @@ fn handle_expr_method_call(
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),
             RustType::TypeParam(_) => todo!(),
-            RustType::I32 => todo!(),
+            RustType::I32 => {
+                // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
+                // TODO dedupe the below with RustType::StructOrEnum
+                let i32_def = global_data
+                    .rust_prelude_definitions
+                    .iter()
+                    .find_map(|(name, js_name, def)| (name == "i32").then_some(def))
+                    .unwrap();
+                let method_turbofish_rust_types =
+                    expr_method_call.turbofish.as_ref().map(|generics| {
+                        generics
+                            .args
+                            .iter()
+                            .map(|generic_arg| match generic_arg {
+                                GenericArgument::Lifetime(_) => todo!(),
+                                GenericArgument::Type(type_) => {
+                                    let (type_params, module_path, scope_id, name) = global_data
+                                        .syn_type_to_rust_type_struct_or_enum(
+                                            current_module,
+                                            type_,
+                                        );
+                                    RustType::StructOrEnum(type_params, module_path, scope_id, name)
+                                }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                let sub_path = RustPathSegment {
+                    ident: method_name.clone(),
+                    turbofish: method_turbofish_rust_types.clone().unwrap_or(Vec::new()),
+                };
+                let impl_method = global_data
+                    .lookup_impl_item_item2(&i32_def, &sub_path)
+                    .unwrap();
+                match impl_method.item {
+                    RustImplItemItemNoJs::Fn(_, _, fn_info) => fn_info.return_type,
+                    RustImplItemItemNoJs::Const => todo!(),
+                }
+            }
             RustType::F32 => todo!(),
             RustType::Bool => todo!(),
             RustType::String => {
@@ -1594,13 +1662,7 @@ fn handle_expr_method_call(
                 // };
 
                 let impl_method = global_data
-                    .lookup_impl_item_item2(
-                        &item_type_params,
-                        &item_module_path,
-                        &item_scope_id,
-                        &item_def,
-                        &sub_path,
-                    )
+                    .lookup_impl_item_item2(&item_def, &sub_path)
                     .unwrap();
 
                 fn method_return_type_generic_resolve_to_rust_type(
@@ -1983,6 +2045,7 @@ pub fn handle_expr_block(
         .stmts
         .iter()
         .map(|stmt| handle_stmt(stmt, global_data, current_module))
+        .flatten()
         .unzip();
 
     // pop block scope
@@ -2200,9 +2263,6 @@ fn handle_expr_call(
                                         );
                                     let impl_method = global_data
                                         .lookup_impl_item_item2(
-                                            &item_type_params,
-                                            &module_path,
-                                            &scope_id,
                                             &item_definition,
                                             // TODO IMPORTANT not populating turbofish correctly
                                             &RustPathSegment {
@@ -3032,6 +3092,7 @@ pub fn handle_expr_match(
                         .stmts
                         .iter()
                         .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                        .flatten()
                         .unzip();
 
                     let last_type = types_.last().unwrap().clone();

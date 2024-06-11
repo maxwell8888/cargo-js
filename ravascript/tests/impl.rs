@@ -915,6 +915,8 @@ async fn simple_scoped_impl_trait_for_type_param() {
                     return 4;
                 }
             }
+            Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
+            String.prototype.getFoo = Foo__for__T.prototype.getFoo;
             var bar = new Bar();
             console.assert(bar.getFoo() === 4);
         "#,
@@ -923,11 +925,8 @@ async fn simple_scoped_impl_trait_for_type_param() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// TODO `imp Foo for T` for primatives vs user types
-// TODO `imp Foo for T` where self is used so need to bind this
 // TODO `imp Foo for T` static vs method
 // etc
-#[ignore = "todo"]
 #[tokio::test]
 async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
     setup_tracing();
@@ -951,28 +950,32 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
         }
 
         let num = 1;
-        num.get_foo();
-        num.get_bar();
+        assert!(num.get_foo() == 4);
+        assert!(num.get_bar() == 5);
     });
+
+    // TODO should ideally not add/remove the `String.prototype...`s since they aren't actually used
     let expected = format_js(
         r#"
-            class FooForT {
+            class Foo__for__T {
                 getFoo() {
                     return 4;
                 }
             }
-            class BarForT {
+            Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
+            String.prototype.getFoo = Foo__for__T.prototype.getFoo;
+            class Bar__for__T {
                 getBar() {
                     return 5;
                 }
             }
-            Number.prototype.getFoo = FooForT.getFoo;
-            Number.prototype.getBar = BarForT.getBar;
+            Number.prototype.getBar = Bar__for__T.prototype.getBar;
+            String.prototype.getBar = Bar__for__T.prototype.getBar;
             var num = 1;
             console.assert(num.getFoo() === 4);
             console.assert(num.getBar() === 5);
         "#,
     );
-    // assert_eq!(expected, actual);
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
