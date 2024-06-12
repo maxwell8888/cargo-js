@@ -66,7 +66,9 @@ async fn reassign_mut_ref_field() {
             assert!(*mut_ref_two == 3);
         }
         *mut_ref_two += 1;
+        five += 1;
         assert!(*mut_ref_two == 4);
+        assert!(five == 6);
     });
 
     let expected = format_js(
@@ -92,7 +94,9 @@ async fn reassign_mut_ref_field() {
                 console.assert(mutRefTwo.inner === 3);
             }
             mutRefTwo.inner += 1;
+            five.inner += 1;
             console.assert(mutRefTwo.inner === 4);
+            console.assert(five.inner === 6);
         "#,
     );
 
@@ -100,43 +104,106 @@ async fn reassign_mut_ref_field() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore]
 #[tokio::test]
-async fn ownership_copy_struct() {
+async fn copy_struct_with_ref_field() {
     let actual = r2j_block_with_prelude!({
-        struct Thing<'a> {
-            numy: &'a mut i32,
+        #[derive(Clone, Copy)]
+        struct Foo<'a> {
+            num: &'a i32,
         }
-        let mut valy = 5;
-        let mut cool = Thing { numy: &mut valy };
-        cool.numy = &mut 2;
+        let mut five = 5;
+        let mut foo = Foo { num: &mut five };
+        let mut_ref_two = &mut 2;
+        {
+            foo.num = mut_ref_two;
+            assert!(*foo.num == 2);
+            assert!(*mut_ref_two == 2);
+        }
+        *mut_ref_two += 1;
+        five += 1;
+        assert!(*mut_ref_two == 3);
+        assert!(five == 6);
     });
 
-    let expected = concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
-        r#"var counter = new RustInteger(0);
-        var someNum = Some(new RustInteger(5));
-        if (someNum.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(5)).jsBoolean);
-        if (None.id === Option.someId) {
-            var [num] = someNum.data;
-            counter += num;
-        } else {
-            counter += new RustInteger(1);
-        }
-        console.assert(counter.eq(new RustInteger(6)).jsBoolean);
-        "#
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+
+                copy() {
+                    return JSON.parse(JSON.stringify(this));
+                }
+            }
+            var five = new RustInteger(5);
+            var foo = new Foo(five.inner);
+            var mutRefTwo = new RustInteger(2);
+            {
+                foo.num = mutRefTwo.inner;
+                console.assert(foo.num === 2);
+                console.assert(mutRefTwo.inner === 2);
+            }
+            mutRefTwo.inner += 1;
+            five.inner += 1;
+            console.assert(mutRefTwo.inner === 3);
+            console.assert(five.inner === 6);
+        "#,
     );
 
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "reason"]
+#[tokio::test]
+async fn pass_mut_var_as_imm_ref() {
+    let actual = r2j_block_with_prelude!({
+        let mut five = 5;
+        five += 1;
+        fn foo(num: &i32) -> i32 {
+            num + 2
+        }
+        let result = foo(&five);
+        assert!(result == 8)
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+
+                copy() {
+                    return JSON.parse(JSON.stringify(this));
+                }
+            }
+            var five = new RustInteger(5);
+            var foo = new Foo(five.inner);
+            var mutRefTwo = new RustInteger(2);
+            {
+                foo.num = mutRefTwo.inner;
+                console.assert(foo.num === 2);
+                console.assert(mutRefTwo.inner === 2);
+            }
+            mutRefTwo.inner += 1;
+            five.inner += 1;
+            console.assert(mutRefTwo.inner === 3);
+            console.assert(five.inner === 6);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

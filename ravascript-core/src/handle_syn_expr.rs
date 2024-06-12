@@ -42,7 +42,12 @@ fn handle_expr_assign(
     current_module: &Vec<String>,
 ) -> JsExpr {
     let (lhs_expr, _lhs_rust_type) = handle_expr(&*expr_assign.left, global_data, current_module);
-    let (rhs_expr, _rhs_rust_type) = handle_expr(&*expr_assign.right, global_data, current_module);
+    let (mut rhs_expr, rhs_rust_type) =
+        handle_expr(&*expr_assign.right, global_data, current_module);
+    let rhs_is_mut_ref = match rhs_rust_type {
+        RustType::MutRef(_) => true,
+        _ => false,
+    };
 
     // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
     // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
@@ -115,6 +120,9 @@ fn handle_expr_assign(
     // });
     // let is_lhs_mut = scoped_var.unwrap().mut_;
 
+    if rhs_is_mut_ref {
+        rhs_expr = JsExpr::Field(Box::new(rhs_expr), "inner".to_string());
+    }
     JsExpr::Assignment(Box::new(lhs_expr), Box::new(rhs_expr))
 
     // TODO
@@ -884,7 +892,19 @@ pub fn handle_expr(
                     let args = expr_struct
                         .fields
                         .iter()
-                        .map(|field| handle_expr(&field.expr, global_data, current_module).0)
+                        .map(|field| {
+                            let (js_expr, rust_type) =
+                                handle_expr(&field.expr, global_data, current_module);
+                            let is_mut = match rust_type {
+                                RustType::MutRef(_) => true,
+                                _ => false,
+                            };
+                            if is_mut {
+                                JsExpr::Field(Box::new(js_expr), "inner".to_string())
+                            } else {
+                                js_expr
+                            }
+                        })
                         .collect::<Vec<_>>();
                     // TODO IMPORTANT need to be using deduplicated name here
                     (JsExpr::New(js_deduped_path, args), rust_type)
