@@ -14,10 +14,11 @@ use utils::*;
 #[ignore]
 #[tokio::test]
 async fn it_transpiles_json_parse() {
-    pub struct Foo {
-        bar: usize,
-    }
-    let actual = r2j_block!({
+    let actual = r2j_file_run_main!(
+        use web_prelude::{SyntaxError, catch, try_, Json};
+        pub struct Foo {
+            bar: i32,
+        }
         fn parse(text: &str) -> Result<Foo, SyntaxError> {
             try_! {{
                 return Ok(Json::parse::<Foo>(text));
@@ -26,15 +27,21 @@ async fn it_transpiles_json_parse() {
                 return Err(err);
             }}
         }
-    });
+        fn main() {}
+    );
 
-    let expected = r#"function parse(text) {
-  try {
-    return Ok(JSON.parse(text));
-  } catch (err) {
-    return Err(err);
-  }
-}"#;
+    let expected = format_js(
+        r#"
+        function parse(text) {
+            try {
+                return Ok(JSON.parse(text));
+            } catch (err) {
+                return Err(err);
+            }
+        }
+        "#,
+    );
+    println!("{actual}");
     assert_eq!(expected, actual);
 }
 

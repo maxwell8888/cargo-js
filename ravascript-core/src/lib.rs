@@ -1009,6 +1009,8 @@ fn parse_fn_input_or_field(
 /// Suitable for parsing: fn input types, fn return type, struct fields, enum variants with args
 ///
 /// NOTE global data is required by get_path_without_namespacing which only uses pub_definitions etc, not `ItemDefintion`s
+///
+/// IMPORTANT NOTE this fn is never used in the first pass where item definitions are being recorded, only in the second pass where info about dependant types is being add, so we can safely lookup Path -> ItemDefinition here
 fn parse_types_for_populate_item_definitions(
     type_: &Type,
     // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
@@ -1188,6 +1190,32 @@ fn parse_types_for_populate_item_definitions(
                     };
                     RustType::Option(Box::new(generic_type))
                 }
+                "Result" => {
+                    let generic_type = match &seg.arguments {
+                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                            // Option only has
+                            match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                GenericArgument::Lifetime(_) => todo!(),
+                                GenericArgument::Type(type_) => {
+                                    parse_types_for_populate_item_definitions(
+                                        type_,
+                                        root_parent_item_definition_generics,
+                                        current_module,
+                                        current_scope_id,
+                                        global_data,
+                                    )
+                                }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    };
+                    RustType::Result(Box::new(generic_type))
+                }
                 // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
                 // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
                 // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
@@ -1196,6 +1224,8 @@ fn parse_types_for_populate_item_definitions(
                     // get full path
                     // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
                     // NOTE also, get_path_without_namespacing() only preserves `RustPathSeg`s/turbofish, it doesn't use or update them so we could just populate them later
+                    // dbg!("parse type path");
+                    // println!("{}", quote! { #type_path });
 
                     let rust_path = type_path
                         .path
@@ -1205,45 +1235,32 @@ fn parse_types_for_populate_item_definitions(
                             ident: seg.ident.to_string(),
                             turbofish: match &seg.arguments {
                                 PathArguments::None => Vec::new(),
-                                PathArguments::AngleBracketed(args) => {
-                                    args.args
-                                        .iter()
-                                        .enumerate()
-                                        .filter_map(|(i, arg)| match arg {
-                                            GenericArgument::Lifetime(_) => None,
-                                            GenericArgument::Type(arg_type_) => {
-                                                let rust_type =
-                                                    parse_types_for_populate_item_definitions(
-                                                        arg_type_,
-                                                        root_parent_item_definition_generics,
-                                                        current_module,
-                                                        current_scope_id,
-                                                        global_data,
-                                                    );
-
-                                                // TODO IMPORTANT there is no easy way to get the names of the item generics here since we are still construction `ItemDefinition`s. However:
-                                                // 1. Do we even need generic names after they have been resolved like here (generic types used within parent definitions must have concrete types (or the a generic of the parent) supplied)?
-                                                // 2. We could just grab the generic names in the previous pass and add to .pub_definitions etc since this is as easy to get as the idents
-                                                Some(RustTypeParam {
-                                                    name: "unknown_todo".to_string(),
-                                                    type_: RustTypeParamValue::RustType(Box::new(
-                                                        rust_type,
-                                                    )),
-                                                })
-                                            }
-                                            GenericArgument::Const(_) => todo!(),
-                                            GenericArgument::AssocType(_) => todo!(),
-                                            GenericArgument::AssocConst(_) => todo!(),
-                                            GenericArgument::Constraint(_) => todo!(),
-                                            _ => todo!(),
-                                        })
-                                        .collect::<Vec<_>>();
-                                    todo!()
-                                }
+                                PathArguments::AngleBracketed(args) => args
+                                    .args
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, arg)| match arg {
+                                        GenericArgument::Lifetime(_) => None,
+                                        GenericArgument::Type(arg_type_) => {
+                                            Some(parse_types_for_populate_item_definitions(
+                                                arg_type_,
+                                                root_parent_item_definition_generics,
+                                                current_module,
+                                                current_scope_id,
+                                                global_data,
+                                            ))
+                                        }
+                                        GenericArgument::Const(_) => todo!(),
+                                        GenericArgument::AssocType(_) => todo!(),
+                                        GenericArgument::AssocConst(_) => todo!(),
+                                        GenericArgument::Constraint(_) => todo!(),
+                                        _ => todo!(),
+                                    })
+                                    .collect(),
                                 PathArguments::Parenthesized(_) => todo!(),
                             },
                         })
-                        .collect::<Vec<_>>();
+                        .collect();
 
                     // TODO important should replace get_path with item lookup like below
                     // let (item_definition_module_path, resolved_scope_id, item_definition) =
@@ -4728,6 +4745,8 @@ fn populate_item_definitions_items_individual_item(
         Item::Mod(_) => {}
         Item::Static(_) => todo!(),
         Item::Struct(item_struct) => {
+            // dbg!("populate_item_definitions_items_individual_item");
+            // println!("{}", quote! { #item_struct });
             let struct_name = item_struct.ident.to_string();
 
             // Make ItemDefinition
@@ -4735,9 +4754,9 @@ fn populate_item_definitions_items_individual_item(
                 .generics
                 .params
                 .iter()
-                .map(|p| match p {
-                    GenericParam::Lifetime(_) => todo!(),
-                    GenericParam::Type(type_param) => type_param.ident.to_string(),
+                .filter_map(|p| match p {
+                    GenericParam::Lifetime(_) => None,
+                    GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
                     GenericParam::Const(_) => todo!(),
                 })
                 .collect::<Vec<_>>();
@@ -4763,7 +4782,8 @@ fn populate_item_definitions_items_individual_item(
                 Meta::List(meta_list) => {
                     let segs = &meta_list.path.segments;
                     if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                        let tokens = format!("({})", meta_list.tokens);
+                        let tokens = format!("({},)", meta_list.tokens);
+                        // NOTE can't parse as syn::TypeTuple because eg (Default) is not a tuple, only len > 1 like (Default, Debug)
                         let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
                         trait_tuple.elems.iter().any(|elem| match elem {
                             Type::Path(type_path) => {
@@ -7760,7 +7780,7 @@ fn get_path(
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, None)
         } else {
-            dbg!("get_path could find path");
+            dbg!("get_path couldn't find path");
             // dbg!(module);
             dbg!(current_mod);
             dbg!(current_scope_id);

@@ -130,41 +130,6 @@ async fn struct_and_impl_methods() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore]
-#[tokio::test]
-async fn impl_in_fn_scope() {
-    // impls can be inside lower *scopes* (not modules) eg inside functions (and the functions don't even need to be run)
-    let actual = r2j_block!({
-        struct Cool {}
-        if false {
-            fn inner() {
-                impl Cool {
-                    fn whatever(&self) -> i32 {
-                        5
-                    }
-                }
-            }
-        }
-        let cool = Cool {};
-        assert_eq!(cool.whatever(), 5)
-    });
-    let expected = format_js(
-        r#"
-            class Cool {
-                whatever() {
-                    return 5;
-                }
-            }
-            if (false) {
-                function inner() {}
-            }
-            var cool = new Cool();
-            console.assert(cool.whatever().eq(5));
-        "#,
-    );
-    assert_eq!(expected, actual);
-}
-
 #[tokio::test]
 async fn tuple_struct() {
     let actual = r2j_block_with_prelude!({
@@ -313,7 +278,7 @@ async fn mutate_non_copy_struct() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "need to implement mut ref borrows from larger types"]
+#[ignore = "TODO need solution for taking &mut field like let num = &mut foo.num;"]
 #[tokio::test]
 async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
     let actual = r2j_block_with_prelude!({
@@ -372,6 +337,7 @@ async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
             console.assert(foo.num.inner === 3);
         "#
     ));
+
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

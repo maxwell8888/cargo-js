@@ -13,3 +13,34 @@ impl Document {
         Div {}
     }
 }
+
+#[derive(Default)]
+pub struct SyntaxError {
+    // pub message: &'static str,
+    pub message: String,
+}
+#[derive(Debug, Default)]
+pub struct Json {}
+impl Json {
+    // TODO stringify should require deriving serde?
+    // pub fn stringify(_object: impl JsonStringyArg) -> &'static str {
+    //     todo!()
+    // }
+    pub fn parse<T>(_text: &str) -> T {
+        todo!()
+    }
+}
+
+#[macro_export]
+macro_rules! try_ {
+    ($try_block:block) => {{
+        $try_block
+    }};
+}
+#[macro_export]
+macro_rules! catch {
+    ($err_ident:ident, $ErrType:ty, $catch_block:block) => {{
+        let $err_ident: $ErrType = <$ErrType>::default();
+        $catch_block
+    }};
+}

@@ -19,27 +19,23 @@ async fn option_match() {
             Some(val) => *val,
             None => 0,
         };
-        assert_eq!(result, 5);
+        assert!(result == 5);
     });
 
     // println!("{actual}");
 
-    let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        r#"var five = Some(new RustInteger(5));
+    let expected = format_js(
+        r#"
+        var five = 5;
         var result;
-        if (five.id === Option.someId) {
-            var [val] = five.data;
-            result = val;
-        } else if (five.id === Option.noneId) {
-            result = 0;
+        if (five !== null) {
+            result = five;
         } else {
-            throw new Error("couldn't match enum variant");
+            result = 0;
         }
         console.assert(result.eq(5));
         "#,
-    ));
+    );
 
     // println!("{expected}");
 
@@ -175,25 +171,36 @@ async fn option_map() {
     let actual = r2j_block_with_prelude!({
         let five = Some(5);
         let none: Option<i32> = None;
-        assert_eq!(five.map(|x| x + 2), Some(7));
-        assert_eq!(none.map(|x| x + 2), None);
-        let _ = 5.eq(&4);
+        assert!(five.map(|x| x + 2) == Some(7));
+        assert!(none.map(|x| x + 2) == None);
     });
-
-    // println!("{actual}");
-
-    // TODO this won't pass because we need to impl deep copies for JS
-    let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
-        r#"var five = Some(5);
-        var none = None;
-        console.assert(five.map((x) => x.add(2)).eq(Some(7)));
-        console.assert(none.map((x) => x.add(2)).eq(None));
-        var _ = 5.eq(4);
+    // let expected = format_js(concat!(
+    //     include_str!("option_prelude.js"),
+    //     "var Some = Option.Some;",
+    //     "var None = Option.None;",
+    //     r#"var five = Some(5);
+    //     var none = None;
+    //     console.assert(five.map((x) => x.add(2)).eq(Some(7)));
+    //     console.assert(none.map((x) => x.add(2)).eq(None));
+    //     var _ = 5.eq(4);
+    //     "#,
+    // ));
+    let expected = format_js(
+        r#"
+            Object.prototype.map = function(f) {
+                if this !== null {
+                    return f(this);
+                } else {
+                    return null;
+                }
+            };
+            var five = 5;
+            var none = null;
+            var result;
+            console.assert(five.map((x) x + 2) === 7)
+            console.assert(none.map((x) x + 2) === null)
         "#,
-    ));
+    );
 
     // let _ = execute_js_with_assertions(&expected).await.unwrap();
 

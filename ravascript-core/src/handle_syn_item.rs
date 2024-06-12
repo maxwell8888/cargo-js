@@ -78,64 +78,65 @@ pub fn handle_item_fn(
         }
     };
 
-    let type_params = item_fn
-        .sig
-        .generics
-        .params
-        .iter()
-        .map(|generic_param| match generic_param {
-            GenericParam::Lifetime(_) => todo!(),
-            GenericParam::Type(type_param) => type_param.ident.to_string(),
-            GenericParam::Const(_) => todo!(),
-        })
-        .collect::<Vec<_>>();
-    let rust_type_params = type_params
-        .iter()
-        .map(|tp_name| RustTypeParam {
-            name: tp_name.clone(),
-            type_: RustTypeParamValue::Unresolved,
-        })
-        .collect::<Vec<_>>();
+    // let type_params = item_fn
+    //     .sig
+    //     .generics
+    //     .params
+    //     .iter()
+    //     .map(|generic_param| match generic_param {
+    //         GenericParam::Lifetime(_) => todo!(),
+    //         GenericParam::Type(type_param) => type_param.ident.to_string(),
+    //         GenericParam::Const(_) => todo!(),
+    //     })
+    //     .collect::<Vec<_>>();
 
-    let inputs = &item_fn
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|input| match input {
-            FnArg::Receiver(_) => None,
-            FnArg::Typed(pat_type) => Some(match &*pat_type.pat {
-                Pat::Ident(pat_ident) => parse_fn_input_or_field(
-                    &*pat_type.ty,
-                    pat_ident.mutability.is_some(),
-                    &Vec::new(),
-                    current_module,
-                    global_data,
-                ),
-                _ => {
-                    todo!();
-                }
-            }),
-        })
-        .collect::<Vec<_>>();
+    // let rust_type_params = type_params
+    //     .iter()
+    //     .map(|tp_name| RustTypeParam {
+    //         name: tp_name.clone(),
+    //         type_: RustTypeParamValue::Unresolved,
+    //     })
+    //     .collect::<Vec<_>>();
 
-    let fn_info = FnInfo {
-        ident: name,
-        generics: type_params,
-        inputs_types: inputs.clone(),
-        return_type: match &item_fn.sig.output {
-            ReturnType::Default => RustType::Unit,
-            ReturnType::Type(_, type_) => {
-                // TODO Note we are passing false for has_mut_keyword because it doesn't apply to fn returns
-                parse_fn_input_or_field(
-                    type_,
-                    false,
-                    &rust_type_params,
-                    current_module,
-                    global_data,
-                )
-            }
-        },
-    };
+    // let inputs = &item_fn
+    //     .sig
+    //     .inputs
+    //     .iter()
+    //     .filter_map(|input| match input {
+    //         FnArg::Receiver(_) => None,
+    //         FnArg::Typed(pat_type) => Some(match &*pat_type.pat {
+    //             Pat::Ident(pat_ident) => parse_fn_input_or_field(
+    //                 &*pat_type.ty,
+    //                 pat_ident.mutability.is_some(),
+    //                 &Vec::new(),
+    //                 current_module,
+    //                 global_data,
+    //             ),
+    //             _ => {
+    //                 todo!();
+    //             }
+    //         }),
+    //     })
+    //     .collect::<Vec<_>>();
+
+    // let fn_info = FnInfo {
+    //     ident: name,
+    //     generics: type_params,
+    //     inputs_types: inputs.clone(),
+    //     return_type: match &item_fn.sig.output {
+    //         ReturnType::Default => RustType::Unit,
+    //         ReturnType::Type(_, type_) => {
+    //             // TODO Note we are passing false for has_mut_keyword because it doesn't apply to fn returns
+    //             parse_fn_input_or_field(
+    //                 type_,
+    //                 false,
+    //                 &rust_type_params,
+    //                 current_module,
+    //                 global_data,
+    //             )
+    //         }
+    //     },
+    // };
 
     // // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // // if !global_data.at_module_top_level {
@@ -1638,24 +1639,24 @@ pub fn handle_item_struct(
         Meta::NameValue(_) => todo!(),
     });
 
-    let generics = item_struct
-        .generics
-        .params
-        .iter()
-        .map(|p| match p {
-            GenericParam::Lifetime(_) => todo!(),
-            GenericParam::Type(type_param) => type_param.ident.to_string(),
-            GenericParam::Const(_) => todo!(),
-        })
-        .collect::<Vec<_>>();
+    // let generics = item_struct
+    //     .generics
+    //     .params
+    //     .iter()
+    //     .map(|p| match p {
+    //         GenericParam::Lifetime(_) => todo!(),
+    //         GenericParam::Type(type_param) => type_param.ident.to_string(),
+    //         GenericParam::Const(_) => todo!(),
+    //     })
+    //     .collect::<Vec<_>>();
 
-    let generics_type_params = generics
-        .iter()
-        .map(|name| RustTypeParam {
-            name: name.clone(),
-            type_: RustTypeParamValue::Unresolved,
-        })
-        .collect::<Vec<_>>();
+    // let generics_type_params = generics
+    //     .iter()
+    //     .map(|name| RustTypeParam {
+    //         name: name.clone(),
+    //         type_: RustTypeParamValue::Unresolved,
+    //     })
+    //     .collect::<Vec<_>>();
 
     // let fields = if item_struct.fields.len() == 0 {
     //     StructFieldInfo::UnitStruct
