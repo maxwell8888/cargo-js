@@ -7011,7 +7011,9 @@ fn parse_fn_body_stmts(
                     //     return_type = Some(type_);
                     //     // (JsStmt::Expr(expr, false), type_)
                     // }
-                    _ => {
+                    other => {
+                        // dbg!("parse_fn_body_stmts");
+                        // println!("{}", quote! { #other });
                         if semi.is_some() {
                             let mut stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());

@@ -602,6 +602,43 @@ async fn mutating_non_copy_value() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn pass_mut_var_as_imm_ref() {
+    let actual = r2j_block_with_prelude!({
+        let mut five = 5;
+        five += 1;
+        fn foo(num: &i32) -> i32 {
+            num + 2
+        }
+        let result = foo(&five);
+        five += 1;
+        assert!(five == 7);
+        assert!(result == 8);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var five = new RustInteger(5);
+            five.inner += 1;
+            function foo(num) {
+                return num + 2;
+            }
+            var result = foo(five.inner);
+            five.inner += 1;
+            console.assert(five.inner === 7);
+            console.assert(result === 8);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
 // https://www.reddit.com/r/rust/comments/3l3fgo/what_if_rust_had_mutablebox_and_immutablebox/
 // Box's primary design goal is to provide a safe interface for heap allocation. Mutability is controlled by the compiler, as you've already noticed. If you want to allow mutability only to the box's contents, you can operate through a direct reference to the contents:
 // let mut my_box = Box::new(11);

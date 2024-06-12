@@ -41,9 +41,13 @@ fn handle_expr_assign(
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
 ) -> JsExpr {
-    let (lhs_expr, _lhs_rust_type) = handle_expr(&*expr_assign.left, global_data, current_module);
+    let (lhs_expr, lhs_rust_type) = handle_expr(&*expr_assign.left, global_data, current_module);
     let (mut rhs_expr, rhs_rust_type) =
         handle_expr(&*expr_assign.right, global_data, current_module);
+    let lhs_is_mut_ref = match lhs_rust_type {
+        RustType::MutRef(_) => true,
+        _ => false,
+    };
     let rhs_is_mut_ref = match rhs_rust_type {
         RustType::MutRef(_) => true,
         _ => false,
@@ -120,7 +124,7 @@ fn handle_expr_assign(
     // });
     // let is_lhs_mut = scoped_var.unwrap().mut_;
 
-    if rhs_is_mut_ref {
+    if !lhs_is_mut_ref && rhs_is_mut_ref {
         rhs_expr = JsExpr::Field(Box::new(rhs_expr), "inner".to_string());
     }
     JsExpr::Assignment(Box::new(lhs_expr), Box::new(rhs_expr))
@@ -880,6 +884,15 @@ pub fn handle_expr(
             // dbg!(&rust_partial_type);
             match rust_partial_type {
                 PartialRustType::StructIdent(type_params, module_path, scope_id, name) => {
+                    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
+                        &module_path,
+                        &scope_id,
+                        &name,
+                    );
+                    let struct_def_info = match item_def.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(struct_def_info) => struct_def_info,
+                        StructOrEnumDefitionInfo::Enum(_) => panic!(),
+                    };
                     let js_deduped_path = match js_path_expr.clone() {
                         JsExpr::Path(path) => {
                             assert_eq!(path.len(), 1);
@@ -892,14 +905,29 @@ pub fn handle_expr(
                     let args = expr_struct
                         .fields
                         .iter()
-                        .map(|field| {
+                        .enumerate()
+                        .map(|(i, field)| {
                             let (js_expr, rust_type) =
                                 handle_expr(&field.expr, global_data, current_module);
-                            let is_mut = match rust_type {
+                            let field_is_mut = match &struct_def_info.fields {
+                                StructFieldInfo::UnitStruct => panic!(),
+                                StructFieldInfo::TupleStruct(rust_types) => match rust_types[i] {
+                                    RustType::MutRef(_) => true,
+                                    _ => false,
+                                },
+                                StructFieldInfo::RegularStruct(fields) => {
+                                    let (_, rust_type) = &fields[i];
+                                    match rust_type {
+                                        RustType::MutRef(_) => true,
+                                        _ => false,
+                                    }
+                                }
+                            };
+                            let arg_is_mut = match rust_type {
                                 RustType::MutRef(_) => true,
                                 _ => false,
                             };
-                            if is_mut {
+                            if !field_is_mut && arg_is_mut {
                                 JsExpr::Field(Box::new(js_expr), "inner".to_string())
                             } else {
                                 js_expr
