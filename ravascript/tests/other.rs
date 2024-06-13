@@ -61,9 +61,7 @@ async fn it_transpiles_vec_macro2() {
             console.assert(data[1] === 2)
         "#,
     );
-    // let expected = format_js(expected_js);
     assert_eq!(expected, actual);
-
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -88,8 +86,47 @@ async fn it_transpiles_iter_map() {
             });
         "#,
     );
-    // let expected = format_js(expected_js);
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// TODO should actually implement these because even though they are not real world examples, they force all the Expr handling to use the right abstractions and patterns
+#[ignore = "low priority"]
+#[tokio::test]
+async fn reassign_box_new() {
+    let actual = r2j_block!({
+        // To assign to box_new, we need to lookup Box::new. In looking it up we find that it is Box::new and rather than assign a normal RustType::Fn, we assign eg a RustType::FnVanish, this way when box_new gets called we can know that the call should vanish and just replace it with the arg. I think we can just vanish the whole `let box_new = Box::<i32>::new;` line too?? (But still create the ScopedVar to hold the name and RustType::FnVanish) What if we are doing something more complex with it like passing it to a fn?
+        let box_new = Box::<i32>::new;
+        let five = box_new(5);
+        assert!(*five == 5);
+    });
+    let expected = format_js(
+        r#"
+            var five = 5;
+            console.assert(five === 5);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "low priority"]
+#[tokio::test]
+async fn boxed_iter_type_infer() {
+    let actual = r2j_block!({
+        // Need to take into account box generics??:
+        let iter = [1, 2, 3].into_iter().collect();
+        let boxed_vec = Box::<Vec<i32>>::new(iter);
+        assert!(boxed_vec[0] == 1);
+    });
+    let expected = format_js(
+        r#"
+            var five = 5;
+            console.assert(five === 5);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]

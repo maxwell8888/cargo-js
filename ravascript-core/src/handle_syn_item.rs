@@ -252,6 +252,7 @@ pub fn handle_item_fn(
                         RustType::UserType(_, _) => todo!(),
                         RustType::Ref(_) => todo!(),
                         RustType::Closure(_) => todo!(),
+                        RustType::FnVanish => todo!(),
                     }
                     // record add var to scope
                     global_data
@@ -314,6 +315,7 @@ pub fn handle_item_fn(
                                 RustType::UserType(_, _) => todo!(),
                                 RustType::Ref(_) => todo!(),
                                 RustType::Closure(_) => todo!(),
+                                RustType::FnVanish => todo!(),
                             },
                         }))
                     }

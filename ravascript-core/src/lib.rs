@@ -1080,16 +1080,17 @@ fn parse_types_for_populate_item_definitions(
                                 })
                                 .collect::<Vec<_>>();
                             // TODO lookup trait in global data to get module path
-                            let (trait_module_path, trait_item_path, trait_item_scope) = get_path(
-                                false,
-                                true,
-                                true,
-                                trait_bound_path,
-                                global_data,
-                                current_module,
-                                current_module,
-                                current_scope_id,
-                            );
+                            let (trait_module_path, trait_item_path, trait_item_scope) =
+                                resolve_path(
+                                    false,
+                                    true,
+                                    true,
+                                    trait_bound_path,
+                                    global_data,
+                                    current_module,
+                                    current_module,
+                                    current_scope_id,
+                                );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
 
@@ -1269,7 +1270,7 @@ fn parse_types_for_populate_item_definitions(
                     //         &global_data.scope_id_as_option(),
                     //         &vec![struct_or_enum_name.to_string()],
                     //     );
-                    let (item_module_path, item_path_seg, item_scope) = get_path(
+                    let (item_module_path, item_path_seg, item_scope) = resolve_path(
                         false,
                         true,
                         true,
@@ -2070,6 +2071,8 @@ enum RustType {
         // TODO arguably it would be better to just store the path and item name all in one, and when looking up the item/fn we are able to determine at that point whether the final one or two elements of the path are a item or associated fn or whatever
         RustTypeFnType,
     ),
+    /// For things like Box::new where we want `Box::new(1)` -> `1`
+    FnVanish,
     /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
     /// (return type)
     Closure(Box<RustType>),
@@ -2097,6 +2100,7 @@ impl RustType {
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => false,
             RustType::Closure(_) => todo!(),
+            RustType::FnVanish => todo!(),
         }
     }
     fn is_mut_ref_of_js_primative(&self) -> bool {
@@ -2124,6 +2128,7 @@ impl RustType {
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => todo!(),
+            RustType::FnVanish => todo!(),
         }
     }
 }
@@ -2652,6 +2657,7 @@ struct GlobalData {
     rust_prelude_types: RustPreludeTypes,
     // TODO why have this seprate to module.item_def? Because they aren't defined anywhere and are available in all modules so don't really belong to a module?
     // (rust name, js primative type name, item definition)
+    // TODO why store rust name when it is in ItemDefinition???
     rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
     /// (trait name, impl item)
     default_trait_impls: Vec<(String, JsImplItem)>,
@@ -2719,6 +2725,17 @@ impl GlobalData {
             }),
             impl_block_ids: Vec::new(),
         };
+        let box_def = ItemDefinition {
+            ident: "Box".to_string(),
+            is_copy: false,
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                // NOTE not actually a unit struct but we will never need to use this field so doesn't matter
+                fields: StructFieldInfo::UnitStruct,
+                syn_object: None,
+            }),
+            impl_block_ids: Vec::new(),
+        };
 
         // let ravascript_prelude_crate = CrateData {
         //     name: "ravascript".to_string(),
@@ -2745,6 +2762,7 @@ impl GlobalData {
                 ("i32".to_string(), "Number".to_string(), i32_def),
                 ("String".to_string(), "String".to_string(), string_def),
                 ("str".to_string(), "String".to_string(), str_def),
+                ("Box".to_string(), "donotuse".to_string(), box_def),
             ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
@@ -2925,7 +2943,7 @@ impl GlobalData {
             _ => todo!(),
         };
 
-        let (module_path, item_path, item_scope_id) = get_path(
+        let (module_path, item_path, item_scope_id) = resolve_path(
             false,
             false,
             true,
@@ -3055,6 +3073,17 @@ impl GlobalData {
             .iter()
             .find(|item_def| &item_def.ident == name);
 
+        // Dont't need to look for prelude items here since resolve_path already returns a ["prelude_special_case"] module for prelude types. This seems like a better place though, since then we wouldn't need a special module name - well resolve_path still needs to return something? maybe [""] instead?
+        // let prelude_item_def = self
+        //     .rust_prelude_definitions
+        //     .iter()
+        //     .find_map(|(_name, _js_name, item_def)| (&item_def.ident == name).then_some(item_def));
+
+        // Might want to check/assert these or useful for debugging
+        let is_box_prelude =
+            module_path == &["prelude_special_case"] && scope_id == &None && name == "Box";
+
+        // if let Some(item_def) = scoped_item_def.or(module_item_def).or(prelude_item_def) {
         if let Some(item_def) = scoped_item_def.or(module_item_def) {
             item_def.clone()
         } else {
@@ -3163,7 +3192,7 @@ impl GlobalData {
         // dbg!(&current_module_path);
         // dbg!(&scope_id);
         // dbg!("get_path");
-        let (item_module_path, item_path, item_scope) = get_path(
+        let (item_module_path, item_path, item_scope) = resolve_path(
             false,
             true,
             true,
@@ -3234,7 +3263,7 @@ impl GlobalData {
         path: &Vec<String>,
         // current_module: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, RustTraitDefinition) {
-        let (item_module_path, item_path, item_scope) = get_path(
+        let (item_module_path, item_path, item_scope) = resolve_path(
             false,
             true,
             true,
@@ -7410,7 +7439,7 @@ pub struct RustPathSegment {
 /// -> (current module (during recursion)/item module path (upon final return), found item path, found item scope id)
 ///
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
-fn get_path(
+fn resolve_path(
     look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
     look_for_scoped_items: bool,
@@ -7635,7 +7664,7 @@ fn get_path(
         let mut current_module = current_mod.clone();
         current_module.pop();
 
-        get_path(
+        resolve_path(
             false,
             false,
             true,
@@ -7649,7 +7678,7 @@ fn get_path(
         // NOTE private items are still accessible from the module via self
         segs.remove(0);
 
-        get_path(
+        resolve_path(
             false,
             false,
             true,
@@ -7664,7 +7693,7 @@ fn get_path(
 
         segs.remove(0);
 
-        get_path(
+        resolve_path(
             false,
             false,
             true,
@@ -7681,7 +7710,7 @@ fn get_path(
 
         segs.remove(0);
 
-        get_path(
+        resolve_path(
             false,
             false,
             false,
@@ -7728,7 +7757,7 @@ fn get_path(
         //     panic!()
         // };
 
-        get_path(
+        resolve_path(
             false,
             false,
             true,
@@ -7750,7 +7779,7 @@ fn get_path(
         let crate_name = segs.remove(0);
         let current_module = [crate_name.ident].to_vec();
 
-        get_path(
+        resolve_path(
             false,
             false,
             true,
@@ -7774,10 +7803,15 @@ fn get_path(
         // }
 
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
+        dbg!(&segs);
         assert_eq!(current_mod, orig_mod);
-        assert_eq!(segs.len(), 1);
+        assert!(segs.len() == 1 || segs.len() == 2);
         let seg = &segs[0];
-        if seg.ident == "i32" || seg.ident == "String" || seg.ident == "str" {
+        if seg.ident == "i32"
+            || seg.ident == "String"
+            || seg.ident == "str"
+            || (seg.ident == "Box" && &segs[1].ident == "new")
+        {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, None)

@@ -639,6 +639,84 @@ async fn pass_mut_var_as_imm_ref() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn get_box_contents() {
+    let actual = r2j_block_with_prelude!({
+        let box_num = Box::new(1);
+        {
+            let mut num_ref = *box_num;
+            num_ref += 1;
+            assert!(num_ref == 2);
+        }
+        assert!(*box_num == 1);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var boxNum = 1;
+            {
+                var numRef = new RustInteger(boxNum);
+                numRef.inner += 1;
+                console.assert(numRef.inner === 2);
+            }
+            console.assert(boxNum === 1);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn get_box_contents_with_mut() {
+    let actual = r2j_block_with_prelude!({
+        let mut box_num = Box::new(1);
+        {
+            let mut num_ref = *box_num;
+            num_ref += 1;
+            assert!(num_ref == 2);
+            *box_num += 5;
+            assert!(num_ref == 2);
+            assert!(*box_num == 6);
+        }
+        *box_num += 5;
+        assert!(*box_num == 11);
+        box_num = Box::new(2);
+        assert!(*box_num == 2);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var boxNum = new RustInteger(1);
+            {
+                var numRef = new RustInteger(boxNum.inner);
+                numRef.inner += 1;
+                console.assert(numRef.inner === 2);
+                boxNum.inner += 5;
+                console.assert(numRef.inner === 2);
+                console.assert(boxNum.inner === 6);
+            }
+            boxNum.inner += 5;
+            console.assert(boxNum.inner === 11);
+            boxNum = 2;
+            console.assert(boxNum === 2);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
 // https://www.reddit.com/r/rust/comments/3l3fgo/what_if_rust_had_mutablebox_and_immutablebox/
 // Box's primary design goal is to provide a safe interface for heap allocation. Mutability is controlled by the compiler, as you've already noticed. If you want to allow mutability only to the box's contents, you can operate through a direct reference to the contents:
 // let mut my_box = Box::new(11);
@@ -646,4 +724,34 @@ async fn pass_mut_var_as_imm_ref() {
 // let mut my_bof_ref = &mut *my_box;
 // Edit: I neglected to mention that my_box cannot be mutated or reassigned after my_box_ref is created, since mutable references are mutually exclusive, so it creates the effect you want.
 #[tokio::test]
-async fn mut_ref_box_contents() {}
+async fn mut_ref_box_contents() {
+    let actual = r2j_block_with_prelude!({
+        let mut box_num = Box::new(1);
+        {
+            let num_ref = &mut *box_num;
+            *num_ref += 1;
+            assert!(*num_ref == 2);
+        }
+        assert!(*box_num == 2);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var boxNum = new RustInteger(1);
+            {
+                var numRef = boxNum;
+                numRef.inner += 1;
+                console.assert(numRef.inner === 2);
+            }
+            console.assert(boxNum.inner === 2);
+        "#,
+    );
+
+    // assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}

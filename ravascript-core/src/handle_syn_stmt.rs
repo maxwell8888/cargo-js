@@ -297,6 +297,7 @@ fn handle_local(
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => rhs_expr,
+            RustType::FnVanish => todo!(),
         }
     }
 

@@ -21,14 +21,14 @@ use syn::{
 use tracing::{debug, debug_span, info, span, warn};
 
 use crate::{
-    camel, case_convert, found_item_to_partial_rust_type, get_path, get_path_old, handle_pat,
+    camel, case_convert, found_item_to_partial_rust_type, get_path_old, handle_pat,
     handle_syn_stmt::handle_stmt,
     hardcoded_conversions,
     js_ast::{
         DestructureObject, DestructureValue, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt, LocalName,
         LocalType,
     },
-    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, resolve_path, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, ItemDefinition,
     JsImplBlock2, JsImplItem, PartialRustType, RustGeneric, RustImplItem, RustImplItemItem,
     RustImplItemItemNoJs, RustPathSegment, RustTraitDefinition, RustType, RustTypeFnType,
@@ -685,6 +685,7 @@ pub fn handle_expr(
                 RustType::UserType(_, _) => todo!(),
                 RustType::Ref(_) => todo!(),
                 RustType::Closure(_) => todo!(),
+                RustType::FnVanish => todo!(),
             };
             (
                 JsExpr::Index(Box::new(expr), Box::new(index_expr)),
@@ -838,6 +839,7 @@ pub fn handle_expr(
                             RustType::Ref(_) => todo!(),
                             RustType::Fn(_, _, _, _, _) => todo!(),
                             RustType::Closure(_) => todo!(),
+                            RustType::FnVanish => todo!(),
                         }
                     }
                 };
@@ -1046,6 +1048,7 @@ pub fn handle_expr(
                             RustType::Ref(_) => todo!(),
                             RustType::Fn(_, _, _, _, _) => todo!(),
                             RustType::Closure(_) => todo!(),
+                            RustType::FnVanish => todo!(),
                         };
 
                         let new_expr = if add_inner {
@@ -1275,6 +1278,7 @@ fn handle_expr_closure(
                     RustType::UserType(_, _) => todo!(),
                     RustType::Ref(_) => todo!(),
                     RustType::Closure(_) => todo!(),
+                    RustType::FnVanish => todo!(),
                 },
             }))
         }
@@ -1487,6 +1491,7 @@ pub fn handle_expr_and_stmt_macro(
                                         _ => todo!(),
                                     },
                                     RustType::Closure(_) => todo!(),
+                                    RustType::FnVanish => todo!(),
                                 };
                                 let mut_ref = match type_ {
                                     RustType::MutRef(_) => true,
@@ -1862,6 +1867,7 @@ fn handle_expr_method_call(
                                 }
                                 RustType::Fn(_, _, _, _, _) => todo!(),
                                 RustType::Closure(_) => todo!(),
+                                RustType::FnVanish => todo!(),
                             }
                         }
                         resolve_generics_for_return_type(
@@ -1924,6 +1930,7 @@ fn handle_expr_method_call(
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => todo!(),
+            RustType::FnVanish => todo!(),
         }
     }
     let method_return_type = get_method_return_type(
@@ -2109,6 +2116,7 @@ fn handle_expr_call(
     current_module: &Vec<String>,
 ) -> (JsExpr, RustType) {
     // dbg!(expr_call);
+
     let js_primitive = match &*expr_call.func {
         Expr::Path(expr_path) => {
             if expr_path.path.segments.len() == 1 {
@@ -2129,8 +2137,8 @@ fn handle_expr_call(
         .iter()
         .map(|arg| handle_expr(arg, global_data, current_module))
         .collect::<Vec<_>>();
-    let args_js_expr = args.iter().map(|a| a.0.clone()).collect::<Vec<_>>();
-    let args_rust_types = args.iter().map(|a| a.1.clone()).collect::<Vec<_>>();
+    let mut args_js_expr = args.iter().map(|a| a.0.clone()).collect::<Vec<_>>();
+    let mut args_rust_types = args.iter().map(|a| a.1.clone()).collect::<Vec<_>>();
 
     // // handle tuple structs Some, Ok, Err
     // match &*expr_call.func {
@@ -2174,9 +2182,9 @@ fn handle_expr_call(
     // parse fn call
     match &*expr_call.func {
         Expr::Path(expr_path) => {
-            if let Some(js_expr) = hardcoded_conversions(expr_path, args_js_expr.clone()) {
-                return js_expr;
-            }
+            // if let Some(js_expr) = hardcoded_conversions(expr_path, args_js_expr.clone()) {
+            //     return js_expr;
+            // }
 
             let (expr, partial_rust_type) =
                 handle_expr_path(expr_path, global_data, current_module, false);
@@ -2377,6 +2385,10 @@ fn handle_expr_call(
                             get_fn_type_returns(fn_info.return_type, &new_type_params)
                         }
                         RustType::Vec(_) => todo!(),
+                        RustType::FnVanish => {
+                            //
+                            RustType::FnVanish
+                        }
                         _ => panic!("type can't be called"),
                     }
                 }
@@ -2400,6 +2412,11 @@ fn handle_expr_call(
                         _ => todo!(),
                     };
                     (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
+                }
+                PartialRustType::RustType(RustType::FnVanish) => {
+                    // TODO for now we are assuming we are dealing with Box::new() so the args must be len=1
+                    assert_eq!(args_js_expr.len(), 1);
+                    (args_js_expr.remove(0), args_rust_types.remove(0))
                 }
                 PartialRustType::EnumVariantIdent(_, _, _, _, _) | PartialRustType::RustType(_) => {
                     (
@@ -2508,7 +2525,7 @@ fn handle_expr_path_inner(
     // dbg!(&current_module);
     // dbg!(&global_data.scope_id_as_option());
     // dbg!(&segs_copy);
-    let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = get_path(
+    let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = resolve_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
         true,
@@ -2538,7 +2555,18 @@ fn handle_expr_path_inner(
     // segs len = 2
     // 1. Associated fn or const
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
-    let (partial_rust_type, is_mut_var) = if segs_copy_item_path.len() == 1 {
+    let (partial_rust_type, is_mut_var) = if segs_copy_module_path == ["prelude_special_case"] {
+        assert_eq!(segs_copy_item_scope, None);
+        let path_idents = segs_copy_item_path
+            .iter()
+            .map(|seg| seg.ident.as_str())
+            .collect::<Vec<_>>();
+        // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
+        match path_idents[..] {
+            ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
+            _ => todo!(),
+        }
+    } else if segs_copy_item_path.len() == 1 {
         // TODO IMPORTANT needs to look/iterate through the static scopes, and var scope in unison, because they can shadow each other.
         // Is path a variable?
         let mut temp_scope_id = global_data.scope_id.clone();
@@ -3202,6 +3230,7 @@ pub fn handle_expr_match(
                         RustType::Ref(_) => prev_body_return_type,
                         RustType::Fn(_, _, _, _, _) => todo!(),
                         RustType::Closure(_) => todo!(),
+                        RustType::FnVanish => todo!(),
                     }),
                     None => Some(body_return_type),
                 },
