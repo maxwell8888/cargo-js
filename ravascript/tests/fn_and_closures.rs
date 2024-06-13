@@ -42,30 +42,30 @@ async fn function_body_returns_and_async() {
     // let generated_js = block_code_str();
 
     // let generated_js = generated_js.print().unwrap().as_code();
-    let expected_js = r#"var _closure3 = (arg) => {
-  var _x = arg;
-};
-var _closure4 = async (arg) => arg;
-var _closure5 = async (arg) => {
-  var _x = arg;
-};
-var _closure6 = async (arg) => {
-  var _x = "hello";
-  return arg;
-}
-var _closure7 = (arg) => {
-  var ifTempAssignment;
-  if (arg >= 0) {
-    ifTempAssignment = "positive";
-  } else {
-    var _thing = 5;
-    ifTempAssignment = "negative";
-  }
-  return ifTempAssignment;
-};"#;
-    let expected_js = format_js(expected_js);
-    // println!("{expected_js}");
-    // println!("{generated_js}");
+    let expected_js = format_js(
+        r#"
+        var _closure3 = (arg) => {
+            var _x = arg;
+        };
+        var _closure4 = async (arg) => arg;
+        var _closure5 = async (arg) => {
+            var _x = arg;
+        };
+        var _closure6 = async (arg) => {
+            var _x = "hello";
+            return arg;
+        }
+        var _closure7 = (arg) => {
+            var ifTempAssignment;
+            if (arg >= 0) {
+                ifTempAssignment = "positive";
+            } else {
+                var _thing = 5;
+                ifTempAssignment = "negative";
+            }
+            return ifTempAssignment;
+        };"#,
+    );
     assert_eq!(expected_js, generated_js);
 
     let actual = r2j_block!({

@@ -495,7 +495,7 @@ pub fn handle_expr(
             };
             (expr, type_)
         }
-        Expr::Block(expr_block) => handle_expr_block(expr_block, global_data, current_module),
+        Expr::Block(expr_block) => handle_expr_block(expr_block, global_data, current_module, true),
         Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
         Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
         Expr::Cast(_) => todo!(),
@@ -636,6 +636,21 @@ pub fn handle_expr(
             global_data.pop_scope();
             // update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
 
+            // NOTE we need to directly handle fail blocks to ensure the block doesn't get converted to an IFFE which would happen if it we handled by handle_expr_block
+            let fail = expr_if.else_branch.as_ref().map(|(_, expr)| {
+                //
+                match &**expr {
+                    Expr::Block(expr_block) => {
+                        // Box::new(handle_expr(&*expr, global_data, current_module).0)
+                        Box::new(
+                            handle_expr_block(expr_block, global_data, current_module, false).0,
+                        )
+                    }
+                    Expr::If(_) => Box::new(handle_expr(&*expr, global_data, current_module).0),
+                    _ => panic!(),
+                }
+            });
+
             // TODO handle same as expr::block
 
             (
@@ -644,9 +659,7 @@ pub fn handle_expr(
                     declare_var: false,
                     condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module).0),
                     succeed: succeed_stmts,
-                    fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
-                        Box::new(handle_expr(&*expr, global_data, current_module).0)
-                    }),
+                    fail,
                 }),
                 types.last().unwrap().clone(),
             )
@@ -686,6 +699,7 @@ pub fn handle_expr(
                 RustType::Ref(_) => todo!(),
                 RustType::Closure(_) => todo!(),
                 RustType::FnVanish => todo!(),
+                RustType::Box(_) => todo!(),
             };
             (
                 JsExpr::Index(Box::new(expr), Box::new(index_expr)),
@@ -788,10 +802,14 @@ pub fn handle_expr(
         Expr::Reference(expr_reference) => {
             if expr_reference.mutability.is_some() {
                 // Vars need to know whether they are having a mut ref taken to know whether they should copy or not ie `var.inner`, `var.copy()`, or whatever. So we repeat the path handle from `handle_expr()` here so that we can explicitly pass a true argument for `is_having_mut_ref_taken` to handle_expr_path().
+                // dbg!("yes");
                 let (expr, rust_type) = match &*expr_reference.expr {
                     Expr::Path(expr_path) => {
                         let (js_expr, partial_rust_type) =
                             handle_expr_path(expr_path, global_data, current_module, true);
+                        // dbg!(&expr_path);
+                        // dbg!(&js_expr);
+                        // dbg!(&partial_rust_type);
                         match partial_rust_type {
                             // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                             PartialRustType::StructIdent(_, _, _, _) => panic!(),
@@ -840,6 +858,7 @@ pub fn handle_expr(
                             RustType::Fn(_, _, _, _, _) => todo!(),
                             RustType::Closure(_) => todo!(),
                             RustType::FnVanish => todo!(),
+                            RustType::Box(_) => todo!(),
                         }
                     }
                 };
@@ -1049,6 +1068,7 @@ pub fn handle_expr(
                             RustType::Fn(_, _, _, _, _) => todo!(),
                             RustType::Closure(_) => todo!(),
                             RustType::FnVanish => todo!(),
+                            RustType::Box(_) => todo!(),
                         };
 
                         let new_expr = if add_inner {
@@ -1279,6 +1299,7 @@ fn handle_expr_closure(
                     RustType::Ref(_) => todo!(),
                     RustType::Closure(_) => todo!(),
                     RustType::FnVanish => todo!(),
+                    RustType::Box(_) => todo!(),
                 },
             }))
         }
@@ -1286,13 +1307,15 @@ fn handle_expr_closure(
 
     // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
     let (body_stmts, return_type) = match &*expr_closure.body {
-        Expr::Block(expr_block) => parse_fn_body_stmts(
-            true,
-            false,
-            &expr_block.block.stmts,
-            global_data,
-            current_module,
-        ),
+        Expr::Block(expr_block) => {
+            parse_fn_body_stmts(
+                true,
+                false,
+                &expr_block.block.stmts,
+                global_data,
+                current_module,
+            )
+        },
         Expr::Async(expr_async) => parse_fn_body_stmts(
             true,
             false,
@@ -1492,6 +1515,7 @@ pub fn handle_expr_and_stmt_macro(
                                     },
                                     RustType::Closure(_) => todo!(),
                                     RustType::FnVanish => todo!(),
+                                    RustType::Box(_) => todo!(),
                                 };
                                 let mut_ref = match type_ {
                                     RustType::MutRef(_) => true,
@@ -1868,6 +1892,7 @@ fn handle_expr_method_call(
                                 RustType::Fn(_, _, _, _, _) => todo!(),
                                 RustType::Closure(_) => todo!(),
                                 RustType::FnVanish => todo!(),
+                                RustType::Box(_) => todo!(),
                             }
                         }
                         resolve_generics_for_return_type(
@@ -1931,6 +1956,7 @@ fn handle_expr_method_call(
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => todo!(),
             RustType::FnVanish => todo!(),
+            RustType::Box(_) => todo!(),
         }
     }
     let method_return_type = get_method_return_type(
@@ -2088,6 +2114,7 @@ pub fn handle_expr_block(
     expr_block: &ExprBlock,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
+    allow_convert_to_iffe: bool,
 ) -> (JsExpr, RustType) {
     // let span = debug_span!("handle_expr_block", expr_block = ?quote! { #expr_block }.to_string());
     let span = debug_span!("handle_expr_block");
@@ -2107,7 +2134,25 @@ pub fn handle_expr_block(
     global_data.pop_scope();
     // update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
 
-    (JsExpr::Block(stmts), types.last().unwrap().clone())
+    let block_returns_value = match stmts.last().unwrap() {
+        JsStmt::Expr(_, closing_semi) => !closing_semi,
+        _ => false,
+    };
+
+    if block_returns_value && allow_convert_to_iffe {
+        let iffe = JsExpr::FnCall(
+            Box::new(JsExpr::Paren(Box::new(JsExpr::ArrowFn(
+                false,
+                true,
+                Vec::new(),
+                stmts,
+            )))),
+            Vec::new(),
+        );
+        (iffe, types.last().unwrap().clone())
+    } else {
+        (JsExpr::Block(stmts), types.last().unwrap().clone())
+    }
 }
 
 fn handle_expr_call(
@@ -3231,6 +3276,7 @@ pub fn handle_expr_match(
                         RustType::Fn(_, _, _, _, _) => todo!(),
                         RustType::Closure(_) => todo!(),
                         RustType::FnVanish => todo!(),
+                        RustType::Box(_) => todo!(),
                     }),
                     None => Some(body_return_type),
                 },

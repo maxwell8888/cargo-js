@@ -342,7 +342,7 @@ pub struct JsIf {
     pub declare_var: bool,
     pub condition: Box<JsExpr>,
     pub succeed: Vec<JsStmt>,
-    /// syn has an expr as the else branch, rather than an iter of statements - because the expr might be another if expr, not always a block
+    /// we copy syn here which has an expr as the else branch, rather than an iter of statements because the expr might be another if expr, not always a block
     pub fail: Option<Box<JsExpr>>,
 }
 

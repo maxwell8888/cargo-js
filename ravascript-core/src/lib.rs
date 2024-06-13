@@ -2052,6 +2052,8 @@ enum RustType {
     Vec(Box<RustType>),
     Array(Box<RustType>),
     Tuple(Vec<RustType>),
+    /// Even though Box::new() vanishes when transpiled, we need to keep track of which vars are Boxed because the dereferencing behaves differently
+    Box(Box<RustType>),
     /// ie `type FooInt = Foo<i32>;`
     /// (name, type)
     UserType(String, Box<RustType>),
@@ -2101,6 +2103,7 @@ impl RustType {
             RustType::Fn(_, _, _, _, _) => false,
             RustType::Closure(_) => todo!(),
             RustType::FnVanish => todo!(),
+            RustType::Box(_) => todo!(),
         }
     }
     fn is_mut_ref_of_js_primative(&self) -> bool {
@@ -2129,6 +2132,7 @@ impl RustType {
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => todo!(),
             RustType::FnVanish => todo!(),
+            RustType::Box(_) => todo!(),
         }
     }
 }
@@ -6798,8 +6802,12 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     //     .iter()
     //     .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
     //     .collect::<Vec<_>>();
-    let (js_block, _rust_type) =
-        handle_expr_block(&expr_block, &mut global_data, &vec!["crate".to_string()]);
+    let (js_block, _rust_type) = handle_expr_block(
+        &expr_block,
+        &mut global_data,
+        &vec!["crate".to_string()],
+        false,
+    );
     let stmts = match js_block {
         JsExpr::Block(js_stmts) => js_stmts,
         _ => todo!(),
@@ -6952,6 +6960,7 @@ fn parse_fn_body_stmts(
         if i == stmts.len() - 1 {
             match stmt {
                 Stmt::Expr(expr, semi) => match expr {
+                    // TODO how is this different to the normal Expr::If handling??? Is this unnecessary duplication?
                     Expr::If(expr_if) => {
                         if semi.is_some() {
                             let mut stmts = handle_stmt(stmt, global_data, current_module);
@@ -6962,6 +6971,28 @@ fn parse_fn_body_stmts(
                             let (condition, type_) =
                                 handle_expr(&*expr_if.cond, global_data, current_module);
                             let condition = Box::new(condition);
+
+                            let fail = expr_if.else_branch.as_ref().map(|(_, expr)| {
+                                //
+                                match &**expr {
+                                    Expr::Block(expr_block) => {
+                                        // Box::new(handle_expr(&*expr, global_data, current_module).0)
+                                        Box::new(
+                                            handle_expr_block(
+                                                expr_block,
+                                                global_data,
+                                                current_module,
+                                                false,
+                                            )
+                                            .0,
+                                        )
+                                    }
+                                    Expr::If(_) => {
+                                        Box::new(handle_expr(&*expr, global_data, current_module).0)
+                                    }
+                                    _ => panic!(),
+                                }
+                            });
                             let stmt = JsStmt::Expr(
                                 JsExpr::If(JsIf {
                                     assignment: Some(LocalName::Single(
@@ -6980,9 +7011,7 @@ fn parse_fn_body_stmts(
                                         })
                                         .flatten()
                                         .collect(),
-                                    fail: expr_if.else_branch.as_ref().map(|(_, expr)| {
-                                        Box::new(handle_expr(&*expr, global_data, current_module).0)
-                                    }),
+                                    fail,
                                 }),
                                 false,
                             );

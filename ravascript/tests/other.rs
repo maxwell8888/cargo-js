@@ -90,6 +90,57 @@ async fn it_transpiles_iter_map() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn if_expr_var() {
+    let actual = r2j_block!({
+        let num = if true { 1 } else { 0 };
+        assert!(num == 1);
+    });
+    let expected = format_js(
+        r#"
+        var num;
+        if (true) {
+            num = 1;
+        } else {
+            num = 0;
+        }
+        console.assert(num === 1);
+        "#,
+    );
+    assert_eq!(expected, actual);
+}
+
+// TODO our current approach to if expressions doesn't work if they eg need to be passed as an argument or wrapped in RustInteger like below. Switch to using either:
+// 1. ternary expressions, which can't have multiple stmts, so need to wrap sections which >1 stmts in an iffe
+// 2. Use a temp var and wrap the whole expression in an iffe like below
+// I don't think one is better than the other, teraries will be horrible with many sections with iffes, but much cleaner if single stmts, also ternary if_else are hard to read, so 2 is probs a better deafult initially until we can impl both, choosing the best approach per case.
+#[ignore = "TODO"]
+#[tokio::test]
+async fn if_expr_mut_var() {
+    let actual = r2j_block!({
+        let mut num = if true { 1 } else { 0 };
+        num += 1;
+        assert!(num == 2);
+    });
+    let expected = format_js(
+        r#"
+            var num = new RustInteger(
+                (() => {
+                    var temp;
+                    if (true) {
+                        temp = 1;
+                    } else {
+                        temp = 0;
+                    }
+                    return temp
+                })()
+            )
+            console.assert(num === 1);
+        "#,
+    );
+    assert_eq!(expected, actual);
+}
+
 // TODO should actually implement these because even though they are not real world examples, they force all the Expr handling to use the right abstractions and patterns
 #[ignore = "low priority"]
 #[tokio::test]

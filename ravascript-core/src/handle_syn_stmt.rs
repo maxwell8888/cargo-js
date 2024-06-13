@@ -220,7 +220,8 @@ fn handle_local(
     let rhs_should_add_copy = match &*local_init.expr {
         Expr::Async(_) => todo!(),
         Expr::Await(_) => todo!(),
-        Expr::Block(_) => todo!(),
+        // TODO not sure if this is correct, need to add some tests for objects that need `.copy()`ing and are returned from blocks
+        Expr::Block(_) => false,
         Expr::Cast(_) => todo!(),
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
@@ -298,6 +299,7 @@ fn handle_local(
             RustType::Fn(_, _, _, _, _) => todo!(),
             RustType::Closure(_) => rhs_expr,
             RustType::FnVanish => todo!(),
+            RustType::Box(_) => todo!(),
         }
     }
 

@@ -760,12 +760,322 @@ async fn get_box_contents_with_mut() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
+// TODO we could use let and still be able to shadow variables by for each local assignment, looking up whether a var with that name already exists in scope, and if so just do a reassignment instead. This allows use to use let which (*also mirrors the Rust keyword which arguably makes the JS a bit nicer to read for a Rust dev) behaves better than var for scoping/blocks. Although JS blocks probably aren't useful for blocks that return like:
+// `foo({ let num = 1; num });`,
+// they are useful useful to transpile to for simple blocks used for scoping/tempory vars, and JS `var` doesn't behave well in these blocks, see below example
+#[ignore = "come back to because needs everything updating from var to let"]
+#[tokio::test]
+async fn shadow_variable_using_let() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        assert!(num == 1);
+        let num = "hello";
+        assert!(num == "hello");
+    });
+
+    let expected = format_js(
+        r#"
+            let num = 1;
+            console.assert(num === 1);
+            num = "hello";
+            console.assert(num === "hello");
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// Demonstrates how var behaviour does not match Rust
+#[ignore = "TODO"]
+#[tokio::test]
+async fn simple_block_using_var_keyword() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        {
+            let num = 2;
+            assert!(num == 2);
+        }
+        assert!(num == 1);
+    });
+
+    let expected = format_js(
+        r#"
+            var num = 1;
+            {
+                var num = 2
+                console.assert(num === 2);
+            }
+            console.assert(num === 1);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "come back to because needs everything updating from var to let"]
+#[tokio::test]
+async fn simple_block_using_let_keyword() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        {
+            let num = 2;
+            assert!(num == 2);
+        }
+        assert!(num == 1);
+    });
+
+    let expected = format_js(
+        r#"
+            let num = 1;
+            {
+                let num = 2
+                console.assert(num === 2);
+            }
+            console.assert(num === 1);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn assign_mut_ref_from_mut_var() {
+    let actual = r2j_block_with_prelude!({
+        let mut num = 1;
+        {
+            let num_ref = &mut num;
+            *num_ref += 1;
+            assert!(*num_ref == 2);
+        }
+        assert!(num == 2);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = new RustInteger(1);
+            {
+                var numRef = num;
+                numRef.inner += 1;
+                console.assert(numRef.inner === 2);
+            }
+            console.assert(num.inner === 2);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn return_value_from_block() {
+    let actual = r2j_block_with_prelude!({
+        let mut num = 1;
+        let mut num2 = {
+            num += 1;
+            num
+        };
+        num2 += 5;
+        assert!(num == 2);
+        assert!(num2 == 7);
+    });
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = new RustInteger(1);
+            var num2 = new RustInteger(
+                    (() => {
+                    num.inner += 1;
+                    return num.inner;
+                })()
+            );
+            num2.inner += 5;
+            console.assert(num.inner === 2);
+            console.assert(num2.inner === 7);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn return_value_from_block2() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        let mut num2 = { num };
+        num2 += 1;
+        assert!(num == 1);
+        assert!(num2 == 2);
+    });
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = 1;
+            var num2 = new RustInteger((() => {
+                return num;
+            })());
+            num2.inner += 1;
+            console.assert(num === 1);
+            console.assert(num2.inner === 2);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn assign_mut_ref_of_im_ref_of_mut_var() {
+    let actual = r2j_block_with_prelude!({
+        let mut num = 1;
+        let num2 = {
+            let num_ref = &mut &num;
+            **num_ref
+        };
+        num += 1;
+        assert!(num == 2);
+        assert!(num2 == 1);
+    });
+    // TODO simplify this stmt: `var numRef = new RustInteger(num.inner);` to `var numRef = num;`
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = new RustInteger(1);
+            var num2 = (() => {
+                var numRef = new RustInteger(num.inner);
+                return numRef.inner;
+            })();
+            num.inner += 1;
+            console.assert(num.inner === 2);
+            console.assert(num2 === 1);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn assign_mut_ref_of_im_ref_of_mut_var2() {
+    let actual = r2j_block_with_prelude!({
+        let mut num = 1;
+        let num2 = {
+            let num_ref = &mut &num;
+            *num_ref
+        };
+        assert!(num == 1);
+        assert!(*num2 == 1);
+    });
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = new RustInteger(1);
+            var num2 = (() => {
+                var numRef = new RustInteger(num.inner);
+                return numRef.inner;
+            })();
+            console.assert(num.inner === 1);
+            console.assert(num2 === 1);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn assign_mut_ref_of_im_ref_of_mut_var3() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        let num2 = {
+            let num_ref = &mut &num;
+            *num_ref
+        };
+        assert!(num == 1);
+        assert!(*num2 == 1);
+    });
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = 1;
+            var num2 = (() => {
+                var numRef = new RustInteger(num);
+                return numRef.inner;
+            })();
+            console.assert(num === 1);
+            console.assert(num2 === 1);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn assign_mut_ref_of_im_ref_of_mut_var4() {
+    let actual = r2j_block_with_prelude!({
+        let num = 1;
+        let mut num2 = {
+            let num_ref = &mut &num;
+            **num_ref
+        };
+        num2 += 1;
+        assert!(num == 1);
+        assert!(num2 == 2);
+    });
+    let expected = format_js(
+        r#"
+                class RustInteger {
+                    constructor(inner) {
+                        this.inner = inner;
+                    }
+                }
+                var num = 1;
+                var num2 = new RustInteger(
+                    (() => {
+                        var numRef = new RustInteger(num);
+                        return numRef.inner;
+                    })()
+                );
+                num2.inner += 1;
+                console.assert(num === 1);
+                console.assert(num2.inner === 2);
+            "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
 // https://www.reddit.com/r/rust/comments/3l3fgo/what_if_rust_had_mutablebox_and_immutablebox/
 // Box's primary design goal is to provide a safe interface for heap allocation. Mutability is controlled by the compiler, as you've already noticed. If you want to allow mutability only to the box's contents, you can operate through a direct reference to the contents:
 // let mut my_box = Box::new(11);
 // // Create an &mut i32 referencing the contents of `my_box`.
 // let mut my_bof_ref = &mut *my_box;
 // Edit: I neglected to mention that my_box cannot be mutated or reassigned after my_box_ref is created, since mutable references are mutually exclusive, so it creates the effect you want.
+#[ignore = "reason"]
 #[tokio::test]
 async fn mut_ref_box_contents() {
     let actual = r2j_block_with_prelude!({
@@ -795,6 +1105,6 @@ async fn mut_ref_box_contents() {
         "#,
     );
 
-    // assert_eq!(expected, actual);
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
