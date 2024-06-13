@@ -574,36 +574,67 @@ async fn mutating_non_copy_value() {
         assert!(orig_num == 2);
     });
 
-    let expected = concat!(
-        "class RustInteger {
-            constructor(inner) {
-                this.inner = inner;
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
             }
-        }",
-        r#"var origNum = new RustInteger(0);
-        function addOne(num) {
-            console.assert(num.inner === 0);
-            num.inner += 1;
-            console.assert(num.inner === 1);
-            return num.inner;
-        }
-        {
-            var result = new RustInteger(addOne(origNum));
-            console.assert(result.inner === 1);
-            result.inner += 1;
-            console.assert(result.inner === 2);
-        }
-        console.assert(origNum.inner === 1);
-        origNum.inner += 1;
-        console.assert(origNum.inner === 2);
-        "#
+            var origNum = new RustInteger(0);
+            function addOne(num) {
+                console.assert(num.inner === 0);
+                num.inner += 1;
+                console.assert(num.inner === 1);
+                return num.inner;
+            }
+            {
+                var result = new RustInteger(addOne(origNum));
+                console.assert(result.inner === 1);
+                result.inner += 1;
+                console.assert(result.inner === 2);
+            }
+            console.assert(origNum.inner === 1);
+            origNum.inner += 1;
+            console.assert(origNum.inner === 2);
+        "#,
     );
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
-async fn pass_mut_var_as_imm_ref() {
+async fn reassign_im_val_to_mut_var() {
+    let actual = r2j_block_with_prelude!({
+        let mut num = 0;
+        num += 1;
+        assert!(num == 1);
+        num = 5;
+        num += 1;
+        assert!(num == 6);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+            var num = new RustInteger(0);
+            num.inner += 1;
+            console.assert(num.inner === 1);
+            num.inner = 5;
+            num.inner += 1;
+            console.assert(num.inner === 6);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn pass_mut_var_as_im_ref() {
     let actual = r2j_block_with_prelude!({
         let mut five = 5;
         five += 1;
@@ -686,8 +717,15 @@ async fn get_box_contents_with_mut() {
         }
         *box_num += 5;
         assert!(*box_num == 11);
-        box_num = Box::new(2);
-        assert!(*box_num == 2);
+
+        let box_two = Box::new(2);
+        box_num = box_two;
+        *box_num += 1;
+
+        assert!(*box_num == 3);
+        box_num = Box::new(0);
+        *box_num += 1;
+        assert!(*box_num == 1);
     });
 
     let expected = format_js(
@@ -708,8 +746,13 @@ async fn get_box_contents_with_mut() {
             }
             boxNum.inner += 5;
             console.assert(boxNum.inner === 11);
-            boxNum = 2;
-            console.assert(boxNum === 2);
+            var boxTwo = 2;
+            boxNum.inner = boxTwo;
+            boxNum.inner += 1;
+            console.assert(boxNum.inner === 3);
+            boxNum.inner = 0;
+            boxNum.inner += 1;
+            console.assert(boxNum.inner === 1);
         "#,
     );
 

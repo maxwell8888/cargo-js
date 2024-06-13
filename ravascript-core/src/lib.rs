@@ -4120,7 +4120,11 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
             );
         }
     }
-    for (name, js_name, item_def) in &mut global_data.rust_prelude_definitions {
+    for (name, js_name, item_def) in global_data
+        .rust_prelude_definitions
+        .iter_mut()
+        .filter(|(_, _, item_def)| item_def.ident != "Box")
+    {
         update_item_def_block_ids(item_def, &None, &vec!["donotuse".to_string()], &impl_blocks);
     }
 }
@@ -7803,7 +7807,6 @@ fn resolve_path(
         // }
 
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
-        dbg!(&segs);
         assert_eq!(current_mod, orig_mod);
         assert!(segs.len() == 1 || segs.len() == 2);
         let seg = &segs[0];
