@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use ravascript_core::from_file;
-use syn::{parse_macro_input, Block, ExprBlock, ItemFn, ItemMod, LitStr, File};
+use syn::{parse_macro_input, Block, ExprBlock, File, ItemFn, ItemMod, LitStr};
 
 #[proc_macro]
 pub fn include_ravascript(input: TokenStream) -> TokenStream {

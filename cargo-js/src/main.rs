@@ -111,6 +111,7 @@ async fn main() {
             filepath,
             out,
         } => {
+            // TODO how transpiling an individual file works needs consideration. It doesn't seem to make much sense to just transpile a standalone file, as this situation is uncommon, it makes more sense to transpile a file which is part of a cargo project in which case we can handle imports from other files in some way, dedupe the projects names, etc. So it makes more sense for it to be a filter-like -- option for the transpile crate command. On the other hand, someone might want to quickly demo cargo-js eg to a coworker by quickly writing a simple self contained .rs file, without having to create an entire Cargo project with .git etc.
             // TODO consider using match to check that both filepath and cratepath haven't been set
             let js_str = if let Some(filepath) = filepath {
                 let code = fs::read_to_string(filepath).unwrap();

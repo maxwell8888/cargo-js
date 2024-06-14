@@ -36,8 +36,8 @@ use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module
 //     };
 // }
 
-pub fn r2j_block(code: &str) -> String {
-    let stmts = from_block(code, false);
+pub fn r2j_block(code: &str, include_web: bool) -> String {
+    let stmts = from_block(code, false, include_web);
     let generated_js = stmts
         .iter()
         .map(|stmt| stmt.js_string())
@@ -56,12 +56,25 @@ macro_rules! r2j_block {
         #[fn_stmts_as_str]
         fn fn_wrapper() $block
 
-        r2j_block(block_code_str())
+        r2j_block(block_code_str(), false)
+    }};
+}
+
+#[macro_export]
+macro_rules! r2j_block_with_web {
+    ($block:block) => {{
+        // Output the block to ensure that it runs without errors, eg failed asserts
+        $block
+
+        #[fn_stmts_as_str]
+        fn fn_wrapper() $block
+
+        r2j_block(block_code_str(), true)
     }};
 }
 
 pub fn r2j_block_with_prelude(code: &str) -> String {
-    let stmts = from_block(code, true);
+    let stmts = from_block(code, true, false);
     let generated_js = stmts
         .iter()
         .map(|stmt| stmt.js_string())

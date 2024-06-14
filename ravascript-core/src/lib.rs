@@ -145,14 +145,7 @@ enum ItemUseModuleOrScope<'a> {
     Module(&'a mut ModuleData),
     Scope(&'a mut GlobalDataScope),
 }
-fn handle_item_use(
-    item_use: &ItemUse,
-    // current_module: Vec<String>,
-    // is_module: bool,
-    // global_data: &mut GlobalData,
-    // modules: &mut Vec<ModuleData>,
-    item_use_module_or_scope: ItemUseModuleOrScope,
-) {
+fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModuleOrScope) {
     let public = match item_use.vis {
         Visibility::Public(_) => true,
         _ => false,
@@ -179,18 +172,6 @@ fn handle_item_use(
         // For now we are not handling globs but need to use them for using enum variants which we will then need to inject manually
         return;
     }
-
-    // if root_module_or_crate == "ravascript" || root_module_or_crate == "crate" {
-    //     match &sub_modules.0[0] {
-    //         DestructureValue::KeyName(_) => {}
-    //         DestructureValue::Rename(_, _) => {}
-    //         DestructureValue::Nesting(name, _) => {
-    //             if name == "prelude" {
-    //                 return;
-    //             }
-    //         }
-    //     }
-    // }
 
     // TODO fix this mess
     if match sub_modules.0.first().unwrap() {
@@ -4191,6 +4172,41 @@ fn update_item_def_block_ids(
     }
 }
 
+// TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
+fn look_for_web_prelude(modules: &Vec<ModuleData>) -> bool {
+    let mut found_web_prelude = false;
+    for module in modules {
+        for item in &module.items {
+            match item {
+                Item::Const(_) => {}
+                Item::Enum(_) => {}
+                Item::ExternCrate(_) => {}
+                Item::Fn(_) => {}
+                Item::ForeignMod(_) => {}
+                Item::Impl(_) => {}
+                Item::Macro(_) => {}
+                Item::Mod(_) => {}
+                Item::Static(_) => {}
+                Item::Struct(_) => {}
+                Item::Trait(_) => {}
+                Item::TraitAlias(_) => {}
+                Item::Type(_) => {}
+                Item::Union(_) => {}
+                Item::Use(item_use) => match &item_use.tree {
+                    UseTree::Path(use_path) => found_web_prelude = use_path.ident == "web_prelude",
+                    UseTree::Name(use_name) => found_web_prelude = use_name.ident == "web_prelude",
+                    UseTree::Rename(_) => {}
+                    UseTree::Glob(_) => {}
+                    UseTree::Group(_) => {}
+                },
+                Item::Verbatim(_) => {}
+                _ => {}
+            }
+        }
+    }
+    found_web_prelude
+}
+
 // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.
 // What about where we are inside a class method so this refers to the class, not the module?
 // Solutions:
@@ -6146,7 +6162,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
 }
 
 pub fn process_items(
-    mut items: Vec<Item>,
+    items: Vec<Item>,
     crate_path: Option<PathBuf>,
     // TODO I don't think there is much point in supporting generation without "Rust types" so remove this flag
     with_rust_types: bool,
@@ -6194,15 +6210,29 @@ pub fn process_items(
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
     // Currently this is only the web prelude for which we need to `extract_data` for deduplicating/namespacing and getting use mappings for resolving paths, and `extract_data_populate_item_definitions` for getting item definitions to eg lookup methods etc, but we do not actually need to parse to a JS AST.
 
-    let include_web = true;
-
     // NOTE We process the web-prelude module in order that we can find it's item definitions, etc, and its names are taken into account when deduplicating/qualifying idents, but we don't parse it because we obviously don't actually need it in the output because it all already exists in the browser enivronment/prelude.
+    // We would ideally determine third party crates to include by checking the the Cargo.toml, as simply checking use stmts is harder and even though they should RA/cargo-check error if the crate isn't actually included. The problem is that eg for testing using from_block and frm_file, there is no Cargo.toml. We could add a `use_web: bool` flag argument to these functions, but that seems verbose when the main use case is for the web (we can just have different fns like `from_block_web` and `from_block` to avoid verboseness) (though in fairness if being used for library stuff it might not directly need web-prelude types?).
+    // Options:
+    // 1. flag argument
+    // 2. always include web-prelude
+    // 3. use Cargo.toml for all third party crates except web-prelude and do a search of `Item::Use`s for "web-prelude". Remember you don't actually have to `use` an external crate, you can just add it to Cargo.toml and use it directly in a path like `let div = web_prelude::create_element("div");`
+
+    // 2. Is the simplest and cleanest approach, the only real drawback is it is a bit more of a "special case"ing approach, and is annoying when trying to debug stuff that doesn't use
+    // Even though RA won't work, we do still want to support cases using from_block etc with no Cargo.toml because it is useful for integrating/embedding into applications eg for our online convertor there will be no Cargo.toml or proper rust project, effectively just a String of Rust code, but we still want to be able to write code using web-prelude and have it transpile, and the web-prelude code to be available (so needs to be `include_string`ed) so that it is taken into account when name deduping. Also transpiling a specific file with the CLI is another use case. We probably actually want to support transpiling an individual file which is part of a Rust project and still actually uses third party crates, does all the same name dedup etc (maybe?) but only outputs the contents of that single file as that would be useful for debugging? And remember that although it seems useful to transpile random .rs files, eg could just add a single .rs file in a js project, that is going to be quite atypical since that would require writing a .rs file without RA.
+    // Remember even just being used in from_block we still need web_prelude in our Cargo.toml - yes if being used in a Rust project but not in other embedded situtations.
+    // So a flag seems the best approach but would be even easier to just check it using `Item::Use` so that is one less things for users to worry about or get wrong, yeah but flag is easier just just use that for now (especially given it is a niche use case), to check for use of web_prelude we need to resolve all the use stmts to make sure it isn't acutally eg `mod web_prelude { user stuff ... }`
+
+    // Look for web prelude
+    // let include_web = true;
+    let include_web = look_for_web_prelude(&modules);
+
     let prelude_items = if include_web {
         let web_prelude_crate_path = "../web-prelude";
         let web_prelude_entry_point_path = PathBuf::new()
             .join(web_prelude_crate_path)
             .join("src")
             .join("lib.rs");
+        // TODO this needs to be an include string so it runs at compile time NO, web-prelude actually needs to be provided as a standlone crate which is added as a dependency so that RA etc works, but cargo-js knows not to actually transpile that crate.
         let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
         let file = syn::parse_file(&code).unwrap();
         let prelude_items = file.items;
@@ -6691,7 +6721,7 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     process_items(items, None, with_rust_types, false)
 }
 
-pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
+pub fn from_block(code: &str, with_rust_types: bool, include_web: bool) -> Vec<JsStmt> {
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
     assert!(modules.len() == 1);
@@ -6708,7 +6738,7 @@ pub fn from_block(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
 }
 
 pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
-    // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. Should web prelude be allowed?
+    // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. NO because a block can still have inline modules. Should web prelude be allowed?
 
     // let file = syn::parse_file(code).unwrap();
     let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
