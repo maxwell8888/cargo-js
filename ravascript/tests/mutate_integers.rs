@@ -764,7 +764,6 @@ async fn get_box_contents_with_mut() {
 // TODO we could use let and still be able to shadow variables by for each local assignment, looking up whether a var with that name already exists in scope, and if so just do a reassignment instead. This allows use to use let which (*also mirrors the Rust keyword which arguably makes the JS a bit nicer to read for a Rust dev) behaves better than var for scoping/blocks. Although JS blocks probably aren't useful for blocks that return like:
 // `foo({ let num = 1; num });`,
 // they are useful useful to transpile to for simple blocks used for scoping/tempory vars, and JS `var` doesn't behave well in these blocks, see below example
-#[ignore = "come back to because needs everything updating from var to let"]
 #[tokio::test]
 async fn shadow_variable_using_let() {
     let actual = r2j_block_with_prelude!({
@@ -787,35 +786,6 @@ async fn shadow_variable_using_let() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// Demonstrates how var behaviour does not match Rust
-#[ignore = "TODO"]
-#[tokio::test]
-async fn simple_block_using_var_keyword() {
-    let actual = r2j_block_with_prelude!({
-        let num = 1;
-        {
-            let num = 2;
-            assert!(num == 2);
-        }
-        assert!(num == 1);
-    });
-
-    let expected = format_js(
-        r#"
-            let num = 1;
-            {
-                let num = 2
-                console.assert(num === 2);
-            }
-            console.assert(num === 1);
-        "#,
-    );
-
-    assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-}
-
-#[ignore = "come back to because needs everything updating from var to let"]
 #[tokio::test]
 async fn simple_block_using_let_keyword() {
     let actual = r2j_block_with_prelude!({

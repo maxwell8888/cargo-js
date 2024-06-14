@@ -126,13 +126,11 @@ async fn if_expr_mut_var() {
         r#"
             let num = new RustInteger(
                 (() => {
-                    var temp;
                     if (true) {
-                        temp = 1;
+                        return 1;
                     } else {
-                        temp = 0;
+                        return 0;
                     }
-                    return temp
                 })()
             )
             console.assert(num === 1);
