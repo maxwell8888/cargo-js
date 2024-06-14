@@ -344,6 +344,7 @@ pub fn handle_item_fn(
         let (body_stmts, return_type) = parse_fn_body_stmts(
             false,
             returns_non_mut_ref_val,
+            true,
             &item_fn.block.stmts,
             global_data,
             current_module,
@@ -1063,6 +1064,7 @@ pub fn handle_impl_item_fn(
     let body_stmts = parse_fn_body_stmts(
         false,
         returns_non_mut_ref_val,
+        true,
         &body_stmts,
         global_data,
         current_module_path,

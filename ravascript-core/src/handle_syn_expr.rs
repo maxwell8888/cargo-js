@@ -1307,18 +1307,18 @@ fn handle_expr_closure(
 
     // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
     let (body_stmts, return_type) = match &*expr_closure.body {
-        Expr::Block(expr_block) => {
-            parse_fn_body_stmts(
-                true,
-                false,
-                &expr_block.block.stmts,
-                global_data,
-                current_module,
-            )
-        },
+        Expr::Block(expr_block) => parse_fn_body_stmts(
+            true,
+            false,
+            true,
+            &expr_block.block.stmts,
+            global_data,
+            current_module,
+        ),
         Expr::Async(expr_async) => parse_fn_body_stmts(
             true,
             false,
+            true,
             &expr_async.block.stmts,
             global_data,
             current_module,

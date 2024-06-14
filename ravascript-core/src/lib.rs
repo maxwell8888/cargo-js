@@ -2112,7 +2112,7 @@ impl RustType {
             RustType::Unknown => todo!(),
             RustType::Todo => todo!(),
             RustType::ParentItem => todo!(),
-            RustType::Unit => todo!(),
+            RustType::Unit => false,
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),
             RustType::TypeParam(_) => todo!(),
@@ -6369,6 +6369,7 @@ pub fn process_items(
     //     .iter()
     //     .map(|m| m.path.clone())
     //     .collect::<Vec<_>>());
+
     for module_data in global_data
         .modules
         .clone()
@@ -6903,6 +6904,8 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 fn parse_fn_body_stmts(
     is_arrow_fn: bool,
     returns_non_mut_ref_val: bool,
+    // `return` can only be used in fns and closures so need this to prevent them being added to blocks
+    allow_return: bool,
     stmts: &Vec<Stmt>,
     global_data: &mut GlobalData,
     current_module: &Vec<String>,
@@ -7097,11 +7100,12 @@ fn parse_fn_body_stmts(
                                 js_expr = JsExpr::Field(Box::new(js_expr), "inner".to_string());
                             }
 
-                            let return_expr = if is_arrow_fn && is_single_expr_return {
-                                JsStmt::Expr(js_expr, true)
-                            } else {
-                                JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true)
-                            };
+                            let return_expr =
+                                if (is_arrow_fn && is_single_expr_return) || !allow_return {
+                                    JsStmt::Expr(js_expr, true)
+                                } else {
+                                    JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true)
+                                };
                             js_stmts.push(return_expr);
                             return_type = Some(type_);
                         }
