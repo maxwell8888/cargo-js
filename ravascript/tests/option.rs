@@ -26,7 +26,7 @@ async fn option_match() {
 
     let expected = format_js(
         r#"
-        var five = 5;
+        let five = 5;
         var result;
         if (five !== null) {
             result = five;
@@ -54,8 +54,8 @@ async fn option_is_some_and() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        r#"var five = Some(5);
+        "let Some = Option.Some;",
+        r#"let five = Some(5);
         console.assert(five.isSomeAnd((x) => x.eq(5)));
         "#,
     ));
@@ -75,8 +75,8 @@ async fn option_unwrap() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        r#"var five = Some(5);
+        "let Some = Option.Some;",
+        r#"let five = Some(5);
         console.assert(five.unwrap().eq(5));
         "#,
     ));
@@ -98,11 +98,11 @@ async fn option_unwrap_or() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-        var None = Option.None;",
-        "var five = Some(5);
+        "let Some = Option.Some;
+        let None = Option.None;",
+        "let five = Some(5);
         console.assert(five.unwrapOr(0).eq(5));
-        var nothing = None;
+        let nothing = None;
         console.assert(nothing.unwrapOr(0).eq(0));
         ",
     ));
@@ -124,10 +124,10 @@ async fn option_unwrap_or_else() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-        var None = Option.None;",
-        "var five = Some(5);
-        var none = None;
+        "let Some = Option.Some;
+        let None = Option.None;",
+        "let five = Some(5);
+        let none = None;
         console.assert(five.unwrapOrElse(() => 4).eq(5));
         console.assert(none.unwrapOrElse(() => 4).eq(4));
         ",
@@ -151,10 +151,10 @@ async fn option_unwrap_or_default() {
 
     let expected = format_js(concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;
-        var None = Option.None;",
-        r#"var five = Some(5);
-        var none = None;
+        "let Some = Option.Some;
+        let None = Option.None;",
+        r#"let five = Some(5);
+        let none = None;
         console.assert(five.unwrapOrElse(() => 4).eq(5));
         console.assert(none.unwrapOrElse(() => 4).eq(4));
         "#,
@@ -176,13 +176,13 @@ async fn option_map() {
     });
     // let expected = format_js(concat!(
     //     include_str!("option_prelude.js"),
-    //     "var Some = Option.Some;",
-    //     "var None = Option.None;",
-    //     r#"var five = Some(5);
-    //     var none = None;
+    //     "let Some = Option.Some;",
+    //     "let None = Option.None;",
+    //     r#"let five = Some(5);
+    //     let none = None;
     //     console.assert(five.map((x) => x.add(2)).eq(Some(7)));
     //     console.assert(none.map((x) => x.add(2)).eq(None));
-    //     var _ = 5.eq(4);
+    //     let _ = 5.eq(4);
     //     "#,
     // ));
     let expected = format_js(
@@ -194,8 +194,8 @@ async fn option_map() {
                     return null;
                 }
             };
-            var five = 5;
-            var none = null;
+            let five = 5;
+            let none = null;
             var result;
             console.assert(five.map((x) x + 2) === 7)
             console.assert(none.map((x) x + 2) === null)

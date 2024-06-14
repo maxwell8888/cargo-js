@@ -41,11 +41,11 @@ async fn destructure_struct() {
                 this.baz = baz;
             }
         }
-        var foo = new Foo(1, "hi");
-        var { bar, baz } = foo;
+        let foo = new Foo(1, "hi");
+        let { bar, baz } = foo;
         console.assert(bar === 1);
         console.assert(baz === "hi");
-        var { bar: cool } = foo;
+        let { bar: cool } = foo;
         console.assert(cool === 1);
         "#,
     ));
@@ -86,8 +86,8 @@ async fn destructure_struct_nested() {
                 this.bar = bar;
             }
         }
-        var foo = new Foo(new Bar(1));
-        var { bar: { baz } } = foo;
+        let foo = new Foo(new Bar(1));
+        let { bar: { baz } } = foo;
         console.assert(baz === 1);
         "#
     );
@@ -120,8 +120,8 @@ async fn destructure_array() {
     // include_str!("number_prototype_extensions.js"),
     let expected = format_js(concat!(
         r#"
-        var arr = [1, 2];
-        var [one, two] = arr;
+        let arr = [1, 2];
+        let [one, two] = arr;
         console.assert(one === 1);
         console.assert(two === 2);
         class Foo {
@@ -129,8 +129,8 @@ async fn destructure_array() {
                 this.bar = bar;
             }
         }
-        var fooArr = [new Foo(1), new Foo(2)];
-        var [{bar: barOne}, {bar: barTwo}] = fooArr;
+        let fooArr = [new Foo(1), new Foo(2)];
+        let [{bar: barOne}, {bar: barTwo}] = fooArr;
         console.assert(barOne === 1);
         console.assert(barTwo === 2);
         "#,
@@ -185,11 +185,11 @@ async fn destructure_array_of_copy_structs() {
                     return JSON.parse(JSON.stringify(this));
                 }
             }
-            var foo = new Foo(1);
-            var foo2 = new Foo(1);
-            var arr = [foo, foo2];
-            var arrRef = arr;
-            var [one, _two] = arrRef.copy();
+            let foo = new Foo(1);
+            let foo2 = new Foo(1);
+            let arr = [foo, foo2];
+            let arrRef = arr;
+            let [one, _two] = arrRef.copy();
             one.num += 1;
             console.assert(one.num === 2);
             console.assert(foo.num === 1);
@@ -201,4 +201,79 @@ async fn destructure_array_of_copy_structs() {
 
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "TODO implement"]
+#[tokio::test]
+async fn destructure_shadowing() {
+    // setup_tracing();
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            bar: i32,
+            baz: i32,
+        }
+        let foo = Foo { bar: 5, baz: 6 };
+        let bar = 2;
+        let Foo { bar, baz } = foo;
+        assert!(bar == 5);
+        assert!(baz == 6);
+    });
+
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(bar, baz) {
+                    this.bar = bar;
+                    this.baz = baz;
+                }
+            }
+            let foo = new Foo(5, 6);
+            let bar = 2;
+            ({ bar, baz } = foo);
+            console.assert(bar === 5);
+            console.assert(baz === 6);
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// #[ignore = "TODO implement"]
+#[tokio::test]
+async fn destructure_shadowing_with_block_scoping() {
+    // setup_tracing();
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            bar: i32,
+            baz: i32,
+        }
+        let foo = Foo { bar: 5, baz: 6 };
+        let bar = 2;
+        {
+            let Foo { bar, baz } = foo;
+            assert!(bar == 5);
+            assert!(baz == 6);
+        }
+        assert!(bar == 2);
+    });
+
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(bar, baz) {
+                    this.bar = bar;
+                    this.baz = baz;
+                }
+            }
+            let foo = new Foo(5, 6);
+            let bar = 2;
+            ({ bar, baz } = foo);
+            console.assert(bar === 5);
+            console.assert(baz === 6);
+        "#,
+    );
+
+    // assert_eq!(expected, actual);
+    // let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

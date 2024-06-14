@@ -45,7 +45,7 @@ async fn it_transpiles_vec_macro() {
     let actual = r2j_block!({
         let _data = vec![1, 2, 3];
     });
-    assert_eq!("var _data = [1, 2, 3];", actual);
+    assert_eq!("let _data = [1, 2, 3];", actual);
 }
 
 #[tokio::test]
@@ -57,7 +57,7 @@ async fn it_transpiles_vec_macro2() {
 
     let expected = format_js(
         r#"
-            var data = [1, 2, 3];
+            let data = [1, 2, 3];
             console.assert(data[1] === 2)
         "#,
     );
@@ -79,9 +79,9 @@ async fn it_transpiles_iter_map() {
     });
     let expected = format_js(
         r#"
-            var data = [1, 2, 3];
-            var _data = data.map((num) => {
-                var _sum = num + 2;
+            let data = [1, 2, 3];
+            let _data = data.map((num) => {
+                let _sum = num + 2;
                 return num;
             });
         "#,
@@ -124,7 +124,7 @@ async fn if_expr_mut_var() {
     });
     let expected = format_js(
         r#"
-            var num = new RustInteger(
+            let num = new RustInteger(
                 (() => {
                     var temp;
                     if (true) {
@@ -153,7 +153,7 @@ async fn reassign_box_new() {
     });
     let expected = format_js(
         r#"
-            var five = 5;
+            let five = 5;
             console.assert(five === 5);
         "#,
     );
@@ -172,7 +172,7 @@ async fn boxed_iter_type_infer() {
     });
     let expected = format_js(
         r#"
-            var five = 5;
+            let five = 5;
             console.assert(five === 5);
         "#,
     );

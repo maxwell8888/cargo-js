@@ -119,7 +119,7 @@ async fn struct_and_impl_methods() {
                 }
             }
 
-            var thing = MyStruct.new(2, "Bruce");
+            let thing = MyStruct.new(2, "Bruce");
             console.assert(thing.myMethod() === "Bruce");
             console.assert(thing.myMethodWithArg(2) === 4);
             console.assert(MyStruct.myAssociatedMethod(2) === 12);
@@ -164,7 +164,7 @@ async fn tuple_struct() {
             }
         }
         
-        var cool = new Cool(5);
+        let cool = new Cool(5);
         console.assert(cool[0] === 5);
         console.assert(cool.getInner() === 5);
         console.assert(cool.otherNumber() === 4);
@@ -224,7 +224,7 @@ async fn tuple_struct_multiple_fields() {
             }
         }
 
-        var cool = new Cool(5, "hi", true, 4);
+        let cool = new Cool(5, "hi", true, 4);
         console.assert(cool[0] === 5);
         console.assert(cool[1] === "hi");
         console.assert(cool[2] === true);
@@ -261,12 +261,12 @@ async fn mutate_non_copy_struct() {
                 this.num = num;
             }
         }
-        var foo = new Foo(1);
+        let foo = new Foo(1);
         console.assert(foo.num === 1);
         foo.num = 2;
         console.assert(foo.num === 2);
         {
-            var bar = foo;
+            let bar = foo;
             bar.num += 1;
             console.assert(bar.num === 3);
         }
@@ -328,9 +328,9 @@ async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
                     this.num = num;
                 }
             }
-            var foo = new Foo(new RustInteger(1));
+            let foo = new Foo(new RustInteger(1));
             console.assert(foo.num.inner === 1);
-            var num = foo.num;
+            let num = foo.num;
             num.inner += 1;
             console.assert(foo.num.inner === 2);
             foo.num.inner += 1;
@@ -375,9 +375,9 @@ async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
                     this.bar = bar;
                 }
             }
-            var foo = new Foo(new Bar(1));
+            let foo = new Foo(new Bar(1));
             console.assert(foo.bar.num === 1);
-            var bar = foo.bar;
+            let bar = foo.bar;
             bar.num += 1;
             console.assert(foo.bar.num === 2);
             foo.bar.num += 1;
@@ -422,16 +422,16 @@ async fn mutate_copy_struct() {
                     return JSON.parse(JSON.stringify(this));
                 }
             }
-            var foo = new Foo(1);
+            let foo = new Foo(1);
             console.assert(foo.num === 1);
             foo.num = 2;
             console.assert(foo.num === 2);
-            var bar = foo;
+            let bar = foo;
             bar.num += 1;
             console.assert(bar.num === 3);
             foo.num += 1;
             console.assert(foo.num === 4);
-            var baz = foo.copy();
+            let baz = foo.copy();
             baz.num += 1;
             console.assert(baz.num === 5);
             console.assert(foo.num === 4);

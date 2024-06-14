@@ -36,8 +36,8 @@ async fn mut_ref_field() {
                     this.num = num;
                 }
             }
-            var five = new RustInteger(5);
-            var foo = new Foo(five);
+            let five = new RustInteger(5);
+            let foo = new Foo(five);
             foo.num.inner += 1;
             console.assert(foo.num.inner === 6);
             five.inner += 1;
@@ -83,9 +83,9 @@ async fn reassign_mut_ref_field() {
                     this.num = num;
                 }
             }
-            var five = new RustInteger(5);
-            var foo = new Foo(five);
-            var mutRefTwo = new RustInteger(2);
+            let five = new RustInteger(5);
+            let foo = new Foo(five);
+            let mutRefTwo = new RustInteger(2);
             {
                 foo.num = mutRefTwo;
                 console.assert(foo.num.inner === 2);
@@ -141,9 +141,9 @@ async fn copy_struct_with_ref_field() {
                     return JSON.parse(JSON.stringify(this));
                 }
             }
-            var five = new RustInteger(5);
-            var foo = new Foo(five.inner);
-            var mutRefTwo = new RustInteger(2);
+            let five = new RustInteger(5);
+            let foo = new Foo(five.inner);
+            let mutRefTwo = new RustInteger(2);
             {
                 foo.num = mutRefTwo.inner;
                 console.assert(foo.num === 2);

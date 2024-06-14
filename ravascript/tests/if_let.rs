@@ -32,12 +32,12 @@ async fn if_let_some() {
 
     let expected = concat!(
         include_str!("option_prelude.js"),
-        "var Some = Option.Some;",
-        "var None = Option.None;",
+        "let Some = Option.Some;",
+        "let None = Option.None;",
         include_str!("rust_integer_prelude.js"),
         include_str!("rust_bool_prelude.js"),
-        r#"var counter = 0;
-        var someNum = Some(5);
+        r#"let counter = 0;
+        let someNum = Some(5);
         if (someNum.id === Option.someId) {
             var [num] = someNum.data;
             counter += num;

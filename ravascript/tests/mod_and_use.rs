@@ -26,8 +26,8 @@ async fn it_transpiles_crate_directory() {
           function main() {
             crate__duplicateName();
             utils__colors__duplicateName();
-            var thing = External.new();
-            var fido = new Green(true, 2);
+            let thing = External.new();
+            let fido = new Green(true, 2);
             fido.woof();
           };
 
@@ -64,7 +64,7 @@ async fn it_transpiles_crate_directory() {
           }
 
           // colors
-          var DOG_ACTIVITY = 5;
+          const DOG_ACTIVITY = 5;
           function colors__duplicateName() {
             return 6;
           }
@@ -160,7 +160,7 @@ async fn simple_module() {
           // crate
           class Bar {}
           function baz() {
-            var _ = new Bar();
+            let _ = new Bar();
           }
 
           // foo
@@ -189,12 +189,12 @@ async fn module_super() {
     let expected = r#"// crate
 class Bar {}
 function baz() {
-  var _ = new Bar();
+  let _ = new Bar();
 }
 
 // foo
 function green() {
-  var blue = baz();
+  let blue = baz();
 }"#;
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
@@ -215,10 +215,10 @@ async fn module_self() {
         r#"
           class Bar {}
           function baz() {
-            var _ = new Bar();
+            let _ = new Bar();
           }
           function green() {
-            var blue = baz();
+            let blue = baz();
           }
         "#,
     );
@@ -246,7 +246,7 @@ function baz() {
 
 // foo
 function green() {
-  var blue = baz();
+  let blue = baz();
 }"#;
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();

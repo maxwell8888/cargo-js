@@ -57,7 +57,7 @@ async fn impl_in_fn_scope() {
             }
         }
 
-        var bob = new Person(30);
+        let bob = new Person(30);
         console.assert(Person.greeting().eq("Hello"));
         console.assert(bob.agePlusTen().eq(40));
         console.assert(bob.agePlusTwenty().eq(50));

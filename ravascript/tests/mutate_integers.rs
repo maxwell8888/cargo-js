@@ -54,17 +54,17 @@ async fn mutating_integers() {
             console.assert(num.inner === 1);
             return num;
         }
-        var origNum = new RustInteger(0);
+        let origNum = new RustInteger(0);
         console.assert(origNum.inner === 0);
         {
-            var result = addOne(origNum);
+            let result = addOne(origNum);
             console.assert(result.inner === 1);
-            var resultCopy = result.inner;
+            let resultCopy = result.inner;
             console.assert(resultCopy === 1);
             result.inner += 1;
             console.assert(resultCopy === 1);
             console.assert(result.inner === 2);
-            var six = new RustInteger(6);
+            let six = new RustInteger(6);
             result = six;
             console.assert(result.inner === 6);
         }
@@ -99,11 +99,11 @@ async fn deref_vs_normal_assign() {
                 this.inner = inner;
             }
         }",
-        r#"var result = new RustInteger(1);
+        r#"let result = new RustInteger(1);
         console.assert(result.inner === 1);
-        var resultCopy = result.inner;
+        let resultCopy = result.inner;
         console.assert(resultCopy === 1);
-        var six = new RustInteger(6);
+        let six = new RustInteger(6);
         result.inner = six.inner;
         console.assert(result.inner === 6);
         six.inner = 10;
@@ -148,24 +148,24 @@ async fn ownership_mut() {
                 this.inner = inner;
             }
         }",
-        r#"var foo = new RustInteger(5);
+        r#"let foo = new RustInteger(5);
         function addOne(num) {
             num.inner += 1;
             return num;
         }
-        var bar = addOne(foo);
+        let bar = addOne(foo);
         console.assert(bar.inner === 6);
         bar.inner += 1;
         console.assert(bar.inner === 7);
         console.assert(foo.inner === 7);
-        var baz = new RustInteger(4);
-        var bazTwo = new RustInteger(baz.inner);
+        let baz = new RustInteger(4);
+        let bazTwo = new RustInteger(baz.inner);
         bazTwo.inner += 1;
         console.assert(baz.inner === 4);
         console.assert(bazTwo.inner === 5);
-        var five = new RustInteger(5);
+        let five = new RustInteger(5);
         five.inner += 1;
-        var six = five;
+        let six = five;
         console.assert(six.inner === 6);
         "#
     );
@@ -188,7 +188,7 @@ async fn mutate_int() {
                 this.inner = inner;
             }
         }",
-        r#"var num = new RustInteger(0);
+        r#"let num = new RustInteger(0);
         num.inner += 1;
         console.assert(num.inner === 1)"#
     );
@@ -213,8 +213,8 @@ async fn copy_and_mutate() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = new RustInteger(0);
-        var copyNum = origNum.inner;
+        r#"let origNum = new RustInteger(0);
+        let copyNum = origNum.inner;
         origNum.inner += 1;
         console.assert(copyNum === 0);
         console.assert(origNum.inner === 1);
@@ -240,8 +240,8 @@ async fn copy_mut_ref() {
                 this.inner = inner;
             }
         }",
-        r#"var mutRef = new RustInteger(0);
-        var copyMutRef = mutRef.inner;
+        r#"let mutRef = new RustInteger(0);
+        let copyMutRef = mutRef.inner;
         mutRef.inner += 1;
         console.assert(mutRef.inner === 1);
         console.assert(copyMutRef === 0);
@@ -267,8 +267,8 @@ async fn non_mut_copy_to_mut() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = 0;
-        var copyNum = new RustInteger(origNum);
+        r#"let origNum = 0;
+        let copyNum = new RustInteger(origNum);
         copyNum.inner += 1;
         console.assert(copyNum.inner === 1);
         console.assert(origNum === 0);
@@ -294,8 +294,8 @@ async fn mut_ref_from_non_mut() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = new RustInteger(0);
-        var mutRefNum = origNum;
+        r#"let origNum = new RustInteger(0);
+        let mutRefNum = origNum;
         mutRefNum.inner += 1;
         console.assert(mutRefNum.inner === 1);
         console.assert(origNum.inner === 1);
@@ -327,16 +327,16 @@ async fn mutate_int_fn_arg() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = 0;
+        r#"let origNum = 0;
         function addOne(num) {
-            var num = new RustInteger(num);
+            num = new RustInteger(num);
             num.inner += 2;
             console.assert(num.inner === 2);
             num.inner += num.inner;
             console.assert(num.inner === 4);
             return num.inner;
         }
-        var result = addOne(origNum);
+        let result = addOne(origNum);
         console.assert(result === 4);
         console.assert(origNum === 0);
         "#
@@ -347,8 +347,8 @@ async fn mutate_int_fn_arg() {
 
 #[tokio::test]
 async fn mut_ref_int_fn_arg() {
-    // whilst it might appear that you can mutate numbers in JS with `var x = 0; x++;`, `=`, `++`, and `+=` just reassign a value to the variable, and when we pass the variable to a function the value is copied to a new variable, and of course we are not able to reassign values to the original variable within the funciton, only the new variable.
-    // A problem is that when create eg `var num = 5; var mutRef = { rustDeref: num };`, we are copying num, so if we mutate mutRef, num doesn't get updated. So I think we need ensure all mut numbers are wrapped. but how will we know how to handle `num = 4;`? Well if it is a reassignment then we know num must be mut so rhs needs wrapping? But we don't know the type of num, so it means everything gets wrapper. Whilst this seems redundant because eg an object is already mutable so doesn't need wrapping, they will actually need wrapping to support calling `.rustDeref()`. But this means if we do `num = 4; num = num; num = num;` we will be adding multiple wrappers. Rather than just wrapping, I think we need a `function mutRef(var)` which checks the type of the object and eg wraps a number or non-wrapper object, does nothing if it is already a wrapper object.
+    // whilst it might appear that you can mutate numbers in JS with `let x = 0; x++;`, `=`, `++`, and `+=` just reassign a value to the variable, and when we pass the variable to a function the value is copied to a new variable, and of course we are not able to reassign values to the original variable within the funciton, only the new variable.
+    // A problem is that when create eg `let num = 5; let mutRef = { rustDeref: num };`, we are copying num, so if we mutate mutRef, num doesn't get updated. So I think we need ensure all mut numbers are wrapped. but how will we know how to handle `num = 4;`? Well if it is a reassignment then we know num must be mut so rhs needs wrapping? But we don't know the type of num, so it means everything gets wrapper. Whilst this seems redundant because eg an object is already mutable so doesn't need wrapping, they will actually need wrapping to support calling `.rustDeref()`. But this means if we do `num = 4; num = num; num = num;` we will be adding multiple wrappers. Rather than just wrapping, I think we need a `function mutRef(var)` which checks the type of the object and eg wraps a number or non-wrapper object, does nothing if it is already a wrapper object.
     // The problem with automatically wrapping mut numbers is that we can then no longer do `num === 0`. We can just *always* call .rustDeref() and add `Number.prototype.rustDeref = function() { return this; };`
     let actual = r2j_block_with_prelude!({
         let mut orig_num = 0;
@@ -376,7 +376,7 @@ async fn mut_ref_int_fn_arg() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = new RustInteger(0);
+        r#"let origNum = new RustInteger(0);
         console.assert(origNum.inner === 0);    
         function addOne(num) {
             console.assert(num.inner === 0);
@@ -385,7 +385,7 @@ async fn mut_ref_int_fn_arg() {
             return num;
         }
         {
-            var result = addOne(origNum);
+            let result = addOne(origNum);
             console.assert(result.inner === 1);
             result.inner += 1;
             console.assert(result.inner === 2);
@@ -415,26 +415,27 @@ async fn copy_mut_inside_fn() {
         assert!(orig_num == 0);
     });
 
-    let expected = format_js(concat!(
-        "class RustInteger {
-            constructor(inner) {
-                this.inner = inner;
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
             }
-        }",
-        r#"var origNum = 0;
-        function addOne(num) {
-            var num = new RustInteger(num);
-            var other = num.inner;
-            num.inner += 1;
-            console.assert(num.inner === 1);
-            console.assert(other === 0);
-            return num.inner;
-        }
-        var result = addOne(origNum);
-        console.assert(result === 1);
-        console.assert(origNum === 0);
-        "#
-    ));
+            let origNum = 0;
+            function addOne(num) {
+                num = new RustInteger(num);
+                let other = num.inner;
+                num.inner += 1;
+                console.assert(num.inner === 1);
+                console.assert(other === 0);
+                return num.inner;
+            }
+            let result = addOne(origNum);
+            console.assert(result === 1);
+            console.assert(origNum === 0);
+        "#,
+    );
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -470,14 +471,14 @@ async fn mut_ref_to_copy() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = new RustInteger(0);
+        r#"let origNum = new RustInteger(0);
         function addOne(num) {
             console.assert(num.inner === 0);
             num.inner += 1;
             console.assert(num.inner === 1);
             return num.inner;
         }
-        var result = new RustInteger(addOne(origNum));
+        let result = new RustInteger(addOne(origNum));
         console.assert(result.inner === 1);
         console.assert(origNum.inner === 1);
         result.inner += 1;
@@ -527,7 +528,7 @@ async fn fn_call_return_mut_ref_to_copy() {
                 this.inner = inner;
             }
         }",
-        r#"var origNum = new RustInteger(0);
+        r#"let origNum = new RustInteger(0);
         function mutRefDoNothing(num) {
             return num;
         }
@@ -537,7 +538,7 @@ async fn fn_call_return_mut_ref_to_copy() {
             console.assert(num.inner === 1);
             return mutRefDoNothing(num).inner;
         }
-        var result = new RustInteger(addOne(origNum));
+        let result = new RustInteger(addOne(origNum));
         console.assert(result.inner === 1);
         console.assert(origNum.inner === 1);
         result.inner += 1;
@@ -581,7 +582,7 @@ async fn mutating_non_copy_value() {
                     this.inner = inner;
                 }
             }
-            var origNum = new RustInteger(0);
+            let origNum = new RustInteger(0);
             function addOne(num) {
                 console.assert(num.inner === 0);
                 num.inner += 1;
@@ -589,7 +590,7 @@ async fn mutating_non_copy_value() {
                 return num.inner;
             }
             {
-                var result = new RustInteger(addOne(origNum));
+                let result = new RustInteger(addOne(origNum));
                 console.assert(result.inner === 1);
                 result.inner += 1;
                 console.assert(result.inner === 2);
@@ -621,7 +622,7 @@ async fn reassign_im_val_to_mut_var() {
                     this.inner = inner;
                 }
             }
-            var num = new RustInteger(0);
+            let num = new RustInteger(0);
             num.inner += 1;
             console.assert(num.inner === 1);
             num.inner = 5;
@@ -654,12 +655,12 @@ async fn pass_mut_var_as_im_ref() {
                     this.inner = inner;
                 }
             }
-            var five = new RustInteger(5);
+            let five = new RustInteger(5);
             five.inner += 1;
             function foo(num) {
                 return num + 2;
             }
-            var result = foo(five.inner);
+            let result = foo(five.inner);
             five.inner += 1;
             console.assert(five.inner === 7);
             console.assert(result === 8);
@@ -689,9 +690,9 @@ async fn get_box_contents() {
                     this.inner = inner;
                 }
             }
-            var boxNum = 1;
+            let boxNum = 1;
             {
-                var numRef = new RustInteger(boxNum);
+                let numRef = new RustInteger(boxNum);
                 numRef.inner += 1;
                 console.assert(numRef.inner === 2);
             }
@@ -735,9 +736,9 @@ async fn get_box_contents_with_mut() {
                     this.inner = inner;
                 }
             }
-            var boxNum = new RustInteger(1);
+            let boxNum = new RustInteger(1);
             {
-                var numRef = new RustInteger(boxNum.inner);
+                let numRef = new RustInteger(boxNum.inner);
                 numRef.inner += 1;
                 console.assert(numRef.inner === 2);
                 boxNum.inner += 5;
@@ -746,7 +747,7 @@ async fn get_box_contents_with_mut() {
             }
             boxNum.inner += 5;
             console.assert(boxNum.inner === 11);
-            var boxTwo = 2;
+            let boxTwo = 2;
             boxNum.inner = boxTwo;
             boxNum.inner += 1;
             console.assert(boxNum.inner === 3);
@@ -801,9 +802,9 @@ async fn simple_block_using_var_keyword() {
 
     let expected = format_js(
         r#"
-            var num = 1;
+            let num = 1;
             {
-                var num = 2
+                let num = 2
                 console.assert(num === 2);
             }
             console.assert(num === 1);
@@ -860,9 +861,9 @@ async fn assign_mut_ref_from_mut_var() {
                     this.inner = inner;
                 }
             }
-            var num = new RustInteger(1);
+            let num = new RustInteger(1);
             {
-                var numRef = num;
+                let numRef = num;
                 numRef.inner += 1;
                 console.assert(numRef.inner === 2);
             }
@@ -893,8 +894,8 @@ async fn return_value_from_block() {
                     this.inner = inner;
                 }
             }
-            var num = new RustInteger(1);
-            var num2 = new RustInteger(
+            let num = new RustInteger(1);
+            let num2 = new RustInteger(
                     (() => {
                     num.inner += 1;
                     return num.inner;
@@ -925,8 +926,8 @@ async fn return_value_from_block2() {
                     this.inner = inner;
                 }
             }
-            var num = 1;
-            var num2 = new RustInteger((() => {
+            let num = 1;
+            let num2 = new RustInteger((() => {
                 return num;
             })());
             num2.inner += 1;
@@ -950,7 +951,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var() {
         assert!(num == 2);
         assert!(num2 == 1);
     });
-    // TODO simplify this stmt: `var numRef = new RustInteger(num.inner);` to `var numRef = num;`
+    // TODO simplify this stmt: `let numRef = new RustInteger(num.inner);` to `let numRef = num;`
     let expected = format_js(
         r#"
             class RustInteger {
@@ -958,9 +959,9 @@ async fn assign_mut_ref_of_im_ref_of_mut_var() {
                     this.inner = inner;
                 }
             }
-            var num = new RustInteger(1);
-            var num2 = (() => {
-                var numRef = new RustInteger(num.inner);
+            let num = new RustInteger(1);
+            let num2 = (() => {
+                let numRef = new RustInteger(num.inner);
                 return numRef.inner;
             })();
             num.inner += 1;
@@ -990,9 +991,9 @@ async fn assign_mut_ref_of_im_ref_of_mut_var2() {
                     this.inner = inner;
                 }
             }
-            var num = new RustInteger(1);
-            var num2 = (() => {
-                var numRef = new RustInteger(num.inner);
+            let num = new RustInteger(1);
+            let num2 = (() => {
+                let numRef = new RustInteger(num.inner);
                 return numRef.inner;
             })();
             console.assert(num.inner === 1);
@@ -1021,9 +1022,9 @@ async fn assign_mut_ref_of_im_ref_of_mut_var3() {
                     this.inner = inner;
                 }
             }
-            var num = 1;
-            var num2 = (() => {
-                var numRef = new RustInteger(num);
+            let num = 1;
+            let num2 = (() => {
+                let numRef = new RustInteger(num);
                 return numRef.inner;
             })();
             console.assert(num === 1);
@@ -1053,10 +1054,10 @@ async fn assign_mut_ref_of_im_ref_of_mut_var4() {
                         this.inner = inner;
                     }
                 }
-                var num = 1;
-                var num2 = new RustInteger(
+                let num = 1;
+                let num2 = new RustInteger(
                     (() => {
-                        var numRef = new RustInteger(num);
+                        let numRef = new RustInteger(num);
                         return numRef.inner;
                     })()
                 );
@@ -1095,9 +1096,9 @@ async fn mut_ref_box_contents() {
                     this.inner = inner;
                 }
             }
-            var boxNum = new RustInteger(1);
+            let boxNum = new RustInteger(1);
             {
-                var numRef = boxNum;
+                let numRef = boxNum;
                 numRef.inner += 1;
                 console.assert(numRef.inner === 2);
             }

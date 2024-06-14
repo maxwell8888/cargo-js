@@ -44,23 +44,23 @@ async fn function_body_returns_and_async() {
     // let generated_js = generated_js.print().unwrap().as_code();
     let expected_js = format_js(
         r#"
-        var _closure3 = (arg) => {
-            var _x = arg;
+        let _closure3 = (arg) => {
+            let _x = arg;
         };
-        var _closure4 = async (arg) => arg;
-        var _closure5 = async (arg) => {
-            var _x = arg;
+        let _closure4 = async (arg) => arg;
+        let _closure5 = async (arg) => {
+            let _x = arg;
         };
-        var _closure6 = async (arg) => {
-            var _x = "hello";
+        let _closure6 = async (arg) => {
+            let _x = "hello";
             return arg;
         }
-        var _closure7 = (arg) => {
+        let _closure7 = (arg) => {
             var ifTempAssignment;
             if (arg >= 0) {
                 ifTempAssignment = "positive";
             } else {
-                var _thing = 5;
+                let _thing = 5;
                 ifTempAssignment = "negative";
             }
             return ifTempAssignment;
@@ -71,14 +71,14 @@ async fn function_body_returns_and_async() {
     let actual = r2j_block!({
         let _closure = |arg: i32| arg;
     });
-    assert_eq!("var _closure = (arg) => arg;", actual);
+    assert_eq!("let _closure = (arg) => arg;", actual);
 
     let actual = r2j_block!({
         let _closure = || {
             5;
         };
     });
-    let expected = "var _closure = () => {
+    let expected = "let _closure = () => {
   5;
 };";
     assert_eq!(expected, actual);
@@ -101,10 +101,10 @@ async fn function_returns_if_else_if_else() {
     });
     let expected = format_js(
         r#"
-        var _closure = (arg) => {
+        let _closure = (arg) => {
             var ifTempAssignment;
             if (arg >= 0) {
-                var _thing = 5;
+                let _thing = 5;
                 ifTempAssignment = "positive";
             } else if (arg === 0) {
                 ifTempAssignment = "zero";
@@ -146,11 +146,11 @@ async fn closure_return_match() {
               return new Number("Some", [arg_0]);
             }
           }
-          var _closure = (arg) => {
+          let _closure = (arg) => {
           var ifTempAssignment;
           if (arg.id === Number.someId) {
             var [num] = arg.data;
-            var sum = num + 5;
+            let sum = num + 5;
             ifTempAssignment = sum;
           } else if (arg.id === Number.noneId) {
             ifTempAssignment = 0;

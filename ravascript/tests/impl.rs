@@ -138,7 +138,7 @@ async fn full_qualified_method_call() {
             }
             
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(Foo.baz(foo) === 0);
             }
 
@@ -191,7 +191,7 @@ async fn full_qualified_trait_method_call() {
             }
 
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(Foo.baz(foo) === 0);
             }
 
@@ -232,7 +232,7 @@ async fn call_method_before_impl_block_definition() {
                 }
             }
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(foo.bar() === 0);
             }
 
@@ -278,7 +278,7 @@ async fn multiple_impls_with_same_signature() {
             }
 
             function main() {
-                var foo = new Foo();
+                let foo = new Foo();
                 console.assert(foo.bar() === 4);
                 console.assert(foo.baz() === 5);
             }
@@ -320,7 +320,7 @@ async fn inherent_impl_in_different_module() {
                 }
             }
             function main() {
-                var foo = new Foo();
+                let foo = new Foo();
                 console.assert(foo.getNum() === 5);
             }
 
@@ -365,7 +365,7 @@ async fn scoped_inherent_impl_in_different_module() {
                 }
             }
             function main() {
-                var foo = new Foo();
+                let foo = new Foo();
                 console.assert(foo.getNum() === 5);
             }
 
@@ -423,10 +423,10 @@ async fn shadowed_structs_with_shadowed_methods() {
                         }
                     }
                     
-                    var foo = new Foo();
+                    let foo = new Foo();
                     console.assert(foo.bar() === 5);
                 }
-                var foo = new Foo();
+                let foo = new Foo();
                 console.assert(foo.bar() === 4);
                 cool();
             }
@@ -469,7 +469,7 @@ async fn dont_need_to_impl_private_method() {
             // crate
             class Foo {}
             function main() {
-                var foo = new Foo();
+                let foo = new Foo();
             }
 
             main();
@@ -516,13 +516,13 @@ async fn private_method_in_scoped_impl() {
             }
         }
         function main() {
-            var foo = new Foo();
+            let foo = new Foo();
             baz();
         }
         
         // bar
         function baz() {
-            var foo = new Foo();
+            let foo = new Foo();
         
             console.assert(foo.getNum() === 5);
         }
@@ -572,9 +572,9 @@ async fn module_level_shadowing_of_struct_name() {
             }
 
             function main() {
-                var foo1 = new Foo();
+                let foo1 = new Foo();
                 console.assert(foo1.getNum() === 4);
-                var foo2 = new bar__Foo();
+                let foo2 = new bar__Foo();
                 console.assert(foo2.getNum() === 5);
             }
 
@@ -634,11 +634,11 @@ async fn scoped_shadowing_of_struct_name() {
                     }
                 }
 
-                var foo = new Foo();
+                let foo = new Foo();
                 console.assert(foo.getNum() === 5);
             }
             anotherScope();
-            var foo = new Foo();
+            let foo = new Foo();
             console.assert(foo.getNum() === 4);
         "#,
     );
@@ -686,7 +686,7 @@ async fn call_method_in_same_impl_block_before_method_definition() {
                 }
             }
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(foo.bar() === 0);
                 console.assert(foo.baz() === 0);
             }
@@ -737,7 +737,7 @@ async fn simple_inherent_impl() {
             }
 
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(foo.baz() === 0);
                 console.assert(Foo.bar() === 1);
             }
@@ -790,7 +790,7 @@ async fn module_level_struct_scoped_inherent_impl() {
             }
             function scoped() {}
             function main() {
-                var foo = new Foo(0);
+                let foo = new Foo(0);
                 console.assert(foo.baz() === 0);
                 console.assert(Foo.bar() === 1);
             }
@@ -838,7 +838,7 @@ async fn scoped_simple_method_impl() {
                 }
             }
 
-            var foo = new Foo(0);
+            let foo = new Foo(0);
             console.assert(foo.baz() === 0);
             console.assert(Foo.bar() === 1);
         "#,
@@ -879,7 +879,7 @@ async fn simple_impl_trait_for_concrete() {
                 }
             }
 
-            var bar = new Bar(5);
+            let bar = new Bar(5);
             console.assert(bar.getFoo() === 5);
         "#,
     );
@@ -917,7 +917,7 @@ async fn simple_scoped_impl_trait_for_type_param() {
             }
             Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
             String.prototype.getFoo = Foo__for__T.prototype.getFoo;
-            var bar = new Bar();
+            let bar = new Bar();
             console.assert(bar.getFoo() === 4);
         "#,
     );
@@ -971,7 +971,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
             }
             Number.prototype.getBar = Bar__for__T.prototype.getBar;
             String.prototype.getBar = Bar__for__T.prototype.getBar;
-            var num = 1;
+            let num = 1;
             console.assert(num.getFoo() === 4);
             console.assert(num.getBar() === 5);
         "#,

@@ -6048,10 +6048,10 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
         }
     }
     if rust_prelude_types.some {
-        prelude_stmts.push(JsStmt::Raw("var Some = Option.Some;".to_string()))
+        prelude_stmts.push(JsStmt::Raw("let Some = Option.Some;".to_string()))
     }
     if rust_prelude_types.none {
-        prelude_stmts.push(JsStmt::Raw("var None = Option.None;".to_string()))
+        prelude_stmts.push(JsStmt::Raw("let None = Option.None;".to_string()))
     }
 
     if rust_prelude_types.string_prototype_extensions {

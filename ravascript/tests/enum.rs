@@ -57,12 +57,12 @@ async fn enum_match() {
                     return new MyEnum("Baz", [arg_0, arg_1]);
                 }
             }
-            var myData = MyEnum.FooBar;
-            var myData = MyEnum.Bar({
+            let myData = MyEnum.FooBar;
+            myData = MyEnum.Bar({
                 x: 4,
                 y: "Hello",
             });
-            var myData = MyEnum.Baz("Hi", 5);
+            myData = MyEnum.Baz("Hi", 5);
             var matchResult;
             if (myData.id === MyEnum.fooBarId) {
                 matchResult = 1;
@@ -136,8 +136,8 @@ async fn enum_methods() {
     });
 
     // include_str!("option_prelude.js"),
-    // "var Some = Option.Some;",
-    // "var None = Option.None;",
+    // "let Some = Option.Some;",
+    // "let None = Option.None;",
     // include_str!("string_prototype_extensions.js"),
     // "\n",
     // include_str!("number_prototype_extensions.js"),
@@ -199,23 +199,23 @@ async fn enum_methods() {
             }
         }
         
-        var bar = Animal.Bar({
+        let bar = Animal.Bar({
             x: 1,
             y: "hibar",
         });
-        var baz = Animal.Baz("hibaz", 5);
-        var barY = bar.barY();
+        let baz = Animal.Baz("hibaz", 5);
+        let barY = bar.barY();
         console.assert(barY === "hibar");
-        var barYTwo = baz.barY();
+        let barYTwo = baz.barY();
         console.assert(barYTwo === "hibaz");
-        var bar = Animal.Bar({
+        bar = Animal.Bar({
             x: 1,
             y: "hibar",
         });
-        var baz = Animal.Baz("hibaz", 5);
-        var bazNum = bar.bazNum();
+        baz = Animal.Baz("hibaz", 5);
+        let bazNum = bar.bazNum();
         console.assert(bazNum === 0);
-        var bazNum = baz.bazNum();
+        bazNum = baz.bazNum();
         console.assert(bazNum === 5);
         "#
     ));

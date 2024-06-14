@@ -54,16 +54,16 @@ async fn mutating_strings() {
             console.assert(text.inner === "two");
             return text;
         }
-        var origText = new RustString("one");
+        let origText = new RustString("one");
         {
-            var result = addOne(origText);
+            let result = addOne(origText);
             console.assert(result.inner === "two");
-            var resultCopy = result.inner;
+            let resultCopy = result.inner;
             console.assert(resultCopy === "two");
             result.inner += "three";
             console.assert(resultCopy === "two");
             console.assert(result.inner === "twothree");
-            var four = new RustString("four");
+            let four = new RustString("four");
             result = four;
             console.assert(result.inner === "four");
         }

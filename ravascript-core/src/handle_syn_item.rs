@@ -264,11 +264,12 @@ pub fn handle_item_fn(
                         .push(scoped_var);
 
                     // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
+                    // TODO need to add this to `handle_impl_fn_item()`
                     if pat_ident.mutability.is_some() {
                         copy_stmts.push(JsStmt::Local(JsLocal {
                             public: false,
                             export: false,
-                            type_: LocalType::Var,
+                            type_: LocalType::None,
                             lhs: LocalName::Single(pat_ident.ident.to_string()),
                             // value: JsExpr::MethodCall(
                             //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
@@ -459,7 +460,7 @@ pub fn handle_item_const(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        type_: LocalType::Var,
+        type_: LocalType::Const,
         lhs: LocalName::Single(name),
         value: handle_expr(&*item_const.expr, global_data, current_module).0,
     })

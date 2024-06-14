@@ -70,10 +70,10 @@ async fn dom_nodes_and_elements() {
 
     // let expected = format_js(
     //     r#"
-    //     var tagName = "button";
-    //     var button = document.createElement(tagName);
-    //     var input = document.createElement("input");
-    //     var div = document.createElement("div");
+    //     let tagName = "button";
+    //     let button = document.createElement(tagName);
+    //     let input = document.createElement("input");
+    //     let div = document.createElement("div");
     //     div.appendChild(input);
     //     div.appendChild(button);
     //     "#,
@@ -81,7 +81,7 @@ async fn dom_nodes_and_elements() {
     let expected = format_js(
         r#"
         function main() {
-            var div = document.createElement("div");
+            let div = document.createElement("div");
         }
 
         main();
@@ -104,9 +104,9 @@ async fn it_writes_to_clipboard() {
 
     let expected_js = format_js(
         r#"
-        var input = document.createElement("input");
-        var button = document.createElement("button");
-        var getText = async (_event) => await navigator.clipboard.writeText(input.value);
+        let input = document.createElement("input");
+        let button = document.createElement("button");
+        let getText = async (_event) => await navigator.clipboard.writeText(input.value);
         button.addEventListener("click", getText);
         "#,
     );

@@ -114,6 +114,24 @@ fn handle_local(
     // dbg!("handle_local");
     // println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
+    // NOTE we must calculate lhs_is_shadowing before calling `handle_pat(&local.pat...` because handle pat adds the current var to the scope
+    let lhs_is_shadowing = global_data
+        .scopes
+        .last()
+        .unwrap()
+        .variables
+        .iter()
+        .any(|var| match &local.pat {
+            // TODO determine whether lhs is shadowing for `Pat`s other than `Pat::Ident`
+            Pat::Ident(pat_ident) => pat_ident.ident == &var.name,
+            Pat::Slice(_) => false,
+            Pat::Struct(_) => false,
+            Pat::Wild(_) => false,
+            other => {
+                dbg!(other);
+                todo!();
+            }
+        });
     let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
 
     // If lhs is `mut` and rhs is a JS primative then we need to wrap it in eg `new RustInteger()`. If rhs is already a `mut` JS primative, it needs copying.
@@ -157,9 +175,9 @@ fn handle_local(
                         RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
                             let item_def = global_data
                                 .lookup_item_def_known_module_assert_not_func2(
-                                    &module_path,
-                                    &global_data.scope_id_as_option(),
-                                    &name,
+                                    module_path,
+                                    scope_id,
+                                    name,
                                 );
                             item_def.is_copy && var.mut_ && !mut_ref_taken
                         }
@@ -318,13 +336,29 @@ fn handle_local(
             )
         }
 
-        rhs => JsStmt::Local(JsLocal {
-            public: false,
-            export: false,
-            type_: LocalType::Var,
-            lhs,
-            value: rhs,
-        }),
+        rhs => {
+            if lhs_is_shadowing {
+                JsStmt::Expr(
+                    JsExpr::Assignment(
+                        Box::new(match lhs {
+                            LocalName::Single(name) => JsExpr::Path(vec![name]),
+                            LocalName::DestructureObject(_) => todo!(),
+                            LocalName::DestructureArray(_) => todo!(),
+                        }),
+                        Box::new(rhs),
+                    ),
+                    true,
+                )
+            } else {
+                JsStmt::Local(JsLocal {
+                    public: false,
+                    export: false,
+                    type_: LocalType::Let,
+                    lhs,
+                    value: rhs,
+                })
+            }
+        }
     }
 
     // Add .copy() if rhs is a mut...
