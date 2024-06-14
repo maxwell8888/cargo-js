@@ -6228,12 +6228,13 @@ pub fn process_items(
 
     let prelude_items = if include_web {
         let web_prelude_crate_path = "../web-prelude";
-        let web_prelude_entry_point_path = PathBuf::new()
-            .join(web_prelude_crate_path)
-            .join("src")
-            .join("lib.rs");
-        // TODO this needs to be an include string so it runs at compile time NO, web-prelude actually needs to be provided as a standlone crate which is added as a dependency so that RA etc works, but cargo-js knows not to actually transpile that crate.
-        let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
+        // let web_prelude_entry_point_path = PathBuf::new()
+        //     .join(web_prelude_crate_path)
+        //     .join("src")
+        //     .join("lib.rs");
+        // We include the web prelude at compile time so that it can be used for eg from_block or from_file which operate on simple strings of Rust code and no Cargo project
+        // let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
+        let code = include_str!("../../web-prelude/src/lib.rs");
         let file = syn::parse_file(&code).unwrap();
         let prelude_items = file.items;
         modules.push(ModuleData {
