@@ -2676,7 +2676,7 @@ struct GlobalData {
     scope_count: Vec<usize>,
 }
 impl GlobalData {
-    fn new(crate_path: Option<PathBuf>, duplicates: Vec<Duplicate>) -> GlobalData {
+    fn new(crate_path: Option<PathBuf>) -> GlobalData {
         // Create prelude definitions
         let i32_def = ItemDefinition {
             ident: "i32".to_string(),
@@ -2751,7 +2751,7 @@ impl GlobalData {
             ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
-            duplicates,
+            duplicates: Vec::new(),
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
             scoped_impl_blocks: Vec::new(),
@@ -4583,12 +4583,6 @@ fn populate_item_definitions_items_individual_item(
     scope_id: &mut Vec<usize>,
     scope_count: &mut usize,
 ) {
-    // let current_scope_id = if scope_id.is_empty() {
-    //     None
-    // } else {
-    //     Some(scope_id.clone())
-    // };
-
     match item {
         Item::Const(item_const) => {
             let const_name = item_const.ident.to_string();
@@ -6258,53 +6252,10 @@ pub fn process_items(
     };
     // dbg!(&modules);
 
-    // find duplicates
-    // TODO account for local functions which shadow these names
-    // (name space, module path (which gets popped), name, original module path)
-
-    let mut duplicates = Vec::new();
-    // TODO surely we want
-    for name in &names_for_finding_duplicates {
-        if names_for_finding_duplicates
-            .iter()
-            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
-            .chain(scoped_names_for_finding_duplicates.iter())
-            .filter(|(_module_path, name2)| &name.1 == name2)
-            .count()
-            > 1
-        {
-            duplicates.push(Duplicate {
-                namespace: Vec::<String>::new(),
-                module_path: name.0.clone(),
-                name: name.1.clone(),
-                original_module_path: name.0.clone(),
-            });
-        }
-    }
-    // First add a single path segment to names that are duplicated by scoped items
-    for dup in duplicates.iter_mut() {
-        let is_scoped_name = scoped_names_for_finding_duplicates
-            .iter()
-            .any(|s| dup.name == s.1);
-        if is_scoped_name {
-            dup.namespace.insert(0, dup.module_path.pop().unwrap())
-        }
-    }
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-
-    for dup in duplicates.iter_mut() {
-        dup.namespace.push(dup.name.clone());
-    }
-
     // resolve_use_stmts(&mut modules);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = GlobalData::new(crate_path, duplicates.clone());
+    let mut global_data = GlobalData::new(crate_path);
     global_data.modules = modules;
 
     // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
@@ -6387,6 +6338,51 @@ pub fn process_items(
     //     .map(|m| m.path.clone())
     //     .collect::<Vec<_>>());
 
+    // find duplicates
+    // TODO account for local functions which shadow these names
+    // (name space, module path (which gets popped), name, original module path)
+
+    let mut duplicates = Vec::new();
+    // TODO surely we want
+    for name in &names_for_finding_duplicates {
+        if names_for_finding_duplicates
+            .iter()
+            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
+            .chain(scoped_names_for_finding_duplicates.iter())
+            .filter(|(_module_path, name2)| &name.1 == name2)
+            .count()
+            > 1
+        {
+            duplicates.push(Duplicate {
+                namespace: Vec::<String>::new(),
+                module_path: name.0.clone(),
+                name: name.1.clone(),
+                original_module_path: name.0.clone(),
+            });
+        }
+    }
+    // First add a single path segment to names that are duplicated by scoped items
+    for dup in duplicates.iter_mut() {
+        let is_scoped_name = scoped_names_for_finding_duplicates
+            .iter()
+            .any(|s| dup.name == s.1);
+        if is_scoped_name {
+            dup.namespace.insert(0, dup.module_path.pop().unwrap())
+        }
+    }
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+    update_dup_names(&mut duplicates);
+
+    for dup in duplicates.iter_mut() {
+        dup.namespace.push(dup.name.clone());
+    }
+    global_data.duplicates = duplicates.clone();
+
+    // Parse to JS
     for module_data in global_data
         .modules
         .clone()
@@ -6792,7 +6788,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
 
     // resolve_use_stmts(&mut modules);
 
-    let mut global_data = GlobalData::new(None, Vec::new());
+    let mut global_data = GlobalData::new(None);
     global_data.modules = modules;
 
     populate_item_definitions(&mut global_data);
@@ -6886,7 +6882,7 @@ pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
     let mut current_module = Vec::new();
-    let mut global_data = GlobalData::new(None, Vec::new());
+    let mut global_data = GlobalData::new(None);
     js_stmts_from_syn_items(items, &mut current_module, &mut global_data)
 }
 
@@ -6895,7 +6891,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 
     let mut js_stmts = Vec::new();
     for stmt in &item_fn.block.stmts {
-        let new_js_stmts = handle_stmt(stmt, &mut GlobalData::new(None, Vec::new()), &Vec::new())
+        let new_js_stmts = handle_stmt(stmt, &mut GlobalData::new(None), &Vec::new())
             .into_iter()
             .map(|(stmt, type_)| stmt);
         js_stmts.extend(new_js_stmts);
