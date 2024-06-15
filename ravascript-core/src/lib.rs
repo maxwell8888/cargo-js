@@ -4229,7 +4229,7 @@ fn extract_data(
     // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
     // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
-    module_path: &mut Vec<String>,
+    current_path: &mut Vec<String>,
     // (module path, name)
     names: &mut Vec<(Vec<String>, String)>,
     scoped_names: &mut Vec<(Vec<String>, String)>,
@@ -4251,65 +4251,54 @@ fn extract_data(
             Item::Const(item_const) => {
                 let const_name = item_const.ident.to_string();
                 if module_level_items {
-                    names.push((module_path.clone(), const_name.clone()));
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
+                    names.push((current_path.clone(), const_name.clone()));
+                    let module_data = modules.get_mut(current_path);
                     match item_const.vis {
-                        Visibility::Public(_) => current_module_data
+                        Visibility::Public(_) => module_data
                             .pub_definitions
                             .push(item_const.ident.to_string()),
                         Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
+                        Visibility::Inherited => module_data
                             .private_definitions
                             .push(item_const.ident.to_string()),
                     }
                 } else {
-                    scoped_names.push((module_path.clone(), const_name.clone()));
+                    scoped_names.push((current_path.clone(), const_name.clone()));
                 }
             }
             Item::Enum(item_enum) => {
                 let enum_name = item_enum.ident.to_string();
                 if module_level_items {
-                    names.push((module_path.clone(), enum_name.clone()));
+                    names.push((current_path.clone(), enum_name.clone()));
 
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
+                    let module_data = modules.get_mut(current_path);
                     match item_enum.vis {
-                        Visibility::Public(_) => current_module_data
+                        Visibility::Public(_) => module_data
                             .pub_definitions
                             .push(item_enum.ident.to_string()),
                         Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => current_module_data
+                        Visibility::Inherited => module_data
                             .private_definitions
                             .push(item_enum.ident.to_string()),
                     }
                 } else {
-                    scoped_names.push((module_path.clone(), enum_name.clone()));
+                    scoped_names.push((current_path.clone(), enum_name.clone()));
                 }
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
                 let fn_name = item_fn.sig.ident.to_string();
                 if module_level_items {
-                    names.push((module_path.clone(), fn_name.clone()));
+                    names.push((current_path.clone(), fn_name.clone()));
 
-                    let current_module_data = modules
-                        .iter_mut()
-                        .find(|module| module.path == *module_path)
-                        .unwrap();
+                    let module_data = modules.get_mut(current_path);
                     match item_fn.vis {
-                        Visibility::Public(_) => current_module_data.pub_definitions.push(fn_name),
+                        Visibility::Public(_) => module_data.pub_definitions.push(fn_name),
                         Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => {
-                            current_module_data.private_definitions.push(fn_name)
-                        }
+                        Visibility::Inherited => module_data.private_definitions.push(fn_name),
                     }
                 } else {
-                    scoped_names.push((module_path.clone(), fn_name));
+                    scoped_names.push((current_path.clone(), fn_name));
                 }
 
                 // Record scoped ident names so we can ensure any module level items with the same name are namespaced
@@ -4329,7 +4318,7 @@ fn extract_data(
                     false,
                     &items,
                     crate_path,
-                    module_path,
+                    current_path,
                     names,
                     scoped_names,
                     modules,
@@ -4362,7 +4351,7 @@ fn extract_data(
                     false,
                     &items,
                     crate_path,
-                    module_path,
+                    current_path,
                     names,
                     scoped_names,
                     modules,
@@ -4370,27 +4359,24 @@ fn extract_data(
             }
             Item::Macro(_) => {}
             Item::Mod(item_mod) => {
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
+                let module_data = modules.get_mut(current_path);
                 match item_mod.vis {
-                    Visibility::Public(_) => current_module_data
-                        .pub_submodules
-                        .push(item_mod.ident.to_string()),
+                    Visibility::Public(_) => {
+                        module_data.pub_submodules.push(item_mod.ident.to_string())
+                    }
                     Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
+                    Visibility::Inherited => module_data
                         .private_submodules
                         .push(item_mod.ident.to_string()),
                 }
 
-                let parent_name = module_path.last().map(|x| x.clone());
-                module_path.push(item_mod.ident.to_string());
+                let parent_name = current_path.last().map(|x| x.clone());
+                current_path.push(item_mod.ident.to_string());
 
                 let mut partial_module_data = ModuleData {
                     name: item_mod.ident.to_string(),
                     parent_name,
-                    path: module_path.clone(),
+                    path: current_path.clone(),
                     pub_definitions: Vec::new(),
                     private_definitions: Vec::new(),
                     pub_submodules: Vec::new(),
@@ -4416,7 +4402,7 @@ fn extract_data(
                         true,
                         &content.1,
                         crate_path,
-                        module_path,
+                        current_path,
                         names,
                         scoped_names,
                         modules,
@@ -4426,10 +4412,10 @@ fn extract_data(
                         let mut file_path = crate_path2.clone();
                         file_path.push("src");
                         // IMPORTANT TODO need to check for "crate" *and* "my_external_crate", and also use the corrent `crate_path`
-                        if *module_path == ["crate"] {
+                        if *current_path == ["crate"] {
                             file_path.push("main.rs");
                         } else {
-                            let mut module_path_copy = module_path.clone();
+                            let mut module_path_copy = current_path.clone();
                             // remove "crate"
                             module_path_copy.remove(0);
                             let last = module_path_copy.last_mut().unwrap();
@@ -4446,7 +4432,7 @@ fn extract_data(
                             true,
                             &file.items,
                             crate_path,
-                            module_path,
+                            current_path,
                             names,
                             scoped_names,
                             modules,
@@ -4455,41 +4441,35 @@ fn extract_data(
                         panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
                     }
                 }
-                module_path.pop();
+                current_path.pop();
             }
             Item::Static(_) => todo!(),
             Item::Struct(item_struct) => {
                 let struct_name = item_struct.ident.to_string();
-                names.push((module_path.clone(), struct_name.clone()));
+                names.push((current_path.clone(), struct_name.clone()));
 
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
+                let module_data = modules.get_mut(current_path);
                 match item_struct.vis {
-                    Visibility::Public(_) => current_module_data
+                    Visibility::Public(_) => module_data
                         .pub_definitions
                         .push(item_struct.ident.to_string()),
                     Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
+                    Visibility::Inherited => module_data
                         .private_definitions
                         .push(item_struct.ident.to_string()),
                 }
             }
             Item::Trait(item_trait) => {
-                names.push((module_path.clone(), item_trait.ident.to_string()));
+                names.push((current_path.clone(), item_trait.ident.to_string()));
 
                 // TODO adding traits to the definitions like below means their names will be taken into account when finding duplicates and namespacing, which we don't want because traits don't actually appear in the transpiled JS
-                let current_module_data = modules
-                    .iter_mut()
-                    .find(|module| module.path == *module_path)
-                    .unwrap();
+                let module_data = modules.get_mut(current_path);
                 match item_trait.vis {
-                    Visibility::Public(_) => current_module_data
+                    Visibility::Public(_) => module_data
                         .pub_definitions
                         .push(item_trait.ident.to_string()),
                     Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => current_module_data
+                    Visibility::Inherited => module_data
                         .private_definitions
                         .push(item_trait.ident.to_string()),
                 }
@@ -4498,15 +4478,21 @@ fn extract_data(
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
             Item::Use(item_use) => {
-                let module = modules
-                    .iter_mut()
-                    .find(|module| &module.path == module_path)
-                    .unwrap();
+                let module = modules.get_mut(current_path);
                 handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         }
+    }
+}
+
+trait GetModule {
+    fn get_mut(&mut self, module_path: &Vec<String>) -> &mut ModuleData;
+}
+impl GetModule for Vec<ModuleData> {
+    fn get_mut(&mut self, module_path: &Vec<String>) -> &mut ModuleData {
+        self.iter_mut().find(|m| &m.path == module_path).unwrap()
     }
 }
 
