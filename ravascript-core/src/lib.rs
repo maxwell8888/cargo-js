@@ -4229,9 +4229,6 @@ fn extract_data(
     // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
-    // (module path, name)
-    names: &mut Vec<(Vec<String>, String)>,
-    scoped_names: &mut Vec<(Vec<String>, String)>,
     modules: &mut Vec<ModuleData>,
 ) {
     // let mut module_path_with_crate = vec!["crate".to_string()];
@@ -4250,7 +4247,6 @@ fn extract_data(
             Item::Const(item_const) => {
                 let const_name = item_const.ident.to_string();
                 if module_level_items {
-                    names.push((current_path.clone(), const_name.clone()));
                     let module_data = modules.get_mut(current_path);
                     match item_const.vis {
                         Visibility::Public(_) => module_data
@@ -4261,15 +4257,11 @@ fn extract_data(
                             .private_definitions
                             .push(item_const.ident.to_string()),
                     }
-                } else {
-                    scoped_names.push((current_path.clone(), const_name.clone()));
                 }
             }
             Item::Enum(item_enum) => {
                 let enum_name = item_enum.ident.to_string();
                 if module_level_items {
-                    names.push((current_path.clone(), enum_name.clone()));
-
                     let module_data = modules.get_mut(current_path);
                     match item_enum.vis {
                         Visibility::Public(_) => module_data
@@ -4280,24 +4272,18 @@ fn extract_data(
                             .private_definitions
                             .push(item_enum.ident.to_string()),
                     }
-                } else {
-                    scoped_names.push((current_path.clone(), enum_name.clone()));
                 }
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
                 let fn_name = item_fn.sig.ident.to_string();
                 if module_level_items {
-                    names.push((current_path.clone(), fn_name.clone()));
-
                     let module_data = modules.get_mut(current_path);
                     match item_fn.vis {
                         Visibility::Public(_) => module_data.pub_definitions.push(fn_name),
                         Visibility::Restricted(_) => todo!(),
                         Visibility::Inherited => module_data.private_definitions.push(fn_name),
                     }
-                } else {
-                    scoped_names.push((current_path.clone(), fn_name));
                 }
 
                 // Record scoped ident names so we can ensure any module level items with the same name are namespaced
@@ -4313,15 +4299,7 @@ fn extract_data(
                     })
                     .collect::<Vec<_>>();
 
-                extract_data(
-                    false,
-                    &items,
-                    crate_path,
-                    current_path,
-                    names,
-                    scoped_names,
-                    modules,
-                )
+                extract_data(false, &items, crate_path, current_path, modules)
             }
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
@@ -4346,15 +4324,7 @@ fn extract_data(
                     .flatten()
                     .collect::<Vec<_>>();
 
-                extract_data(
-                    false,
-                    &items,
-                    crate_path,
-                    current_path,
-                    names,
-                    scoped_names,
-                    modules,
-                )
+                extract_data(false, &items, crate_path, current_path, modules)
             }
             Item::Macro(_) => {}
             Item::Mod(item_mod) => {
@@ -4384,15 +4354,7 @@ fn extract_data(
                     modules.push(partial_module_data);
 
                     // TODO how does `mod bar { mod foo; }` work?
-                    extract_data(
-                        true,
-                        &content.1,
-                        crate_path,
-                        current_path,
-                        names,
-                        scoped_names,
-                        modules,
-                    );
+                    extract_data(true, &content.1, crate_path, current_path, modules);
                 } else {
                     if let Some(crate_path2) = crate_path {
                         let mut file_path = crate_path2.clone();
@@ -4414,15 +4376,7 @@ fn extract_data(
 
                         partial_module_data.items = file.items.clone();
                         modules.push(partial_module_data);
-                        extract_data(
-                            true,
-                            &file.items,
-                            crate_path,
-                            current_path,
-                            names,
-                            scoped_names,
-                            modules,
-                        );
+                        extract_data(true, &file.items, crate_path, current_path, modules);
                     } else {
                         panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
                     }
@@ -4432,8 +4386,8 @@ fn extract_data(
             Item::Static(_) => todo!(),
             Item::Struct(item_struct) => {
                 let struct_name = item_struct.ident.to_string();
-                names.push((current_path.clone(), struct_name.clone()));
 
+                // TODO why does Enum only do this when `is_module_level == true`??
                 let module_data = modules.get_mut(current_path);
                 match item_struct.vis {
                     Visibility::Public(_) => module_data
@@ -4446,8 +4400,6 @@ fn extract_data(
                 }
             }
             Item::Trait(item_trait) => {
-                names.push((current_path.clone(), item_trait.ident.to_string()));
-
                 // TODO adding traits to the definitions like below means their names will be taken into account when finding duplicates and namespacing, which we don't want because traits don't actually appear in the transpiled JS
                 let module_data = modules.get_mut(current_path);
                 match item_trait.vis {
@@ -5870,8 +5822,13 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
     }
 }
 
-fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
+fn update_dup_names(duplicates: &mut Vec<Duplicate>) -> bool {
+    let mut found_duplicate = false;
+
     // We take a copy to make sure both duplicates have a path segment added to their namespace, rather than just the first one that is found
+    // NOTE we add to the name space of all duplicates rather than just one because they eventually diverge eg we end up with:
+    // [green__foo__Bar] and [blue__foo__Bar]. (Though this case will be rare as it relies on having two submodules named `foo` in different parent modules `green` and `blue`, in most cases there won't be duplicate module names so we will end up with something like:
+    // [green__Bar] and [blue__Bar])
     let dups_copy = duplicates.clone();
     for dup in duplicates.iter_mut() {
         if dups_copy
@@ -5883,8 +5840,11 @@ fn update_dup_names(duplicates: &mut Vec<Duplicate>) {
             if dup.module_path != vec!["crate"] {
                 dup.namespace.insert(0, dup.module_path.pop().unwrap())
             }
+            found_duplicate = true;
         }
     }
+
+    found_duplicate
 }
 
 fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
@@ -6131,17 +6091,12 @@ pub fn process_items(
     crate_module.items = items.clone();
     modules.push(crate_module);
 
-    // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
-    let mut names_to_dedup = Vec::new();
-    let mut scoped_names_to_dedup = Vec::new();
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
     extract_data(
         true,
         &items,
         &crate_path,
         &mut vec!["crate".to_string()],
-        &mut names_to_dedup,
-        &mut scoped_names_to_dedup,
         &mut modules,
     );
 
@@ -6162,6 +6117,8 @@ pub fn process_items(
     // So a flag seems the best approach but would be even easier to just check it using `Item::Use` so that is one less things for users to worry about or get wrong, yeah but flag is easier just just use that for now (especially given it is a niche use case), to check for use of web_prelude we need to resolve all the use stmts to make sure it isn't acutally eg `mod web_prelude { user stuff ... }`
 
     // Look for web prelude
+    // TODO make this correct. Whilst it would be easier to identify web_prelude usage if `make_use_mappings_absolute()` (or whatever) was implemented, it is still impossible to know whether web_prelude is being used until we parse the entire syntax in `js_stmts_from_syn_items()` since we can have cases like:
+    // `let div = web_prelude::document::create_element("div");`
     let include_web = look_for_web_prelude(&modules);
 
     if include_web {
@@ -6184,11 +6141,11 @@ pub fn process_items(
             &prelude_items,
             &Some(web_prelude_crate_path.into()),
             &mut vec!["web_prelude".to_string()],
-            &mut names_to_dedup,
-            &mut scoped_names_to_dedup,
             &mut modules,
         );
     };
+
+    // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
     let mut global_data = GlobalData::new(crate_path);
@@ -6244,67 +6201,92 @@ pub fn process_items(
         bar.get_foo();
     }
 
-    // if include_web {
-    //     let stmts = js_stmts_from_syn_items(
-    //         prelude_items,
-    //         &mut vec!["web_prelude".to_string()],
-    //         &mut global_data,
-    //     );
-    //     global_data.transpiled_modules.push(JsModule {
-    //         public: true,
-    //         name: "web_prelude".to_string(),
-    //         module_path: vec!["web_prelude".to_string()],
-    //         stmts,
-    //     });
-    // }
-
-    // dbg!(global_data
-    //     .modules
-    //     .iter()
-    //     .map(|m| m.path.clone())
-    //     .collect::<Vec<_>>());
-
     // find duplicates
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
 
+    // TODO confine use of camel and case_convert to handle_syn_*** so we can be confident we are dealing with snake_case
+
+    // TODO try and use same code for counting/creating scopes for all passes to ensure they stay in sync
+
+    // TODO tests
+
+    // Extract vec: Vec<(module path, name)> of items from modules and scopes
+    // NOTE I think it is impossible to do this without creating a new Vec because we need to be able to sort the Vec
+    // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
+    // (module path, item name)
+    let mut names_to_dedup = Vec::new();
+    let mut scoped_names_to_dedup = Vec::new();
+    for m in &global_data.modules {
+        for item_def in &m.item_definitons {
+            names_to_dedup.push((&m.path, &item_def.ident));
+        }
+        for fn_info in &m.fn_info {
+            names_to_dedup.push((&m.path, &fn_info.ident));
+        }
+        for trait_def in &m.trait_definitons {
+            names_to_dedup.push((&m.path, &trait_def.name));
+        }
+        for const_ in &m.consts {
+            names_to_dedup.push((&m.path, &const_.name));
+        }
+        for svd in &m.scoped_various_definitions {
+            for item_def in &svd.1.item_definitons {
+                scoped_names_to_dedup.push((&m.path, &item_def.ident));
+            }
+            for fn_info in &svd.1.fn_info {
+                scoped_names_to_dedup.push((&m.path, &fn_info.ident));
+            }
+            for trait_def in &svd.1.trait_definitons {
+                scoped_names_to_dedup.push((&m.path, &trait_def.name));
+            }
+            for const_ in &svd.1.consts {
+                scoped_names_to_dedup.push((&m.path, &const_.name));
+            }
+        }
+    }
     let mut duplicates = Vec::new();
-    // TODO surely we want
     for name in &names_to_dedup {
         if names_to_dedup
             .iter()
-            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
+            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique (ie only duplicated in different scopes? Doesn't make much sense, do we mean a single module level name that is only duplicated by scoped items?), but we still want them namespaced (why?), so this needs to be taken into account in `update_dup_names`
             .chain(scoped_names_to_dedup.iter())
             .filter(|(_module_path, name2)| &name.1 == name2)
             .count()
             > 1
         {
-            duplicates.push(Duplicate {
-                namespace: Vec::<String>::new(),
+            let mut dup = Duplicate {
+                namespace: Vec::new(),
                 module_path: name.0.clone(),
                 name: name.1.clone(),
                 original_module_path: name.0.clone(),
-            });
-        }
-    }
-    // First add a single path segment to names that are duplicated by scoped items
-    for dup in duplicates.iter_mut() {
-        let is_scoped_name = scoped_names_to_dedup.iter().any(|s| dup.name == s.1);
-        if is_scoped_name {
-            dup.namespace.insert(0, dup.module_path.pop().unwrap())
-        }
-    }
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
-    update_dup_names(&mut duplicates);
+            };
 
+            // To start off, add a single path segment to names that are duplicated by scoped items
+            let is_scoped_name = scoped_names_to_dedup.iter().any(|s| &dup.name == s.1);
+            if is_scoped_name {
+                dup.namespace.insert(0, dup.module_path.pop().unwrap())
+            }
+
+            duplicates.push(dup);
+        }
+    }
+
+    // If a duplicate is found add to it's "namespace" by popping from the (remaining) module path and inserting it at the beginning of the namespace
+    loop {
+        let found_duplicate = update_dup_names(&mut duplicates);
+        if !found_duplicate {
+            break;
+        }
+    }
+
+    // Finally, add the item name to the namespace
     for dup in duplicates.iter_mut() {
         dup.namespace.push(dup.name.clone());
     }
-    global_data.duplicates = duplicates.clone();
+
+    // TODO rather than storing a global list of duplicates, would it not make more sense to have a "dedup path" field on ItemDef etc? This might be more effeicient performance wise but would be harder to test?
+    global_data.duplicates = duplicates;
 
     // Parse to JS
     for module_data in global_data
