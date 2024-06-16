@@ -104,10 +104,10 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
 /// `relative_path` (snake) is a temporary var for building the relative path that gets copied into `items`
 ///
 /// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
-/// 
+///
 fn tree_parsing_for_boilerplate(
     use_tree: &UseTree,
-    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt 
+    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt
     relative_path: &mut Vec<String>,
     items: &mut Vec<(String, Vec<String>)>,
 ) {
@@ -4483,14 +4483,13 @@ impl GetModule for Vec<ModuleData> {
     }
 }
 
-fn populate_item_definitions(global_data: &mut GlobalData) {
+fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
 
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
     // We also need it for looking up trait definitions
-    let global_data_copy = global_data.clone();
 
-    for module in &mut global_data.modules {
+    for module in modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
             module_path = ?module.path
@@ -4501,20 +4500,11 @@ fn populate_item_definitions(global_data: &mut GlobalData) {
         let items = module.items.clone();
         let module_path = module.path.clone();
         let mut scope_id = Vec::new();
-        // let mut scope_number = Vec::new();
-        // populate_item_definitions_items(
-        //     &items,
-        //     &global_data_copy,
-        //     &module_path,
-        //     &mut var_defs,
-        //     module,
-        //     &mut scope_number,
-        // );
+
         let mut scope_count = 0;
         for item in &items {
             populate_item_definitions_items_individual_item(
                 item,
-                &global_data_copy,
                 &module_path,
                 &mut var_defs,
                 module,
@@ -4562,7 +4552,7 @@ struct VariousDefintions {
 
 fn populate_item_definitions_items_individual_item(
     item: &Item,
-    global_data: &GlobalData,
+    // global_data: &GlobalData,
     module_path: &Vec<String>,
     // These `various_defs` are will either be added to a module if this fn is called when iterating over module level items, or a scope is it is called when iterating over stmts
     various_defs: &mut VariousDefintions,
@@ -4697,7 +4687,7 @@ fn populate_item_definitions_items_individual_item(
             // );
             populate_item_definitions_stmts(
                 &item_fn.block.stmts,
-                global_data,
+                // global_data,
                 module_path,
                 &mut scoped_various_defs,
                 module,
@@ -4737,7 +4727,7 @@ fn populate_item_definitions_items_individual_item(
                         let mut scoped_various_defs = VariousDefintions::default();
                         populate_item_definitions_stmts(
                             &impl_item_fn.block.stmts,
-                            global_data,
+                            // global_data,
                             module_path,
                             &mut scoped_various_defs,
                             module,
@@ -4845,7 +4835,7 @@ fn populate_item_definitions_items_individual_item(
 
 fn populate_item_definitions_stmts(
     stmts: &Vec<Stmt>,
-    global_data: &GlobalData,
+    // global_data: &GlobalData,
     module_path: &Vec<String>,
     current_scope_various_defs: &mut VariousDefintions,
     module: &mut ModuleData,
@@ -4859,7 +4849,7 @@ fn populate_item_definitions_stmts(
                 let init = local.init.as_ref().unwrap();
                 populate_item_definitions_expr(
                     &init.expr,
-                    global_data,
+                    // global_data,
                     module_path,
                     // current_scope_various_defs,
                     module,
@@ -4870,7 +4860,7 @@ fn populate_item_definitions_stmts(
             }
             Stmt::Item(item) => populate_item_definitions_items_individual_item(
                 item,
-                global_data,
+                // global_data,
                 module_path,
                 current_scope_various_defs,
                 module,
@@ -4879,7 +4869,7 @@ fn populate_item_definitions_stmts(
             ),
             Stmt::Expr(expr, _) => populate_item_definitions_expr(
                 expr,
-                global_data,
+                // global_data,
                 module_path,
                 // current_scope_various_defs,
                 module,
@@ -4894,7 +4884,7 @@ fn populate_item_definitions_stmts(
 
 fn populate_item_definitions_expr(
     expr: &Expr,
-    global_data: &GlobalData,
+    // global_data: &GlobalData,
     module_path: &Vec<String>,
     // various_defs: &mut VariousDefintions,
     module: &mut ModuleData,
@@ -4940,7 +4930,7 @@ fn populate_item_definitions_expr(
             let mut scoped_various_defs = VariousDefintions::default();
             populate_item_definitions_stmts(
                 &expr_async.block.stmts,
-                global_data,
+                // global_data,
                 module_path,
                 &mut scoped_various_defs,
                 module,
@@ -4964,7 +4954,7 @@ fn populate_item_definitions_expr(
             let mut scoped_various_defs = VariousDefintions::default();
             populate_item_definitions_stmts(
                 &expr_block.block.stmts,
-                global_data,
+                // global_data,
                 module_path,
                 &mut scoped_various_defs,
                 module,
@@ -4985,7 +4975,7 @@ fn populate_item_definitions_expr(
         Expr::Closure(expr_closure) => {
             populate_item_definitions_expr(
                 &expr_closure.body,
-                global_data,
+                // global_data,
                 module_path,
                 module,
                 scope_id,
@@ -5024,7 +5014,7 @@ fn populate_item_definitions_expr(
 
             populate_item_definitions_expr(
                 &expr_match.expr,
-                global_data,
+                // global_data,
                 module_path,
                 module,
                 scope_id,
@@ -5036,7 +5026,7 @@ fn populate_item_definitions_expr(
                 // In this case, even if the arm body is simply a path like `x`, we still need to create a scope because the `x` can be an argument of eg the enum variant for this match arm.
                 populate_item_definitions_expr(
                     &arm.body,
-                    global_data,
+                    // global_data,
                     module_path,
                     module,
                     scope_id,
@@ -5055,7 +5045,7 @@ fn populate_item_definitions_expr(
             );
             populate_item_definitions_expr(
                 &*expr_method_call.receiver,
-                global_data,
+                // global_data,
                 module_path,
                 module,
                 scope_id,
@@ -5065,7 +5055,7 @@ fn populate_item_definitions_expr(
             for expr in &expr_method_call.args {
                 populate_item_definitions_expr(
                     expr,
-                    global_data,
+                    // global_data,
                     module_path,
                     module,
                     scope_id,
@@ -6181,42 +6171,24 @@ pub fn process_items(
         let code = include_str!("../../web-prelude/src/lib.rs");
         let file = syn::parse_file(&code).unwrap();
         let prelude_items = file.items;
-        modules.push(ModuleData {
-            name: "web_prelude".to_string(),
-            parent_name: None,
-            path: vec!["web_prelude".to_string()],
-            pub_definitions: Vec::new(),
-            private_definitions: Vec::new(),
-            pub_submodules: Vec::new(),
-            private_submodules: Vec::new(),
-            pub_use_mappings: Vec::new(),
-            private_use_mappings: Vec::new(),
-            resolved_mappings: Vec::new(),
-            fn_info: Vec::new(),
-            item_definitons: Vec::new(),
-            trait_definitons: Vec::new(),
-            consts: Vec::new(),
-            items: prelude_items.clone(),
-            scoped_various_definitions: Vec::new(),
-        });
+        let mut module_data = ModuleData::new(
+            "web_prelude".to_string(),
+            None,
+            vec!["web_prelude".to_string()],
+        );
+        module_data.items = prelude_items.clone();
+        modules.push(module_data);
 
         extract_data(
             true,
             &prelude_items,
             &Some(web_prelude_crate_path.into()),
-            // &mut get_names_module_path.clone(),
             &mut vec!["web_prelude".to_string()],
             &mut names_to_dedup,
             &mut scoped_names_to_dedup,
             &mut modules,
         );
-        prelude_items
-    } else {
-        Vec::new()
     };
-    // dbg!(&modules);
-
-    // resolve_use_stmts(&mut modules);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
     let mut global_data = GlobalData::new(crate_path);
@@ -6236,19 +6208,9 @@ pub fn process_items(
     // Also populates `global_data.impl_blocks` so that in the next step, before parsing the syn to JS, we can populate `item_definition.impl_items`, so that when parsing syn to JS we are able to to lookup return types of method calls, and also add the methods themselves to the JS classes
     // ie populate module and scoped `fn_info`, `item_definitons`, `consts`, `trait_definitons`.
     // We need to only populate the idents of the `ItemDefinition`s etc here, and then in a subsequent pass populate all the fields which use types and therefore might require other `ItemDefinition`s to already exist even though they may appear later in the code.
-    populate_item_definitions(&mut global_data);
-    // dbg!("populate_item_definitions scope_ids");
-    let scope_ids = global_data
-        .modules
-        .iter()
-        .map(|m| {
-            m.scoped_various_definitions
-                .iter()
-                .map(|svd| svd.0.clone())
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    // dbg!(scope_ids);
+
+    // Updates module.item_defs etc and module.scoped_various_definitions. Doesn't use any data from global_data, only pushes data to ModuleData
+    populate_item_definitions(&mut global_data.modules);
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
@@ -6753,7 +6715,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     let mut global_data = GlobalData::new(None);
     global_data.modules = modules;
 
-    populate_item_definitions(&mut global_data);
+    populate_item_definitions(&mut global_data.modules);
     populate_impl_blocks_and_item_def_fields(&mut global_data);
     populate_item_def_impl_blocks(&mut global_data);
 
