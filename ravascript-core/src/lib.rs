@@ -98,13 +98,16 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
     }
 }
 
-/// We want each of used items eg `use mod::sub_mod::{item1, item2, another_mod::item3}` to return the name of the item, and the path relative to the root module
+/// We want each of used items to return the name of the item, and the path relative to the root module, eg:
+/// eg `use mod::sub_mod::{item1, item2, another_mod::item3}` -> [mod/sub_mod/item1, mod/sub_mod/item2, mod/sub_mod/another_mod/item3]
 ///
-/// relative_path (snake) is a temporary var for building the relative path
+/// `relative_path` (snake) is a temporary var for building the relative path that gets copied into `items`
 ///
 /// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
+/// 
 fn tree_parsing_for_boilerplate(
     use_tree: &UseTree,
+    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt 
     relative_path: &mut Vec<String>,
     items: &mut Vec<(String, Vec<String>)>,
 ) {
@@ -113,6 +116,7 @@ fn tree_parsing_for_boilerplate(
             relative_path.push(use_path.ident.to_string());
             tree_parsing_for_boilerplate(&*use_path.tree, relative_path, items);
         }
+        // NOTE a `syn::UseName` can the the ident for an item *or* a submodule that is being `use`d??
         UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
         UseTree::Rename(_) => todo!(),
         UseTree::Glob(_) => todo!(),
@@ -120,6 +124,7 @@ fn tree_parsing_for_boilerplate(
             for item in &use_group.items {
                 match item {
                     UseTree::Path(use_path) => {
+                        // Create separate `relative_path`s for each "fork" created by the `UseGroup`
                         let mut new_relative_path = relative_path.clone();
                         new_relative_path.push(use_path.ident.to_string());
                         tree_parsing_for_boilerplate(
@@ -145,6 +150,8 @@ enum ItemUseModuleOrScope<'a> {
     Module(&'a mut ModuleData),
     Scope(&'a mut GlobalDataScope),
 }
+
+/// Populates module pub/private and scoped `.use_mappings`s
 fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModuleOrScope) {
     let public = match item_use.vis {
         Visibility::Public(_) => true,
@@ -153,99 +160,70 @@ fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModuleOr
 
     let (root_module_or_crate, sub_modules) = match &item_use.tree {
         UseTree::Path(use_path) => {
-            // let mut sub_modules: Vec<DestructureValue> = Vec::new();
+            // Capture the name of the root of the "use_mapping", ie not the root of the absolute path which would be a crate name but the root of this specific use path
             let root_module_or_crate = use_path.ident.to_string();
-
+            // Recursively parse the `syn::UseTree` to JS AST `DestructureObject`
             let sub_modules = tree_to_destructure_object(&*use_path.tree);
-            // let sub_modules = DestructureObject (sub_modules);
-            // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
             (root_module_or_crate, sub_modules)
         }
-        // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
         // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
         UseTree::Name(use_name) => todo!(),
         _ => panic!("root of use trees are always a path or name"),
     };
 
     // handle globs
-    if sub_modules.0.len() == 0 {
-        // For now we are not handling globs but need to use them for using enum variants which we will then need to inject manually
-        return;
-    }
+    // if sub_modules.0.len() == 0 {
+    //     // For now we are not handling globs but need to use them for using enum variants which we will then need to inject manually
+    //     return;
+    // }
 
-    // TODO fix this mess
-    if match sub_modules.0.first().unwrap() {
-        DestructureValue::KeyName(_) => "",
-        DestructureValue::Rename(_, _) => "",
-        DestructureValue::Nesting(name, _) => name,
-    } == "web"
-    {
-        if root_module_or_crate == "Sse" {
-            // JsStmt::Raw(SSE_RAW_FUNC.to_string())
-        } else {
-            // JsStmt::Expr(JsExpr::Vanish, false)
+    // if root_module_or_crate == "Sse" {
+    //     JsStmt::Raw(SSE_RAW_FUNC.to_string())
+    // }
+
+    // } else if root_module_or_crate == "crate" {
+    //     // If we import something from our crate, inline it (probably what we want for external crates too?)
+    //     // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
+    //     // Get the name of the item to be inlined
+    //     todo!()
+
+    let (_root_module_or_crate, item_paths) = match &item_use.tree {
+        UseTree::Path(use_path) => {
+            let root_module_or_crate = use_path.ident.to_string();
+
+            let mut item_paths = Vec::new();
+            let mut relative_path = vec![use_path.ident.to_string()];
+            tree_parsing_for_boilerplate(&*use_path.tree, &mut relative_path, &mut item_paths);
+            (root_module_or_crate, item_paths)
         }
-    } else if root_module_or_crate == "serde" || root_module_or_crate == "serde_json" {
-        // JsStmt::Expr(JsExpr::Vanish, false)
-    } else if root_module_or_crate == "crate" {
-        // If we import something from our crate, inline it (probably what we want for external crates too?)
-        // A much simpler plan for now is to force defining the type in the JS file, and then export, rather than the other way round
-        // Get the name of the item to be inlined
-        todo!()
-    } else {
-        // JsStmt::Local(JsLocal {
-        //     public,
-        //     export: false,
-        //     type_: LocalType::Var,
-        //     lhs: LocalName::DestructureObject(sub_modules),
-        //     value: JsExpr::Path(vec![camel(root_module_or_crate)]),
-        // })
+        // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+        UseTree::Name(_use_name) => todo!(),
+        _ => panic!("root of use trees are always a path or name"),
+    };
 
-        // eg this.colorModule.spinachMessage = this.colorModule.greenModule.spinachModule.spinachMessage;
-
-        let (_root_module_or_crate, item_paths) = match &item_use.tree {
-            UseTree::Path(use_path) => {
-                // let mut sub_modules: Vec<DestructureValue> = Vec::new();
-                let root_module_or_crate = use_path.ident.to_string();
-
-                // Vec<(item name (snake), relative path (snake))>
-                let mut item_paths = Vec::new();
-                let mut relative_path = vec![use_path.ident.to_string()];
-                tree_parsing_for_boilerplate(&*use_path.tree, &mut relative_path, &mut item_paths);
-                // let sub_modules = DestructureObject (sub_modules);
-                // handle_item_use_tree(&*use_path.tree, &mut sub_modules),
-                (root_module_or_crate, item_paths)
-            }
-            // UseTree::Name(use_name) => sub_modules.push(use_name.ident.to_string()),
-            // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
-            UseTree::Name(_use_name) => todo!(),
-            _ => panic!("root of use trees are always a path or name"),
-        };
-
-        // TODO we do want to do the JsLocal destructure thing if the use is not a top level item?
-        // TODO this is probably also the correct place to determine if std stuff like HashMap needs flagging
-        // if is_module {
-        match item_use_module_or_scope {
-            ItemUseModuleOrScope::ExternalCrate => {}
-            ItemUseModuleOrScope::Module(module) => {
-                for item_path in item_paths {
-                    // Get current module since it must already exist if we are in it
-                    match item_use.vis {
-                        Visibility::Public(_) => module.pub_use_mappings.push(item_path),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => module.private_use_mappings.push(item_path),
-                    }
+    // TODO we do want to do the JsLocal destructure thing if the use is not a top level item?
+    // TODO this is probably also the correct place to determine if std stuff like HashMap needs flagging
+    // if is_module {
+    match item_use_module_or_scope {
+        ItemUseModuleOrScope::ExternalCrate => {}
+        ItemUseModuleOrScope::Module(module) => {
+            for item_path in item_paths {
+                // Get current module since it must already exist if we are in it
+                match item_use.vis {
+                    Visibility::Public(_) => module.pub_use_mappings.push(item_path),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => module.private_use_mappings.push(item_path),
                 }
             }
-            ItemUseModuleOrScope::Scope(scope) => {
-                for item_path in item_paths {
-                    // Get current module since it must already exist if we are in it
-                    match item_use.vis {
-                        // TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
-                        Visibility::Public(_) => todo!(),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => scope.use_mappings.push(item_path),
-                    }
+        }
+        ItemUseModuleOrScope::Scope(scope) => {
+            for item_path in item_paths {
+                // Get current module since it must already exist if we are in it
+                match item_use.vis {
+                    // TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
+                    Visibility::Public(_) => todo!(),
+                    Visibility::Restricted(_) => todo!(),
+                    Visibility::Inherited => scope.use_mappings.push(item_path),
                 }
             }
         }
@@ -1746,6 +1724,27 @@ struct ModuleData {
     scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
 }
 impl ModuleData {
+    /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
+    fn new(name: String, parent_name: Option<String>, path: Vec<String>) -> Self {
+        ModuleData {
+            name,
+            parent_name,
+            path,
+            pub_definitions: Vec::new(),
+            private_definitions: Vec::new(),
+            pub_submodules: Vec::new(),
+            private_submodules: Vec::new(),
+            pub_use_mappings: Vec::new(),
+            private_use_mappings: Vec::new(),
+            resolved_mappings: Vec::new(),
+            fn_info: Vec::new(),
+            item_definitons: Vec::new(),
+            trait_definitons: Vec::new(),
+            consts: Vec::new(),
+            items: Vec::new(),
+            scoped_various_definitions: Vec::new(),
+        }
+    }
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
         let mut definitions = self.pub_definitions.iter();
         if use_private {
@@ -4326,7 +4325,7 @@ fn extract_data(
             }
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
-                // Record scoped ident names so we can ensure any module level items with the same name are namespaced
+                // Record scoped ident names for deduping/namespacing
                 let items = item_impl
                     .clone()
                     .items
@@ -4373,24 +4372,11 @@ fn extract_data(
                 let parent_name = current_path.last().map(|x| x.clone());
                 current_path.push(item_mod.ident.to_string());
 
-                let mut partial_module_data = ModuleData {
-                    name: item_mod.ident.to_string(),
+                let mut partial_module_data = ModuleData::new(
+                    item_mod.ident.to_string(),
                     parent_name,
-                    path: current_path.clone(),
-                    pub_definitions: Vec::new(),
-                    private_definitions: Vec::new(),
-                    pub_submodules: Vec::new(),
-                    private_submodules: Vec::new(),
-                    pub_use_mappings: Vec::new(),
-                    private_use_mappings: Vec::new(),
-                    resolved_mappings: Vec::new(),
-                    fn_info: Vec::new(),
-                    item_definitons: Vec::new(),
-                    trait_definitons: Vec::new(),
-                    consts: Vec::new(),
-                    items: Vec::new(),
-                    scoped_various_definitions: Vec::new(),
-                };
+                    current_path.clone(),
+                );
 
                 // NOTE we do the `modules.push(ModuleData { ...` below because we need to get the module items from the different content/no content branches
                 if let Some(content) = &item_mod.content {
@@ -4478,6 +4464,7 @@ fn extract_data(
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
             Item::Use(item_use) => {
+                // TODO we are adding all use stmts the the module use mappings rather than accounting for when we are not at the top level so the stmts should be added to the scope? Also does `resolve_path()` account for the difference?
                 let module = modules.get_mut(current_path);
                 handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
@@ -6150,41 +6137,23 @@ pub fn process_items(
     is_block: bool,
 ) -> Vec<JsModule> {
     let mut modules = Vec::new();
-    modules.push(ModuleData {
-        name: "crate".to_string(),
-        parent_name: None,
-        path: vec!["crate".to_string()],
-        pub_definitions: Vec::new(),
-        private_definitions: Vec::new(),
-        pub_submodules: Vec::new(),
-        private_submodules: Vec::new(),
-        pub_use_mappings: Vec::new(),
-        private_use_mappings: Vec::new(),
-        resolved_mappings: Vec::new(),
-        fn_info: Vec::new(),
-        item_definitons: Vec::new(),
-        trait_definitons: Vec::new(),
-        consts: Vec::new(),
-        items: items.clone(),
-        scoped_various_definitions: Vec::new(),
-    });
-    let get_names_module_path = vec!["crate".to_string()];
+    let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
+    crate_module.items = items.clone();
+    modules.push(crate_module);
 
     // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
-    let mut names_for_finding_duplicates = Vec::new();
-    let mut scoped_names_for_finding_duplicates = Vec::new();
-    // gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
-    // dbg!(&modules);
+    let mut names_to_dedup = Vec::new();
+    let mut scoped_names_to_dedup = Vec::new();
+    // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
     extract_data(
         true,
         &items,
         &crate_path,
-        &mut get_names_module_path.clone(),
-        &mut names_for_finding_duplicates,
-        &mut scoped_names_for_finding_duplicates,
+        &mut vec!["crate".to_string()],
+        &mut names_to_dedup,
+        &mut scoped_names_to_dedup,
         &mut modules,
     );
-    // dbg!(&modules);
 
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
@@ -6203,15 +6172,10 @@ pub fn process_items(
     // So a flag seems the best approach but would be even easier to just check it using `Item::Use` so that is one less things for users to worry about or get wrong, yeah but flag is easier just just use that for now (especially given it is a niche use case), to check for use of web_prelude we need to resolve all the use stmts to make sure it isn't acutally eg `mod web_prelude { user stuff ... }`
 
     // Look for web prelude
-    // let include_web = true;
     let include_web = look_for_web_prelude(&modules);
 
-    let prelude_items = if include_web {
+    if include_web {
         let web_prelude_crate_path = "../web-prelude";
-        // let web_prelude_entry_point_path = PathBuf::new()
-        //     .join(web_prelude_crate_path)
-        //     .join("src")
-        //     .join("lib.rs");
         // We include the web prelude at compile time so that it can be used for eg from_block or from_file which operate on simple strings of Rust code and no Cargo project
         // let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
         let code = include_str!("../../web-prelude/src/lib.rs");
@@ -6242,8 +6206,8 @@ pub fn process_items(
             &Some(web_prelude_crate_path.into()),
             // &mut get_names_module_path.clone(),
             &mut vec!["web_prelude".to_string()],
-            &mut names_for_finding_duplicates,
-            &mut scoped_names_for_finding_duplicates,
+            &mut names_to_dedup,
+            &mut scoped_names_to_dedup,
             &mut modules,
         );
         prelude_items
@@ -6344,11 +6308,11 @@ pub fn process_items(
 
     let mut duplicates = Vec::new();
     // TODO surely we want
-    for name in &names_for_finding_duplicates {
-        if names_for_finding_duplicates
+    for name in &names_to_dedup {
+        if names_to_dedup
             .iter()
             // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique, but we still want them namespaced, so this needs to be taken into account in `update_dup_names`
-            .chain(scoped_names_for_finding_duplicates.iter())
+            .chain(scoped_names_to_dedup.iter())
             .filter(|(_module_path, name2)| &name.1 == name2)
             .count()
             > 1
@@ -6363,9 +6327,7 @@ pub fn process_items(
     }
     // First add a single path segment to names that are duplicated by scoped items
     for dup in duplicates.iter_mut() {
-        let is_scoped_name = scoped_names_for_finding_duplicates
-            .iter()
-            .any(|s| dup.name == s.1);
+        let is_scoped_name = scoped_names_to_dedup.iter().any(|s| dup.name == s.1);
         if is_scoped_name {
             dup.namespace.insert(0, dup.module_path.pop().unwrap())
         }
