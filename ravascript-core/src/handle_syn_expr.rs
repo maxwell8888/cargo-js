@@ -2886,6 +2886,7 @@ fn handle_expr_path_inner(
         js_segs[0] = "document".to_string();
     }
 
+    // TODO why are we converting to JS ident here? JS AST should just store namespace ident and do the join("__") at `.to_string()` time
     // TODO Surely this should be `.is_none()`?
     // if segs_copy_item_scope.is_some() {
     if segs_copy_item_scope.is_none() {
