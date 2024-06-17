@@ -915,6 +915,7 @@ async fn simple_scoped_impl_trait_for_type_param() {
                     return 4;
                 }
             }
+            Boolean.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
             String.prototype.getFoo = Foo__for__T.prototype.getFoo;
             let bar = new Bar();
@@ -962,6 +963,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
                     return 4;
                 }
             }
+            Boolean.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
             String.prototype.getFoo = Foo__for__T.prototype.getFoo;
             class Bar__for__T {
@@ -969,6 +971,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
                     return 5;
                 }
             }
+            Boolean.prototype.getBar = Bar__for__T.prototype.getBar;
             Number.prototype.getBar = Bar__for__T.prototype.getBar;
             String.prototype.getBar = Bar__for__T.prototype.getBar;
             let num = 1;

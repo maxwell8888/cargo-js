@@ -966,7 +966,7 @@ fn parse_fn_input_or_field(
     }
 }
 
-/// Similar to parse_fn_input_or_field but for the extract_data_populate_item_definitions() pass before parsing, so only dealing with top level items, so don't need to check for scoped item definitions, also given we are popualting `.item_definitions()` etc, we need to avoid using these
+/// Similar to parse_fn_input_or_field but for the extract_data_populate_item_definitions() pass before parsing, so only dealing with top level items, so don't need to check for scoped item definitions, also given we are popualting `.item_definitions()` etc, we need to avoid using these. TODO IMPORTANT no I believe we are also dealing with scoped items in `extract_data_populate_item_definitions()`
 ///
 /// Suitable for parsing: fn input types, fn return type, struct fields, enum variants with args
 ///
@@ -982,25 +982,13 @@ fn parse_types_for_populate_item_definitions(
     current_scope_id: &Option<Vec<usize>>,
     global_data: &GlobalData,
 ) -> RustType {
-    // let current_module_data = global_data
-    //     .modules
-    //     .iter()
-    //     .find(|m| &m.path == current_module)
-    //     .unwrap();
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
         Type::Group(_) => todo!(),
         Type::ImplTrait(type_impl_trait) => {
             debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
-            // TODO handle len > 1
-            // let type_param_bound = type_impl_trait.bounds.first().unwrap();
-            // get_return_type_of_type_param_bound(
-            //     type_param_bound,
-            //     parent_item_definition_generics,
-            //     current_module,
-            //     global_data,
-            // )
+
             let bounds = type_impl_trait
                 .bounds
                 .iter()
@@ -1121,13 +1109,13 @@ fn parse_types_for_populate_item_definitions(
             // For structs
             // Can always be inferred from the arguments used to construct the struct?
 
+            // dbg!(seg_name_str);
+
             // For impl blocks
             match seg_name_str {
-                "i32" => RustType::I32,
-                "bool" => RustType::Bool,
-                "str" => RustType::String,
                 // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
                 "Option" => {
+                    todo!();
                     let generic_type = match &seg.arguments {
                         PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
                             // Option only has
@@ -1179,10 +1167,6 @@ fn parse_types_for_populate_item_definitions(
                     };
                     RustType::Result(Box::new(generic_type))
                 }
-                // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
-                // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
-                // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
-                // "RustBool" => RustType::Struct(StructOrEnum { ident: "RustBool".to_string(), members: (), generics: (), syn_object: () }),
                 _ => {
                     // get full path
                     // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
@@ -1255,6 +1239,11 @@ fn parse_types_for_populate_item_definitions(
                             //     global_data.rust_prelude_types.rust_string = true;
                             // }
                             RustType::String
+                        } else if item_seg.ident == "bool" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            RustType::Bool
                         } else {
                             todo!()
                         }
@@ -1978,7 +1967,7 @@ enum RustType {
     Never,
     /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
     ///
-    /// Vec<(Option<module path> (None if a scoped trait), trait (eg FooTrait or Fn(i32) -> i32))>
+    /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
     ImplTrait(Vec<(Vec<String>, Option<Vec<usize>>, RustTypeImplTrait)>),
     /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
     TypeParam(RustTypeParam),
@@ -2704,6 +2693,16 @@ impl GlobalData {
             }),
             impl_block_ids: Vec::new(),
         };
+        let bool_def = ItemDefinition {
+            ident: "bool".to_string(),
+            is_copy: false,
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                fields: StructFieldInfo::RegularStruct(Vec::new()),
+                syn_object: None,
+            }),
+            impl_block_ids: Vec::new(),
+        };
         let box_def = ItemDefinition {
             ident: "Box".to_string(),
             is_copy: false,
@@ -2741,6 +2740,7 @@ impl GlobalData {
                 ("i32".to_string(), "Number".to_string(), i32_def),
                 ("String".to_string(), "String".to_string(), string_def),
                 ("str".to_string(), "String".to_string(), str_def),
+                ("bool".to_string(), "Boolean".to_string(), bool_def),
                 ("Box".to_string(), "donotuse".to_string(), box_def),
             ],
             default_trait_impls: Vec::new(),
@@ -5457,8 +5457,6 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
         }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
-            // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
-
             let impl_item_target_path = match &*item_impl.self_ty {
                 Type::Path(type_path) => type_path
                     .path
@@ -5542,16 +5540,6 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                     );
                 (module_path, trait_scope_id, trait_def.name)
             });
-
-            // if let Some(trait_) = &item_impl.trait_ {
-            //     if trait_.1.segments.len() != 1 {
-            //         todo!()
-            //     }
-            //     global_data.default_trait_impls_class_mapping.push((
-            //         target_item.ident.clone(),
-            //         trait_.1.segments.first().unwrap().ident.to_string(),
-            //     ));
-            // }
 
             let (target_rust_type, is_target_type_param) =
                 if let Some(target_type_param) = target_type_param {
@@ -5664,7 +5652,6 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 &global_data_copy,
                                 &module_path,
                                 global_impl_blocks_simpl,
-                                // scoped_various_definitions,
                                 scope_id,
                             );
                             scope_id.pop();
@@ -5705,32 +5692,6 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                     }
                 })
                 .collect();
-
-            // TODO I don't think there is any value in storing module and scoped `RustImplBlockSimple`s separately, they should be stored in a single Vec with a `scope_id: Option<Vec<usize>>` field
-            // if scope_id.is_empty() {
-            //     global_impl_blocks_simpl.push(RustImplBlockSimple {
-            //         unique_id: get_item_impl_unique_id(item_impl),
-            //         generics: rust_impl_block_generics,
-            //         trait_: trait_path_and_name,
-            //         target: target_rust_type.clone(),
-            //         rust_items,
-            //         items: item_impl.items.clone(),
-            //     });
-            // } else {
-            //     let svd = scoped_various_definitions
-            //         .iter_mut()
-            //         .find(|svd| svd.0 == *scope_id)
-            //         .unwrap();
-
-            //     svd.2.push(RustImplBlockSimple {
-            //         unique_id: get_item_impl_unique_id(item_impl),
-            //         generics: rust_impl_block_generics,
-            //         trait_: trait_path_and_name,
-            //         target: target_rust_type.clone(),
-            //         rust_items,
-            //         items: item_impl.items.clone(),
-            //     });
-            // }
 
             global_impl_blocks_simpl.push(RustImplBlockSimple {
                 unique_id: get_item_impl_unique_id(module_path, &current_scope_id, item_impl),
@@ -7651,6 +7612,7 @@ fn resolve_path(
         if seg.ident == "i32"
             || seg.ident == "String"
             || seg.ident == "str"
+            || seg.ident == "bool"
             || (seg.ident == "Box" && &segs[1].ident == "new")
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
