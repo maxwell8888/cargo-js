@@ -114,7 +114,6 @@ fn handle_local(
     // dbg!("handle_local");
     // println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
-    dbg!(&rhs_type);
 
     // NOTE we must calculate lhs_is_shadowing before calling `handle_pat(&local.pat...` because handle pat adds the current var to the scope
     let lhs_is_shadowing = global_data

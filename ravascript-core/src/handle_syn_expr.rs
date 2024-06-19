@@ -2487,15 +2487,30 @@ fn handle_expr_call(
                     assert_eq!(args_js_expr.len(), 1);
                     (args_js_expr.remove(0), args_rust_types.remove(0))
                 }
-                PartialRustType::RustType(RustType::Option(_)) => {
-                    (args_js_expr.remove(0), rust_type)
+                PartialRustType::EnumVariantIdent(
+                    _,
+                    module_path,
+                    scope_id,
+                    enum_name,
+                    variant_name,
+                ) => {
+                    if module_path == ["prelude_special_case"]
+                        && scope_id.is_none()
+                        && enum_name == "Option"
+                        && variant_name == "Some"
+                    {
+                        (args_js_expr.remove(0), rust_type)
+                    } else {
+                        (
+                            JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
+                            rust_type,
+                        )
+                    }
                 }
-                PartialRustType::EnumVariantIdent(_, _, _, _, _) | PartialRustType::RustType(_) => {
-                    (
-                        JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
-                        rust_type,
-                    )
-                }
+                PartialRustType::RustType(_) => (
+                    JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
+                    rust_type,
+                ),
             }
         }
         // Expr::Path(expr_path)
@@ -3098,23 +3113,32 @@ fn handle_match_pat(
             //     },
             //     _ => todo!(),
             // };
-            let names = pat_tuple_struct
+            let mut names = pat_tuple_struct
                 .elems
                 .iter()
                 .map(|elem| handle_pat(elem, global_data, RustType::I32))
                 .collect::<Vec<_>>();
 
             // A TupleStruct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
-            let item_def = match match_condition_type {
-                RustType::StructOrEnum(type_params, module_path, scope_id, name) => global_data
-                    .lookup_item_def_known_module_assert_not_func2(module_path, scope_id, name),
-                RustType::Option(_) => global_data
-                    .rust_prelude_definitions
-                    .iter()
-                    .find_map(|(_, _, item_def)| {
-                        (item_def.ident == "Option").then_some(item_def.clone())
-                    })
-                    .unwrap(),
+            let (item_def, is_option) = match match_condition_type {
+                RustType::StructOrEnum(type_params, module_path, scope_id, name) => (
+                    global_data.lookup_item_def_known_module_assert_not_func2(
+                        module_path,
+                        scope_id,
+                        name,
+                    ),
+                    false,
+                ),
+                RustType::Option(_) => (
+                    global_data
+                        .rust_prelude_definitions
+                        .iter()
+                        .find_map(|(_, _, item_def)| {
+                            (item_def.ident == "Option").then_some(item_def.clone())
+                        })
+                        .unwrap(),
+                    true,
+                ),
                 _ => {
                     dbg!(match_condition_type);
                     todo!()
@@ -3161,6 +3185,7 @@ fn handle_match_pat(
                     };
 
                     // If field type is a type param, see if it exists in parent/enum type and if it has been resolved then use resolved type
+                    // TODO do this for Pat::Struct also
                     let field_type = match field_type {
                         RustType::TypeParam(rust_type_param) => {
                             match match_condition_type {
@@ -3184,16 +3209,28 @@ fn handle_match_pat(
                     }
                 })
                 .collect::<Vec<_>>();
-            let stmt = JsStmt::Local(JsLocal {
-                public: false,
-                export: false,
-                type_: LocalType::Var,
-                lhs: LocalName::DestructureArray(names),
-                value: JsExpr::Field(
-                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
-                    "data".to_string(),
-                ),
-            });
+
+            let stmt = if is_option {
+                assert_eq!(names.len(), 1);
+                JsStmt::Local(JsLocal {
+                    public: false,
+                    export: false,
+                    type_: LocalType::Let,
+                    lhs: names.remove(0),
+                    value: handle_expr(&*expr_match.expr, global_data, current_module).0,
+                })
+            } else {
+                JsStmt::Local(JsLocal {
+                    public: false,
+                    export: false,
+                    type_: LocalType::Var,
+                    lhs: LocalName::DestructureArray(names),
+                    value: JsExpr::Field(
+                        Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
+                        "data".to_string(),
+                    ),
+                })
+            };
             (
                 pat_tuple_struct
                     .path
@@ -3224,7 +3261,6 @@ pub fn handle_expr_match(
 
     let (match_condition_expr, match_condition_type) =
         handle_expr(&*expr_match.expr, global_data, current_module);
-    dbg!(&match_condition_type);
 
     fn handle_option_match(
         match_condition_expr: &JsExpr,
@@ -3275,6 +3311,7 @@ pub fn handle_expr_match(
                     // TODO not sure what this is for???
                     Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
                     Expr::Block(expr_block) => {
+                        dbg!("block");
                         // TODO should probably be using handle_body() or something for this
                         let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
                             .block
@@ -3294,6 +3331,9 @@ pub fn handle_expr_match(
                         (vec![JsStmt::Expr(js_expr, false)], rust_type)
                     }
                 };
+
+                body_data_destructure.extend(succeed_body_js_stmts.into_iter());
+                let mut succeed_body_js_stmts = body_data_destructure;
 
                 // If last stmt is returned, add return stmt
                 if succeed_body_js_stmts.len() > 0 {
@@ -3418,7 +3458,6 @@ pub fn handle_expr_match(
         global_data,
         current_module,
     ) {
-        dbg!(&rust_type);
         return (expr, rust_type);
     }
 
