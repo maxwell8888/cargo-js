@@ -122,7 +122,13 @@ fn tree_parsing_for_boilerplate(
         // NOTE a `syn::UseName` can the the ident for an item *or* a submodule that is being `use`d??
         UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
         UseTree::Rename(_) => todo!(),
-        UseTree::Glob(_) => todo!(),
+        UseTree::Glob(_) => {
+            println!("here");
+            dbg!(relative_path);
+            dbg!(items);
+            println!("{}", quote! { #use_tree });
+            todo!()
+        }
         UseTree::Group(use_group) => {
             for item in &use_group.items {
                 match item {
@@ -2206,7 +2212,7 @@ struct EnumVariantInfo {
 #[derive(Debug, Clone)]
 struct EnumDefinitionInfo {
     members: Vec<EnumVariantInfo>,
-    syn_object: ItemEnum,
+    // syn_object: Option<ItemEnum>,
 }
 
 #[derive(Debug, Clone)]
@@ -2265,89 +2271,89 @@ enum ItemDefintionImpls {
 //     syn_object: StructOrEnumSynObject,
 // }
 impl ItemDefinition {
-    /// Update generics based on types of args
-    ///
-    /// For all the generics of the struct/enum...
-    /// ...for enum check if any of the arguments to any of the variants are the generic type...
-    /// ...(if) we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-    fn attempt_to_resolve_generics(
-        &self,
-        field_or_variant_name: &String,
-        args: &Vec<(JsExpr, RustType)>,
-    ) -> Vec<RustTypeParam> {
-        let mut possibly_resolved_generics = Vec::new();
-        for generic in &self.generics {
-            match &self.struct_or_enum_info {
-                StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-                    let item_enum = &enum_def_info.syn_object;
-                    // ...for enum check if any of the arguments to any of the variants are the generic type...
-                    for v in &item_enum.variants {
-                        if v.ident == field_or_variant_name {
-                            match &v.fields {
-                                Fields::Named(fields_named) => {
-                                    for (i, field) in fields_named.named.iter().enumerate() {
-                                        match &field.ty {
-                                            Type::Path(type_path) => {
-                                                if type_path.path.segments.first().unwrap().ident
-                                                    == generic
-                                                {
-                                                    // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-                                                    let (_js_expr, rust_type) = args[i].clone();
-                                                    possibly_resolved_generics.push(
-                                                        RustTypeParam {
-                                                            name: generic.clone(),
-                                                            type_: RustTypeParamValue::RustType(
-                                                                Box::new(rust_type),
-                                                            ),
-                                                        },
-                                                    );
-                                                    continue;
-                                                }
-                                            }
-                                            Type::Verbatim(_) => todo!(),
-                                            _ => todo!(),
-                                        }
-                                    }
-                                }
-                                Fields::Unnamed(fields_unnamed) => {
-                                    for (i, field) in fields_unnamed.unnamed.iter().enumerate() {
-                                        match &field.ty {
-                                            Type::Path(type_path) => {
-                                                if type_path.path.segments.first().unwrap().ident
-                                                    == generic
-                                                {
-                                                    // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-                                                    let (_js_expr, rust_type) = args[i].clone();
-                                                    possibly_resolved_generics.push(
-                                                        RustTypeParam {
-                                                            name: generic.clone(),
-                                                            type_: RustTypeParamValue::RustType(
-                                                                Box::new(rust_type),
-                                                            ),
-                                                        },
-                                                    );
-                                                    continue;
-                                                }
-                                            }
-                                            Type::Verbatim(_) => todo!(),
-                                            _ => todo!(),
-                                        }
-                                    }
-                                }
-                                Fields::Unit => todo!(),
-                            }
-                        }
-                    }
-                }
-            }
-            possibly_resolved_generics.push(RustTypeParam {
-                name: generic.clone(),
-                type_: RustTypeParamValue::Unresolved,
-            });
-        }
-        possibly_resolved_generics
-    }
+    // /// Update generics based on types of args
+    // ///
+    // /// For all the generics of the struct/enum...
+    // /// ...for enum check if any of the arguments to any of the variants are the generic type...
+    // /// ...(if) we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+    // fn attempt_to_resolve_generics(
+    //     &self,
+    //     field_or_variant_name: &String,
+    //     args: &Vec<(JsExpr, RustType)>,
+    // ) -> Vec<RustTypeParam> {
+    //     let mut possibly_resolved_generics = Vec::new();
+    //     for generic in &self.generics {
+    //         match &self.struct_or_enum_info {
+    //             StructOrEnumDefitionInfo::Struct(_) => todo!(),
+    //             StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+    //                 let item_enum = &enum_def_info.syn_object;
+    //                 // ...for enum check if any of the arguments to any of the variants are the generic type...
+    //                 for v in &item_enum.variants {
+    //                     if v.ident == field_or_variant_name {
+    //                         match &v.fields {
+    //                             Fields::Named(fields_named) => {
+    //                                 for (i, field) in fields_named.named.iter().enumerate() {
+    //                                     match &field.ty {
+    //                                         Type::Path(type_path) => {
+    //                                             if type_path.path.segments.first().unwrap().ident
+    //                                                 == generic
+    //                                             {
+    //                                                 // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+    //                                                 let (_js_expr, rust_type) = args[i].clone();
+    //                                                 possibly_resolved_generics.push(
+    //                                                     RustTypeParam {
+    //                                                         name: generic.clone(),
+    //                                                         type_: RustTypeParamValue::RustType(
+    //                                                             Box::new(rust_type),
+    //                                                         ),
+    //                                                     },
+    //                                                 );
+    //                                                 continue;
+    //                                             }
+    //                                         }
+    //                                         Type::Verbatim(_) => todo!(),
+    //                                         _ => todo!(),
+    //                                     }
+    //                                 }
+    //                             }
+    //                             Fields::Unnamed(fields_unnamed) => {
+    //                                 for (i, field) in fields_unnamed.unnamed.iter().enumerate() {
+    //                                     match &field.ty {
+    //                                         Type::Path(type_path) => {
+    //                                             if type_path.path.segments.first().unwrap().ident
+    //                                                 == generic
+    //                                             {
+    //                                                 // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
+    //                                                 let (_js_expr, rust_type) = args[i].clone();
+    //                                                 possibly_resolved_generics.push(
+    //                                                     RustTypeParam {
+    //                                                         name: generic.clone(),
+    //                                                         type_: RustTypeParamValue::RustType(
+    //                                                             Box::new(rust_type),
+    //                                                         ),
+    //                                                     },
+    //                                                 );
+    //                                                 continue;
+    //                                             }
+    //                                         }
+    //                                         Type::Verbatim(_) => todo!(),
+    //                                         _ => todo!(),
+    //                                     }
+    //                                 }
+    //                             }
+    //                             Fields::Unit => todo!(),
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         possibly_resolved_generics.push(RustTypeParam {
+    //             name: generic.clone(),
+    //             type_: RustTypeParamValue::Unresolved,
+    //         });
+    //     }
+    //     possibly_resolved_generics
+    // }
 }
 
 #[derive(Debug, Clone)]
@@ -2715,6 +2721,30 @@ impl GlobalData {
             impl_block_ids: Vec::new(),
         };
 
+        let option_def = ItemDefinition {
+            ident: "Option".to_string(),
+            is_copy: false,
+            generics: Vec::new(),
+            struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                members: vec![
+                    EnumVariantInfo {
+                        ident: "Some".to_string(),
+                        inputs: vec![EnumVariantInputsInfo::Unnamed(RustType::TypeParam(
+                            RustTypeParam {
+                                name: "T".to_string(),
+                                type_: RustTypeParamValue::Unresolved,
+                            },
+                        ))],
+                    },
+                    EnumVariantInfo {
+                        ident: "None".to_string(),
+                        inputs: Vec::new(),
+                    },
+                ],
+            }),
+            impl_block_ids: Vec::new(),
+        };
+
         // let ravascript_prelude_crate = CrateData {
         //     name: "ravascript".to_string(),
         // };
@@ -2742,6 +2772,7 @@ impl GlobalData {
                 ("str".to_string(), "String".to_string(), str_def),
                 ("bool".to_string(), "Boolean".to_string(), bool_def),
                 ("Box".to_string(), "donotuse".to_string(), box_def),
+                ("Option".to_string(), "donotuse".to_string(), option_def),
             ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
@@ -3028,6 +3059,13 @@ impl GlobalData {
         // dbg!(module_path);
         // dbg!(scope_id);
         // dbg!(name);
+        if module_path == &["prelude_special_case"] {
+            return self
+                .rust_prelude_definitions
+                .iter()
+                .find_map(|(_, _, item_def)| (&item_def.ident == name).then_some(item_def.clone()))
+                .unwrap();
+        }
         let module = self
             .modules
             .iter()
@@ -4568,7 +4606,7 @@ fn populate_item_definitions_items_individual_item(
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
                     members: members_for_scope,
-                    syn_object: item_enum.clone(),
+                    // syn_object: item_enum.clone(),
                 }),
                 impl_block_ids: Vec::new(),
             });
@@ -5023,14 +5061,30 @@ fn populate_item_definitions_expr(
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::Range(_) => {}
-        Expr::Reference(_) => {}
+        Expr::Reference(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Repeat(_) => {}
         Expr::Return(_) => {}
         Expr::Struct(_) => {}
         Expr::Try(_) => {}
         Expr::TryBlock(_) => {}
         Expr::Tuple(_) => {}
-        Expr::Unary(_) => {}
+        Expr::Unary(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Unsafe(_) => {}
         Expr::Verbatim(_) => {}
         Expr::While(_) => {}
@@ -5876,46 +5930,46 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     }
 
     if rust_prelude_types.option {
-        let code = include_str!("rust_prelude/option.rs");
-        let modules = from_file(code, false);
-        assert_eq!(modules.len(), 1);
-        let option_module = &modules[0];
+        // let code = include_str!("rust_prelude/option.rs");
+        // let modules = from_file(code, false);
+        // assert_eq!(modules.len(), 1);
+        // let option_module = &modules[0];
 
-        for stmt in &option_module.stmts {
-            match stmt {
-                JsStmt::Class(js_class) => {
-                    if js_class.name == "Option" {
-                        prelude_stmts.push(stmt.clone());
-                    }
-                }
-                JsStmt::ClassMethod(_, _, _, _) => todo!(),
-                JsStmt::ClassStatic(_) => todo!(),
-                // JsStmt::Local(js_local) => match &js_local.lhs {
-                //     LocalName::Single(name) => {
-                //         if name == "Some" || name == "None" {
-                //             js_stmts.insert(0, stmt.clone());
-                //         }
-                //     }
-                //     LocalName::DestructureObject(_) => todo!(),
-                //     LocalName::DestructureArray(_) => todo!(),
-                // },
-                JsStmt::Local(_) => todo!(),
-                JsStmt::Expr(_, _) => todo!(),
-                JsStmt::Import(_, _, _) => todo!(),
-                JsStmt::Function(_) => todo!(),
-                JsStmt::ScopeBlock(_) => todo!(),
-                // JsStmt::TryBlock(_) => todo!(),
-                // JsStmt::CatchBlock(_, _) => todo!(),
-                JsStmt::Raw(_) => todo!(),
-                JsStmt::Comment(_) => todo!(),
-            }
-        }
+        // for stmt in &option_module.stmts {
+        //     match stmt {
+        //         JsStmt::Class(js_class) => {
+        //             if js_class.name == "Option" {
+        //                 prelude_stmts.push(stmt.clone());
+        //             }
+        //         }
+        //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+        //         JsStmt::ClassStatic(_) => todo!(),
+        //         // JsStmt::Local(js_local) => match &js_local.lhs {
+        //         //     LocalName::Single(name) => {
+        //         //         if name == "Some" || name == "None" {
+        //         //             js_stmts.insert(0, stmt.clone());
+        //         //         }
+        //         //     }
+        //         //     LocalName::DestructureObject(_) => todo!(),
+        //         //     LocalName::DestructureArray(_) => todo!(),
+        //         // },
+        //         JsStmt::Local(_) => todo!(),
+        //         JsStmt::Expr(_, _) => todo!(),
+        //         JsStmt::Import(_, _, _) => todo!(),
+        //         JsStmt::Function(_) => todo!(),
+        //         JsStmt::ScopeBlock(_) => todo!(),
+        //         // JsStmt::TryBlock(_) => todo!(),
+        //         // JsStmt::CatchBlock(_, _) => todo!(),
+        //         JsStmt::Raw(_) => todo!(),
+        //         JsStmt::Comment(_) => todo!(),
+        //     }
+        // }
     }
     if rust_prelude_types.some {
-        prelude_stmts.push(JsStmt::Raw("let Some = Option.Some;".to_string()))
+        // prelude_stmts.push(JsStmt::Raw("let Some = Option.Some;".to_string()))
     }
     if rust_prelude_types.none {
-        prelude_stmts.push(JsStmt::Raw("let None = Option.None;".to_string()))
+        // prelude_stmts.push(JsStmt::Raw("let None = Option.None;".to_string()))
     }
 
     if rust_prelude_types.string_prototype_extensions {
@@ -7242,6 +7296,8 @@ pub struct RustPathSegment {
 /// -> (current module (during recursion)/item module path (upon final return), found item path, found item scope id)
 ///
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
+///
+/// TODO given eg `use MyEnum::{Variant1, Variant2};` we need to not only look for match `ItemDefintion`s but also matching enum variants
 fn resolve_path(
     look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
@@ -7613,13 +7669,14 @@ fn resolve_path(
             || seg.ident == "String"
             || seg.ident == "str"
             || seg.ident == "bool"
+            || seg.ident == "Some"
             || (seg.ident == "Box" && &segs[1].ident == "new")
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             (vec!["prelude_special_case".to_string()], segs, None)
         } else {
-            dbg!("get_path couldn't find path");
+            dbg!("resolve_path couldn't find path");
             // dbg!(module);
             dbg!(current_mod);
             dbg!(current_scope_id);
@@ -7641,7 +7698,7 @@ pub enum PartialRustType {
     /// This is only used for instantiation of enum variants with args which are parsed as an ExprCall, since normal enum variant instantiation are simply evaluated directly to an enum instance.
     /// Note we need to record type params because we might be parsing something like the `MyGenericEnum::<i32>::MyVariant` portion of `MyGenericEnum::<i32>::MyVariant("hi")` where the *enum definition* has had generics resolved
     ///
-    /// (type params, module path, enum name, variant name) module path is None for scoped structs
+    /// (type params, module path, scope id, enum name, variant name) module path is None for scoped structs
     EnumVariantIdent(
         Vec<RustTypeParam>,
         Vec<String>,

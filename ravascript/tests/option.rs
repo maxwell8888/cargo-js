@@ -10,6 +10,40 @@ use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
+#[tokio::test]
+async fn option_some() {
+    let actual = r2j_block_with_prelude!({
+        let five = Some(5);
+        let result = match &five {
+            Some(val) => *val,
+            None => 0,
+        };
+        assert!(result == 5);
+    });
+
+    println!("{actual}");
+
+    let expected = format_js(
+        r#"
+        let five = 5;
+        let result = (() => {
+            if (five !== null) {
+                return five;
+            } else {
+                return 0;
+            }
+        })();
+        console.assert(result === 5);
+        "#,
+    );
+
+    // println!("{expected}");
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+
+}
+
 #[ignore]
 #[tokio::test]
 async fn option_match() {

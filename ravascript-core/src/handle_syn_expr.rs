@@ -473,6 +473,15 @@ pub fn handle_expr(
 
             fn types_are_primative(rust_type: RustType) -> bool {
                 match rust_type {
+                    RustType::TypeParam(rust_type_param) => {
+                        match rust_type_param.type_ {
+                            // TODO if one side is unresolved, then we should use the type of the other side to resovle it
+                            RustTypeParamValue::Unresolved => false,
+                            RustTypeParamValue::RustType(resolved_rust_type) => {
+                                types_are_primative(*resolved_rust_type)
+                            }
+                        }
+                    }
                     RustType::I32 => true,
                     RustType::F32 => true,
                     RustType::Bool => true,
@@ -2209,16 +2218,16 @@ fn handle_expr_call(
     // }
 
     // record if using Some/Option
-    match &*expr_call.func {
-        Expr::Path(expr_path) => {
-            let last = expr_path.path.segments.last().unwrap().ident.to_string();
-            if last == "Some" {
-                global_data.rust_prelude_types.option = true;
-                global_data.rust_prelude_types.some = true;
-            }
-        }
-        _ => {}
-    }
+    // match &*expr_call.func {
+    //     Expr::Path(expr_path) => {
+    //         let last = expr_path.path.segments.last().unwrap().ident.to_string();
+    //         if last == "Some" {
+    //             global_data.rust_prelude_types.option = true;
+    //             global_data.rust_prelude_types.some = true;
+    //         }
+    //     }
+    //     _ => {}
+    // }
 
     // Determine return type, looking up structs/enums in scope and checking for generics and whether they can be inferred
     // TODO also need to handle looking up fns
@@ -2331,7 +2340,22 @@ fn handle_expr_call(
                         })
                         .collect::<Vec<_>>();
 
-                    RustType::StructOrEnum(updated_type_params, module_path, scope_id, enum_name)
+                    if module_path == ["prelude_special_case"]
+                        && scope_id.is_none()
+                        && enum_name == "Option"
+                        && variant_name == "Some"
+                    {
+                        assert_eq!(args_js_expr.len(), 1);
+                        assert_eq!(args_rust_types.len(), 1);
+                        RustType::Option(Box::new(args_rust_types.first().unwrap().clone()))
+                    } else {
+                        RustType::StructOrEnum(
+                            updated_type_params,
+                            module_path,
+                            scope_id,
+                            enum_name,
+                        )
+                    }
                 }
                 PartialRustType::RustType(rust_type) => {
                     // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
@@ -2462,6 +2486,9 @@ fn handle_expr_call(
                     // TODO for now we are assuming we are dealing with Box::new() so the args must be len=1
                     assert_eq!(args_js_expr.len(), 1);
                     (args_js_expr.remove(0), args_rust_types.remove(0))
+                }
+                PartialRustType::RustType(RustType::Option(_)) => {
+                    (args_js_expr.remove(0), rust_type)
                 }
                 PartialRustType::EnumVariantIdent(_, _, _, _, _) | PartialRustType::RustType(_) => {
                     (
@@ -2609,6 +2636,16 @@ fn handle_expr_path_inner(
         // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
         match path_idents[..] {
             ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
+            ["Some"] => (
+                PartialRustType::EnumVariantIdent(
+                    Vec::new(),
+                    segs_copy_module_path.clone(),
+                    None,
+                    "Option".to_string(),
+                    "Some".to_string(),
+                ),
+                false,
+            ),
             _ => todo!(),
         }
     } else if segs_copy_item_path.len() == 1 {
@@ -3068,19 +3105,24 @@ fn handle_match_pat(
                 .collect::<Vec<_>>();
 
             // A TupleStruct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
-            let enum_def_info = match match_condition_type {
-                RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
-                    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                        module_path,
-                        scope_id,
-                        name,
-                    );
-                    match item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                        StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
-                    }
+            let item_def = match match_condition_type {
+                RustType::StructOrEnum(type_params, module_path, scope_id, name) => global_data
+                    .lookup_item_def_known_module_assert_not_func2(module_path, scope_id, name),
+                RustType::Option(_) => global_data
+                    .rust_prelude_definitions
+                    .iter()
+                    .find_map(|(_, _, item_def)| {
+                        (item_def.ident == "Option").then_some(item_def.clone())
+                    })
+                    .unwrap(),
+                _ => {
+                    dbg!(match_condition_type);
+                    todo!()
                 }
-                _ => todo!(),
+            };
+            let enum_def_info = match item_def.struct_or_enum_info {
+                StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
             };
             let arm_field_defs = enum_def_info
                 .members
@@ -3116,6 +3158,22 @@ fn handle_match_pat(
                     let field_type = match &arm_field_defs.inputs[i] {
                         EnumVariantInputsInfo::Named { ident, input_type } => todo!(),
                         EnumVariantInputsInfo::Unnamed(input_type) => input_type.clone(),
+                    };
+
+                    // If field type is a type param, see if it exists in parent/enum type and if it has been resolved then use resolved type
+                    let field_type = match field_type {
+                        RustType::TypeParam(rust_type_param) => {
+                            match match_condition_type {
+                                // TODO should just mutate rust_type_param rather than create a new one
+                                RustType::Option(inner) => RustType::TypeParam(RustTypeParam {
+                                    name: rust_type_param.name.clone(),
+                                    type_: RustTypeParamValue::RustType(inner.clone()),
+                                }),
+                                RustType::StructOrEnum(_, _, _, _) => todo!(),
+                                _ => todo!(),
+                            }
+                        }
+                        _ => field_type,
                     };
 
                     ScopedVar {
@@ -3166,6 +3224,203 @@ pub fn handle_expr_match(
 
     let (match_condition_expr, match_condition_type) =
         handle_expr(&*expr_match.expr, global_data, current_module);
+    dbg!(&match_condition_type);
+
+    fn handle_option_match(
+        match_condition_expr: &JsExpr,
+        match_condition_type: &RustType,
+        expr_match: &ExprMatch,
+        global_data: &mut GlobalData,
+        current_module: &Vec<String>,
+    ) -> Option<(JsExpr, RustType)> {
+        match match_condition_type {
+            RustType::Ref(inner) => handle_option_match(
+                match_condition_expr,
+                match_condition_type,
+                expr_match,
+                global_data,
+                current_module,
+            ),
+            RustType::Option(inner) => {
+                assert_eq!(expr_match.arms.len(), 2);
+
+                // make succeed
+                let succeed_arm = expr_match
+                    .arms
+                    .iter()
+                    .find(|arm| match &arm.pat {
+                        Pat::TupleStruct(pat_tuple_struct) => {
+                            assert_eq!(pat_tuple_struct.path.segments.len(), 1);
+                            pat_tuple_struct.path.segments.first().unwrap().ident == "Some"
+                        }
+                        _ => false,
+                    })
+                    .unwrap();
+                let (mut cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
+                    &succeed_arm.pat,
+                    expr_match,
+                    global_data,
+                    current_module,
+                    &match_condition_type,
+                );
+
+                // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
+                let index = cond_rhs.len() - 1;
+                cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
+                global_data.push_new_scope(true, scoped_vars);
+
+                let (mut succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body
+                {
+                    // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
+                    // TODO not sure what this is for???
+                    Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
+                    Expr::Block(expr_block) => {
+                        // TODO should probably be using handle_body() or something for this
+                        let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
+                            .block
+                            .stmts
+                            .iter()
+                            .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                            .flatten()
+                            .unzip();
+
+                        let last_type = types_.last().unwrap().clone();
+
+                        (js_stmts, last_type)
+                    }
+                    other_expr => {
+                        let (js_expr, rust_type) =
+                            handle_expr(other_expr, global_data, current_module);
+                        (vec![JsStmt::Expr(js_expr, false)], rust_type)
+                    }
+                };
+
+                // If last stmt is returned, add return stmt
+                if succeed_body_js_stmts.len() > 0 {
+                    let last_stmt = succeed_body_js_stmts.pop().unwrap();
+                    let new_stmt = match last_stmt {
+                        JsStmt::Expr(js_expr, has_semi) if !has_semi => {
+                            JsStmt::Expr(JsExpr::Return(Box::new(js_expr.clone())), true)
+                        }
+                        _ => last_stmt,
+                    };
+                    succeed_body_js_stmts.push(new_stmt);
+                }
+
+                // pop match arm scope stuff
+                global_data.pop_scope();
+
+                // body_data_destructure.extend(body_js_stmts.into_iter());
+                // let succeed_body = body_data_destructure;
+
+                // make fail
+                let fail_arm = expr_match
+                    .arms
+                    .iter()
+                    .find(|arm| match &arm.pat {
+                        Pat::Ident(pat_ident) => pat_ident.ident == "None",
+                        _ => false,
+                    })
+                    .unwrap();
+                let (mut cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
+                    &fail_arm.pat,
+                    expr_match,
+                    global_data,
+                    current_module,
+                    &match_condition_type,
+                );
+
+                // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
+                let index = cond_rhs.len() - 1;
+                cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
+                global_data.push_new_scope(true, scoped_vars);
+
+                let (mut fail_body_js_stmts, fail_body_return_type) = match &*fail_arm.body {
+                    // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
+                    // TODO not sure what this is for???
+                    Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
+                    Expr::Block(expr_block) => {
+                        // TODO should probably be using handle_body() or something for this
+                        let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
+                            .block
+                            .stmts
+                            .iter()
+                            .map(|stmt| handle_stmt(stmt, global_data, current_module))
+                            .flatten()
+                            .unzip();
+
+                        let last_type = types_.last().unwrap().clone();
+
+                        (js_stmts, last_type)
+                    }
+                    other_expr => {
+                        let (js_expr, rust_type) =
+                            handle_expr(other_expr, global_data, current_module);
+                        (vec![JsStmt::Expr(js_expr, false)], rust_type)
+                    }
+                };
+
+                // If last stmt is returned, add return stmt
+                if fail_body_js_stmts.len() > 0 {
+                    let last_stmt = fail_body_js_stmts.pop().unwrap();
+                    let new_stmt = match last_stmt {
+                        JsStmt::Expr(js_expr, has_semi) if !has_semi => {
+                            JsStmt::Expr(JsExpr::Return(Box::new(js_expr.clone())), true)
+                        }
+                        _ => last_stmt,
+                    };
+                    fail_body_js_stmts.push(new_stmt);
+                }
+
+                // pop match arm scope stuff
+                global_data.pop_scope();
+
+                // body_data_destructure.extend(body_js_stmts.into_iter());
+                // let fail_body = body_data_destructure;
+
+                let if_stmts = JsStmt::Expr(
+                    JsExpr::If(JsIf {
+                        assignment: None,
+                        declare_var: false,
+                        condition: Box::new(JsExpr::Binary(
+                            Box::new(match_condition_expr.clone()),
+                            JsOp::NotEq,
+                            Box::new(JsExpr::Null),
+                        )),
+                        succeed: succeed_body_js_stmts,
+                        fail: Some(Box::new(JsExpr::Block(fail_body_js_stmts))),
+                    }),
+                    false,
+                );
+                Some((
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Paren(Box::new(JsExpr::ArrowFn(
+                            false,
+                            true,
+                            Vec::new(),
+                            vec![if_stmts],
+                        )))),
+                        Vec::new(),
+                    ),
+                    // TODO succeeed might be a todo!(), need to check and use fail otherwise, and write a test
+                    succeed_body_return_type,
+                    // TODO using fail because need to convert succeed type param into concrete type
+                    // fail_body_return_type,
+                ))
+            }
+            _ => None,
+        }
+    }
+    if let Some((expr, rust_type)) = handle_option_match(
+        &match_condition_expr,
+        &match_condition_type,
+        expr_match,
+        global_data,
+        current_module,
+    ) {
+        dbg!(&rust_type);
+        return (expr, rust_type);
+    }
 
     // Fold match arms into if else statements
     // NOTE some arms might return never/unreachable (ie throw) so we can't just rely on eg getting the type from the first or last arm, we need to look through them all until we find a type which is not never/unreachable
@@ -3186,9 +3441,9 @@ pub fn handle_expr_match(
                 &match_condition_type,
             );
 
-            if cond_rhs == ["Some"] || cond_rhs == ["None"] {
-                cond_rhs.insert(0, "Option".to_string());
-            }
+            // if cond_rhs == ["Some"] || cond_rhs == ["None"] {
+            //     cond_rhs.insert(0, "Option".to_string());
+            // }
 
             // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
             let index = cond_rhs.len() - 1;
