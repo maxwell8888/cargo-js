@@ -11,43 +11,7 @@ use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
 // TODO avoid rename if same var name is used for condition and some value
-// TODO if condition is an expression (and the Some() inner is actually used) it should be evaluated and assigned to a var before being used 
-#[tokio::test]
-async fn option_some() {
-    let actual = r2j_block_with_prelude!({
-        let five = Some(5);
-        let result = match &five {
-            Some(val) => *val,
-            None => 0,
-        };
-        assert!(result == 5);
-    });
-
-    // println!("{actual}");
-
-    let expected = format_js(
-        r#"
-        let five = 5;
-        let result = (() => {
-            if (five !== null) {
-                let val = five;
-                return val;
-            } else {
-                return 0;
-            }
-        })();
-        console.assert(result === 5);
-        "#,
-    );
-
-    // println!("{expected}");
-
-    assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-
-}
-
-#[ignore]
+// TODO if condition is an expression (and the Some() inner is actually used) it should be evaluated and assigned to a var before being used
 #[tokio::test]
 async fn option_match() {
     let actual = r2j_block_with_prelude!({
@@ -59,47 +23,46 @@ async fn option_match() {
         assert!(result == 5);
     });
 
-    // println!("{actual}");
-
     let expected = format_js(
         r#"
-        let five = 5;
-        var result;
-        if (five !== null) {
-            result = five;
-        } else {
-            result = 0;
-        }
-        console.assert(result.eq(5));
+            let five = 5;
+            let result = (() => {
+                if (five !== null) {
+                    let val = five;
+                    return val;
+                } else {
+                    return 0;
+                }
+            })();
+            console.assert(result === 5);
         "#,
     );
 
-    // println!("{expected}");
-
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
-
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore]
 #[tokio::test]
 async fn option_is_some_and() {
     let actual = r2j_block_with_prelude!({
         let five = Some(5);
+        let not_five: Option<i32> = None;
         assert!(five.is_some_and(|x| x == 5));
+        // assert!(!not_five.is_some_and(|x| x == 5));
     });
 
-    let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        "let Some = Option.Some;",
-        r#"let five = Some(5);
-        console.assert(five.isSomeAnd((x) => x.eq(5)));
+    let expected = format_js(
+        r#"
+            Object.prototype.isSomeAnd = (f) => this !== null ? f(this) : false;
+            let five = 5;
+            let notFive = null;
+            console.assert(five.isSomeAnd((x) => x === 5));
+            console.assert(!notFive.isSomeAnd((x) => x === 5));
         "#,
-    ));
-
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    );
 
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore]

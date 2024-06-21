@@ -30,6 +30,7 @@ use crate::{
     GlobalDataScope, ItemDefinition, ItemDefintionImpls, JsImplBlock2, JsImplItem, RustGeneric,
     RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
     RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
+    PRELUDE_MODULE_PATH,
 };
 
 pub fn handle_item_fn(
@@ -251,7 +252,7 @@ pub fn handle_item_fn(
                         RustType::ParentItem => todo!(),
                         RustType::UserType(_, _) => todo!(),
                         RustType::Ref(_) => todo!(),
-                        RustType::Closure(_) => todo!(),
+                        RustType::Closure(_, _) => todo!(),
                         RustType::FnVanish => todo!(),
                         RustType::Box(_) => todo!(),
                     }
@@ -316,7 +317,7 @@ pub fn handle_item_fn(
                                 RustType::ParentItem => todo!(),
                                 RustType::UserType(_, _) => todo!(),
                                 RustType::Ref(_) => todo!(),
-                                RustType::Closure(_) => todo!(),
+                                RustType::Closure(_, _) => todo!(),
                                 RustType::FnVanish => todo!(),
                                 RustType::Box(_) => todo!(),
                             },
@@ -1490,11 +1491,32 @@ pub fn handle_item_impl(
     };
     let mut stmts = vec![class_stmt];
 
-    let mut dedup_rust_prelude_definitions = global_data.rust_prelude_definitions.clone();
-    dedup_rust_prelude_definitions.sort_by_key(|(name, js_name, item_def)| js_name.clone());
-    dedup_rust_prelude_definitions.dedup_by_key(|(name, js_name, item_def)| js_name.clone());
+    fn prelude_item_def_name_to_js(item_def_name: &String) -> &'static str {
+        match item_def_name.as_str() {
+            "i32" => "Number",
+            "String" => "String",
+            "str" => "String",
+            "bool" => "Boolean",
+            "Box" => "donotuse",
+            "Option" => "donotuse",
+            _ => todo!(),
+        }
+    }
+    let prelude_module = global_data
+        .modules
+        .iter()
+        .find(|m| m.path == [PRELUDE_MODULE_PATH])
+        .unwrap();
+    let mut dedup_rust_prelude_definitions = prelude_module
+        .item_definitons
+        .iter()
+        .cloned()
+        .map(|item_def| (prelude_item_def_name_to_js(&item_def.ident), item_def))
+        .collect::<Vec<_>>();
+    dedup_rust_prelude_definitions.sort_by_key(|(js_name, item_def)| js_name.clone());
+    dedup_rust_prelude_definitions.dedup_by_key(|(js_name, item_def)| js_name.clone());
 
-    for (name, js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
+    for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         if prelude_item_def.impl_block_ids.contains(&unique_id) {
             for (is_used, item) in &rust_impl_block.items {
                 // TODO only add if `is_used == true`

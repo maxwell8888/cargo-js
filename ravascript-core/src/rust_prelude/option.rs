@@ -1,5 +1,5 @@
-use super::RustBool;
-use crate::prelude::JsBoolean;
+// use super::RustBool;
+// use crate::prelude::JsBoolean;
 
 #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
@@ -14,25 +14,25 @@ pub use Option::*;
 
 #[allow(dead_code)]
 impl<T: PartialEq> Option<T> {
-    fn eq(&self, other: &Option<T>) -> bool {
-        // return new RustBool(this.id === other.id && this.data.eq(other.data));
-        // This gets manually overriden
-        match (self, other) {
-            (Some(a), Some(b)) => a == b,
-            (Some(_), None) => false,
-            (None, Some(_)) => false,
-            (None, None) => true,
-        }
-    }
+    // fn eq(&self, other: &Option<T>) -> bool {
+    //     // return new RustBool(this.id === other.id && this.data.eq(other.data));
+    //     // This gets manually overriden
+    //     match (self, other) {
+    //         (Some(a), Some(b)) => a == b,
+    //         (Some(_), None) => false,
+    //         (None, Some(_)) => false,
+    //         (None, None) => true,
+    //     }
+    // }
 
-    fn ne(&self, other: &Option<T>) -> bool {
-        match (self, other) {
-            (Some(a), Some(b)) => a != b,
-            (Some(_), None) => true,
-            (None, Some(_)) => true,
-            (None, None) => false,
-        }
-    }
+    // fn ne(&self, other: &Option<T>) -> bool {
+    //     match (self, other) {
+    //         (Some(a), Some(b)) => a != b,
+    //         (Some(_), None) => true,
+    //         (None, Some(_)) => true,
+    //         (None, None) => false,
+    //     }
+    // }
 
     // pub fn is_some(&self) -> bool {
     //     matches!(*self, Some(_))
@@ -40,8 +40,8 @@ impl<T: PartialEq> Option<T> {
 
     pub fn is_some_and(self, f: impl FnOnce(T) -> bool) -> bool {
         match self {
-            None => false,
             Some(x) => f(x),
+            None => false,
         }
     }
 
@@ -50,36 +50,36 @@ impl<T: PartialEq> Option<T> {
     // }
 
     // TODO need to parse and handle panic! input properly
-    pub fn expect(self, msg: &str) -> T {
-        match self {
-            Some(val) => val,
-            None => panic!("{}", msg),
-        }
-    }
+    // pub fn expect(self, msg: &str) -> T {
+    //     match self {
+    //         Some(val) => val,
+    //         None => panic!("{}", msg),
+    //     }
+    // }
 
-    pub fn unwrap(self) -> T {
-        match self {
-            Some(val) => val,
-            None => panic!("called `Option::unwrap()` on a `None` value"),
-        }
-    }
+    // pub fn unwrap(self) -> T {
+    //     match self {
+    //         Some(val) => val,
+    //         None => panic!("called `Option::unwrap()` on a `None` value"),
+    //     }
+    // }
 
-    pub fn unwrap_or(self, default: T) -> T {
-        match self {
-            Some(x) => x,
-            None => default,
-        }
-    }
+    // pub fn unwrap_or(self, default: T) -> T {
+    //     match self {
+    //         Some(x) => x,
+    //         None => default,
+    //     }
+    // }
 
-    pub fn unwrap_or_else<F>(self, f: F) -> T
-    where
-        F: FnOnce() -> T,
-    {
-        match self {
-            Some(x) => x,
-            None => f(),
-        }
-    }
+    // pub fn unwrap_or_else<F>(self, f: F) -> T
+    // where
+    //     F: FnOnce() -> T,
+    // {
+    //     match self {
+    //         Some(x) => x,
+    //         None => f(),
+    //     }
+    // }
 
     // pub fn unwrap_or_default(self) -> T
     // where
@@ -91,15 +91,15 @@ impl<T: PartialEq> Option<T> {
     //     }
     // }
 
-    pub fn map<U: PartialEq, F>(self, f: F) -> Option<U>
-    where
-        F: FnOnce(T) -> U,
-    {
-        match self {
-            Some(x) => Some(f(x)),
-            None => None,
-        }
-    }
+    // pub fn map<U: PartialEq, F>(self, f: F) -> Option<U>
+    // where
+    //     F: FnOnce(T) -> U,
+    // {
+    //     match self {
+    //         Some(x) => Some(f(x)),
+    //         None => None,
+    //     }
+    // }
 
     // pub fn map_or<U, F>(self, default: U, f: F) -> U
     // where
@@ -181,3 +181,10 @@ impl<T: PartialEq> Option<T> {
     //     }
     // }
 }
+
+// TODO even though i32 is Copy, we are only interested in *structs* which are Copy, though this might be wrong if is_copy is used for other purposes.
+struct i32 {}
+struct String {}
+struct str {}
+// struct bool {}
+struct Box {}

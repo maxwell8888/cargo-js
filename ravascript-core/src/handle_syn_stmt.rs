@@ -122,16 +122,22 @@ fn handle_local(
         .unwrap()
         .variables
         .iter()
-        .any(|var| match &local.pat {
-            // TODO determine whether lhs is shadowing for `Pat`s other than `Pat::Ident`
-            Pat::Ident(pat_ident) => pat_ident.ident == &var.name,
-            Pat::Slice(_) => false,
-            Pat::Struct(_) => false,
-            Pat::Wild(_) => false,
-            other => {
-                dbg!(other);
-                todo!();
+        .any(|var| {
+            fn var_name_matches(pat: &Pat, var_name: &String) -> bool {
+                match pat {
+                    // TODO determine whether lhs is shadowing for `Pat`s other than `Pat::Ident`
+                    Pat::Ident(pat_ident) => pat_ident.ident == var_name,
+                    Pat::Slice(_) => false,
+                    Pat::Struct(_) => false,
+                    Pat::Type(pat_type) => var_name_matches(&*pat_type.pat, var_name),
+                    Pat::Wild(_) => false,
+                    other => {
+                        dbg!(other);
+                        todo!();
+                    }
+                }
             }
+            var_name_matches(&local.pat, &var.name)
         });
     let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
 
@@ -224,7 +230,7 @@ fn handle_local(
                         }
                         RustType::Ref(_) => todo!(),
                         RustType::Fn(_, _, _, _, _) => todo!(),
-                        RustType::Closure(_) => todo!(),
+                        RustType::Closure(_, _) => todo!(),
                         _ => todo!(),
                     }
                 }
@@ -316,7 +322,7 @@ fn handle_local(
             RustType::MutRef(_) => rhs_expr,
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => todo!(),
-            RustType::Closure(_) => rhs_expr,
+            RustType::Closure(_, _) => rhs_expr,
             RustType::FnVanish => todo!(),
             RustType::Box(_) => todo!(),
         }

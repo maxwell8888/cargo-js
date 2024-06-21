@@ -43,6 +43,8 @@ use duplicate_namespacing::{namespace_duplicates, Duplicate};
 
 pub use js_ast::JsStmt;
 
+const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
+
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
 // TODO consider how to get RA/cargo check to analyze rust inputs in `testing/`
@@ -442,7 +444,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
         }
         Pat::TupleStruct(_) => todo!(),
         Pat::Type(pat_type) => {
-            todo!();
+            // TODO does it make sense to also return the (parsed) RustType from handle_pat?
             handle_pat(&pat_type.pat, global_data, current_type)
         }
         Pat::Verbatim(_) => todo!(),
@@ -1987,6 +1989,8 @@ enum RustType {
     Bool,
     String,
     /// (generic)
+    /// The RustType for option *must* be a type param. (I believe) It is important to always have a type param to ensure we can always lookup the name of the generic to match against generics in methods etc NO, we can always lookup the name of the generic on the item_def
+    // Option(RustTypeParam),
     Option(Box<RustType>),
     /// (generic)
     Result(Box<RustType>),
@@ -2046,8 +2050,8 @@ enum RustType {
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
     /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
-    /// (return type)
-    Closure(Box<RustType>),
+    /// (input types, return type)
+    Closure(Vec<RustType>, Box<RustType>),
 }
 impl RustType {
     fn is_js_primative(&self) -> bool {
@@ -2071,7 +2075,7 @@ impl RustType {
             RustType::MutRef(_) => false,
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => false,
-            RustType::Closure(_) => todo!(),
+            RustType::Closure(_, _) => todo!(),
             RustType::FnVanish => todo!(),
             RustType::Box(_) => todo!(),
         }
@@ -2100,7 +2104,7 @@ impl RustType {
             RustType::MutRef(inner) => inner.is_js_primative(),
             RustType::Ref(_) => todo!(),
             RustType::Fn(_, _, _, _, _) => todo!(),
-            RustType::Closure(_) => todo!(),
+            RustType::Closure(_, _) => todo!(),
             RustType::FnVanish => todo!(),
             RustType::Box(_) => todo!(),
         }
@@ -2381,6 +2385,7 @@ struct RustGeneric {
 #[derive(Debug, Clone)]
 struct RustImplBlockSimple {
     unique_id: String,
+    // TODO Should this include generics that are defined on the target type, or just new generics introduced for the impl Trait or used in the methods/items? For now just assume it is everything.
     generics: Vec<RustGeneric>,
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
@@ -2632,7 +2637,8 @@ struct GlobalData {
     // TODO why have this seprate to module.item_def? Because they aren't defined anywhere and are available in all modules so don't really belong to a module?
     // (rust name, js primative type name, item definition)
     // TODO why store rust name when it is in ItemDefinition???
-    rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
+    // TODO should this just be a big struct rather than a vec so we don't have to do lookups?
+    // rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
     /// (trait name, impl item)
     default_trait_impls: Vec<(String, JsImplItem)>,
     /// Used for working out which `default_trait_impls` elements to add to which classes
@@ -2666,88 +2672,103 @@ struct GlobalData {
 }
 impl GlobalData {
     fn new(crate_path: Option<PathBuf>) -> GlobalData {
-        // Create prelude definitions
-        let i32_def = ItemDefinition {
-            ident: "i32".to_string(),
-            // TODO even though i32 is Copy, we are only interested in *structs* which are Copy, though this might be wrong if is_copy is used for other purposes.
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields: StructFieldInfo::RegularStruct(Vec::new()),
-                syn_object: None,
-            }),
-            impl_block_ids: Vec::new(),
-        };
-        // TODO should the ident be `String` or `str`???
-        let string_def = ItemDefinition {
-            ident: "String".to_string(),
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields: StructFieldInfo::RegularStruct(Vec::new()),
-                syn_object: None,
-            }),
-            impl_block_ids: Vec::new(),
-        };
-        let str_def = ItemDefinition {
-            ident: "str".to_string(),
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields: StructFieldInfo::RegularStruct(Vec::new()),
-                syn_object: None,
-            }),
-            impl_block_ids: Vec::new(),
-        };
-        let bool_def = ItemDefinition {
-            ident: "bool".to_string(),
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                fields: StructFieldInfo::RegularStruct(Vec::new()),
-                syn_object: None,
-            }),
-            impl_block_ids: Vec::new(),
-        };
-        let box_def = ItemDefinition {
-            ident: "Box".to_string(),
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                // NOTE not actually a unit struct but we will never need to use this field so doesn't matter
-                fields: StructFieldInfo::UnitStruct,
-                syn_object: None,
-            }),
-            impl_block_ids: Vec::new(),
-        };
-
-        let option_def = ItemDefinition {
-            ident: "Option".to_string(),
-            is_copy: false,
-            generics: Vec::new(),
-            struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                members: vec![
-                    EnumVariantInfo {
-                        ident: "Some".to_string(),
-                        inputs: vec![EnumVariantInputsInfo::Unnamed(RustType::TypeParam(
-                            RustTypeParam {
-                                name: "T".to_string(),
-                                type_: RustTypeParamValue::Unresolved,
-                            },
-                        ))],
-                    },
-                    EnumVariantInfo {
-                        ident: "None".to_string(),
-                        inputs: Vec::new(),
-                    },
-                ],
-            }),
-            impl_block_ids: Vec::new(),
-        };
+        // let option_def = ItemDefinition {
+        //     ident: "Option".to_string(),
+        //     is_copy: false,
+        //     generics: vec!["T".to_string()],
+        //     struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+        //         members: vec![
+        //             EnumVariantInfo {
+        //                 ident: "Some".to_string(),
+        //                 inputs: vec![EnumVariantInputsInfo::Unnamed(RustType::TypeParam(
+        //                     RustTypeParam {
+        //                         name: "T".to_string(),
+        //                         type_: RustTypeParamValue::Unresolved,
+        //                     },
+        //                 ))],
+        //             },
+        //             EnumVariantInfo {
+        //                 ident: "None".to_string(),
+        //                 inputs: Vec::new(),
+        //             },
+        //         ],
+        //     }),
+        //     impl_block_ids: Vec::new(),
+        // };
 
         // let ravascript_prelude_crate = CrateData {
         //     name: "ravascript".to_string(),
         // };
+
+        // let mut impl_blocks_simpl = Vec::new();
+        // let mut rust_items = Vec::new();
+        // rust_items.push(RustImplItemNoJs {
+        //     ident: "is_some_and".to_string(),
+        //     item: RustImplItemItemNoJs::Fn(
+        //         false,
+        //         false,
+        //         FnInfo {
+        //             ident: "is_some_and".to_string(),
+        //             inputs_types: vec![RustType::Closure(
+        //                 vec![RustType::TypeParam()],
+        //                 RustType::Bool,
+        //             )],
+        //             generics: (),
+        //             return_type: (),
+        //         },
+        //     ),
+        //     syn_object: (),
+        // });
+        // impl_blocks_simpl.push(RustImplBlockSimple {
+        //     unique_id: "is this needed?".to_string(),
+        //     generics: vec![RustGeneric {
+        //         ident: "T".to_string(),
+        //         trait_bounds: Vec::new(),
+        //     }],
+        //     trait_: None,
+        //     target: RustType::Option(Box::new(RustType::TypeParam(RustTypeParam {
+        //         name: "T".to_string(),
+        //         type_: RustTypeParamValue::Unresolved,
+        //     }))),
+        //     rust_items,
+        //     // TODO do we need this??
+        //     items: Vec::new(),
+        // });
+
+        let code = include_str!("rust_prelude/option.rs");
+        let modules = from_file(code, false);
+        assert_eq!(modules.len(), 1);
+        let option_module = &modules[0];
+
+        // for stmt in &option_module.stmts {
+        //     match stmt {
+        //         JsStmt::Class(js_class) => {
+        //             if js_class.name == "Option" {
+        //                 prelude_stmts.push(stmt.clone());
+        //             }
+        //         }
+        //         JsStmt::ClassMethod(_, _, _, _) => todo!(),
+        //         JsStmt::ClassStatic(_) => todo!(),
+        //         // JsStmt::Local(js_local) => match &js_local.lhs {
+        //         //     LocalName::Single(name) => {
+        //         //         if name == "Some" || name == "None" {
+        //         //             js_stmts.insert(0, stmt.clone());
+        //         //         }
+        //         //     }
+        //         //     LocalName::DestructureObject(_) => todo!(),
+        //         //     LocalName::DestructureArray(_) => todo!(),
+        //         // },
+        //         JsStmt::Local(_) => todo!(),
+        //         JsStmt::Expr(_, _) => todo!(),
+        //         JsStmt::Import(_, _, _) => todo!(),
+        //         JsStmt::Function(_) => todo!(),
+        //         JsStmt::ScopeBlock(_) => todo!(),
+        //         // JsStmt::TryBlock(_) => todo!(),
+        //         // JsStmt::CatchBlock(_, _) => todo!(),
+        //         JsStmt::Raw(_) => todo!(),
+        //         JsStmt::Comment(_) => todo!(),
+        //     }
+        // }
 
         GlobalData {
             crate_path,
@@ -2766,14 +2787,6 @@ impl GlobalData {
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
-            rust_prelude_definitions: vec![
-                ("i32".to_string(), "Number".to_string(), i32_def),
-                ("String".to_string(), "String".to_string(), string_def),
-                ("str".to_string(), "String".to_string(), str_def),
-                ("bool".to_string(), "Boolean".to_string(), bool_def),
-                ("Box".to_string(), "donotuse".to_string(), box_def),
-                ("Option".to_string(), "donotuse".to_string(), option_def),
-            ],
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
             duplicates: Vec::new(),
@@ -3056,16 +3069,6 @@ impl GlobalData {
         scope_id: &Option<Vec<usize>>,
         name: &String,
     ) -> ItemDefinition {
-        // dbg!(module_path);
-        // dbg!(scope_id);
-        // dbg!(name);
-        if module_path == &["prelude_special_case"] {
-            return self
-                .rust_prelude_definitions
-                .iter()
-                .find_map(|(_, _, item_def)| (&item_def.ident == name).then_some(item_def.clone()))
-                .unwrap();
-        }
         let module = self
             .modules
             .iter()
@@ -3227,16 +3230,6 @@ impl GlobalData {
         // dbg!(&item_module_path);
         // dbg!(&item_path);
         // dbg!(&item_scope);
-
-        if item_module_path == vec!["prelude_special_case".to_string()] {
-            // Get prelude item definitions
-            let (_name, _js_name, def) = self
-                .rust_prelude_definitions
-                .iter()
-                .find(|(name, _js_name, def)| name == &item_path[0].ident)
-                .unwrap();
-            return (item_module_path, None, def.clone());
-        }
 
         let item_module = self
             .modules
@@ -4137,10 +4130,16 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
             );
         }
     }
-    for (name, js_name, item_def) in global_data
-        .rust_prelude_definitions
+
+    let prelude_module = global_data
+        .modules
         .iter_mut()
-        .filter(|(_, _, item_def)| item_def.ident != "Box")
+        .find(|m| m.path == [PRELUDE_MODULE_PATH])
+        .unwrap();
+    for item_def in prelude_module
+        .item_definitons
+        .iter_mut()
+        .filter(|item_def| item_def.ident != "Box")
     {
         update_item_def_block_ids(item_def, &None, &vec!["donotuse".to_string()], &impl_blocks);
     }
@@ -6130,6 +6129,28 @@ pub fn process_items(
         );
     };
 
+    // Rust prelude
+    let code = include_str!("rust_prelude/option.rs");
+    let file = syn::parse_file(&code).unwrap();
+    let prelude_items = file.items;
+    let mut module_data = ModuleData::new(
+        PRELUDE_MODULE_PATH.to_string(),
+        None,
+        vec![PRELUDE_MODULE_PATH.to_string()],
+    );
+
+    module_data.items = prelude_items.clone();
+    modules.push(module_data);
+
+    extract_data(
+        true,
+        &prelude_items,
+        // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
+        &None,
+        &mut vec![PRELUDE_MODULE_PATH.to_string()],
+        &mut modules,
+    );
+
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
@@ -6248,7 +6269,7 @@ pub fn process_items(
 
     // For impl blocks which target Rust prelude types eg `impl i32`, `impl<T> Foo for T`, etc, append their js classes with any prototype extensions that need to be applied to JS primatives eg `Number.prototype.getFoo = FooForT.prototype.getFoo` (note these are just assignment statments so won't be hoisted and can't appear just anywhere, the must appear *after* the impl block's class).
     // Actually should do this at the point the impl block is parsed?
-    for item_def in &global_data.rust_prelude_definitions {}
+    // for item_def in &global_data.rust_prelude_definitions {}
 
     // resolve paths to get canonical path to item
     // Update paths to use namespaced names and account for `use` statements
@@ -7670,6 +7691,7 @@ fn resolve_path(
             || seg.ident == "str"
             || seg.ident == "bool"
             || seg.ident == "Some"
+            || seg.ident == "None"
             || (seg.ident == "Box" && &segs[1].ident == "new")
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
@@ -7699,6 +7721,8 @@ pub enum PartialRustType {
     /// Note we need to record type params because we might be parsing something like the `MyGenericEnum::<i32>::MyVariant` portion of `MyGenericEnum::<i32>::MyVariant("hi")` where the *enum definition* has had generics resolved
     ///
     /// (type params, module path, scope id, enum name, variant name) module path is None for scoped structs
+    ///
+    /// IMPORTANT NOTE this variant should only be used for tuple and struct variants, normal path variants should be a PartialRustType::RustType
     EnumVariantIdent(
         Vec<RustTypeParam>,
         Vec<String>,
