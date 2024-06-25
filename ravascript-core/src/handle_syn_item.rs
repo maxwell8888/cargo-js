@@ -956,6 +956,7 @@ pub fn handle_impl_item_fn(
     // dbg!(&where_generics);
     // generics.extend(where_generics);
 
+    // MORNING TODO lookup the impl item definition and use the parsed input types from that (which correctly pass FnOnce closure types) rather than parsing agains here.
     let mut vars = Vec::new();
     // let mut fns = Vec::new();
     // record var and fn inputs
@@ -996,6 +997,7 @@ pub fn handle_impl_item_fn(
                     mut_,
                     type_: rust_type,
                 };
+                dbg!(&scoped_var);
                 vars.push(scoped_var);
             }
         };
@@ -1183,6 +1185,12 @@ pub fn handle_item_impl(
     //     &item_impl.trait_, &item_impl.self_ty
     // ));
 
+    let module = global_data
+        .modules
+        .iter()
+        .find(|m| &m.path == current_module_path)
+        .unwrap();
+
     let impl_item_target_path = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path
             .path
@@ -1284,11 +1292,7 @@ pub fn handle_item_impl(
             )
         } else {
             // Get type of impl target
-            let opt_scope_id = if global_data.scope_id.is_empty() {
-                None
-            } else {
-                Some(global_data.scope_id.clone())
-            };
+            let opt_scope_id = global_data.scope_id_as_option();
             let (target_item_module, resolved_scope_id, target_item) = global_data
                 .lookup_item_definition_any_module_or_scope(
                     current_module_path,
@@ -1296,22 +1300,41 @@ pub fn handle_item_impl(
                     &impl_item_target_path,
                 );
 
-            (
-                RustType::StructOrEnum(
-                    target_item
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam {
-                            name: g.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        })
-                        .collect::<Vec<_>>(),
-                    target_item_module,
-                    resolved_scope_id,
-                    target_item.ident.to_string(),
-                ),
-                false,
-            )
+            // TODO seems like we are only handling cases like `impl<T> Foo<T>` and not `impl Foo<i32>`?
+            let target_item_type_params = target_item
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>();
+
+            if target_item_module == [PRELUDE_MODULE_PATH] {
+                // NOTE we have called lookup_item_definition_any_module_or_scope which of course returns an ItemDefinition but this might be for eg `Option`, so we must check and return the correct RustType
+                match target_item.ident.as_str() {
+                    "Option" => {
+                        assert_eq!(target_item_type_params.len(), 1);
+                        (
+                            RustType::Option(Box::new(RustType::TypeParam(
+                                target_item_type_params.into_iter().next().unwrap(),
+                            ))),
+                            false,
+                        )
+                    }
+                    _ => todo!(),
+                }
+            } else {
+                (
+                    RustType::StructOrEnum(
+                        target_item_type_params,
+                        target_item_module,
+                        resolved_scope_id,
+                        target_item.ident.to_string(),
+                    ),
+                    false,
+                )
+            }
         };
 
     global_data

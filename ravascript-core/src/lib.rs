@@ -776,10 +776,14 @@ fn parse_fn_input_or_field(
                     .rev()
                     .find(|generic| generic.name == seg_name_str);
                 if let Some(generic) = generic {
-                    return match &generic.type_ {
-                        RustTypeParamValue::Unresolved => todo!(),
-                        RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
-                    };
+                    // return match &generic.type_ {
+                    //     RustTypeParamValue::Unresolved => {
+                    //         dbg!(generic);
+                    //         todo!()
+                    //     }
+                    //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
+                    // };
+                    return RustType::TypeParam(generic.clone());
                 }
 
                 // For fns:
@@ -997,6 +1001,55 @@ fn parse_types_for_populate_item_definitions(
         Type::ImplTrait(type_impl_trait) => {
             debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
 
+            // We distinguish between normal traits which -> RustType::Impl, and fn/closure traits which -> RustType::Fn
+            if type_impl_trait.bounds.len() == 1 {
+                let bound = type_impl_trait.bounds.first().unwrap();
+                match bound {
+                    TypeParamBound::Trait(trait_bound) => {
+                        if trait_bound.path.segments.len() == 1 {
+                            let seg = trait_bound.path.segments.first().unwrap();
+                            if seg.ident == "Fn" || seg.ident == "FnOnce" || seg.ident == "FnMut" {
+                                return match &seg.arguments {
+                                    PathArguments::None => todo!(),
+                                    PathArguments::AngleBracketed(_) => todo!(),
+                                    PathArguments::Parenthesized(args) => {
+                                        let inputs = args
+                                            .inputs
+                                            .iter()
+                                            .map(|input_type| {
+                                                parse_types_for_populate_item_definitions(
+                                                    input_type,
+                                                    root_parent_item_definition_generics,
+                                                    current_module,
+                                                    current_scope_id,
+                                                    global_data,
+                                                )
+                                            })
+                                            .collect();
+                                        let return_type = match &args.output {
+                                            ReturnType::Default => RustType::Unit,
+                                            ReturnType::Type(_, return_type) => {
+                                                parse_types_for_populate_item_definitions(
+                                                    &*return_type,
+                                                    root_parent_item_definition_generics,
+                                                    current_module,
+                                                    current_scope_id,
+                                                    global_data,
+                                                )
+                                            }
+                                        };
+                                        RustType::Closure(inputs, Box::new(return_type))
+                                    }
+                                };
+                            }
+                        }
+                    }
+                    TypeParamBound::Lifetime(_) => {}
+                    TypeParamBound::Verbatim(_) => todo!(),
+                    _ => todo!(),
+                }
+            }
+
             let bounds = type_impl_trait
                 .bounds
                 .iter()
@@ -1033,7 +1086,10 @@ fn parse_types_for_populate_item_definitions(
                                                 _ => todo!(),
                                             })
                                             .collect::<Vec<_>>(),
-                                        PathArguments::Parenthesized(_) => todo!(),
+                                        PathArguments::Parenthesized(_) => {
+                                            dbg!(seg);
+                                            todo!();
+                                        }
                                     },
                                 })
                                 .collect::<Vec<_>>();
@@ -2631,6 +2687,8 @@ struct GlobalData {
     ///
     /// We have a Vec in case there is an impl block nested inside an impl block?
     impl_block_target_type: Vec<RustType>,
+    /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
+    impl_block_type_params: Vec<RustTypeParam>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
@@ -2735,10 +2793,10 @@ impl GlobalData {
         //     items: Vec::new(),
         // });
 
-        let code = include_str!("rust_prelude/option.rs");
-        let modules = from_file(code, false);
-        assert_eq!(modules.len(), 1);
-        let option_module = &modules[0];
+        // let code = include_str!("rust_prelude/option.rs");
+        // let modules = from_file(code, false);
+        // assert_eq!(modules.len(), 1);
+        // let option_module = &modules[0];
 
         // for stmt in &option_module.stmts {
         //     match stmt {
@@ -2784,6 +2842,7 @@ impl GlobalData {
             }],
             // struct_or_enum_methods: Vec::new(),
             impl_block_target_type: Vec::new(),
+            impl_block_type_params: Vec::new(),
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             default_trait_impls_class_mapping: Vec::new(),
@@ -3273,6 +3332,7 @@ impl GlobalData {
         path: &Vec<String>,
         // current_module: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, RustTraitDefinition) {
+        dbg!("lookup_trait_definition_any_module");
         let (item_module_path, item_path, item_scope) = resolve_path(
             false,
             true,
@@ -5510,6 +5570,8 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
         }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
+            // Temporarily store impl block's type params on global data
+
             let impl_item_target_path = match &*item_impl.self_ty {
                 Type::Path(type_path) => type_path
                     .path
@@ -5652,7 +5714,9 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                     let rust_impl_item_item = match syn_item {
                         ImplItem::Const(_) => todo!(),
                         ImplItem::Fn(impl_item_fn) => {
-                            let generics = impl_item_fn
+                            let impl_block_generics =
+                                rust_impl_block_generics.iter().map(|g| g.ident.clone());
+                            let fn_generics = impl_item_fn
                                 .sig
                                 .generics
                                 .params
@@ -5665,6 +5729,9 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                     GenericParam::Const(_) => todo!(),
                                 })
                                 .collect::<Vec<_>>();
+                            let combined_generics = impl_block_generics
+                                .chain(fn_generics.iter().cloned())
+                                .collect();
 
                             let inputs_types = impl_item_fn
                                 .sig
@@ -5675,7 +5742,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                     FnArg::Typed(pat_type) => {
                                         Some(parse_types_for_populate_item_definitions(
                                             &*pat_type.ty,
-                                            &generics,
+                                            &combined_generics,
                                             module_path,
                                             &current_scope_id,
                                             &global_data_copy,
@@ -5689,7 +5756,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 ReturnType::Type(_, type_) => {
                                     parse_types_for_populate_item_definitions(
                                         &*type_,
-                                        &generics,
+                                        &combined_generics,
                                         module_path,
                                         &current_scope_id,
                                         global_data_copy,
@@ -5728,7 +5795,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 FnInfo {
                                     ident: item_name.clone(),
                                     inputs_types,
-                                    generics,
+                                    generics: fn_generics,
                                     return_type,
                                 },
                             )
@@ -6140,6 +6207,10 @@ pub fn process_items(
     );
 
     module_data.items = prelude_items.clone();
+    // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
+    module_data.trait_definitons.push(RustTraitDefinition {
+        name: "FnOnce".to_string(),
+    });
     modules.push(module_data);
 
     extract_data(
@@ -7693,6 +7764,7 @@ fn resolve_path(
             || seg.ident == "Some"
             || seg.ident == "None"
             || (seg.ident == "Box" && &segs[1].ident == "new")
+            || seg.ident == "FnOnce"
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String

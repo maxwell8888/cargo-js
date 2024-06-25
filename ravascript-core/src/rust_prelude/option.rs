@@ -1,19 +1,24 @@
 // use super::RustBool;
 // use crate::prelude::JsBoolean;
 
-#[allow(dead_code)]
+// #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
 // #[derive(PartialEq)]
 // TODO don't want to force T to always be PartialEq?
-pub enum Option<T: PartialEq> {
+// pub enum Option<T: PartialEq> {
+pub enum Option<T> {
     Some(T),
     None,
 }
-// pub use self::Option::*;
-pub use Option::*;
 
-#[allow(dead_code)]
-impl<T: PartialEq> Option<T> {
+// pub trait FnOnce<T> {}
+
+// pub use self::Option::*;
+// pub use Option::*;
+
+// #[allow(dead_code)]
+// impl<T: PartialEq> Option<T> {
+impl<T> Option<T> {
     // fn eq(&self, other: &Option<T>) -> bool {
     //     // return new RustBool(this.id === other.id && this.data.eq(other.data));
     //     // This gets manually overriden
@@ -40,8 +45,8 @@ impl<T: PartialEq> Option<T> {
 
     pub fn is_some_and(self, f: impl FnOnce(T) -> bool) -> bool {
         match self {
-            Some(x) => f(x),
-            None => false,
+            Option::Some(x) => f(x),
+            Option::None => false,
         }
     }
 

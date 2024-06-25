@@ -2528,7 +2528,10 @@ fn handle_expr_call(
                     // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
                     // We also resolved the type to whatever the call returns eg fn path -> fn return type, enum variant path -> enum instance, tuple struct path -> struct instance, etc
                     match rust_type {
-                        RustType::ImplTrait(_) => todo!(),
+                        RustType::ImplTrait(_) => {
+                            dbg!(expr_call);
+                            todo!()
+                        }
                         RustType::TypeParam(_) => {
                             // TODO if type param is resolved it could be a fn or whatever so need to call this match recursively/as a fn
                             // otherwise need return the unresolved type but also note that it has been called(!) so could be the return type of some fn yet to be known, a tuple struct instance, and enum instance, etc. Though this seems like a rarer case and I'm not sure it is even possbile/aloud to wait until after calling a type param to resolved
@@ -2810,58 +2813,74 @@ fn handle_expr_path_inner(
     // 1. Associated fn or const
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
     let (partial_rust_type, is_mut_var) = if segs_copy_module_path == ["prelude_special_case"] {
-        assert_eq!(segs_copy_item_scope, None);
-        let path_idents = segs_copy_item_path
-            .iter()
-            .map(|seg| seg.ident.as_str())
-            .collect::<Vec<_>>();
-        // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
-        match path_idents[..] {
-            ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
-            ["Some"] => (
-                PartialRustType::EnumVariantIdent(
-                    Vec::new(),
-                    segs_copy_module_path.clone(),
-                    None,
-                    "Option".to_string(),
-                    "Some".to_string(),
-                ),
-                false,
-            ),
-            ["None"] => {
-                let prelude_module = global_data
-                    .modules
-                    .iter()
-                    .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                    .unwrap();
-                let item_def = prelude_module
-                    .item_definitons
-                    .iter()
-                    .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
-                    .unwrap();
-                assert_eq!(item_def.generics.len(), 1);
-                let rust_type = match &item_def.struct_or_enum_info {
-                    StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                    StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-                        // Some member has a RustType::TypeParam input which is what we want
-                        let some_member = enum_def_info
-                            .members
-                            .iter()
-                            .find(|m| m.ident == "Some")
-                            .unwrap();
-                        assert_eq!(some_member.inputs.len(), 1);
-                        match some_member.inputs.first().unwrap() {
-                            EnumVariantInputsInfo::Named { .. } => todo!(),
-                            EnumVariantInputsInfo::Unnamed(rust_type) => rust_type.clone(),
-                        }
-                    }
-                };
-                (
-                    PartialRustType::RustType(RustType::Option(Box::new(rust_type))),
+        // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
+        if let Some(segs_copy_item_scope) = &segs_copy_item_scope {
+            // Look for var
+            assert_eq!(segs_copy_item_path.len(), 1);
+            let path = segs_copy_item_path.first().unwrap();
+            dbg!(&segs_copy_item_path);
+            // TODO look through all transparent scopes
+            let var = global_data
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|s| s.variables.iter().find(|v| v.name == path.ident))
+                .unwrap();
+            (PartialRustType::RustType(var.type_.clone()), var.mut_)
+        } else {
+            assert_eq!(segs_copy_item_scope, None);
+            let path_idents = segs_copy_item_path
+                .iter()
+                .map(|seg| seg.ident.as_str())
+                .collect::<Vec<_>>();
+            // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
+            match path_idents[..] {
+                ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
+                ["Some"] => (
+                    PartialRustType::EnumVariantIdent(
+                        Vec::new(),
+                        segs_copy_module_path.clone(),
+                        None,
+                        "Option".to_string(),
+                        "Some".to_string(),
+                    ),
                     false,
-                )
+                ),
+                ["None"] => {
+                    let prelude_module = global_data
+                        .modules
+                        .iter()
+                        .find(|m| m.path == [PRELUDE_MODULE_PATH])
+                        .unwrap();
+                    let item_def = prelude_module
+                        .item_definitons
+                        .iter()
+                        .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
+                        .unwrap();
+                    assert_eq!(item_def.generics.len(), 1);
+                    let rust_type = match &item_def.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                        StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                            // Some member has a RustType::TypeParam input which is what we want
+                            let some_member = enum_def_info
+                                .members
+                                .iter()
+                                .find(|m| m.ident == "Some")
+                                .unwrap();
+                            assert_eq!(some_member.inputs.len(), 1);
+                            match some_member.inputs.first().unwrap() {
+                                EnumVariantInputsInfo::Named { .. } => todo!(),
+                                EnumVariantInputsInfo::Unnamed(rust_type) => rust_type.clone(),
+                            }
+                        }
+                    };
+                    (
+                        PartialRustType::RustType(RustType::Option(Box::new(rust_type))),
+                        false,
+                    )
+                }
+                _ => todo!(),
             }
-            _ => todo!(),
         }
     } else if segs_copy_item_path.len() == 1 {
         // TODO IMPORTANT needs to look/iterate through the static scopes, and var scope in unison, because they can shadow each other.
@@ -3401,7 +3420,19 @@ fn handle_match_pat(
                                     name: rust_type_param.name.clone(),
                                     type_: RustTypeParamValue::RustType(inner.clone()),
                                 }),
-                                RustType::StructOrEnum(_, _, _, _) => todo!(),
+                                RustType::StructOrEnum(
+                                    type_params,
+                                    module_path,
+                                    scope_id,
+                                    name,
+                                ) => {
+                                    dbg!(type_params);
+                                    dbg!(module_path);
+                                    dbg!(scope_id);
+                                    dbg!(name);
+                                    dbg!(pat_tuple_struct);
+                                    todo!()
+                                }
                                 _ => todo!(),
                             }
                         }
@@ -3469,6 +3500,7 @@ pub fn handle_expr_match(
     let (match_condition_expr, match_condition_type) =
         handle_expr(&*expr_match.expr, global_data, current_module);
 
+    dbg!(&match_condition_type);
     fn handle_option_match(
         match_condition_expr: &JsExpr,
         match_condition_type: &RustType,
@@ -3493,8 +3525,9 @@ pub fn handle_expr_match(
                     .iter()
                     .find(|arm| match &arm.pat {
                         Pat::TupleStruct(pat_tuple_struct) => {
-                            assert_eq!(pat_tuple_struct.path.segments.len(), 1);
-                            pat_tuple_struct.path.segments.first().unwrap().ident == "Some"
+                            let segs_len = pat_tuple_struct.path.segments.len();
+                            assert!(segs_len == 1 || segs_len == 2);
+                            pat_tuple_struct.path.segments.last().unwrap().ident == "Some"
                         }
                         _ => false,
                     })
