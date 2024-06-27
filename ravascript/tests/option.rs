@@ -46,7 +46,7 @@ async fn option_match() {
 async fn option_is_some_and() {
     let actual = r2j_block_with_prelude!({
         let five = Some(5);
-        // let not_five: Option<i32> = None;
+        let not_five: Option<i32> = None;
         // assert!(five.is_some_and(|x| x == 5));
         // assert!(!not_five.is_some_and(|x| x == 5));
     });

@@ -2820,7 +2820,7 @@ fn handle_expr_path_inner(
     // segs len = 2
     // 1. Associated fn or const
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
-    let (partial_rust_type, is_mut_var) = if segs_copy_module_path == ["prelude_special_case"] {
+    let (partial_rust_type, is_mut_var) = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
         if let Some(segs_copy_item_scope) = &segs_copy_item_scope {
             // Look for var
@@ -3185,12 +3185,15 @@ fn handle_expr_path_inner(
             js_segs[0] = "this".to_string();
         }
     }
-    // dbg!(&js_segs);
 
     // let segs = segs_copy.iter()
     // TODO all this logic could be cleaned up and/or made clearer
-    let final_expr = if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
+    let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+        JsExpr::Null
+    } else if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
         JsExpr::Path(js_segs)
+
+        // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
     } else {
         match &partial_rust_type {
             PartialRustType::StructIdent(_, _, _, _) => todo!(),
