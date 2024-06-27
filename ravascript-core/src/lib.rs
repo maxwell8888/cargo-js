@@ -4544,6 +4544,7 @@ fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
     // We also need it for looking up trait definitions
 
+    dbg!("pop");
     for module in modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
@@ -4897,6 +4898,7 @@ fn populate_item_definitions_stmts(
     scope_id: &mut Vec<usize>,
 ) {
     let mut scope_count = 0;
+    dbg!("pop stmts");
 
     for stmt in stmts {
         match stmt {
@@ -4932,7 +4934,26 @@ fn populate_item_definitions_stmts(
                 &mut scope_count,
                 false,
             ),
-            Stmt::Macro(_) => {}
+            Stmt::Macro(stmt_macro) => {
+                if stmt_macro.mac.path.segments.len() == 1
+                    && stmt_macro.mac.path.segments.first().unwrap().ident == "assert"
+                {
+                    let input = stmt_macro.mac.tokens.clone().to_string();
+                    let condition_expr = syn::parse_str::<syn::Expr>(&input).unwrap();
+                    populate_item_definitions_expr(
+                        &condition_expr,
+                        // global_data,
+                        module_path,
+                        // current_scope_various_defs,
+                        module,
+                        scope_id,
+                        &mut scope_count,
+                        false,
+                    )
+                } else {
+                    todo!();
+                }
+            }
         }
     }
 }
@@ -5001,7 +5022,16 @@ fn populate_item_definitions_expr(
             scope_id.pop();
         }
         Expr::Await(_) => {}
-        Expr::Binary(_) => {}
+        Expr::Binary(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            // TODO call populate_item_definitions_expr for side
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Block(expr_block) => {
             *scope_count += 1;
             scope_id.push(*scope_count);
@@ -5066,7 +5096,10 @@ fn populate_item_definitions_expr(
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::Loop(_) => {}
-        Expr::Macro(_) => {}
+        Expr::Macro(expr_macro) => {
+            dbg!(expr_macro);
+            todo!();
+        }
         Expr::Match(expr_match) => {
             // We wouldn't normally create a new scope for a match expression but if it is the body of eg a closure or a another match expression's arm body, then force_new_scope will be true and we must create an empty scope (NOTE this is different to the arm body scopes which are created below, this is a single empty scope for the entire match expression)
             forced_inc_scope_count_and_id_and_push_empty_scope(

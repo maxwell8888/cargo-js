@@ -1659,12 +1659,16 @@ fn handle_expr_method_call(
                 .inputs_types
                 .iter()
                 .map(|(_is_self, _is_mut, _name, input_type)| {
-                    resolve_input_type(
+                    dbg!(input_type);
+                    let resovled_input_type = resolve_input_type(
                         &input_type,
+                        &receiver_type,
                         &receiver_type_params,
                         &fn_info.generics,
                         &method_turbofish_rust_types,
-                    )
+                    );
+                    dbg!(&resovled_input_type);
+                    resovled_input_type
                 })
                 .collect::<Vec<_>>()
         }
@@ -1675,33 +1679,58 @@ fn handle_expr_method_call(
 
     // Parse the args
     let (args_js_exprs, args_rust_types): (Vec<_>, Vec<_>) = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(private, static_, fn_info) => expr_method_call
-            .args
-            .iter()
-            .enumerate()
-            .map(|(i, arg)| {
-                let input_type = &resolved_input_types[i];
-                match arg {
-                    Expr::Closure(expr_closure) => {
-                        let closure_types = match input_type {
-                            RustType::TypeParam(_) => todo!(),
-                            RustType::Fn(_, _, _, _, _) => todo!(),
-                            RustType::Closure(input_types, return_type) => {
-                                (input_types.clone(), *return_type.clone())
-                            }
-                            _ => todo!(),
-                        };
-                        handle_expr_closure(
-                            expr_closure,
-                            global_data,
-                            current_module,
-                            Some(closure_types),
-                        )
+        RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
+            // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
+            let first_input_is_self = fn_info
+                .inputs_types
+                .get(0)
+                .map(|input| input.0)
+                .unwrap_or(false);
+
+            let resolved_input_types_slice = if first_input_is_self {
+                &resolved_input_types[1..]
+            } else {
+                &resolved_input_types[..]
+            };
+            expr_method_call
+                .args
+                .iter()
+                .zip(resolved_input_types_slice)
+                .enumerate()
+                .map(|(i, (arg, resolved_input_type))| {
+                    dbg!(i);
+                    dbg!(&arg);
+                    dbg!(&resolved_input_type);
+                    match arg {
+                        Expr::Closure(expr_closure) => {
+                            // This particular method input is a closure
+                            let closure_types = match resolved_input_type {
+                                RustType::TypeParam(_) => todo!(),
+                                RustType::Fn(_, _, _, _, _) => todo!(),
+                                RustType::Closure(input_types, return_type) => {
+                                    (input_types.clone(), *return_type.clone())
+                                }
+                                RustType::Option(_) => {
+                                    // how can a Expr::Closure arg have a RustType::Option resolved_input_type?
+                                    todo!()
+                                }
+                                _ => {
+                                    dbg!(resolved_input_type);
+                                    todo!()
+                                }
+                            };
+                            handle_expr_closure(
+                                expr_closure,
+                                global_data,
+                                current_module,
+                                Some(closure_types),
+                            )
+                        }
+                        _ => handle_expr(arg, global_data, current_module),
                     }
-                    _ => handle_expr(arg, global_data, current_module),
-                }
-            })
-            .unzip(),
+                })
+                .unzip()
+        }
         RustImplItemItemNoJs::Const => todo!(),
     };
 
@@ -1876,12 +1905,13 @@ fn handle_expr_method_call(
 
 fn resolve_input_type(
     input_type: &RustType,
+    receiver_type: &RustType,
     receiver_type_params: &Vec<RustTypeParam>,
     method_def_generics: &Vec<String>,
     method_turbofish_rust_types: &Option<Vec<RustType>>,
 ) -> RustType {
     match input_type {
-        RustType::ParentItem => todo!(),
+        RustType::ParentItem => receiver_type.clone(),
         RustType::ImplTrait(_) => todo!(),
         RustType::TypeParam(rust_type_param) => {
             match rust_type_param.type_ {
@@ -1898,7 +1928,7 @@ fn resolve_input_type(
                 match receiver_type_param.type_ {
                     RustTypeParamValue::Unresolved => {}
                     RustTypeParamValue::RustType(_) => {
-                        return RustType::TypeParam(receiver_type_param.clone())
+                        return RustType::TypeParam(receiver_type_param.clone());
                     }
                 }
             }
@@ -1937,6 +1967,7 @@ fn resolve_input_type(
                 .map(|input_type| {
                     resolve_input_type(
                         input_type,
+                        receiver_type,
                         receiver_type_params,
                         method_def_generics,
                         method_turbofish_rust_types,
@@ -1944,7 +1975,8 @@ fn resolve_input_type(
                 })
                 .collect();
             let resolved_return_type = resolve_input_type(
-                input_type,
+                return_type,
+                receiver_type,
                 receiver_type_params,
                 method_def_generics,
                 method_turbofish_rust_types,
