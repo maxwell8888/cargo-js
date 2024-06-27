@@ -31,7 +31,7 @@ use crate::{
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
     GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplBlock2, JsImplItem, RustGeneric,
-    RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
+    RustImplItemJs, RustImplItemItemJs, RustTraitDefinition, RustType, RustTypeParam,
     RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 

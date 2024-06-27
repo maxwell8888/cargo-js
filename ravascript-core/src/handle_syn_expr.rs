@@ -30,9 +30,9 @@ use crate::{
     },
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, resolve_path, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, ItemDefinition,
-    JsImplBlock2, JsImplItem, PartialRustType, RustGeneric, RustImplItem, RustImplItemItem,
-    RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment, RustTraitDefinition, RustType,
-    RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo,
+    JsImplBlock2, JsImplItem, PartialRustType, RustGeneric, RustImplItemItemJs,
+    RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustPathSegment, RustTraitDefinition,
+    RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo,
     StructFieldInfo, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
 };
 
@@ -1658,7 +1658,7 @@ fn handle_expr_method_call(
             fn_info
                 .inputs_types
                 .iter()
-                .map(|input_type| {
+                .map(|(_is_self, _is_mut, _name, input_type)| {
                     resolve_input_type(
                         &input_type,
                         &receiver_type_params,
@@ -2269,16 +2269,17 @@ fn method_return_type_generic_resolve_to_rust_type(
         method_turbofish_rust_types.as_ref().unwrap()[gen_index].clone()
 
         // Is type param concrete value resolved by input argument?
-    } else if let Some(pos) = fn_info
-        .inputs_types
-        .iter()
-        .position(|input_type| match input_type {
-            RustType::TypeParam(input_rust_type_param) => {
-                input_rust_type_param.name == return_type_param.name
-            }
-            // TODO we might have input types like eg Foo<T>
-            _ => false,
-        })
+    } else if let Some(pos) =
+        fn_info
+            .inputs_types
+            .iter()
+            .position(|(_is_self, _is_mut, _name, input_type)| match input_type {
+                RustType::TypeParam(input_rust_type_param) => {
+                    input_rust_type_param.name == return_type_param.name
+                }
+                // TODO we might have input types like eg Foo<T>
+                _ => false,
+            })
     {
         args_rust_types[pos].clone()
     } else {
@@ -2623,12 +2624,19 @@ fn handle_expr_call(
                             }
                             get_fn_type_returns(fn_info.return_type, &new_type_params)
                         }
+                        RustType::Closure(input_types, return_type) => {
+                            //
+                            *return_type
+                        }
                         RustType::Vec(_) => todo!(),
                         RustType::FnVanish => {
                             //
                             RustType::FnVanish
                         }
-                        _ => panic!("type can't be called"),
+                        _ => {
+                            dbg!(partial_rust_type);
+                            panic!("type can't be called")
+                        }
                     }
                 }
             };
@@ -3339,37 +3347,48 @@ fn handle_match_pat(
                 .collect::<Vec<_>>();
 
             // A TupleStruct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
-            let (item_def, is_option) = match match_condition_type {
-                RustType::StructOrEnum(type_params, module_path, scope_id, name) => (
-                    global_data.lookup_item_def_known_module_assert_not_func2(
-                        module_path,
-                        scope_id,
-                        name,
+            fn get_item_def_from_rust_type(
+                match_condition_type: &RustType,
+                global_data: &GlobalData,
+            ) -> (ItemDefinition, bool) {
+                match match_condition_type {
+                    RustType::StructOrEnum(type_params, module_path, scope_id, name) => (
+                        global_data.lookup_item_def_known_module_assert_not_func2(
+                            module_path,
+                            scope_id,
+                            name,
+                        ),
+                        false,
                     ),
-                    false,
-                ),
-                RustType::Option(_) => {
-                    let prelude_module = global_data
-                        .modules
-                        .iter()
-                        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                        .unwrap();
-                    (
-                        prelude_module
-                            .item_definitons
+                    RustType::Option(_) => {
+                        let prelude_module = global_data
+                            .modules
                             .iter()
-                            .find_map(|item_def| {
-                                (item_def.ident == "Option").then_some(item_def.clone())
-                            })
-                            .unwrap(),
-                        true,
-                    )
+                            .find(|m| m.path == [PRELUDE_MODULE_PATH])
+                            .unwrap();
+                        (
+                            prelude_module
+                                .item_definitons
+                                .iter()
+                                .find_map(|item_def| {
+                                    (item_def.ident == "Option").then_some(item_def.clone())
+                                })
+                                .unwrap(),
+                            true,
+                        )
+                    }
+                    RustType::ParentItem => {
+                        let parent_type = global_data.impl_block_target_type.last().unwrap();
+                        get_item_def_from_rust_type(parent_type, global_data)
+                    }
+                    _ => {
+                        dbg!(match_condition_type);
+                        todo!()
+                    }
                 }
-                _ => {
-                    dbg!(match_condition_type);
-                    todo!()
-                }
-            };
+            }
+            let (item_def, is_option) =
+                get_item_def_from_rust_type(match_condition_type, global_data);
             let enum_def_info = match item_def.struct_or_enum_info {
                 StructOrEnumDefitionInfo::Struct(_) => todo!(),
                 StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
@@ -3414,27 +3433,52 @@ fn handle_match_pat(
                     // TODO do this for Pat::Struct also
                     let field_type = match field_type {
                         RustType::TypeParam(rust_type_param) => {
-                            match match_condition_type {
-                                // TODO should just mutate rust_type_param rather than create a new one
-                                RustType::Option(inner) => RustType::TypeParam(RustTypeParam {
-                                    name: rust_type_param.name.clone(),
-                                    type_: RustTypeParamValue::RustType(inner.clone()),
-                                }),
-                                RustType::StructOrEnum(
-                                    type_params,
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                ) => {
-                                    dbg!(type_params);
-                                    dbg!(module_path);
-                                    dbg!(scope_id);
-                                    dbg!(name);
-                                    dbg!(pat_tuple_struct);
-                                    todo!()
+                            fn type_to_type(
+                                match_condition_type: &RustType,
+                                rust_type_param: RustTypeParam,
+                                global_data: &GlobalData,
+                            ) -> RustType {
+                                match match_condition_type {
+                                    // TODO should just mutate rust_type_param rather than create a new one
+                                    RustType::Option(inner) => RustType::TypeParam(RustTypeParam {
+                                        name: rust_type_param.name.clone(),
+                                        type_: RustTypeParamValue::RustType(inner.clone()),
+                                    }),
+                                    RustType::StructOrEnum(
+                                        type_params,
+                                        module_path,
+                                        scope_id,
+                                        name,
+                                    ) => {
+                                        dbg!(type_params);
+                                        dbg!(module_path);
+                                        dbg!(scope_id);
+                                        dbg!(name);
+                                        // dbg!(pat_tuple_struct);
+                                        todo!()
+                                    }
+                                    RustType::ParentItem => {
+                                        // NOTE the parent item of which this method is being called on might have had type params resolved so we need to get the var type rather than the static def type NO if we have come across a RustType::ParentItem we must be inside a static def eg an impl item fn
+                                        // let self_var = global_data
+                                        //     .scopes
+                                        //     .iter()
+                                        //     .rev()
+                                        //     .find_map(|s| {
+                                        //         s.variables.iter().find(|v| v.name == "self")
+                                        //     })
+                                        //     .unwrap();
+                                        // dbg!(self_var);
+                                        // todo!()
+                                        RustType::ParentItem
+                                    }
+                                    _ => {
+                                        dbg!(match_condition_type);
+                                        // dbg!(pat_tuple_struct);
+                                        todo!()
+                                    }
                                 }
-                                _ => todo!(),
                             }
+                            type_to_type(match_condition_type, rust_type_param, &global_data)
                         }
                         _ => field_type,
                     };

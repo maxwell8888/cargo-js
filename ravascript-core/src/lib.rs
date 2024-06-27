@@ -2024,6 +2024,7 @@ enum RustType {
     Todo,
     // Self_,
     /// I think ParentItem means it is actually `self` not just `Self`???
+    /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
     ParentItem,
     /// ()
     Unit,
@@ -2498,24 +2499,33 @@ struct JsImplBlock2 {
     // Note this can a generic param
     target: RustType,
     /// Vec<(TODO whether the method actually gets used (for some eg `impl<T> Foo for T {}` blocks that apply to everything, it is hard to work out for which items the methods are actually used, since the criteria is whether the impl'd trait ie Foo is in scope/accessible at the point that the method is called, so the easiest approach is to just add everything and then track which methods actually get called), JS method/field)>
-    items: Vec<(bool, RustImplItem)>,
+    items: Vec<(bool, RustImplItemJs)>,
 }
 impl JsImplBlock2 {
     fn js_name(&self) -> String {
         let trait_name = match &self.trait_ {
             Some((module_path, scope_id, name)) => name,
-            None => todo!(),
+            None => "no_trait",
         };
-        let target_name = match &self.target {
-            RustType::StructOrEnum(_, _, _, name) => {
-                // TODO get proper deduplicated js name
-                camel(name.clone())
+        fn rust_type_js_name(rust_type: &RustType) -> String {
+            match rust_type {
+                RustType::StructOrEnum(_, _, _, name) => {
+                    // TODO get proper deduplicated js name
+                    camel(name.clone())
+                }
+                RustType::TypeParam(rust_type_param) => {
+                    format!("for__{}", rust_type_param.name)
+                }
+                RustType::Option(inner) => {
+                    format!("Option_{}_", rust_type_js_name(inner))
+                }
+                _ => {
+                    dbg!(rust_type);
+                    todo!()
+                }
             }
-            RustType::TypeParam(rust_type_param) => {
-                format!("for__{}", rust_type_param.name)
-            }
-            _ => todo!(),
-        };
+        }
+        let target_name = rust_type_js_name(&self.target);
         format!("{trait_name}__{target_name}")
     }
 }
@@ -2530,22 +2540,22 @@ struct RustImplItemNoJs {
 
 // TODO clean up these types since eg there is duplication of the fn ident
 #[derive(Debug, Clone)]
-struct RustImplItem {
+struct RustImplItemJs {
     ident: String,
-    item: RustImplItemItem,
+    item: RustImplItemItemJs,
     // return_type: RustType,
     syn_object: ImplItem,
 }
 
 #[derive(Debug, Clone)]
 enum RustImplItemItemNoJs {
-    /// (private, static, fn info, js fn),
+    /// (private, static, fn info),
     Fn(bool, bool, FnInfo),
     Const,
 }
 
 #[derive(Debug, Clone)]
-enum RustImplItemItem {
+enum RustImplItemItemJs {
     /// (private, static, fn info, js fn),
     Fn(bool, bool, FnInfo, JsFn),
     Const(JsLocal),
@@ -2563,8 +2573,10 @@ struct ConstDef {
 struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
     ident: String,
-    /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything
-    inputs_types: Vec<RustType>,
+    /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything. NO again, updated to include self inputs because we need them.
+    /// TODO probably don't actually need `is_self`
+    /// (is_self, is_mut, name, type)
+    inputs_types: Vec<(bool, bool, String, RustType)>,
     generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
     return_type: RustType,
@@ -2580,19 +2592,17 @@ impl FnInfo {
         self.generics
             .iter()
             .map(|g| {
-                let matched_arg_rust_type =
-                    self.inputs_types
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, input_type)| {
-                            match input_type {
-                                RustType::TypeParam(type_param) if g == &type_param.name => {
-                                    Some(args[i].clone())
-                                }
-                                // TODO what about types that *contain* a type param eg `foo: Option<T>`
-                                _ => None,
+                let matched_arg_rust_type = self.inputs_types.iter().enumerate().find_map(
+                    |(i, (_is_self, _is_mut, _name, input_type))| {
+                        match input_type {
+                            RustType::TypeParam(type_param) if g == &type_param.name => {
+                                Some(args[i].clone())
                             }
-                        });
+                            // TODO what about types that *contain* a type param eg `foo: Option<T>`
+                            _ => None,
+                        }
+                    },
+                );
 
                 let rust_type_param_value =
                     if let Some(matched_arg_rust_type) = matched_arg_rust_type {
@@ -2688,6 +2698,7 @@ struct GlobalData {
     /// We have a Vec in case there is an impl block nested inside an impl block?
     impl_block_target_type: Vec<RustType>,
     /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
+    /// TODO Should be Vec of Vecs for same reason impl_block_target_type is a Vec
     impl_block_type_params: Vec<RustTypeParam>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
@@ -5014,7 +5025,16 @@ fn populate_item_definitions_expr(
             scope_id.pop();
         }
         Expr::Break(_) => {}
-        Expr::Call(_) => {}
+        Expr::Call(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            // TODO call populate_item_definitions_expr for each argument?
+            drop_forced_empty_scope(force_new_scope, scope_id);
+        }
         Expr::Cast(_) => {}
         Expr::Closure(expr_closure) => {
             populate_item_definitions_expr(
@@ -5529,15 +5549,29 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                 .sig
                 .inputs
                 .iter()
-                .filter_map(|input| match input {
-                    FnArg::Receiver(_) => None,
-                    FnArg::Typed(pat_type) => Some(parse_types_for_populate_item_definitions(
-                        &*pat_type.ty,
-                        &fn_info.generics,
-                        module_path,
-                        &current_scope_id,
-                        global_data_copy,
-                    )),
+                .map(|input| match input {
+                    FnArg::Receiver(_) => {
+                        // standalone functions cannot have self/receiver inputs
+                        panic!();
+                    }
+                    FnArg::Typed(pat_type) => (
+                        false,
+                        match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                            _ => todo!(),
+                        },
+                        match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                            _ => todo!(),
+                        },
+                        parse_types_for_populate_item_definitions(
+                            &*pat_type.ty,
+                            &fn_info.generics,
+                            module_path,
+                            &current_scope_id,
+                            global_data_copy,
+                        ),
+                    ),
                 })
                 .collect::<Vec<_>>();
 
@@ -5737,17 +5771,30 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 .sig
                                 .inputs
                                 .iter()
-                                .filter_map(|input| match input {
-                                    FnArg::Receiver(_) => None,
-                                    FnArg::Typed(pat_type) => {
-                                        Some(parse_types_for_populate_item_definitions(
+                                .map(|input| match input {
+                                    FnArg::Receiver(_) => {
+                                        // TODO need to actually parse the reciever to determine if it is boxed or a &mut so we can properly handle derefs
+                                        // TODO need to ensure we are clear and consistent with the meaning of `RustType::ParentItem`
+                                        (true, false, "self".to_string(), RustType::ParentItem)
+                                    }
+                                    FnArg::Typed(pat_type) => (
+                                        false,
+                                        match &*pat_type.pat {
+                                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                                            _ => todo!(),
+                                        },
+                                        match &*pat_type.pat {
+                                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                            _ => todo!(),
+                                        },
+                                        parse_types_for_populate_item_definitions(
                                             &*pat_type.ty,
                                             &combined_generics,
                                             module_path,
                                             &current_scope_id,
                                             &global_data_copy,
-                                        ))
-                                    }
+                                        ),
+                                    ),
                                 })
                                 .collect::<Vec<_>>();
 
@@ -5794,7 +5841,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 },
                                 FnInfo {
                                     ident: item_name.clone(),
-                                    inputs_types,
+                                    inputs_types: inputs_types,
                                     generics: fn_generics,
                                     return_type,
                                 },
@@ -6448,7 +6495,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                             // TODO implement used
                             // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
                             match &impl_item.item {
-                                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                                RustImplItemItemJs::Fn(private, static_, fn_info, js_fn) => {
                                     if is_generic_impl {
                                         js_class.static_fields.push(JsLocal {
                                             public: false,
@@ -6473,7 +6520,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                         ));
                                     }
                                 }
-                                RustImplItemItem::Const(_) => todo!(),
+                                RustImplItemItemJs::Const(_) => todo!(),
                             }
                         }
                     }
@@ -6606,7 +6653,9 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
 pub fn from_block(code: &str, with_rust_types: bool, include_web: bool) -> Vec<JsStmt> {
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
-    assert!(modules.len() == 1);
+    // Blocks should only be 1 module and optionally include a second module for rust prelude
+    // TODO why return the prelude module from process_items when it is not to be rendered?
+    assert!(modules.len() == 1 || modules.len() == 2);
     let mut module = modules.into_iter().next().unwrap();
     // If we have inserted prelude statements, the len will be > 1. Ideally we would insert the prelude stmts inside `fn temp`. For now we are just assuming any added stmts are inserted before `fn temp`
     // assert!(module.stmts.len() == 1);

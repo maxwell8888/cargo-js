@@ -28,9 +28,9 @@ use crate::{
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
     GlobalDataScope, ItemDefinition, ItemDefintionImpls, JsImplBlock2, JsImplItem, RustGeneric,
-    RustImplItem, RustImplItemItem, RustTraitDefinition, RustType, RustTypeParam,
-    RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
-    PRELUDE_MODULE_PATH,
+    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs,
+    RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
+    StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
 };
 
 pub fn handle_item_fn(
@@ -833,12 +833,13 @@ pub fn handle_item_enum(
 }
 
 pub fn handle_impl_item_fn(
-    rust_impl_items: &mut Vec<RustImplItem>,
+    js_impl_items: &mut Vec<RustImplItemJs>,
     impl_item: &ImplItem,
     impl_item_fn: &ImplItemFn,
     global_data: &mut GlobalData,
     current_module_path: &Vec<String>,
     target_rust_type: &RustType,
+    rust_impl_item: &RustImplItemNoJs,
 ) {
     let scope_count = {
         let scope_count = global_data.scope_count.last_mut().unwrap();
@@ -958,49 +959,87 @@ pub fn handle_impl_item_fn(
 
     // MORNING TODO lookup the impl item definition and use the parsed input types from that (which correctly pass FnOnce closure types) rather than parsing agains here.
     let mut vars = Vec::new();
+    match &rust_impl_item.item {
+        RustImplItemItemNoJs::Fn(_private, _static, fn_info) => {
+            for (is_self, is_mut, name, input_type) in fn_info.inputs_types.clone() {
+                if is_self {
+                    // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
+
+                    // NOTE THIS IS WRONG, we parsing the definition so the type params won't have changed from the first pass. It is once the method is *called* that we can attempt to further resolve type params eg the `T` in an `Option<T>`
+                    let type_ = if is_mut {
+                        // TODO does this mean self in `fn foo(mut self) {}` goes to RustType::MutRef??
+                        RustType::MutRef(Box::new(target_rust_type.clone()))
+                    } else {
+                        target_rust_type.clone()
+                    };
+
+                    assert!(!is_mut);
+                    let scoped_var = ScopedVar {
+                        // TODO IMPORTANT surely this should be `self`???
+                        // name: target_item.ident.clone(),
+                        name: "self".to_string(),
+                        // TODO how do we know if we have `foo(mut self)`?
+                        mut_: false,
+                        type_: input_type,
+                    };
+                    vars.push(scoped_var);
+                } else {
+                    // TODO what if input types contain type params that have been resolved? need a `fn update_type(possibly_resolved_generics, type)`
+                    let scoped_var = ScopedVar {
+                        name,
+                        mut_: is_mut,
+                        type_: input_type,
+                    };
+                    // dbg!(&scoped_var);
+                    vars.push(scoped_var);
+                }
+            }
+        }
+        crate::RustImplItemItemNoJs::Const => todo!(),
+    }
+
     // let mut fns = Vec::new();
     // record var and fn inputs
     for input in &impl_item_fn.sig.inputs {
-        match input {
-            FnArg::Receiver(receiver) => {
-                let type_ = if receiver.mutability.is_some() {
-                    RustType::MutRef(Box::new(target_rust_type.clone()))
-                } else {
-                    target_rust_type.clone()
-                };
-                let scoped_var = ScopedVar {
-                    // TODO IMPORTANT surely this should be `self`???
-                    // name: target_item.ident.clone(),
-                    name: "self".to_string(),
-                    // TODO how do we know if we have `foo(mut self)`?
-                    mut_: false,
-                    type_,
-                };
-                vars.push(scoped_var);
-            }
-            FnArg::Typed(pat_type) => {
-                let (ident, mut_) = match &*pat_type.pat {
-                    Pat::Ident(pat_ident) => {
-                        (pat_ident.ident.to_string(), pat_ident.mutability.is_some())
-                    }
-                    _ => todo!(),
-                };
-                let rust_type = parse_fn_input_or_field(
-                    &*pat_type.ty,
-                    mut_,
-                    &fn_generics,
-                    current_module_path,
-                    global_data,
-                );
-                let scoped_var = ScopedVar {
-                    name: ident,
-                    mut_,
-                    type_: rust_type,
-                };
-                dbg!(&scoped_var);
-                vars.push(scoped_var);
-            }
-        };
+        // match input {
+        //     FnArg::Receiver(receiver) => {
+        //         let type_ = if receiver.mutability.is_some() {
+        //             RustType::MutRef(Box::new(target_rust_type.clone()))
+        //         } else {
+        //             target_rust_type.clone()
+        //         };
+        //         let scoped_var = ScopedVar {
+        //             // TODO IMPORTANT surely this should be `self`???
+        //             // name: target_item.ident.clone(),
+        //             name: "self".to_string(),
+        //             // TODO how do we know if we have `foo(mut self)`?
+        //             mut_: false,
+        //             type_,
+        //         };
+        //         vars.push(scoped_var);
+        //     }
+        //     FnArg::Typed(pat_type) => {
+        //         let (ident, mut_) = match &*pat_type.pat {
+        //             Pat::Ident(pat_ident) => {
+        //                 (pat_ident.ident.to_string(), pat_ident.mutability.is_some())
+        //             }
+        //             _ => todo!(),
+        //         };
+        //         let rust_type = parse_fn_input_or_field(
+        //             &*pat_type.ty,
+        //             mut_,
+        //             &fn_generics,
+        //             current_module_path,
+        //             global_data,
+        //         );
+        //         let scoped_var = ScopedVar {
+        //             name: ident,
+        //             mut_,
+        //             type_: rust_type,
+        //         };
+        //         vars.push(scoped_var);
+        //     }
+        // }
     }
 
     // dbg!("handle_item_impl new scope");
@@ -1100,18 +1139,29 @@ pub fn handle_impl_item_fn(
             .sig
             .inputs
             .iter()
-            .filter_map(|input| match input {
-                FnArg::Receiver(_) => None,
-                FnArg::Typed(pat_type) => Some(parse_fn_input_or_field(
-                    &*pat_type.ty,
+            .map(|input| match input {
+                FnArg::Receiver(_) => (true, false, "self".to_string(), RustType::ParentItem),
+                FnArg::Typed(pat_type) => (
+                    false,
                     match &*pat_type.pat {
                         Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
                         _ => todo!(),
                     },
-                    &fn_rust_type_params,
-                    current_module_path,
-                    global_data,
-                )),
+                    match &*pat_type.pat {
+                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                        _ => todo!(),
+                    },
+                    parse_fn_input_or_field(
+                        &*pat_type.ty,
+                        match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                            _ => todo!(),
+                        },
+                        &fn_rust_type_params,
+                        current_module_path,
+                        global_data,
+                    ),
+                ),
             })
             .collect::<Vec<_>>();
 
@@ -1130,7 +1180,7 @@ pub fn handle_impl_item_fn(
             });
         let fn_info = FnInfo {
             ident: impl_item_fn.sig.ident.to_string(),
-            inputs_types,
+            inputs_types: inputs_types,
             generics: fn_generics,
             return_type: match &impl_item_fn.sig.output {
                 ReturnType::Default => RustType::Unit,
@@ -1155,9 +1205,9 @@ pub fn handle_impl_item_fn(
             input_names: js_input_names,
             body_stmts: body_stmts,
         };
-        rust_impl_items.push(RustImplItem {
+        js_impl_items.push(RustImplItemJs {
             ident: impl_item_fn.sig.ident.to_string(),
-            item: RustImplItemItem::Fn(private, static_, fn_info, js_fn),
+            item: RustImplItemItemJs::Fn(private, static_, fn_info, js_fn),
             syn_object: impl_item.clone(),
         });
     }
@@ -1185,12 +1235,25 @@ pub fn handle_item_impl(
     //     &item_impl.trait_, &item_impl.self_ty
     // ));
 
+    let unique_id = get_item_impl_unique_id(
+        current_module_path,
+        &global_data.scope_id_as_option(),
+        item_impl,
+    );
+    let impl_block = global_data
+        .impl_blocks_simpl
+        .iter()
+        .find(|ib| ib.unique_id == unique_id)
+        .unwrap()
+        .clone();
+
     let module = global_data
         .modules
         .iter()
         .find(|m| &m.path == current_module_path)
         .unwrap();
 
+    // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
     let impl_item_target_path = match &*item_impl.self_ty {
         Type::Path(type_path) => type_path
             .path
@@ -1354,32 +1417,34 @@ pub fn handle_item_impl(
                     value: handle_expr(&impl_item_const.expr, global_data, &current_module_path).0,
                 };
 
-                rust_impl_items.push(RustImplItem {
+                rust_impl_items.push(RustImplItemJs {
                     ident: impl_item_const.ident.to_string(),
-                    item: RustImplItemItem::Const(js_local),
+                    item: RustImplItemItemJs::Const(js_local),
                     syn_object: impl_item.clone(),
                 });
             }
-            ImplItem::Fn(impl_item_fn) => handle_impl_item_fn(
-                &mut rust_impl_items,
-                impl_item,
-                impl_item_fn,
-                global_data,
-                current_module_path,
-                &target_rust_type,
-            ),
+            ImplItem::Fn(impl_item_fn) => {
+                let rust_impl_item = impl_block
+                    .rust_items
+                    .iter()
+                    .find(|i| i.ident == impl_item_fn.sig.ident.to_string())
+                    .unwrap();
+                handle_impl_item_fn(
+                    &mut rust_impl_items,
+                    impl_item,
+                    impl_item_fn,
+                    global_data,
+                    current_module_path,
+                    &target_rust_type,
+                    rust_impl_item,
+                )
+            }
             ImplItem::Type(_) => todo!(),
             ImplItem::Macro(_) => todo!(),
             ImplItem::Verbatim(_) => todo!(),
             _ => todo!(),
         }
     }
-
-    let unique_id = get_item_impl_unique_id(
-        current_module_path,
-        &global_data.scope_id_as_option(),
-        item_impl,
-    );
 
     let rust_impl_block = JsImplBlock2 {
         unique_id: unique_id.clone(),
@@ -1479,8 +1544,8 @@ pub fn handle_item_impl(
             .iter()
             .cloned()
             .filter_map(|(used, item)| match item.item {
-                RustImplItemItem::Fn(_, _, _, _) => None,
-                RustImplItemItem::Const(js_local) => Some(js_local),
+                RustImplItemItemJs::Fn(_, _, _, _) => None,
+                RustImplItemItemJs::Const(js_local) => Some(js_local),
             })
             .collect::<Vec<_>>();
         let methods = rust_impl_block
@@ -1488,10 +1553,10 @@ pub fn handle_item_impl(
             .iter()
             .cloned()
             .filter_map(|(used, item)| match item.item {
-                RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
+                RustImplItemItemJs::Fn(private, static_, fn_info, js_fn) => {
                     Some((rust_impl_block.js_name(), private, static_, js_fn))
                 }
-                RustImplItemItem::Const(_) => None,
+                RustImplItemItemJs::Const(_) => None,
             })
             .collect::<Vec<_>>();
 
