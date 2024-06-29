@@ -1294,6 +1294,15 @@ fn parse_types_for_populate_item_definitions(
                     );
                     let item_seg = &item_path_seg[0];
 
+                    let mut type_params = item_seg
+                        .turbofish
+                        .iter()
+                        .map(|rt| RustTypeParam {
+                            name: "unknown_todo".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
+                        })
+                        .collect::<Vec<_>>();
+
                     if item_module_path == vec!["prelude_special_case".to_string()] {
                         if item_seg.ident == "i32" {
                             // if has_mut_keyword {
@@ -1310,20 +1319,22 @@ fn parse_types_for_populate_item_definitions(
                             //     global_data.rust_prelude_types.rust_string = true;
                             // }
                             RustType::Bool
+                        } else if item_seg.ident == "Vec" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            // dbg!(&type_params);
+                            // dbg!(&type_path.path.segments);
+                            assert_eq!(type_params.len(), 1);
+                            RustType::Vec(Box::new(RustType::TypeParam(type_params.remove(0))))
                         } else {
+                            dbg!(&item_seg.ident);
                             todo!()
                         }
                     } else {
                         // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
                         RustType::StructOrEnum(
-                            item_seg
-                                .turbofish
-                                .iter()
-                                .map(|rt| RustTypeParam {
-                                    name: "unknown_todo".to_string(),
-                                    type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
-                                })
-                                .collect::<Vec<_>>(),
+                            type_params,
                             item_module_path,
                             item_scope,
                             item_seg.ident.clone(),
@@ -2027,6 +2038,7 @@ enum RustType {
     Todo,
     // Self_,
     /// I think ParentItem means it is actually `self` not just `Self`???
+    /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
     /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
     ParentItem,
     /// ()
@@ -3029,7 +3041,10 @@ impl GlobalData {
                             turbofish: match seg.arguments {
                                 PathArguments::None => Vec::new(),
                                 // TODO support nested turbofish types
-                                PathArguments::AngleBracketed(_) => todo!(),
+                                PathArguments::AngleBracketed(_) => {
+                                    // TODO this is a hack, needs handling properly
+                                    Vec::new()
+                                }
                                 PathArguments::Parenthesized(_) => todo!(),
                             },
                         }
@@ -4952,6 +4967,7 @@ fn populate_item_definitions_stmts(
                         false,
                     )
                 } else {
+                    dbg!(&stmt_macro.mac);
                     todo!();
                 }
             }
@@ -5097,9 +5113,14 @@ fn populate_item_definitions_expr(
             drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::Loop(_) => {}
-        Expr::Macro(expr_macro) => {
-            dbg!(expr_macro);
-            todo!();
+        Expr::Macro(_) => {
+            forced_inc_scope_count_and_id_and_push_empty_scope(
+                force_new_scope,
+                scope_count,
+                scope_id,
+                module,
+            );
+            drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::Match(expr_match) => {
             // We wouldn't normally create a new scope for a match expression but if it is the body of eg a closure or a another match expression's arm body, then force_new_scope will be true and we must create an empty scope (NOTE this is different to the arm body scopes which are created below, this is a single empty scope for the entire match expression)
@@ -6312,6 +6333,9 @@ pub fn process_items(
     module_data.trait_definitons.push(RustTraitDefinition {
         name: "FnOnce".to_string(),
     });
+    module_data.trait_definitons.push(RustTraitDefinition {
+        name: "Copy".to_string(),
+    });
     modules.push(module_data);
 
     extract_data(
@@ -6383,12 +6407,9 @@ pub fn process_items(
     global_data.duplicates = namespace_duplicates(&global_data.modules);
 
     // Parse to JS
-    for module_data in global_data
-        .modules
-        .clone()
-        .into_iter()
-        .filter(|m| m.path != vec!["web_prelude".to_string()])
-    {
+    for module_data in global_data.modules.clone().into_iter().filter(|m| {
+        m.path != vec!["web_prelude".to_string()] && m.path != vec![PRELUDE_MODULE_PATH.to_string()]
+    }) {
         global_data.scope_count.clear();
         global_data.scope_count.push(0);
         global_data.scope_id.clear();
@@ -7868,6 +7889,8 @@ fn resolve_path(
             || seg.ident == "None"
             || (seg.ident == "Box" && &segs[1].ident == "new")
             || seg.ident == "FnOnce"
+            || seg.ident == "Copy"
+            || seg.ident == "Vec"
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String

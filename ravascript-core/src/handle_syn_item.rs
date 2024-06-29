@@ -1240,12 +1240,12 @@ pub fn handle_item_impl(
         &global_data.scope_id_as_option(),
         item_impl,
     );
-    let impl_block = global_data
+    let impl_blocks = global_data
         .impl_blocks_simpl
         .iter()
-        .find(|ib| ib.unique_id == unique_id)
-        .unwrap()
-        .clone();
+        .filter(|ib| ib.unique_id == unique_id)
+        .cloned()
+        .collect::<Vec<_>>();
 
     let module = global_data
         .modules
@@ -1424,10 +1424,14 @@ pub fn handle_item_impl(
                 });
             }
             ImplItem::Fn(impl_item_fn) => {
-                let rust_impl_item = impl_block
-                    .rust_items
+                let rust_impl_item = impl_blocks
                     .iter()
-                    .find(|i| i.ident == impl_item_fn.sig.ident.to_string())
+                    .find_map(|impl_block| {
+                        impl_block
+                            .rust_items
+                            .iter()
+                            .find(|i| i.ident == impl_item_fn.sig.ident.to_string())
+                    })
                     .unwrap();
                 handle_impl_item_fn(
                     &mut rust_impl_items,
@@ -1584,9 +1588,11 @@ pub fn handle_item_impl(
             "i32" => "Number",
             "String" => "String",
             "str" => "String",
-            "bool" => "Boolean",
+            // "bool" => "Boolean",
+            "Bool" => "Boolean",
             "Box" => "donotuse",
             "Option" => "donotuse",
+            "Vec" => "Array",
             _ => todo!(),
         }
     }
@@ -1599,7 +1605,14 @@ pub fn handle_item_impl(
         .item_definitons
         .iter()
         .cloned()
-        .map(|item_def| (prelude_item_def_name_to_js(&item_def.ident), item_def))
+        .filter_map(|item_def| {
+            let new_name = prelude_item_def_name_to_js(&item_def.ident);
+            if new_name != "donotuse" {
+                Some((new_name, item_def))
+            } else {
+                None
+            }
+        })
         .collect::<Vec<_>>();
     dedup_rust_prelude_definitions.sort_by_key(|(js_name, item_def)| js_name.clone());
     dedup_rust_prelude_definitions.dedup_by_key(|(js_name, item_def)| js_name.clone());

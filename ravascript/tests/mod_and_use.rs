@@ -296,11 +296,11 @@ async fn use_paths() {
             }
         }
         fn main() {
-            assert_eq!(duplicate(), 0);
-            assert_eq!(one::duplicate(), 1);
-            assert_eq!(one::two::three::duplicate(), 3);
-            assert_eq!(four::duplicate(), 4);
-            assert_eq!(five::duplicate(), 5);
+            assert!(duplicate() == 0);
+            assert!(one::duplicate() == 1);
+            assert!(one::two::three::duplicate() == 3);
+            assert!(four::duplicate() == 4);
+            assert!(five::duplicate() == 5);
         }
     );
     let actual = format_js(actual);
@@ -312,11 +312,11 @@ async fn use_paths() {
             return 0;
           }
           function main() {
-            console.assert(duplicate().eq(0));
-            console.assert(one__duplicate().eq(1));
-            console.assert(three__duplicate().eq(3));
-            console.assert(four__duplicate().eq(4));
-            console.assert(five__duplicate().eq(5));
+            console.assert(duplicate() === 0);
+            console.assert(one__duplicate() === 1);
+            console.assert(three__duplicate() === 3);
+            console.assert(four__duplicate() === 4);
+            console.assert(five__duplicate() === 5);
           }
 
           // one

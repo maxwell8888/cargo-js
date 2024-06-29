@@ -915,6 +915,7 @@ async fn simple_scoped_impl_trait_for_type_param() {
                     return 4;
                 }
             }
+            Array.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Boolean.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
             String.prototype.getFoo = Foo__for__T.prototype.getFoo;
@@ -963,6 +964,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
                     return 4;
                 }
             }
+            Array.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Boolean.prototype.getFoo = Foo__for__T.prototype.getFoo;
             Number.prototype.getFoo = Foo__for__T.prototype.getFoo;
             String.prototype.getFoo = Foo__for__T.prototype.getFoo;
@@ -971,6 +973,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
                     return 5;
                 }
             }
+            Array.prototype.getBar = Bar__for__T.prototype.getBar;
             Boolean.prototype.getBar = Bar__for__T.prototype.getBar;
             Number.prototype.getBar = Bar__for__T.prototype.getBar;
             String.prototype.getBar = Bar__for__T.prototype.getBar;

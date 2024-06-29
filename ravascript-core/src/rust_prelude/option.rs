@@ -1,6 +1,8 @@
 // use super::RustBool;
 // use crate::prelude::JsBoolean;
 
+use std::marker::PhantomData;
+
 // #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
 // #[derive(PartialEq)]
@@ -189,7 +191,40 @@ impl<T> Option<T> {
 
 // TODO even though i32 is Copy, we are only interested in *structs* which are Copy, though this might be wrong if is_copy is used for other purposes.
 struct i32 {}
+
+struct Vec<T: Copy> {
+    deleteme: T,
+}
+impl<T: Copy> Vec<T> {
+    fn iter(&self) -> Vec<T> {
+        Vec {
+            deleteme: self.deleteme,
+        }
+    }
+    fn map<U>(&self, f: impl FnOnce(T) -> U) -> Vec<T> {
+        Vec {
+            deleteme: self.deleteme,
+        }
+    }
+    fn collect(&self) -> Vec<T> {
+        Vec {
+            deleteme: self.deleteme,
+        }
+    }
+}
 struct String {}
+impl String {
+    fn to_string(&self) -> String {
+        String {}
+    }
+    fn clone(&self) -> String {
+        String {}
+    }
+    fn push_str(&self, string: String) -> String {
+        String {}
+    }
+}
+
 struct str {}
-// struct bool {}
+struct Bool {}
 struct Box {}

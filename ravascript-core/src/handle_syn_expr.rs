@@ -14,9 +14,10 @@ use std::{
 use syn::{
     parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
     ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
-    Ident, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
-    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment,
-    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
+    Ident, ImplItem, ImplItemFn, Index, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod,
+    ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments,
+    PathSegment, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
+    WherePredicate,
 };
 use tracing::{debug, debug_span, info, span, warn};
 
@@ -553,6 +554,14 @@ pub fn handle_expr(
                             RustType::MutRef(inner_type) => {
                                 get_field_type(*inner_type, global_data, ident)
                             }
+                            RustType::ParentItem => {
+                                //
+                                get_field_type(
+                                    global_data.impl_block_target_type.last().unwrap().clone(),
+                                    global_data,
+                                    ident,
+                                )
+                            }
                             _ => {
                                 dbg!(&base_type);
                                 todo!()
@@ -563,34 +572,50 @@ pub fn handle_expr(
                     (JsExpr::Field(Box::new(base_expr), camel(ident)), field_type)
                 }
                 Member::Unnamed(index) => {
-                    let type_ = match base_type {
-                        RustType::Tuple(tuple_types) => tuple_types[index.index as usize].clone(),
-                        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
-                            let item_definition = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    &module_path,
-                                    &scope_id,
-                                    &name,
-                                );
-                            match item_definition.struct_or_enum_info {
-                                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
-                                    match struct_def_info.fields {
-                                        StructFieldInfo::UnitStruct => todo!(),
-                                        StructFieldInfo::TupleStruct(fields) => {
-                                            fields[index.index as usize].clone()
+                    fn get_unnamed_field_type(
+                        base_type: RustType,
+                        global_data: &GlobalData,
+                        index: &Index,
+                    ) -> RustType {
+                        match base_type {
+                            RustType::Tuple(tuple_types) => {
+                                tuple_types[index.index as usize].clone()
+                            }
+                            RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                                let item_definition = global_data
+                                    .lookup_item_def_known_module_assert_not_func2(
+                                        &module_path,
+                                        &scope_id,
+                                        &name,
+                                    );
+                                match item_definition.struct_or_enum_info {
+                                    StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                        match struct_def_info.fields {
+                                            StructFieldInfo::UnitStruct => todo!(),
+                                            StructFieldInfo::TupleStruct(fields) => {
+                                                fields[index.index as usize].clone()
+                                            }
+                                            StructFieldInfo::RegularStruct(_) => todo!(),
                                         }
-                                        StructFieldInfo::RegularStruct(_) => todo!(),
                                     }
+                                    StructOrEnumDefitionInfo::Enum(_) => todo!(),
                                 }
-                                StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                            }
+                            RustType::ParentItem => {
+                                //
+                                get_unnamed_field_type(
+                                    global_data.impl_block_target_type.last().unwrap().clone(),
+                                    global_data,
+                                    index,
+                                )
+                            }
+                            _ => {
+                                dbg!(&base_type);
+                                todo!()
                             }
                         }
-                        _ => {
-                            dbg!(&expr);
-                            dbg!(&base_type);
-                            todo!()
-                        }
-                    };
+                    }
+                    let type_ = get_unnamed_field_type(base_type, &global_data, index);
                     (
                         JsExpr::Index(
                             Box::new(base_expr),
@@ -2038,7 +2063,15 @@ fn get_receiver_params_and_method_impl_item(
         RustType::NotAllowed => todo!(),
         RustType::Unknown => todo!(),
         RustType::Todo => todo!(),
-        RustType::ParentItem => todo!(),
+        RustType::ParentItem => {
+            //
+            get_receiver_params_and_method_impl_item(
+                global_data.impl_block_target_type.last().unwrap().clone(),
+                method_name,
+                global_data,
+                sub_path,
+            )
+        }
         RustType::Unit => todo!(),
         RustType::Never => todo!(),
         RustType::ImplTrait(_) => todo!(),
@@ -2077,15 +2110,36 @@ fn get_receiver_params_and_method_impl_item(
             // } else {
             //     todo!()
             // }
-            if method_name == "to_string" || method_name == "clone" {
-                // (Vec::new(), RustType::String)
-                todo!();
-            } else if method_name == "push_str" {
-                // (vec![RustType::String], RustType::String)
-                todo!();
-            } else {
-                todo!()
-            }
+            // if method_name == "to_string" || method_name == "clone" {
+            //     // (Vec::new(), RustType::String)
+            //     // todo!();
+            //     gl
+            // } else if method_name == "push_str" {
+            //     // (vec![RustType::String], RustType::String)
+            //     todo!();
+            // } else {
+            //     todo!()
+            // }
+            let prelude_module = global_data
+                .modules
+                .iter()
+                .find(|m| m.path == [PRELUDE_MODULE_PATH])
+                .unwrap();
+            let string_def = prelude_module
+                .item_definitons
+                .iter()
+                .find_map(|item_def| (item_def.ident == "String").then_some(item_def))
+                .unwrap();
+            // dbg!(&string_def);
+            // dbg!(&sub_path);
+            // dbg!(&global_data.impl_blocks_simpl);
+
+            (
+                Vec::new(),
+                global_data
+                    .lookup_impl_item_item2(&string_def, sub_path)
+                    .unwrap(),
+            )
         }
         RustType::Option(type_param) => {
             let prelude_module = global_data
@@ -2145,25 +2199,45 @@ fn get_receiver_params_and_method_impl_item(
         }
         RustType::Vec(element) => {
             // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
-            if method_name == "iter" || method_name == "collect" {
-                // (Vec::new(), RustType::Vec(element))
-                todo!();
-            } else if method_name == "map" {
-                // let closure_return = match &args_rust_types[0] {
-                //     RustType::MutRef(_) => todo!(),
-                //     RustType::Ref(_) => todo!(),
-                //     RustType::Fn(_, _, _, _, _) => todo!(),
-                //     RustType::Closure(return_type) => return_type.clone(),
-                //     _ => todo!(),
-                // };
-                // (
-                //     vec![RustType::Closure(closure_return.clone())],
-                //     RustType::Vec(closure_return),
-                // )
-                todo!();
-            } else {
-                todo!()
-            }
+            // if method_name == "iter" || method_name == "collect" {
+            //     // (Vec::new(), RustType::Vec(element))
+            //     todo!();
+            // } else if method_name == "map" {
+            //     // let closure_return = match &args_rust_types[0] {
+            //     //     RustType::MutRef(_) => todo!(),
+            //     //     RustType::Ref(_) => todo!(),
+            //     //     RustType::Fn(_, _, _, _, _) => todo!(),
+            //     //     RustType::Closure(return_type) => return_type.clone(),
+            //     //     _ => todo!(),
+            //     // };
+            //     // (
+            //     //     vec![RustType::Closure(closure_return.clone())],
+            //     //     RustType::Vec(closure_return),
+            //     // )
+            //     todo!();
+            // } else {
+            //     todo!()
+            // }
+            let prelude_module = global_data
+                .modules
+                .iter()
+                .find(|m| m.path == [PRELUDE_MODULE_PATH])
+                .unwrap();
+            let vec_def = prelude_module
+                .item_definitons
+                .iter()
+                .find_map(|item_def| (item_def.ident == "Vec").then_some(item_def))
+                .unwrap();
+            // dbg!(&string_def);
+            // dbg!(&sub_path);
+            // dbg!(&global_data.impl_blocks_simpl);
+
+            (
+                Vec::new(),
+                global_data
+                    .lookup_impl_item_item2(&vec_def, sub_path)
+                    .unwrap(),
+            )
         }
         RustType::Array(element) => {
             // TODO need to think about the different between Array and Vec here
@@ -3336,6 +3410,21 @@ fn handle_match_pat(
                         StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
                     }
                 }
+                RustType::ParentItem => match global_data.impl_block_target_type.last().unwrap() {
+                    // TODO this is a duplicate of above
+                    RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                        let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
+                            module_path,
+                            scope_id,
+                            name,
+                        );
+                        match item_def.struct_or_enum_info {
+                            StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                            StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
+                        }
+                    }
+                    _ => todo!(),
+                },
                 _ => {
                     dbg!(match_condition_type);
                     dbg!(pat_struct);
