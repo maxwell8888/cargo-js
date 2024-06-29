@@ -48,16 +48,18 @@ async fn option_is_some_and() {
         let five = Some(5);
         let not_five: Option<i32> = None;
         assert!(five.is_some_and(|x| x == 5));
-        // assert!(!not_five.is_some_and(|x| x == 5));
+        assert!(!not_five.is_some_and(|x| x == 5));
     });
 
     let expected = format_js(
         r#"
-            Object.prototype.isSomeAnd = (f) => this !== null ? f(this) : false;
+            function optionIsSomeAnd(self, f) {
+                return self !== null ? f(self) : false;
+            }
             let five = 5;
             let notFive = null;
-            console.assert(five.isSomeAnd((x) => x === 5));
-            console.assert(!notFive.isSomeAnd((x) => x === 5));
+            console.assert(optionIsSomeAnd(five, (x) => x === 5));
+            console.assert(!optionIsSomeAnd(notFive, (x) => x === 5));
         "#,
     );
 

@@ -31,7 +31,7 @@ use crate::{
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
     EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
     GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplBlock2, JsImplItem, RustGeneric,
-    RustImplItemJs, RustImplItemItemJs, RustTraitDefinition, RustType, RustTypeParam,
+    RustImplItemItemJs, RustImplItemJs, RustTraitDefinition, RustType, RustTypeParam,
     RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
 };
 
@@ -139,7 +139,33 @@ fn handle_local(
             }
             var_name_matches(&local.pat, &var.name)
         });
-    let lhs = handle_pat(&local.pat, global_data, rhs_type.clone());
+
+    // TODO handle case where type annotation contains a type param eg `let foo: Option<T> = None;`
+    let type_annotation = match &local.pat {
+        Pat::Type(pat_type) => {
+            let is_mut = match &*pat_type.pat {
+                Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                _ => todo!(),
+            };
+            Some(parse_fn_input_or_field(
+                &pat_type.ty,
+                is_mut,
+                // parent_item_definition_generics,
+                // TODO update parse_fn_input_or_field to handle type params in the scope eg for `let foo: Option<T> = None;` the T will be defined eg on the fn and may have already been resolved
+                &Vec::new(),
+                current_module_path,
+                global_data,
+            ))
+        }
+        _ => None,
+    };
+
+    let lhs = handle_pat(
+        &local.pat,
+        global_data,
+        // TODO handle case where the type annotation contains type params that are actually resolved in rhs_type
+        type_annotation.unwrap_or(rhs_type.clone()),
+    );
 
     // If lhs is `mut` and rhs is a JS primative then we need to wrap it in eg `new RustInteger()`. If rhs is already a `mut` JS primative, it needs copying.
     let lhs_is_mut = match &local.pat {

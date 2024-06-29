@@ -1092,12 +1092,12 @@ pub fn handle_expr(
                     rust_type => (expr, rust_type),
                 }
             }
-            UnOp::Not(_) => (
-                JsExpr::Not(Box::new(
+            UnOp::Not(_) => {
+                let js_expr = JsExpr::Not(Box::new(
                     handle_expr(&*expr_unary.expr, global_data, current_module).0,
-                )),
-                RustType::Bool,
-            ),
+                ));
+                (js_expr, RustType::Bool)
+            }
             UnOp::Neg(_) => {
                 let (expr, type_) = handle_expr(&*expr_unary.expr, global_data, current_module);
                 (JsExpr::Minus(Box::new(expr)), type_)
@@ -1659,7 +1659,7 @@ fn handle_expr_method_call(
                 .inputs_types
                 .iter()
                 .map(|(_is_self, _is_mut, _name, input_type)| {
-                    dbg!(input_type);
+                    // dbg!(input_type);
                     let resovled_input_type = resolve_input_type(
                         &input_type,
                         &receiver_type,
@@ -1667,7 +1667,7 @@ fn handle_expr_method_call(
                         &fn_info.generics,
                         &method_turbofish_rust_types,
                     );
-                    dbg!(&resovled_input_type);
+                    // dbg!(&resovled_input_type);
                     resovled_input_type
                 })
                 .collect::<Vec<_>>()
@@ -1698,9 +1698,9 @@ fn handle_expr_method_call(
                 .zip(resolved_input_types_slice)
                 .enumerate()
                 .map(|(i, (arg, resolved_input_type))| {
-                    dbg!(i);
-                    dbg!(&arg);
-                    dbg!(&resolved_input_type);
+                    // dbg!(i);
+                    // dbg!(&arg);
+                    // dbg!(&resolved_input_type);
                     match arg {
                         Expr::Closure(expr_closure) => {
                             // This particular method input is a closure
@@ -1897,6 +1897,35 @@ fn handle_expr_method_call(
             RustType::I32,
         );
     }
+
+    match receiver_type {
+        RustType::I32 => {}
+        RustType::F32 => {}
+        RustType::Bool => {}
+        RustType::String => {}
+        RustType::Option(_) => match &method_impl_item.item {
+            RustImplItemItemNoJs::Fn(_, _, fn_info) => {
+                if fn_info.ident == "is_some_and" {
+                    global_data.rust_prelude_types.option_is_some_and = true;
+                }
+                let mut args = vec![receiver];
+                args.extend(args_js_exprs);
+                return (
+                    JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
+                    method_return_type,
+                );
+            }
+            RustImplItemItemNoJs::Const => todo!(),
+        },
+        RustType::Result(_) => {}
+        RustType::Vec(_) => {}
+        RustType::Array(_) => {}
+        RustType::Box(_) => {}
+        RustType::MutRef(_) => {}
+        RustType::Ref(_) => {}
+        _ => {}
+    }
+
     (
         JsExpr::MethodCall(Box::new(receiver), camel(method_name), args_js_exprs),
         method_return_type,
@@ -2852,13 +2881,16 @@ fn handle_expr_path_inner(
     // segs len = 2
     // 1. Associated fn or const
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
+
+    // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
     let (partial_rust_type, is_mut_var) = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
         if let Some(segs_copy_item_scope) = &segs_copy_item_scope {
             // Look for var
+            // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
             assert_eq!(segs_copy_item_path.len(), 1);
             let path = segs_copy_item_path.first().unwrap();
-            dbg!(&segs_copy_item_path);
+            // dbg!(&segs_copy_item_path);
             // TODO look through all transparent scopes
             let var = global_data
                 .scopes
@@ -3304,7 +3336,11 @@ fn handle_match_pat(
                         StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
                     }
                 }
-                _ => todo!(),
+                _ => {
+                    dbg!(match_condition_type);
+                    dbg!(pat_struct);
+                    todo!()
+                }
             };
             let arm_field_defs = enum_def_info
                 .members
@@ -3579,7 +3615,6 @@ pub fn handle_expr_match(
     let (match_condition_expr, match_condition_type) =
         handle_expr(&*expr_match.expr, global_data, current_module);
 
-    dbg!(&match_condition_type);
     fn handle_option_match(
         match_condition_expr: &JsExpr,
         match_condition_type: &RustType,

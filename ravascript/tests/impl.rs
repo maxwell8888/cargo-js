@@ -982,3 +982,80 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[ignore = "TODO"]
+#[tokio::test]
+async fn mut_method_call_struct() {
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        impl Foo {
+            fn plus_one(&self) -> i32 {
+                self.num + 1
+            }
+        }
+        let mut foo = Foo { num: 1 };
+        let result = foo.plus_one();
+        let mut mut_result = foo.plus_one();
+        mut_result += 1;
+        assert!(result == 2);
+        assert!(mut_result == 3);
+    });
+
+    let expected = format_js(concat!(
+        r#"
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+                plusOne() {
+                    this.num + 1
+                }
+            }
+            let foo = new Foo(1);
+            let result = foo.plusOne();
+            let mutResult = new RustInteger(foo.plusOne());
+            console.assert(result === 2);
+            console.assert(mutResult === 3);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "TODO"]
+#[tokio::test]
+async fn mut_method_call_num() {
+    let actual = r2j_block_with_prelude!({
+        trait PlusOne {
+            fn plus_one(&self) -> i32;
+        }
+        impl PlusOne for i32 {
+            fn plus_one(&self) -> i32 {
+                self + 1
+            }
+        }
+        let mut num =  1 ;
+        let result = num.plus_one();
+        let mut mut_result = num.plus_one();
+        mut_result += 1;
+        assert!(result == 2);
+        assert!(mut_result == 3);
+    });
+
+    let expected = format_js(concat!(
+        r#"
+            Number.prototype.plusOne = function plusOne() {
+                this.num + 1
+            }
+            let foo = new Foo(1);
+            let result = foo.plusOne();
+            let mutResult = new RustInteger(foo.plusOne());
+            console.assert(result === 2);
+            console.assert(mutResult === 3);
+        "#
+    ));
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
+}

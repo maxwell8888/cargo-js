@@ -684,6 +684,8 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
 ///
 /// Remember this is only for definitions, but the types used *within* definitions can have resolved generics
 ///
+/// NOTE also using this to parse local stmt type annotations eg `let foo: i32 = 5;`
+///
 /// TODO also using this for return types in handle_item_fn and not sure if that is reasonable
 /// TODO handle types with len > 1
 fn parse_fn_input_or_field(
@@ -1691,6 +1693,7 @@ struct RustPreludeTypes {
     rust_integer: bool,
     rust_string: bool,
     rust_array_copy: bool,
+    option_is_some_and: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2122,7 +2125,7 @@ impl RustType {
             RustType::ImplTrait(_) => todo!(),
             RustType::TypeParam(_) => todo!(),
             RustType::I32 | RustType::F32 | RustType::Bool | RustType::String => true,
-            RustType::Option(_) => todo!(),
+            RustType::Option(inner) => inner.is_js_primative(),
             RustType::Result(_) => todo!(),
             RustType::StructOrEnum(_, _, _, _) => false,
             RustType::Vec(_) => todo!(),
@@ -3343,7 +3346,7 @@ impl GlobalData {
         path: &Vec<String>,
         // current_module: &Vec<String>,
     ) -> (Vec<String>, Option<Vec<usize>>, RustTraitDefinition) {
-        dbg!("lookup_trait_definition_any_module");
+        // dbg!("lookup_trait_definition_any_module");
         let (item_module_path, item_path, item_scope) = resolve_path(
             false,
             true,
@@ -4544,7 +4547,6 @@ fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
     // We also need it for looking up trait definitions
 
-    dbg!("pop");
     for module in modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
@@ -4898,7 +4900,6 @@ fn populate_item_definitions_stmts(
     scope_id: &mut Vec<usize>,
 ) {
     let mut scope_count = 0;
-    dbg!("pop stmts");
 
     for stmt in stmts {
         match stmt {
@@ -5188,14 +5189,24 @@ fn populate_item_definitions_expr(
         Expr::Try(_) => {}
         Expr::TryBlock(_) => {}
         Expr::Tuple(_) => {}
-        Expr::Unary(_) => {
-            forced_inc_scope_count_and_id_and_push_empty_scope(
-                force_new_scope,
-                scope_count,
-                scope_id,
+        Expr::Unary(expr_unary) => {
+            // TODO I think it is correct that we don't need to call `forced_inc_scope_count_and_id_and_push_empty_scope` and can just pass `force_new_scope` down to the target expression to create a new scope if necessary? If this is correct then `Expr::Reference` should be the same as similarly to unary you can't have a reference with no target
+            // forced_inc_scope_count_and_id_and_push_empty_scope(
+            //     force_new_scope,
+            //     scope_count,
+            //     scope_id,
+            //     module,
+            // );
+            populate_item_definitions_expr(
+                &expr_unary.expr,
+                module_path,
                 module,
+                scope_id,
+                scope_count,
+                force_new_scope,
+                // false,
             );
-            drop_forced_empty_scope(force_new_scope, scope_id);
+            // drop_forced_empty_scope(force_new_scope, scope_id);
         }
         Expr::Unsafe(_) => {}
         Expr::Verbatim(_) => {}
@@ -6023,6 +6034,16 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                     return JSON.parse(JSON.stringify(this));
                 };
             "
+            .to_string(),
+        );
+        prelude_stmts.push(js_stmt);
+    }
+
+    if rust_prelude_types.option_is_some_and {
+        let js_stmt = JsStmt::Raw(
+            "function optionIsSomeAnd(self, f) {
+                return self !== null ? f(self) : false;
+            }"
             .to_string(),
         );
         prelude_stmts.push(js_stmt);
