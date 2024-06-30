@@ -823,7 +823,11 @@ fn parse_fn_input_or_field(
                             }
                             _ => todo!(),
                         };
-                        RustType::Option(Box::new(generic_type))
+                        RustType::Option(RustTypeParam {
+                            // TODO "T" shouldn't be hardcoded here
+                            name: "T".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                        })
                     }
                     // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
                     // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
@@ -1205,7 +1209,11 @@ fn parse_types_for_populate_item_definitions(
                         }
                         _ => todo!(),
                     };
-                    RustType::Option(Box::new(generic_type))
+                    RustType::Option(RustTypeParam {
+                        // TODO "T" shouldn't be hardcoded here
+                        name: "T".to_string(),
+                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    })
                 }
                 "Result" => {
                     let generic_type = match &seg.arguments {
@@ -1231,7 +1239,11 @@ fn parse_types_for_populate_item_definitions(
                         }
                         _ => todo!(),
                     };
-                    RustType::Result(Box::new(generic_type))
+                    RustType::Result(RustTypeParam {
+                        // TODO "T" shouldn't be hardcoded here
+                        name: "T".to_string(),
+                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    })
                 }
                 _ => {
                     // get full path
@@ -1705,6 +1717,9 @@ struct RustPreludeTypes {
     rust_string: bool,
     rust_array_copy: bool,
     option_is_some_and: bool,
+    option_unwrap: bool,
+    result_is_err: bool,
+    result_unwrap: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2039,6 +2054,7 @@ enum RustType {
     // Self_,
     /// I think ParentItem means it is actually `self` not just `Self`???
     /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
+    /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
     /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
     ParentItem,
     /// ()
@@ -2062,10 +2078,10 @@ enum RustType {
     String,
     /// (generic)
     /// The RustType for option *must* be a type param. (I believe) It is important to always have a type param to ensure we can always lookup the name of the generic to match against generics in methods etc NO, we can always lookup the name of the generic on the item_def
-    // Option(RustTypeParam),
-    Option(Box<RustType>),
+    Option(RustTypeParam),
+    // Option(Box<RustType>),
     /// (generic)
-    Result(Box<RustType>),
+    Result(RustTypeParam),
     /// Need to remember that because StructOrEnum can have generics that have been resolved to concrete types, it means we are using RustType to record the type of both the single defined item that gets recorded in scopes modules/structs and enums, but also instances of the item, stored the in variables vec of the scope
     // Struct(StructOrEnumItemDefinition),
     // Enum(StructOrEnumInstance),
@@ -2137,7 +2153,13 @@ impl RustType {
             RustType::ImplTrait(_) => todo!(),
             RustType::TypeParam(_) => todo!(),
             RustType::I32 | RustType::F32 | RustType::Bool | RustType::String => true,
-            RustType::Option(inner) => inner.is_js_primative(),
+            RustType::Option(inner) => {
+                //
+                match &inner.type_ {
+                    RustTypeParamValue::Unresolved => todo!(),
+                    RustTypeParamValue::RustType(resolved_type) => resolved_type.is_js_primative(),
+                }
+            }
             RustType::Result(_) => todo!(),
             RustType::StructOrEnum(_, _, _, _) => false,
             RustType::Vec(_) => todo!(),
@@ -2532,7 +2554,12 @@ impl JsImplBlock2 {
                     format!("for__{}", rust_type_param.name)
                 }
                 RustType::Option(inner) => {
-                    format!("Option_{}_", rust_type_js_name(inner))
+                    // The idea here is to differeniate between eg Option<T> and Option<i32>
+                    let generic_name = match &inner.type_ {
+                        RustTypeParamValue::Unresolved => inner.name.clone(),
+                        RustTypeParamValue::RustType(resolved) => rust_type_js_name(&*resolved),
+                    };
+                    format!("Option_{}_", generic_name)
                 }
                 _ => {
                     dbg!(rust_type);
@@ -6065,6 +6092,20 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
             "function optionIsSomeAnd(self, f) {
                 return self !== null ? f(self) : false;
             }"
+            .to_string(),
+        );
+        prelude_stmts.push(js_stmt);
+    }
+
+    if rust_prelude_types.option_unwrap {
+        let js_stmt = JsStmt::Raw(
+            r#"function optionUnwrap(self) {
+                if (self === null) {
+                    throw new Error("called `Option::unwrap()` on a `None` value");
+                } else {
+                    return self;
+                }
+            }"#
             .to_string(),
         );
         prelude_stmts.push(js_stmt);

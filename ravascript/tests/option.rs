@@ -1,4 +1,6 @@
 mod utils;
+use std::panic::catch_unwind;
+
 use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
@@ -67,24 +69,52 @@ async fn option_is_some_and() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore]
 #[tokio::test]
-async fn option_unwrap() {
+async fn option_unwrap_some() {
     let actual = r2j_block_with_prelude!({
-        let five = Some(5);
-        assert_eq!(five.unwrap(), 5);
+        let some_five = Some(5);
+        let unwrapped_five = some_five.unwrap();
+        assert!(unwrapped_five == 5);
     });
-
-    let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
-        "let Some = Option.Some;",
-        r#"let five = Some(5);
-        console.assert(five.unwrap().eq(5));
+    let expected = format_js(
+        r#"
+            function optionUnwrap(self) {
+                if (self === null) {
+                    throw new Error("called `Option::unwrap()` on a `None` value");
+                } else {
+                    return self;
+                }
+            }
+            let someFive = 5;
+            let unwrappedFive = optionUnwrap(someFive);
+            console.assert(unwrappedFive === 5);
         "#,
-    ));
-
+    );
+    assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
+}
 
+#[ignore = "TODO is error"]
+#[tokio::test]
+async fn option_unwrap_none() {
+    let actual = r2j_block_with_prelude!({
+        let none: Option<i32> = None;
+        let err = catch_unwind(|| none.unwrap());
+        assert!(err.is_err());
+    });
+    let expected = format_js(
+        r#"
+            let none = null;
+            let err;
+            try {
+                optionUnwrap(none)
+            } catch(error) {
+                err = error;
+            }
+            console.assert(resultIsErr(err));
+        "#,
+    );
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
     assert_eq!(expected, actual);
 }
 

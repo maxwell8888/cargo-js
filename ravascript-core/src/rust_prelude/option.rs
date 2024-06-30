@@ -64,12 +64,12 @@ impl<T> Option<T> {
     //     }
     // }
 
-    // pub fn unwrap(self) -> T {
-    //     match self {
-    //         Some(val) => val,
-    //         None => panic!("called `Option::unwrap()` on a `None` value"),
-    //     }
-    // }
+    pub fn unwrap(self) -> T {
+        match self {
+            Option::Some(val) => val,
+            Option::None => panic!("called `Option::unwrap()` on a `None` value"),
+        }
+    }
 
     // pub fn unwrap_or(self, default: T) -> T {
     //     match self {

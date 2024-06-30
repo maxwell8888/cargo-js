@@ -1379,9 +1379,7 @@ pub fn handle_item_impl(
                     "Option" => {
                         assert_eq!(target_item_type_params.len(), 1);
                         (
-                            RustType::Option(Box::new(RustType::TypeParam(
-                                target_item_type_params.into_iter().next().unwrap(),
-                            ))),
+                            RustType::Option(target_item_type_params.into_iter().next().unwrap()),
                             false,
                         )
                     }

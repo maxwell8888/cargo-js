@@ -1762,11 +1762,56 @@ fn handle_expr_method_call(
     // Now get the method return type from the impl item and similarly if it is, or contains, type params then see if it/they have been resolved by:
     // the receiver type params, method turbofish, arguments, (or within the body of the fn??)
     let method_return_type = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(_, _, fn_info) => {
-            // TODO resolve type
-            fn_info.return_type.clone()
-        }
+        RustImplItemItemNoJs::Fn(_, _, fn_info) => fn_info.return_type.clone(),
         RustImplItemItemNoJs::Const => todo!(),
+    };
+
+    // Update any resolved type params in the `method_return_type`
+    // TODO resolve nested type params eg within a struct or Vec
+    let method_return_type = match &method_return_type {
+        RustType::ParentItem => todo!(),
+        RustType::Option(_) => todo!(),
+        RustType::TypeParam(rust_type_param) => {
+            // Check to see if type param has been resolved by parent/receiver type
+            let parent_type_params = match &receiver_type {
+                RustType::ParentItem => todo!(),
+                RustType::TypeParam(_) => todo!(),
+                RustType::Option(inner) => Some(vec![inner]),
+                RustType::Result(_) => todo!(),
+                RustType::StructOrEnum(_, _, _, _) => todo!(),
+                RustType::Vec(_) => todo!(),
+                RustType::Array(_) => todo!(),
+                RustType::Tuple(_) => todo!(),
+                RustType::Box(_) => todo!(),
+                RustType::UserType(_, _) => todo!(),
+                RustType::MutRef(_) => todo!(),
+                RustType::Ref(_) => todo!(),
+                RustType::Fn(_, _, _, _, _) => todo!(),
+                RustType::FnVanish => todo!(),
+                RustType::Closure(_, _) => todo!(),
+                _ => None,
+            };
+            // TODO type param might be defined on the method itself, so we need to look at turbofish and arg types
+            // NOTE it could be that the receiver type is unresovled but the static fn_info def return type is resolved?
+            if let Some(parent_type_params) = parent_type_params {
+                let found_param = parent_type_params
+                    .into_iter()
+                    .find(|p| p.name == rust_type_param.name)
+                    .unwrap();
+                let found_param_is_resolved = match found_param.type_ {
+                    RustTypeParamValue::Unresolved => false,
+                    RustTypeParamValue::RustType(_) => true,
+                };
+                if found_param_is_resolved {
+                    RustType::TypeParam(found_param.clone())
+                } else {
+                    method_return_type
+                }
+            } else {
+                method_return_type
+            }
+        }
+        _ => method_return_type,
     };
 
     // Finally we see if the final types we get from parsing the arguments (after having already attempted to resolve generics using receiver type params, method turbofish, (anything else?)) we check that if the argument the same type param as the return type and is now resolved, we can update the return type???
@@ -1932,13 +1977,23 @@ fn handle_expr_method_call(
             RustImplItemItemNoJs::Fn(_, _, fn_info) => {
                 if fn_info.ident == "is_some_and" {
                     global_data.rust_prelude_types.option_is_some_and = true;
+                    let mut args = vec![receiver];
+                    args.extend(args_js_exprs);
+                    return (
+                        JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
+                        method_return_type,
+                    );
                 }
-                let mut args = vec![receiver];
-                args.extend(args_js_exprs);
-                return (
-                    JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
-                    method_return_type,
-                );
+                if fn_info.ident == "unwrap" {
+                    global_data.rust_prelude_types.option_unwrap = true;
+                    return (
+                        JsExpr::FnCall(
+                            Box::new(JsExpr::Var("optionUnwrap".to_string())),
+                            vec![receiver],
+                        ),
+                        method_return_type,
+                    );
+                }
             }
             RustImplItemItemNoJs::Const => todo!(),
         },
@@ -2152,13 +2207,13 @@ fn get_receiver_params_and_method_impl_item(
                 .iter()
                 .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
                 .unwrap();
-            let type_param = match &*type_param {
-                RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
-                other_rust_type => RustTypeParam {
-                    name: item_def.generics.first().unwrap().clone(),
-                    type_: RustTypeParamValue::RustType(Box::new(other_rust_type.clone())),
-                },
-            };
+            // let type_param = match &*type_param {
+            //     RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
+            //     other_rust_type => RustTypeParam {
+            //         name: item_def.generics.first().unwrap().clone(),
+            //         type_: RustTypeParamValue::RustType(Box::new(other_rust_type.clone())),
+            //     },
+            // };
             (
                 vec![type_param],
                 global_data
@@ -2643,14 +2698,20 @@ fn handle_expr_call(
                         })
                         .collect::<Vec<_>>();
 
-                    if module_path == ["prelude_special_case"]
+                    if module_path == [PRELUDE_MODULE_PATH]
                         && scope_id.is_none()
                         && enum_name == "Option"
                         && variant_name == "Some"
                     {
                         assert_eq!(args_js_expr.len(), 1);
                         assert_eq!(args_rust_types.len(), 1);
-                        RustType::Option(Box::new(args_rust_types.first().unwrap().clone()))
+                        RustType::Option(RustTypeParam {
+                            // TODO don't hardcode "T"
+                            name: "T".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(
+                                args_rust_types.first().unwrap().clone(),
+                            )),
+                        })
                     } else {
                         RustType::StructOrEnum(
                             updated_type_params,
@@ -2982,16 +3043,20 @@ fn handle_expr_path_inner(
             // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
             match path_idents[..] {
                 ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
-                ["Some"] => (
-                    PartialRustType::EnumVariantIdent(
-                        Vec::new(),
-                        segs_copy_module_path.clone(),
-                        None,
-                        "Option".to_string(),
-                        "Some".to_string(),
-                    ),
-                    false,
-                ),
+                ["Some"] => {
+                    // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
+                    (
+                        PartialRustType::EnumVariantIdent(
+                            // TODO handle turbofish
+                            Vec::new(),
+                            segs_copy_module_path.clone(),
+                            None,
+                            "Option".to_string(),
+                            "Some".to_string(),
+                        ),
+                        false,
+                    )
+                }
                 ["None"] => {
                     let prelude_module = global_data
                         .modules
@@ -3004,10 +3069,11 @@ fn handle_expr_path_inner(
                         .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
                         .unwrap();
                     assert_eq!(item_def.generics.len(), 1);
-                    let rust_type = match &item_def.struct_or_enum_info {
+                    let rust_type_type_param = match &item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(_) => todo!(),
                         StructOrEnumDefitionInfo::Enum(enum_def_info) => {
                             // Some member has a RustType::TypeParam input which is what we want
+                            // TODO yes but surely it will always be RustType::TypeParam(T)??? Is this simply for getting the name of the generic? Maybe we should assert this?
                             let some_member = enum_def_info
                                 .members
                                 .iter()
@@ -3020,10 +3086,12 @@ fn handle_expr_path_inner(
                             }
                         }
                     };
-                    (
-                        PartialRustType::RustType(RustType::Option(Box::new(rust_type))),
-                        false,
-                    )
+                    let rust_type_param = match rust_type_type_param {
+                        RustType::TypeParam(rust_type_param) => rust_type_param,
+                        _ => panic!(),
+                    };
+                    let option = RustType::Option(rust_type_param);
+                    (PartialRustType::RustType(option), false)
                 }
                 _ => todo!(),
             }
@@ -3503,6 +3571,7 @@ fn handle_match_pat(
             let mut names = pat_tuple_struct
                 .elems
                 .iter()
+                // TODO why is RustType::I32 hardcoded here?
                 .map(|elem| handle_pat(elem, global_data, RustType::I32))
                 .collect::<Vec<_>>();
 
@@ -3553,7 +3622,7 @@ fn handle_match_pat(
                 StructOrEnumDefitionInfo::Struct(_) => todo!(),
                 StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
             };
-            let arm_field_defs = enum_def_info
+            let variant_def = enum_def_info
                 .members
                 .iter()
                 .find(|member| {
@@ -3584,7 +3653,7 @@ fn handle_match_pat(
 
                     // Get input from definition based on it's position
                     // TODO what about use of .. ??
-                    let field_type = match &arm_field_defs.inputs[i] {
+                    let field_type = match &variant_def.inputs[i] {
                         EnumVariantInputsInfo::Named { ident, input_type } => todo!(),
                         EnumVariantInputsInfo::Unnamed(input_type) => input_type.clone(),
                     };
@@ -3600,10 +3669,10 @@ fn handle_match_pat(
                             ) -> RustType {
                                 match match_condition_type {
                                     // TODO should just mutate rust_type_param rather than create a new one
-                                    RustType::Option(inner) => RustType::TypeParam(RustTypeParam {
-                                        name: rust_type_param.name.clone(),
-                                        type_: RustTypeParamValue::RustType(inner.clone()),
-                                    }),
+                                    RustType::Option(type_param) => {
+                                        // TODO don't assume match_condition_type is resolved, maybe it is resovled by turbofish?
+                                        RustType::TypeParam(type_param.clone())
+                                    }
                                     RustType::StructOrEnum(
                                         type_params,
                                         module_path,

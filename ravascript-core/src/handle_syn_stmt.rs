@@ -160,6 +160,7 @@ fn handle_local(
         _ => None,
     };
 
+    // NOTE handle_pat pushes the var to the current scope
     let lhs = handle_pat(
         &local.pat,
         global_data,
