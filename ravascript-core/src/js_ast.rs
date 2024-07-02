@@ -516,8 +516,8 @@ pub struct JsClass {
     /// we are assuming input names is equivalent to field names
     pub inputs: Vec<String>,
     pub static_fields: Vec<JsLocal>,
-    /// (class name, private, static, JsFn)  
-    pub methods: Vec<(String, bool, bool, JsFn)>,
+    /// (class name, static, JsFn)  
+    pub methods: Vec<(String, bool, JsFn)>,
     // NOTE dropped the idea of just storing eg a list of impld items or the path to an impl block, because there is methods and fields we might want to add manually eg for an enum, so it makes more sense
     // struct_or_enum: StructOrEnumSynObject,
     // /// all methods impl'd specifically for the type ie `impl MyStructOrEnum { ... }` and `impl MyTrait for MyStructOrEnum { ... }`
@@ -926,8 +926,8 @@ impl JsStmt {
                         .iter()
                         .map(|method| format!(
                             "{}{}",
-                            if method.2 { "static " } else { "" },
-                            method.3.js_string()
+                            if method.1 { "static " } else { "" },
+                            method.2.js_string()
                         ))
                         .collect::<Vec<_>>()
                         .join("\n")

@@ -1678,7 +1678,7 @@ fn handle_expr_method_call(
 
     // Now that we have the method impl item, we can get the method input types, and if any of them contain type params, we can attempt to resolve them from receiver_type_params or method_turbofish_rust_types
     let resolved_input_types = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
+        RustImplItemItemNoJs::Fn(static_, fn_info) => {
             //
             fn_info
                 .inputs_types
@@ -1704,7 +1704,7 @@ fn handle_expr_method_call(
 
     // Parse the args
     let (args_js_exprs, args_rust_types): (Vec<_>, Vec<_>) = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
+        RustImplItemItemNoJs::Fn(static_, fn_info) => {
             // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
             let first_input_is_self = fn_info
                 .inputs_types
@@ -1762,7 +1762,7 @@ fn handle_expr_method_call(
     // Now get the method return type from the impl item and similarly if it is, or contains, type params then see if it/they have been resolved by:
     // the receiver type params, method turbofish, arguments, (or within the body of the fn??)
     let method_return_type = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(_, _, fn_info) => fn_info.return_type.clone(),
+        RustImplItemItemNoJs::Fn(_, fn_info) => fn_info.return_type.clone(),
         RustImplItemItemNoJs::Const => todo!(),
     };
 
@@ -1974,7 +1974,7 @@ fn handle_expr_method_call(
         RustType::Bool => {}
         RustType::String => {}
         RustType::Option(_) => match &method_impl_item.item {
-            RustImplItemItemNoJs::Fn(_, _, fn_info) => {
+            RustImplItemItemNoJs::Fn(_, fn_info) => {
                 if fn_info.ident == "is_some_and" {
                     global_data.rust_prelude_types.option_is_some_and = true;
                     let mut args = vec![receiver];
@@ -2764,7 +2764,7 @@ fn handle_expr_call(
                                         )
                                         .unwrap();
                                     match impl_method.item {
-                                        RustImplItemItemNoJs::Fn(_, _, fn_info) => fn_info,
+                                        RustImplItemItemNoJs::Fn(_, fn_info) => fn_info,
                                         RustImplItemItemNoJs::Const => todo!(),
                                     }
                                 }

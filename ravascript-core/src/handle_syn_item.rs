@@ -659,7 +659,6 @@ pub fn handle_item_enum(
     methods.push((
         item_enum.ident.to_string(),
         false,
-        false,
         JsFn {
             iife: false,
             public: false,
@@ -757,7 +756,6 @@ pub fn handle_item_enum(
         if body_stmts.len() > 0 {
             methods.push((
                 item_enum.ident.to_string(),
-                false,
                 true,
                 JsFn {
                     iife: false,
@@ -960,7 +958,7 @@ pub fn handle_impl_item_fn(
     // MORNING TODO lookup the impl item definition and use the parsed input types from that (which correctly pass FnOnce closure types) rather than parsing agains here.
     let mut vars = Vec::new();
     match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(_private, _static, fn_info) => {
+        RustImplItemItemNoJs::Fn(_static, fn_info) => {
             for (is_self, is_mut, name, input_type) in fn_info.inputs_types.clone() {
                 if is_self {
                     // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
@@ -1165,10 +1163,10 @@ pub fn handle_impl_item_fn(
             })
             .collect::<Vec<_>>();
 
-        let private = match impl_item_fn.vis {
-            Visibility::Public(_) => false,
+        let is_pub = match impl_item_fn.vis {
+            Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
-            Visibility::Inherited => true,
+            Visibility::Inherited => false,
         };
         let static_ = impl_item_fn
             .sig
@@ -1178,8 +1176,10 @@ pub fn handle_impl_item_fn(
                 FnArg::Receiver(_) => false,
                 FnArg::Typed(_) => true,
             });
+
         let fn_info = FnInfo {
             ident: impl_item_fn.sig.ident.to_string(),
+            is_pub,
             inputs_types: inputs_types,
             generics: fn_generics,
             return_type: match &impl_item_fn.sig.output {
@@ -1196,7 +1196,7 @@ pub fn handle_impl_item_fn(
 
         let js_fn = JsFn {
             iife: false,
-            public: !private,
+            public: is_pub,
             export: false,
             // TODO
             async_: false,
@@ -1207,7 +1207,7 @@ pub fn handle_impl_item_fn(
         };
         js_impl_items.push(RustImplItemJs {
             ident: impl_item_fn.sig.ident.to_string(),
-            item: RustImplItemItemJs::Fn(private, static_, fn_info, js_fn),
+            item: RustImplItemItemJs::Fn(static_, fn_info, js_fn),
             syn_object: impl_item.clone(),
         });
     }
@@ -1546,7 +1546,7 @@ pub fn handle_item_impl(
             .iter()
             .cloned()
             .filter_map(|(used, item)| match item.item {
-                RustImplItemItemJs::Fn(_, _, _, _) => None,
+                RustImplItemItemJs::Fn(_, _, _) => None,
                 RustImplItemItemJs::Const(js_local) => Some(js_local),
             })
             .collect::<Vec<_>>();
@@ -1555,8 +1555,8 @@ pub fn handle_item_impl(
             .iter()
             .cloned()
             .filter_map(|(used, item)| match item.item {
-                RustImplItemItemJs::Fn(private, static_, fn_info, js_fn) => {
-                    Some((rust_impl_block.js_name(), private, static_, js_fn))
+                RustImplItemItemJs::Fn(static_, fn_info, js_fn) => {
+                    Some((rust_impl_block.js_name(), static_, js_fn))
                 }
                 RustImplItemItemJs::Const(_) => None,
             })
@@ -1878,7 +1878,6 @@ pub fn handle_item_struct(
         methods.push((
             name.clone(),
             false,
-            false,
             JsFn {
                 iife: false,
                 public: false,
@@ -1898,7 +1897,6 @@ pub fn handle_item_struct(
         let stmt = JsStmt::Raw("return JSON.stringify(this) === JSON.stringify(other)".to_string());
         methods.push((
             name.clone(),
-            false,
             false,
             JsFn {
                 iife: false,

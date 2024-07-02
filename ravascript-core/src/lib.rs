@@ -1761,8 +1761,8 @@ struct ModuleData {
     parent_name: Option<String>,
     /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
     path: Vec<String>,
-    pub_definitions: Vec<String>,
-    private_definitions: Vec<String>,
+    // pub_definitions: Vec<String>,
+    // private_definitions: Vec<String>,
     pub_submodules: Vec<String>,
     private_submodules: Vec<String>,
     /// (snake case item name, snake case use path)
@@ -1815,8 +1815,8 @@ impl ModuleData {
             name,
             parent_name,
             path,
-            pub_definitions: Vec::new(),
-            private_definitions: Vec::new(),
+            // pub_definitions: Vec::new(),
+            // private_definitions: Vec::new(),
             pub_submodules: Vec::new(),
             private_submodules: Vec::new(),
             pub_use_mappings: Vec::new(),
@@ -1831,14 +1831,31 @@ impl ModuleData {
         }
     }
     fn item_defined_in_module(&self, use_private: bool, item: &String) -> bool {
-        let mut definitions = self.pub_definitions.iter();
-        if use_private {
-            definitions
-                .chain(self.private_definitions.iter())
-                .any(|definition| definition == item)
-        } else {
-            definitions.any(|definition| definition == item)
-        }
+        // let mut definitions = self.pub_definitions.iter();
+        // if use_private {
+        //     definitions
+        //         .chain(self.private_definitions.iter())
+        //         .any(|definition| definition == item)
+        // } else {
+        //     definitions.any(|definition| definition == item)
+        // }
+        self.item_definitons
+            .iter()
+            .filter_map(|item_def| (use_private || item_def.is_pub).then_some(&item_def.ident))
+            .chain(
+                self.fn_info.iter().filter_map(|fn_info| {
+                    (use_private || fn_info.is_pub).then_some(&fn_info.ident)
+                }),
+            )
+            .chain(self.trait_definitons.iter().filter_map(|trait_def| {
+                (use_private || trait_def.is_pub).then_some(&trait_def.name)
+            }))
+            .chain(
+                self.consts
+                    .iter()
+                    .filter_map(|const_| (use_private || const_.is_pub).then_some(&const_.name)),
+            )
+            .any(|name| name == item)
     }
     fn path_starts_with_sub_module(&self, use_private: bool, item: &String) -> bool {
         let mut submodules = self.pub_submodules.iter();
@@ -2327,6 +2344,7 @@ struct ItemDefinition {
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
     // module_path: Option<Vec<String>>,
     is_copy: bool,
+    is_pub: bool,
     // /// Fields and enum variants. Methods etc are stored in impl blocks?
     // members: Vec<StructFieldInfo>,
     // members: Vec<ImplItem>,
@@ -2591,21 +2609,22 @@ struct RustImplItemJs {
 
 #[derive(Debug, Clone)]
 enum RustImplItemItemNoJs {
-    /// (private, static, fn info),
-    Fn(bool, bool, FnInfo),
+    /// (static, fn info),
+    Fn(bool, FnInfo),
     Const,
 }
 
 #[derive(Debug, Clone)]
 enum RustImplItemItemJs {
-    /// (private, static, fn info, js fn),
-    Fn(bool, bool, FnInfo, JsFn),
+    /// (static, fn info, js fn),
+    Fn(bool, FnInfo, JsFn),
     Const(JsLocal),
 }
 
 #[derive(Debug, Clone)]
 struct ConstDef {
     name: String,
+    is_pub: bool,
     type_: RustType,
     syn_object: ItemConst,
 }
@@ -2615,6 +2634,7 @@ struct ConstDef {
 struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
     ident: String,
+    is_pub: bool,
     /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything. NO again, updated to include self inputs because we need them.
     /// TODO probably don't actually need `is_self`
     /// (is_self, is_mut, name, type)
@@ -2719,6 +2739,7 @@ struct GlobalDataScope {
 #[derive(Debug, Clone)]
 struct RustTraitDefinition {
     name: String,
+    is_pub: bool,
     // impl_items:
 }
 
@@ -3516,7 +3537,7 @@ impl GlobalData {
 
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
+                RustImplItemItemNoJs::Fn(static_, fn_info) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                     let fn_generics = if sub_path.turbofish.len() > 0 {
                         sub_path
@@ -4394,45 +4415,45 @@ fn extract_data(
         match item {
             Item::Const(item_const) => {
                 let const_name = item_const.ident.to_string();
-                if module_level_items {
-                    let module_data = modules.get_mut(current_path);
-                    match item_const.vis {
-                        Visibility::Public(_) => module_data
-                            .pub_definitions
-                            .push(item_const.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => module_data
-                            .private_definitions
-                            .push(item_const.ident.to_string()),
-                    }
-                }
+                // if module_level_items {
+                //     let module_data = modules.get_mut(current_path);
+                //     match item_const.vis {
+                //         Visibility::Public(_) => module_data
+                //             .pub_definitions
+                //             .push(item_const.ident.to_string()),
+                //         Visibility::Restricted(_) => todo!(),
+                //         Visibility::Inherited => module_data
+                //             .private_definitions
+                //             .push(item_const.ident.to_string()),
+                //     }
+                // }
             }
             Item::Enum(item_enum) => {
                 let enum_name = item_enum.ident.to_string();
-                if module_level_items {
-                    let module_data = modules.get_mut(current_path);
-                    match item_enum.vis {
-                        Visibility::Public(_) => module_data
-                            .pub_definitions
-                            .push(item_enum.ident.to_string()),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => module_data
-                            .private_definitions
-                            .push(item_enum.ident.to_string()),
-                    }
-                }
+                // if module_level_items {
+                //     let module_data = modules.get_mut(current_path);
+                //     match item_enum.vis {
+                //         Visibility::Public(_) => module_data
+                //             .pub_definitions
+                //             .push(item_enum.ident.to_string()),
+                //         Visibility::Restricted(_) => todo!(),
+                //         Visibility::Inherited => module_data
+                //             .private_definitions
+                //             .push(item_enum.ident.to_string()),
+                //     }
+                // }
             }
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
                 let fn_name = item_fn.sig.ident.to_string();
-                if module_level_items {
-                    let module_data = modules.get_mut(current_path);
-                    match item_fn.vis {
-                        Visibility::Public(_) => module_data.pub_definitions.push(fn_name),
-                        Visibility::Restricted(_) => todo!(),
-                        Visibility::Inherited => module_data.private_definitions.push(fn_name),
-                    }
-                }
+                // if module_level_items {
+                //     let module_data = modules.get_mut(current_path);
+                //     match item_fn.vis {
+                //         Visibility::Public(_) => module_data.pub_definitions.push(fn_name),
+                //         Visibility::Restricted(_) => todo!(),
+                //         Visibility::Inherited => module_data.private_definitions.push(fn_name),
+                //     }
+                // }
 
                 // Record scoped ident names so we can ensure any module level items with the same name are namespaced
                 // TODO also need to be looking for names in blocks, if expressions, etc
@@ -4536,29 +4557,29 @@ fn extract_data(
                 let struct_name = item_struct.ident.to_string();
 
                 // TODO why does Enum only do this when `is_module_level == true`??
-                let module_data = modules.get_mut(current_path);
-                match item_struct.vis {
-                    Visibility::Public(_) => module_data
-                        .pub_definitions
-                        .push(item_struct.ident.to_string()),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => module_data
-                        .private_definitions
-                        .push(item_struct.ident.to_string()),
-                }
+                // let module_data = modules.get_mut(current_path);
+                // match item_struct.vis {
+                //     Visibility::Public(_) => module_data
+                //         .pub_definitions
+                //         .push(item_struct.ident.to_string()),
+                //     Visibility::Restricted(_) => todo!(),
+                //     Visibility::Inherited => module_data
+                //         .private_definitions
+                //         .push(item_struct.ident.to_string()),
+                // }
             }
             Item::Trait(item_trait) => {
                 // TODO adding traits to the definitions like below means their names will be taken into account when finding duplicates and namespacing, which we don't want because traits don't actually appear in the transpiled JS
-                let module_data = modules.get_mut(current_path);
-                match item_trait.vis {
-                    Visibility::Public(_) => module_data
-                        .pub_definitions
-                        .push(item_trait.ident.to_string()),
-                    Visibility::Restricted(_) => todo!(),
-                    Visibility::Inherited => module_data
-                        .private_definitions
-                        .push(item_trait.ident.to_string()),
-                }
+                // let module_data = modules.get_mut(current_path);
+                // match item_trait.vis {
+                //     Visibility::Public(_) => module_data
+                //         .pub_definitions
+                //         .push(item_trait.ident.to_string()),
+                //     Visibility::Restricted(_) => todo!(),
+                //     Visibility::Inherited => module_data
+                //         .private_definitions
+                //         .push(item_trait.ident.to_string()),
+                // }
             }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -4664,8 +4685,14 @@ fn populate_item_definitions_items_individual_item(
         Item::Const(item_const) => {
             let const_name = item_const.ident.to_string();
 
+            let is_pub = match item_const.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
             various_defs.consts.push(ConstDef {
                 name: const_name,
+                is_pub,
                 type_: RustType::Todo,
                 syn_object: item_const.clone(),
             });
@@ -4715,9 +4742,15 @@ fn populate_item_definitions_items_individual_item(
                 Meta::NameValue(_) => todo!(),
             });
 
+            let is_pub = match item_enum.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
             various_defs.item_definitons.push(ItemDefinition {
                 ident: enum_name,
                 is_copy,
+                is_pub,
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
                     members: members_for_scope,
@@ -4740,8 +4773,14 @@ fn populate_item_definitions_items_individual_item(
                 })
                 .collect::<Vec<_>>();
 
+            let is_pub = match item_fn.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
             various_defs.fn_info.push(FnInfo {
                 ident: item_fn.sig.ident.to_string(),
+                is_pub,
                 inputs_types: Vec::new(),
                 generics,
                 // return_type: RustType::Uninit,
@@ -4910,8 +4949,14 @@ fn populate_item_definitions_items_individual_item(
                 Meta::NameValue(_) => todo!(),
             });
 
+            let is_pub = match item_struct.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
             various_defs.item_definitons.push(ItemDefinition {
                 ident: item_struct.ident.to_string(),
+                is_pub,
                 is_copy,
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
@@ -4921,9 +4966,17 @@ fn populate_item_definitions_items_individual_item(
                 impl_block_ids: Vec::new(),
             });
         }
-        Item::Trait(item_trait) => various_defs.trait_definitons.push(RustTraitDefinition {
-            name: item_trait.ident.to_string(),
-        }),
+        Item::Trait(item_trait) => {
+            let is_pub = match item_trait.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+            various_defs.trait_definitons.push(RustTraitDefinition {
+                name: item_trait.ident.to_string(),
+                is_pub,
+            })
+        }
         Item::TraitAlias(_) => todo!(),
         Item::Type(_) => todo!(),
         Item::Union(_) => todo!(),
@@ -5915,12 +5968,12 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                             );
                             scope_id.pop();
 
+                            let is_pub = match impl_item_fn.vis {
+                                Visibility::Public(_) => true,
+                                Visibility::Restricted(_) => todo!(),
+                                Visibility::Inherited => false,
+                            };
                             RustImplItemItemNoJs::Fn(
-                                match impl_item_fn.vis {
-                                    Visibility::Public(_) => false,
-                                    Visibility::Restricted(_) => todo!(),
-                                    Visibility::Inherited => true,
-                                },
                                 {
                                     if let Some(input) = impl_item_fn.sig.inputs.first() {
                                         match input {
@@ -5933,6 +5986,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                 },
                                 FnInfo {
                                     ident: item_name.clone(),
+                                    is_pub,
                                     inputs_types: inputs_types,
                                     generics: fn_generics,
                                     return_type,
@@ -6115,7 +6169,6 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
         let mut methods = Vec::new();
         methods.push((
             "new".to_string(),
-            false,
             true,
             JsFn {
                 iife: false,
@@ -6130,7 +6183,6 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
         ));
         methods.push((
             "push".to_string(),
-            false,
             false,
             JsFn {
                 iife: false,
@@ -6373,9 +6425,11 @@ pub fn process_items(
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
     module_data.trait_definitons.push(RustTraitDefinition {
         name: "FnOnce".to_string(),
+        is_pub: true,
     });
     module_data.trait_definitons.push(RustTraitDefinition {
         name: "Copy".to_string(),
+        is_pub: true,
     });
     modules.push(module_data);
 
@@ -6611,7 +6665,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                             // TODO implement used
                             // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
                             match &impl_item.item {
-                                RustImplItemItemJs::Fn(private, static_, fn_info, js_fn) => {
+                                RustImplItemItemJs::Fn(static_, fn_info, js_fn) => {
                                     if is_generic_impl {
                                         js_class.static_fields.push(JsLocal {
                                             public: false,
@@ -6630,7 +6684,6 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                     } else {
                                         js_class.methods.push((
                                             item_def.ident.clone(),
-                                            *private,
                                             *static_,
                                             js_fn.clone(),
                                         ));
@@ -6796,8 +6849,8 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         name: "crate".to_string(),
         parent_name: None,
         path: vec!["crate".to_string()],
-        pub_definitions: Vec::new(),
-        private_definitions: Vec::new(),
+        // pub_definitions: Vec::new(),
+        // private_definitions: Vec::new(),
         pub_submodules: Vec::new(),
         private_submodules: Vec::new(),
         pub_use_mappings: Vec::new(),
