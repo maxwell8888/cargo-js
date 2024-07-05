@@ -31,6 +31,7 @@ pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
         for fn_info in &m.fn_info {
             names_to_dedup.push((&m.path, &fn_info.ident));
         }
+        // TODO adding traits names means their names will be taken into account when finding duplicates and namespacing, which we don't always want because traits don't always actually appear in the transpiled JS
         for trait_def in &m.trait_definitons {
             names_to_dedup.push((&m.path, &trait_def.name));
         }

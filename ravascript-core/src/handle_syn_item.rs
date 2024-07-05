@@ -39,7 +39,7 @@ pub fn handle_item_fn(
     // Good also keep track using a field on global data, but for now seems less error prone to pass values to handle fns because it is always clear whether we are at the top level based on whether the item is being parsed within `handle_statments()`
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> JsStmt {
     let name = item_fn.sig.ident.to_string();
     let span = debug_span!("handle_item_fn", name = ?name);
@@ -399,7 +399,7 @@ pub fn handle_item_const(
     item_const: &ItemConst,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> JsStmt {
     let mut name = item_const.ident.to_string();
     debug!(name = ?name, "handle_item_const");
@@ -474,7 +474,7 @@ pub fn handle_item_enum(
     item_enum: ItemEnum,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> JsStmt {
     let enum_name = item_enum.ident.to_string();
     debug!(enum_name = ?enum_name, "handle_item_enum");
@@ -822,7 +822,7 @@ pub fn handle_item_enum(
         methods,
         rust_name: item_enum.ident.to_string(),
         is_impl_block: false,
-        module_path: current_module.clone(),
+        module_path: current_module.to_vec(),
         scope_id: global_data.scope_id_as_option(),
         // struct_or_enum: StructOrEnumSynObject::Enum(item_enum.clone()),
         // impld_methods: methods,
@@ -835,7 +835,7 @@ pub fn handle_impl_item_fn(
     impl_item: &ImplItem,
     impl_item_fn: &ImplItemFn,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
     target_rust_type: &RustType,
     rust_impl_item: &RustImplItemNoJs,
 ) {
@@ -1208,7 +1208,7 @@ pub fn handle_impl_item_fn(
         js_impl_items.push(RustImplItemJs {
             ident: impl_item_fn.sig.ident.to_string(),
             item: RustImplItemItemJs::Fn(static_, fn_info, js_fn),
-            syn_object: impl_item.clone(),
+            // syn_object: impl_item.clone(),
         });
     }
     info!("handle_item_impl after scope");
@@ -1222,7 +1222,7 @@ pub fn handle_item_impl(
     item_impl: &ItemImpl,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
 ) -> Vec<JsStmt> {
     let debug_self_type = match &*item_impl.self_ty {
         Type::Path(type_path) => format!("{:?}", type_path.path.segments),
@@ -1418,7 +1418,7 @@ pub fn handle_item_impl(
                 rust_impl_items.push(RustImplItemJs {
                     ident: impl_item_const.ident.to_string(),
                     item: RustImplItemItemJs::Const(js_local),
-                    syn_object: impl_item.clone(),
+                    // syn_object: impl_item.clone(),
                 });
             }
             ImplItem::Fn(impl_item_fn) => {
@@ -1711,7 +1711,7 @@ pub fn handle_item_struct(
     item_struct: &ItemStruct,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
 ) -> JsStmt {
     let mut name = item_struct.ident.to_string();
     // dbg!(&global_data.scopes);
@@ -1972,7 +1972,7 @@ pub fn handle_item_struct(
         methods,
         rust_name: item_struct.ident.to_string(),
         is_impl_block: false,
-        module_path: current_module_path.clone(),
+        module_path: current_module_path.to_vec(),
         scope_id: global_data.scope_id_as_option(),
     })
 }
@@ -2130,7 +2130,7 @@ pub fn handle_item_trait(
     item_trait: &ItemTrait,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
 ) {
     debug!("handle_item_trait");
 

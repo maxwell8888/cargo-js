@@ -38,7 +38,7 @@ use crate::{
 fn handle_local(
     local: &Local,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
 ) -> JsStmt {
     let span = debug_span!("handle_local", lhs = ?quote! { #local }.to_string());
     let _guard = span.enter();
@@ -798,7 +798,7 @@ fn handle_local(
 pub fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
-    current_module_path: &Vec<String>,
+    current_module_path: &[String],
 ) -> Vec<(JsStmt, RustType)> {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {

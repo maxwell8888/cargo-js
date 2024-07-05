@@ -40,7 +40,7 @@ use crate::{
 fn handle_expr_assign(
     expr_assign: &ExprAssign,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> JsExpr {
     let (lhs_expr, lhs_rust_type) = handle_expr(&*expr_assign.left, global_data, current_module);
     let (mut rhs_expr, rhs_rust_type) =
@@ -307,7 +307,7 @@ fn handle_expr_assign(
 pub fn handle_expr(
     expr: &Expr,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> (JsExpr, RustType) {
     debug!("handle_expr");
     match expr {
@@ -1156,7 +1156,7 @@ pub fn handle_expr(
 fn handle_expr_closure(
     expr_closure: &ExprClosure,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
     // (input types, return type)
     known_type: Option<(Vec<RustType>, RustType)>,
 ) -> (JsExpr, RustType) {
@@ -1390,7 +1390,7 @@ fn handle_expr_closure(
 pub fn handle_expr_and_stmt_macro(
     mac: &Macro,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> (JsExpr, RustType) {
     let path_segs = mac
         .path
@@ -1605,7 +1605,7 @@ pub fn handle_expr_and_stmt_macro(
 fn handle_expr_method_call(
     expr_method_call: &ExprMethodCall,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> (JsExpr, RustType) {
     let method_name = expr_method_call.method.to_string();
     let span = debug_span!("handle_expr_method_call", expr_method_call = ?quote! { #expr_method_call }.to_string());
@@ -2016,7 +2016,7 @@ fn resolve_input_type(
     input_type: &RustType,
     receiver_type: &RustType,
     receiver_type_params: &Vec<RustTypeParam>,
-    method_def_generics: &Vec<String>,
+    method_def_generics: &[String],
     method_turbofish_rust_types: &Option<Vec<RustType>>,
 ) -> RustType {
     match input_type {
@@ -2480,7 +2480,7 @@ fn method_return_type_generic_resolve_to_rust_type(
 pub fn handle_expr_block(
     expr_block: &ExprBlock,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
     allow_convert_to_iffe: bool,
 ) -> (JsExpr, RustType) {
     // let span = debug_span!("handle_expr_block", expr_block = ?quote! { #expr_block }.to_string());
@@ -2525,7 +2525,7 @@ pub fn handle_expr_block(
 fn handle_expr_call(
     expr_call: &ExprCall,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> (JsExpr, RustType) {
     // dbg!(expr_call);
 
@@ -2923,7 +2923,7 @@ fn handle_expr_call(
 fn handle_expr_path(
     expr_path: &ExprPath,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
     is_having_mut_ref_taken: bool,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
@@ -2944,7 +2944,7 @@ fn handle_expr_path_inner(
     // Use Path in place of ExprPath since eg ExprStruct has a Path that needs handling, but not a ExprPath
     expr_path: &syn::Path,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
     is_having_mut_ref_taken: bool,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
@@ -3424,7 +3424,7 @@ fn handle_match_pat(
     arm_pat: &Pat,
     expr_match: &ExprMatch,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
     match_condition_type: &RustType,
 ) -> (Vec<String>, Vec<JsStmt>, Vec<ScopedVar>) {
     match arm_pat {
@@ -3764,7 +3764,7 @@ pub fn handle_expr_match(
     expr_match: &ExprMatch,
     is_returned: bool,
     global_data: &mut GlobalData,
-    current_module: &Vec<String>,
+    current_module: &[String],
 ) -> (JsExpr, RustType) {
     // (assignment, condition, succeed, fail)
     // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
@@ -3778,7 +3778,7 @@ pub fn handle_expr_match(
         match_condition_type: &RustType,
         expr_match: &ExprMatch,
         global_data: &mut GlobalData,
-        current_module: &Vec<String>,
+        current_module: &[String],
     ) -> Option<(JsExpr, RustType)> {
         match match_condition_type {
             RustType::Ref(inner) => handle_option_match(
