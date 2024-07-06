@@ -158,7 +158,7 @@ fn tree_parsing_for_boilerplate(
 
 enum ItemUseModuleOrScope<'a> {
     ExternalCrate,
-    Module(&'a mut ModuleData),
+    Module(&'a mut ModuleDataFirstPass),
     Scope(&'a mut GlobalDataScope),
 }
 
@@ -1766,9 +1766,40 @@ struct CrateData {
 }
 
 #[derive(Debug, Clone)]
+struct ModuleDataFirstPass {
+    name: String,
+    /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
+    path: Vec<String>,
+    // pub_definitions: Vec<String>,
+    // private_definitions: Vec<String>,
+    pub_submodules: Vec<String>,
+    private_submodules: Vec<String>,
+    /// (snake case item name, snake case use path)
+    pub_use_mappings: Vec<(String, Vec<String>)>,
+    private_use_mappings: Vec<(String, Vec<String>)>,
+
+    // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but is populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
+    items: Vec<Item>,
+}
+impl ModuleDataFirstPass {
+    /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
+    fn new(name: String, path: Vec<String>) -> Self {
+        ModuleDataFirstPass {
+            name,
+            path,
+            pub_submodules: Vec::new(),
+            private_submodules: Vec::new(),
+            pub_use_mappings: Vec::new(),
+            private_use_mappings: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ModuleData {
     name: String,
-    parent_name: Option<String>,
+    // parent_name: Option<String>,
     /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
     path: Vec<String>,
     // pub_definitions: Vec<String>,
@@ -1823,7 +1854,7 @@ impl ModuleData {
     fn new(name: String, parent_name: Option<String>, path: Vec<String>) -> Self {
         ModuleData {
             name,
-            parent_name,
+            // parent_name,
             path,
             // pub_definitions: Vec::new(),
             // private_definitions: Vec::new(),
@@ -4355,7 +4386,7 @@ fn update_item_def_block_ids(
 }
 
 // TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
-fn look_for_web_prelude(modules: &Vec<ModuleData>) -> bool {
+fn look_for_web_prelude(modules: &Vec<ModuleDataFirstPass>) -> bool {
     let mut found_web_prelude = false;
     for module in modules {
         for item in &module.items {
@@ -4412,7 +4443,7 @@ fn extract_data(
     // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
-    modules: &mut Vec<ModuleData>,
+    modules: &mut Vec<ModuleDataFirstPass>,
 ) {
     // let mut module_path_with_crate = vec!["crate".to_string()];
     // module_path_with_crate.extend(module_path.clone());
@@ -4487,9 +4518,9 @@ fn extract_data(
                 let parent_name = current_path.last().map(|x| x.clone());
                 current_path.push(item_mod.ident.to_string());
 
-                let mut partial_module_data = ModuleData::new(
+                let mut partial_module_data = ModuleDataFirstPass::new(
                     item_mod.ident.to_string(),
-                    parent_name,
+                    // parent_name,
                     current_path.clone(),
                 );
 
@@ -4554,17 +4585,44 @@ impl GetModule for Vec<ModuleData> {
     }
 }
 
-fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
+trait GetModuleFirstPass {
+    fn get_mut(&mut self, module_path: &[String]) -> &mut ModuleDataFirstPass;
+}
+impl GetModuleFirstPass for Vec<ModuleDataFirstPass> {
+    fn get_mut(&mut self, module_path: &[String]) -> &mut ModuleDataFirstPass {
+        self.iter_mut().find(|m| &m.path == module_path).unwrap()
+    }
+}
+
+fn populate_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleData> {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
 
     // This is because parse_types_for_populate_item_definitions needs a access to .pub_definitions etc in global_data from `extract_data()` but we are taking an immutable ref first
     // We also need it for looking up trait definitions
 
-    for module in modules {
+    let mut new_modules = Vec::new();
+    for module_first_pass in modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
-            module_path = ?module.path
+            module_path = ?module_first_pass.path
         );
+
+        let mut module = ModuleData {
+            name: module_first_pass.name,
+            // parent_name: module,
+            path: module_first_pass.path,
+            pub_submodules: module_first_pass.pub_submodules,
+            private_submodules: module_first_pass.private_submodules,
+            pub_use_mappings: module_first_pass.pub_use_mappings,
+            private_use_mappings: module_first_pass.private_use_mappings,
+            resolved_mappings: Vec::new(),
+            fn_info: Vec::new(),
+            item_definitons: Vec::new(),
+            consts: Vec::new(),
+            trait_definitons: Vec::new(),
+            items: module_first_pass.items,
+            scoped_various_definitions: Vec::new(),
+        };
 
         // TODO Gymnastics to reconcile needing to mutate 4 different vectors which are stored differently for modules and scopes. Should probably have `module.various_defs` and `scope.various_defs` fields
         let mut var_defs = VariousDefintions::default();
@@ -4578,7 +4636,7 @@ fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
                 item,
                 &module_path,
                 &mut var_defs,
-                module,
+                &mut module,
                 &mut scope_id,
                 &mut scope_count,
             )
@@ -4587,7 +4645,9 @@ fn populate_item_definitions(modules: &mut Vec<ModuleData>) {
         module.item_definitons.extend(var_defs.item_definitons);
         module.consts.extend(var_defs.consts);
         module.trait_definitons.extend(var_defs.trait_definitons);
+        new_modules.push(module);
     }
+    new_modules
 }
 
 #[derive(Debug, Clone, Default)]
@@ -6304,7 +6364,8 @@ pub fn process_items(
     is_block: bool,
 ) -> Vec<JsModule> {
     let mut modules = Vec::new();
-    let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
+    // let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
+    let mut crate_module = ModuleDataFirstPass::new("crate".to_string(), vec!["crate".to_string()]);
     crate_module.items = items.clone();
     modules.push(crate_module);
 
@@ -6345,11 +6406,8 @@ pub fn process_items(
         let code = include_str!("../../web-prelude/src/lib.rs");
         let file = syn::parse_file(&code).unwrap();
         let prelude_items = file.items;
-        let mut module_data = ModuleData::new(
-            "web_prelude".to_string(),
-            None,
-            vec!["web_prelude".to_string()],
-        );
+        let mut module_data =
+            ModuleDataFirstPass::new("web_prelude".to_string(), vec!["web_prelude".to_string()]);
         module_data.items = prelude_items.clone();
         modules.push(module_data);
 
@@ -6366,22 +6424,12 @@ pub fn process_items(
     let code = include_str!("rust_prelude/option.rs");
     let file = syn::parse_file(&code).unwrap();
     let prelude_items = file.items;
-    let mut module_data = ModuleData::new(
+    let mut module_data = ModuleDataFirstPass::new(
         PRELUDE_MODULE_PATH.to_string(),
-        None,
         vec![PRELUDE_MODULE_PATH.to_string()],
     );
 
     module_data.items = prelude_items.clone();
-    // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
-    module_data.trait_definitons.push(RustTraitDefinition {
-        name: "FnOnce".to_string(),
-        is_pub: true,
-    });
-    module_data.trait_definitons.push(RustTraitDefinition {
-        name: "Copy".to_string(),
-        is_pub: true,
-    });
     modules.push(module_data);
 
     extract_data(
@@ -6394,10 +6442,6 @@ pub fn process_items(
     );
 
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
-
-    // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = GlobalData::new(crate_path);
-    global_data.modules = modules;
 
     // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
     // 1. Only use syn for resolving types. Currently we use `get_path()` to resolve paths which uses the parsed `ItemDefinition`s etc, we could update it/make a different version to work directly on syn data, but this seems like it would be inefficient.
@@ -6415,7 +6459,29 @@ pub fn process_items(
     // We need to only populate the idents of the `ItemDefinition`s etc here, and then in a subsequent pass populate all the fields which use types and therefore might require other `ItemDefinition`s to already exist even though they may appear later in the code.
 
     // Updates module.item_defs etc and module.scoped_various_definitions. Doesn't use any data from global_data, only pushes data to ModuleData
-    populate_item_definitions(&mut global_data.modules);
+    let mut actual_modules = populate_item_definitions(modules);
+
+    // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
+    let prelude_module_data = actual_modules
+        .iter_mut()
+        .find(|m| m.path == [PRELUDE_MODULE_PATH])
+        .unwrap();
+    prelude_module_data
+        .trait_definitons
+        .push(RustTraitDefinition {
+            name: "FnOnce".to_string(),
+            is_pub: true,
+        });
+    prelude_module_data
+        .trait_definitons
+        .push(RustTraitDefinition {
+            name: "Copy".to_string(),
+            is_pub: true,
+        });
+
+    // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
+    let mut global_data = GlobalData::new(crate_path);
+    global_data.modules = actual_modules;
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
@@ -6801,7 +6867,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     let mut modules = Vec::new();
     modules.push(ModuleData {
         name: "crate".to_string(),
-        parent_name: None,
+        // parent_name: None,
         path: vec!["crate".to_string()],
         // pub_definitions: Vec::new(),
         // private_definitions: Vec::new(),
@@ -6862,7 +6928,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     let mut global_data = GlobalData::new(None);
     global_data.modules = modules;
 
-    populate_item_definitions(&mut global_data.modules);
+    // populate_item_definitions(&mut global_data.modules);
     populate_impl_blocks_and_item_def_fields(&mut global_data);
     populate_item_def_impl_blocks(&mut global_data);
 
