@@ -234,6 +234,10 @@ fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModuleOr
                     // TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
                     Visibility::Public(_) => todo!(),
                     Visibility::Restricted(_) => todo!(),
+                    // TODO this assumes we are pushing to the var scope in the JS parsing pass, we don't currently do this and it wouldn't make sense to add it there because then the mappings wouldn't be available to be used during the populate item def passes, for looking up the types used in scoped item defs. We either need to:
+                    // store the scope id in .use_mappings like we do for item defs
+                    // completely remove use of .use_mappings and have .resovle_path resolve the use mappings itself
+                    // implement the Rust AST/syn IR
                     Visibility::Inherited => scope.use_mappings.push(item_path),
                 }
             }
@@ -1678,7 +1682,11 @@ fn js_stmts_from_syn_items(
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
-            Item::Use(_) => {}
+            Item::Use(item_use) => {
+                //
+                // handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
+            }
+
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
         }

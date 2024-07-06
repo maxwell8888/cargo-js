@@ -252,10 +252,11 @@ function green() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// TODO the Rust code is not being run, causing an assert! to fail is not reported
+// TODO the Rust code is not being run, causing an assert! to fail is not reported - SOLUTION need to use r2j_file_run_main not r2j_file
+// TODO write some explicit tests for r2j_file! to check it fails where expected
 #[tokio::test]
 async fn use_paths() {
-    let actual = r2j_file!(
+    let actual = r2j_file_run_main!(
         fn duplicate() -> i32 {
             0
         }
@@ -345,9 +346,54 @@ async fn use_paths() {
           function five__duplicate() {
             return three__duplicate() + one__duplicate() + one__duplicate();
           }
+
+          main();
       "#,
     );
 
-    let _ = execute_js_with_assertions(&actual).await.unwrap();
     assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&actual).await.unwrap();
+}
+
+#[ignore = "TODO"]
+#[tokio::test]
+async fn scoped_use() {
+    let actual = r2j_file_run_main!(
+        fn duplicate() -> i32 {
+            use one::duplicate;
+            assert!(duplicate() == 1);
+            5
+        }
+        mod one {
+            pub fn duplicate() -> i32 {
+                1
+            }
+        }
+        fn main() {
+            duplicate();
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            function duplicate() {
+              console.assert(one__duplicate() === 1);
+              return 5;
+            }
+            function main() {
+              duplicate();
+            }
+
+            // one
+            function one__duplicate() {
+              return 1;
+            }
+
+            main();
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
