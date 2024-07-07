@@ -5329,7 +5329,6 @@ fn populate_item_definitions_expr(
 
 fn populate_impl_blocks_and_item_def_fields(global_data: &mut GlobalData) {
     let global_data_copy = global_data.clone();
-    let impl_blocks = global_data.impl_blocks_simpl.clone();
 
     for module in &mut global_data.modules {
         debug_span!(
@@ -5339,15 +5338,31 @@ fn populate_impl_blocks_and_item_def_fields(global_data: &mut GlobalData) {
         let module_path = module.path.clone();
         let mut scope_id = Vec::new();
         let items = module.items.clone();
-        populate_impl_blocks_items_and_item_def_fields(
-            &items,
-            module,
-            &global_data_copy,
-            &module_path,
-            &mut global_data.impl_blocks_simpl,
-            // &mut module.scoped_various_definitions,
-            &mut scope_id,
-        );
+        // populate_impl_blocks_items_and_item_def_fields(
+        //     &items,
+        //     module,
+        //     &global_data_copy,
+        //     &module_path,
+        //     &mut global_data.impl_blocks_simpl,
+        //     // &mut module.scoped_various_definitions,
+        //     &mut scope_id,
+        // );
+
+        let mut scope_count = 0;
+
+        for item in items {
+            // dbg!("populate_impl_blocks_items");
+            // println!("{}", quote! { #item });
+            populate_impl_blocks_items_and_item_def_fields_individual(
+                &item,
+                module,
+                &global_data_copy,
+                &module_path,
+                &mut global_data.impl_blocks_simpl,
+                &mut scope_id,
+                &mut scope_count,
+            );
+        }
 
         // Add unique impl block ids to item_def.impl_block_ids
         // NOTE it is ok to do this in the same pass as populate_impl_blocks_items_and_item_def_fields because we are only relying on the traits defined in the impl block signature... NO it won't work because we are literally creating the `RustImplBlockSimple`s in populate_impl_blocks_items_and_item_def_fields so they won't all exist until the end of the loop over modules
@@ -5356,31 +5371,31 @@ fn populate_impl_blocks_and_item_def_fields(global_data: &mut GlobalData) {
     }
 }
 
-fn populate_impl_blocks_items_and_item_def_fields(
-    items: &Vec<Item>,
-    module: &mut ModuleData,
-    global_data_copy: &GlobalData,
-    module_path: &[String],
-    global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
-    // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
-    scope_id: &mut Vec<usize>,
-) {
-    let mut scope_count = 0;
+// fn populate_impl_blocks_items_and_item_def_fields(
+//     items: &Vec<Item>,
+//     module: &mut ModuleData,
+//     global_data_copy: &GlobalData,
+//     module_path: &[String],
+//     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
+//     // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
+//     scope_id: &mut Vec<usize>,
+// ) {
+//     let mut scope_count = 0;
 
-    for item in items {
-        // dbg!("populate_impl_blocks_items");
-        // println!("{}", quote! { #item });
-        populate_impl_blocks_items_and_item_def_fields_individual(
-            item,
-            module,
-            global_data_copy,
-            module_path,
-            global_impl_blocks_simpl,
-            scope_id,
-            &mut scope_count,
-        );
-    }
-}
+//     for item in items {
+//         // dbg!("populate_impl_blocks_items");
+//         // println!("{}", quote! { #item });
+//         populate_impl_blocks_items_and_item_def_fields_individual(
+//             item,
+//             module,
+//             global_data_copy,
+//             module_path,
+//             global_impl_blocks_simpl,
+//             scope_id,
+//             &mut scope_count,
+//         );
+//     }
+// }
 fn populate_impl_blocks_items_and_item_def_fields_stmts(
     stmts: &Vec<Stmt>,
     module: &mut ModuleData,
