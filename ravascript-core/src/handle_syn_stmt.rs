@@ -1,38 +1,17 @@
-use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
-use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
-use biome_js_parser::JsParserOptions;
-use biome_js_syntax::JsFileSource;
-use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use quote::quote;
-use std::{
-    default,
-    fmt::{self, Debug},
-    fs,
-    net::ToSocketAddrs,
-    path::{Path, PathBuf},
-};
-use syn::{
-    parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
-    Ident, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
-    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment,
-    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
-};
-use tracing::{debug, debug_span, info, span, warn};
+
+use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
+use tracing::debug_span;
 
 use crate::{
-    camel, handle_item_use, handle_pat,
+    handle_item_use, handle_pat,
     handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro},
     handle_syn_item::{
         handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
         handle_item_trait,
     },
     js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType},
-    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
-    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, ItemUseModuleOrScope, JsImplBlock2, JsImplItem, RustGeneric,
-    RustImplItemItemJs, RustImplItemJs, RustTraitDefinition, RustType, RustTypeParam,
-    RustTypeParamValue, ScopedVar, StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo,
+    parse_fn_input_or_field, GlobalData, ItemUseModuleOrScope, RustType, ScopedVar,
 };
 
 fn handle_local(
@@ -129,7 +108,7 @@ fn handle_local(
                     Pat::Ident(pat_ident) => pat_ident.ident == var_name,
                     Pat::Slice(_) => false,
                     Pat::Struct(_) => false,
-                    Pat::Type(pat_type) => var_name_matches(&*pat_type.pat, var_name),
+                    Pat::Type(pat_type) => var_name_matches(&pat_type.pat, var_name),
                     Pat::Wild(_) => false,
                     other => {
                         dbg!(other);
@@ -181,7 +160,7 @@ fn handle_local(
             let var = scopes_clone.iter().rev().find_map(|s| {
                 s.variables
                     .iter()
-                    .find(|v| v.name == expr_path.path.segments.first().unwrap().ident.to_string())
+                    .find(|v| expr_path.path.segments.first().unwrap().ident == v.name)
             });
             if let Some(var) = var {
                 assert!(var.type_ == rhs_type);
@@ -253,7 +232,7 @@ fn handle_local(
                         RustType::UserType(_, _) => todo!(),
                         RustType::MutRef(inner) => {
                             // A &mut T is always `Copy` copied (not the T, the reference) so don't need to `.copy()` it, unless it is dereferenced - *or destructured*
-                            handle_type(&*inner, global_data, var, lhs, true)
+                            handle_type(inner, global_data, var, lhs, true)
                         }
                         RustType::Ref(_) => todo!(),
                         RustType::Fn(_, _, _, _, _) => todo!(),
@@ -288,8 +267,9 @@ fn handle_local(
         Expr::Path(expr_path) => handle_should_add_copy_expr_path(expr_path),
         Expr::Range(_) => todo!(),
         Expr::Reference(expr_reference) => {
+            #[allow(clippy::all)]
             if expr_reference.mutability.is_some() {
-                match &*expr_reference.expr {
+                match &expr_reference.expr {
                     // Expr::Path(expr_path) => {
                     //     handle_should_add_copy_expr_path(expr_path)
                     // }

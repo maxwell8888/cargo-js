@@ -1,39 +1,20 @@
-use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
-use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
-use biome_js_parser::JsParserOptions;
-use biome_js_syntax::JsFileSource;
-use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 use quote::quote;
-use std::{
-    default,
-    fmt::{self, Debug},
-    fs,
-    net::ToSocketAddrs,
-    path::{Path, PathBuf},
-};
 use syn::{
-    parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
-    Ident, ImplItem, ImplItemFn, Index, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod,
-    ItemStruct, ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments,
-    PathSegment, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility,
-    WherePredicate,
+    BinOp, Expr, ExprAssign, ExprBlock, ExprCall, ExprClosure, ExprMatch, ExprMethodCall, ExprPath,
+    GenericArgument, Ident, Index, Lit, Macro, Member, Pat, Stmt, UnOp,
 };
-use tracing::{debug, debug_span, info, span, warn};
+use tracing::{debug, debug_span, warn};
 
 use crate::{
-    camel, case_convert, found_item_to_partial_rust_type, get_path_old, handle_pat,
+    camel, case_convert, found_item_to_partial_rust_type, handle_pat,
     handle_syn_stmt::handle_stmt,
-    hardcoded_conversions,
     js_ast::{
         DestructureObject, DestructureValue, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt, LocalName,
         LocalType,
     },
-    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, resolve_path, ConstDef,
-    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData, ItemDefinition,
-    JsImplBlock2, JsImplItem, PartialRustType, RustGeneric, RustImplItemItemJs,
-    RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustPathSegment, RustTraitDefinition,
-    RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar, StructDefinitionInfo,
+    parse_fn_body_stmts, parse_fn_input_or_field, resolve_path, EnumVariantInputsInfo, FnInfo,
+    GlobalData, ItemDefinition, PartialRustType, RustImplItemItemNoJs, RustImplItemNoJs,
+    RustPathSegment, RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar,
     StructFieldInfo, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
 };
 
@@ -42,17 +23,11 @@ fn handle_expr_assign(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsExpr {
-    let (lhs_expr, lhs_rust_type) = handle_expr(&*expr_assign.left, global_data, current_module);
+    let (lhs_expr, lhs_rust_type) = handle_expr(&expr_assign.left, global_data, current_module);
     let (mut rhs_expr, rhs_rust_type) =
-        handle_expr(&*expr_assign.right, global_data, current_module);
-    let lhs_is_mut_ref = match lhs_rust_type {
-        RustType::MutRef(_) => true,
-        _ => false,
-    };
-    let rhs_is_mut_ref = match rhs_rust_type {
-        RustType::MutRef(_) => true,
-        _ => false,
-    };
+        handle_expr(&expr_assign.right, global_data, current_module);
+    let lhs_is_mut_ref = matches!(lhs_rust_type, RustType::MutRef(_));
+    let rhs_is_mut_ref = matches!(rhs_rust_type, RustType::MutRef(_));
 
     // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
     // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
@@ -89,7 +64,7 @@ fn handle_expr_assign(
             Expr::Struct(_) => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Unary(expr_unary) => match expr_unary.op {
-                UnOp::Deref(_) => (get_name_and_deref(&*expr_unary.expr).0, true),
+                UnOp::Deref(_) => (get_name_and_deref(&expr_unary.expr).0, true),
                 UnOp::Not(_) => todo!(),
                 UnOp::Neg(_) => todo!(),
                 _ => todo!(),
@@ -314,7 +289,7 @@ pub fn handle_expr(
         Expr::Array(expr_array) => {
             // TODO how to handle `let a: [i32, 0] = [];`? or other cases where there is no elements and the type is inferred from elsewhere
 
-            let type_ = if expr_array.elems.len() > 0 {
+            let type_ = if !expr_array.elems.is_empty() {
                 handle_expr(
                     expr_array.elems.first().unwrap(),
                     global_data,
@@ -342,7 +317,7 @@ pub fn handle_expr(
         ),
         Expr::Async(_) => todo!(),
         Expr::Await(expr_await) => {
-            let js_expr = handle_expr(&*expr_await.base, global_data, current_module);
+            let js_expr = handle_expr(&expr_await.base, global_data, current_module);
             (JsExpr::Await(Box::new(js_expr.0)), js_expr.1)
         }
         Expr::Binary(expr_binary) => {
@@ -373,7 +348,7 @@ pub fn handle_expr(
             // }
 
             // TODO IMPORTANT for some reason which I have failed to debug, for the destructure_struct test, the following line seems cause a second "handle_expr_binary" tracing span to be entered, despite expr_binary.left definitely being a path.
-            let (lhs_expr, lhs_type) = handle_expr(&*expr_binary.left, global_data, current_module);
+            let (lhs_expr, lhs_type) = handle_expr(&expr_binary.left, global_data, current_module);
 
             // TODO need to check for `impl Add for Foo`
             let type_ = match expr_binary.op {
@@ -470,7 +445,7 @@ pub fn handle_expr(
             };
 
             let (rhs_expr, _rhs_type) =
-                handle_expr(&*expr_binary.right, global_data, current_module);
+                handle_expr(&expr_binary.right, global_data, current_module);
 
             fn types_are_primative(rust_type: RustType) -> bool {
                 match rust_type {
@@ -515,8 +490,7 @@ pub fn handle_expr(
         Expr::Const(_) => todo!(),
         Expr::Continue(_) => todo!(),
         Expr::Field(expr_field) => {
-            let (base_expr, base_type) =
-                handle_expr(&*expr_field.base, global_data, current_module);
+            let (base_expr, base_type) = handle_expr(&expr_field.base, global_data, current_module);
             // TODO for a field, the type must be a struct or tuple, so look it up and get the type of the field
             match &expr_field.member {
                 Member::Named(ident) => {
@@ -615,7 +589,7 @@ pub fn handle_expr(
                             }
                         }
                     }
-                    let type_ = get_unnamed_field_type(base_type, &global_data, index);
+                    let type_ = get_unnamed_field_type(base_type, global_data, index);
                     (
                         JsExpr::Index(
                             Box::new(base_expr),
@@ -632,23 +606,23 @@ pub fn handle_expr(
                     Pat::Ident(pat_ident) => camel(&pat_ident.ident),
                     _ => todo!(),
                 },
-                Box::new(handle_expr(&*expr_for_loop.expr, global_data, current_module).0),
+                Box::new(handle_expr(&expr_for_loop.expr, global_data, current_module).0),
                 expr_for_loop
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| {
+                    .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
                             .into_iter()
                             .map(|(stmt, type_)| stmt)
                     })
-                    .flatten()
-                    .collect::<Vec<_>>(),
+                    .collect(),
             ),
             RustType::Unit,
         ),
         Expr::Group(_) => todo!(),
         Expr::If(expr_if) => {
+            #[allow(clippy::all)]
             match &*expr_if.cond {
                 Expr::Let(_) => todo!(),
                 _ => {}
@@ -663,8 +637,7 @@ pub fn handle_expr(
                 .then_branch
                 .stmts
                 .iter()
-                .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                .flatten()
+                .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .unzip();
 
             global_data.pop_scope();
@@ -680,7 +653,7 @@ pub fn handle_expr(
                             handle_expr_block(expr_block, global_data, current_module, false).0,
                         )
                     }
-                    Expr::If(_) => Box::new(handle_expr(&*expr, global_data, current_module).0),
+                    Expr::If(_) => Box::new(handle_expr(expr, global_data, current_module).0),
                     _ => panic!(),
                 }
             });
@@ -691,7 +664,7 @@ pub fn handle_expr(
                 JsExpr::If(JsIf {
                     assignment: None,
                     declare_var: false,
-                    condition: Box::new(handle_expr(&*expr_if.cond, global_data, current_module).0),
+                    condition: Box::new(handle_expr(&expr_if.cond, global_data, current_module).0),
                     succeed: succeed_stmts,
                     fail,
                 }),
@@ -699,9 +672,9 @@ pub fn handle_expr(
             )
         }
         Expr::Index(expr_index) => {
-            let (expr, type_) = handle_expr(&*expr_index.expr, global_data, current_module);
+            let (expr, type_) = handle_expr(&expr_index.expr, global_data, current_module);
             let (index_expr, index_type) =
-                handle_expr(&*expr_index.index, global_data, current_module);
+                handle_expr(&expr_index.index, global_data, current_module);
             // NOTE `Index` is a trait that can be implemented for any non primitive type (I think?), so need to look up the `Index` impl of the base expr's type to find what the `Output` type is
             // TODO we can use square bracket array[] indexing for arrays, but for other types which don't get transpiled to an array, we need to use `.index(i)` instead
             // "only traits defined in the current crate can be implemented for primitive types"
@@ -796,12 +769,11 @@ pub fn handle_expr(
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| {
+                    .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
                             .into_iter()
                             .map(|(stmt, type_)| stmt)
                     })
-                    .flatten()
                     .collect::<Vec<_>>(),
             ),
             RustType::Never,
@@ -816,7 +788,7 @@ pub fn handle_expr(
             handle_expr_method_call(expr_method_call, global_data, current_module)
         }
         Expr::Paren(expr_paren) => {
-            let (expr, type_) = handle_expr(&*expr_paren.expr, global_data, current_module);
+            let (expr, type_) = handle_expr(&expr_paren.expr, global_data, current_module);
             (JsExpr::Paren(Box::new(expr)), type_)
         }
         Expr::Path(expr_path) => {
@@ -899,7 +871,7 @@ pub fn handle_expr(
                 (expr, RustType::MutRef(Box::new(rust_type)))
             } else {
                 let (expr, rust_type) =
-                    handle_expr(&*expr_reference.expr, global_data, current_module);
+                    handle_expr(&expr_reference.expr, global_data, current_module);
                 (expr, rust_type)
             }
         }
@@ -957,6 +929,7 @@ pub fn handle_expr(
                     };
                     let rust_type =
                         RustType::StructOrEnum(type_params, module_path, scope_id, name.clone());
+                    #[allow(clippy::all)]
                     let args = expr_struct
                         .fields
                         .iter()
@@ -1057,7 +1030,7 @@ pub fn handle_expr(
         Expr::Tuple(_) => todo!(),
         Expr::Unary(expr_unary) => match expr_unary.op {
             UnOp::Deref(_) => {
-                let (expr, rust_type) = handle_expr(&*expr_unary.expr, global_data, current_module);
+                let (expr, rust_type) = handle_expr(&expr_unary.expr, global_data, current_module);
                 // let thing = &*expr_unary.expr;
                 // dbg!("let (expr, rust_type) = handle_expr(&*expr_unary.expr, global_data, current_module);");
                 // println!("{}", quote! { #thing });
@@ -1119,12 +1092,12 @@ pub fn handle_expr(
             }
             UnOp::Not(_) => {
                 let js_expr = JsExpr::Not(Box::new(
-                    handle_expr(&*expr_unary.expr, global_data, current_module).0,
+                    handle_expr(&expr_unary.expr, global_data, current_module).0,
                 ));
                 (js_expr, RustType::Bool)
             }
             UnOp::Neg(_) => {
-                let (expr, type_) = handle_expr(&*expr_unary.expr, global_data, current_module);
+                let (expr, type_) = handle_expr(&expr_unary.expr, global_data, current_module);
                 (JsExpr::Minus(Box::new(expr)), type_)
             }
             _ => todo!(),
@@ -1133,17 +1106,16 @@ pub fn handle_expr(
         Expr::Verbatim(_) => todo!(),
         Expr::While(expr_while) => (
             JsExpr::While(
-                Box::new(handle_expr(&*expr_while.cond, global_data, current_module).0),
+                Box::new(handle_expr(&expr_while.cond, global_data, current_module).0),
                 expr_while
                     .body
                     .stmts
                     .iter()
-                    .map(|stmt| {
+                    .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
                             .into_iter()
                             .map(|(stmt, type_)| stmt)
                     })
-                    .flatten()
                     .collect::<Vec<_>>(),
             ),
             RustType::Unit,
@@ -1160,10 +1132,7 @@ fn handle_expr_closure(
     // (input types, return type)
     known_type: Option<(Vec<RustType>, RustType)>,
 ) -> (JsExpr, RustType) {
-    let async_ = match &*expr_closure.body {
-        Expr::Async(_) => true,
-        _ => false,
-    };
+    let async_ = matches!(&*expr_closure.body, Expr::Async(_));
 
     let body_is_js_block = match &*expr_closure.body {
         Expr::Async(expr_async) => {
@@ -1179,11 +1148,7 @@ fn handle_expr_closure(
                     Stmt::Macro(_) => todo!(),
                     _ => false,
                 };
-                if is_expr_with_no_semi {
-                    false
-                } else {
-                    true
-                }
+                !is_expr_with_no_semi
             }
         }
         Expr::Block(_) => true,
@@ -1433,18 +1398,17 @@ pub fn handle_expr_and_stmt_macro(
             let stmt_vec = try_block
                 .stmts
                 .iter()
-                .map(|stmt| {
+                .flat_map(|stmt| {
                     handle_stmt(stmt, global_data, current_module)
                         .into_iter()
                         .map(|(stmt, type_)| stmt)
                 })
-                .flatten()
-                .collect::<Vec<_>>();
+                .collect();
             return (JsExpr::TryBlock(stmt_vec), RustType::Unit);
         }
         if path_segs[0] == "catch" {
             let input = mac.tokens.clone().to_string();
-            let mut parts = input.split(",");
+            let mut parts = input.split(',');
             let err_var_name = parts.next().unwrap();
             let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
                 .unwrap()
@@ -1452,15 +1416,11 @@ pub fn handle_expr_and_stmt_macro(
             let _err_var_type = parts.next().unwrap();
             let catch_block = parts.collect::<String>();
             let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
-            let stmt_vec = catch_block
-                .stmts
-                .into_iter()
-                .map(|stmt| {
-                    handle_stmt(&stmt, global_data, current_module)
-                        .into_iter()
-                        .map(|(stmt, type_)| stmt)
-                })
-                .flatten();
+            let stmt_vec = catch_block.stmts.into_iter().flat_map(|stmt| {
+                handle_stmt(&stmt, global_data, current_module)
+                    .into_iter()
+                    .map(|(stmt, type_)| stmt)
+            });
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType::Unit);
         }
@@ -1494,7 +1454,7 @@ pub fn handle_expr_and_stmt_macro(
         }
         if path_segs[0] == "assert_eq" {
             let input = mac.tokens.clone().to_string();
-            let mut parts = input.split(",");
+            let mut parts = input.split(',');
 
             let lhs = parts.next().unwrap();
             let syn_lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
@@ -1560,10 +1520,7 @@ pub fn handle_expr_and_stmt_macro(
                                     RustType::FnVanish => todo!(),
                                     RustType::Box(_) => todo!(),
                                 };
-                                let mut_ref = match type_ {
-                                    RustType::MutRef(_) => true,
-                                    _ => false,
-                                };
+                                let mut_ref = matches!(type_, RustType::MutRef(_));
                                 (*mut_, mut_ref, is_primative)
                             })
                     } else {
@@ -1633,7 +1590,7 @@ fn handle_expr_method_call(
 
     let mut method_name = expr_method_call.method.to_string();
     let (receiver, receiver_type) =
-        handle_expr(&*expr_method_call.receiver, global_data, current_module);
+        handle_expr(&expr_method_call.receiver, global_data, current_module);
 
     // TASK we want to get the type of the method arguments so we can pass it to `handle_expr_closure` (and possibly other handlers) when we create args_js_exprs and args_rust_types. The problem is that we want to use args_rust_types to get the type of the method arguments (specifically for resolving type params)
 
@@ -1661,7 +1618,7 @@ fn handle_expr_method_call(
 
     let sub_path = RustPathSegment {
         ident: method_name.clone(),
-        turbofish: method_turbofish_rust_types.clone().unwrap_or(Vec::new()),
+        turbofish: method_turbofish_rust_types.clone().unwrap_or_default(),
     };
 
     // Matches the receiver_type and returns the receiver's (possibly resolved) type params, and looks up the method's impl item
@@ -1684,16 +1641,13 @@ fn handle_expr_method_call(
                 .inputs_types
                 .iter()
                 .map(|(_is_self, _is_mut, _name, input_type)| {
-                    // dbg!(input_type);
-                    let resovled_input_type = resolve_input_type(
-                        &input_type,
+                    resolve_input_type(
+                        input_type,
                         &receiver_type,
                         &receiver_type_params,
                         &fn_info.generics,
                         &method_turbofish_rust_types,
-                    );
-                    // dbg!(&resovled_input_type);
-                    resovled_input_type
+                    )
                 })
                 .collect::<Vec<_>>()
         }
@@ -1708,7 +1662,7 @@ fn handle_expr_method_call(
             // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
             let first_input_is_self = fn_info
                 .inputs_types
-                .get(0)
+                .first()
                 .map(|input| input.0)
                 .unwrap_or(false);
 
@@ -1838,7 +1792,7 @@ fn handle_expr_method_call(
             global_data.scopes.iter().rev().any(|s| {
                 s.variables
                     .iter()
-                    .any(|v| v.name == expr_path.path.segments[0].ident.to_string() && v.mut_)
+                    .any(|v| expr_path.path.segments[0].ident == v.name && v.mut_)
             })
         }
         _ => false,
@@ -1910,6 +1864,7 @@ fn handle_expr_method_call(
     }
 
     if let JsExpr::Path(path) = &receiver {
+        #[allow(clippy::all)]
         if path.len() == 2 {
             if path[0] == "JSON" && path[1] == "parse" {
                 // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
@@ -1953,7 +1908,7 @@ fn handle_expr_method_call(
     //     method_name = "slice".to_string();
     // }
     if let Some(last_char) = method_name.chars().last() {
-        if last_char.is_digit(10) {
+        if last_char.is_ascii_digit() {
             method_name.pop().unwrap();
             // method_name = method_name[..method_name.len() - 1].to_string();
         }
@@ -2141,13 +2096,13 @@ fn get_receiver_params_and_method_impl_item(
             let i32_def = prelude_module
                 .item_definitons
                 .iter()
-                .find_map(|item_def| (item_def.ident == "i32").then_some(item_def))
+                .find(|item_def| item_def.ident == "i32")
                 .unwrap();
 
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&i32_def, sub_path)
+                    .lookup_impl_item_item2(i32_def, sub_path)
                     .unwrap(),
             )
             // match impl_method.item {
@@ -2183,7 +2138,7 @@ fn get_receiver_params_and_method_impl_item(
             let string_def = prelude_module
                 .item_definitons
                 .iter()
-                .find_map(|item_def| (item_def.ident == "String").then_some(item_def))
+                .find(|item_def| item_def.ident == "String")
                 .unwrap();
             // dbg!(&string_def);
             // dbg!(&sub_path);
@@ -2192,7 +2147,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&string_def, sub_path)
+                    .lookup_impl_item_item2(string_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2205,7 +2160,7 @@ fn get_receiver_params_and_method_impl_item(
             let item_def = prelude_module
                 .item_definitons
                 .iter()
-                .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
+                .find(|item_def| item_def.ident == "Option")
                 .unwrap();
             // let type_param = match &*type_param {
             //     RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
@@ -2281,7 +2236,7 @@ fn get_receiver_params_and_method_impl_item(
             let vec_def = prelude_module
                 .item_definitons
                 .iter()
-                .find_map(|item_def| (item_def.ident == "Vec").then_some(item_def))
+                .find(|item_def| item_def.ident == "Vec")
                 .unwrap();
             // dbg!(&string_def);
             // dbg!(&sub_path);
@@ -2290,7 +2245,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&vec_def, sub_path)
+                    .lookup_impl_item_item2(vec_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2362,11 +2317,11 @@ fn resolve_generics_for_return_type(
             });
 
             method_return_type_generic_resolve_to_rust_type(
-                &item_type_params,
+                item_type_params,
                 &rust_type_param,
-                &fn_info,
-                &method_turbofish_rust_types,
-                &args_rust_types,
+                fn_info,
+                method_turbofish_rust_types,
+                args_rust_types,
             )
         }
         RustType::I32 => RustType::I32,
@@ -2394,11 +2349,11 @@ fn resolve_generics_for_return_type(
                         RustTypeParamValue::Unresolved => {
                             let mut new_tp = tp.clone();
                             let rust_type = method_return_type_generic_resolve_to_rust_type(
-                                &item_type_params,
+                                item_type_params,
                                 tp,
-                                &fn_info,
-                                &method_turbofish_rust_types,
-                                &args_rust_types,
+                                fn_info,
+                                method_turbofish_rust_types,
+                                args_rust_types,
                             );
                             new_tp.type_ = RustTypeParamValue::RustType(Box::new(rust_type));
                             new_tp
@@ -2437,11 +2392,11 @@ fn resolve_generics_for_return_type(
 
 /// For a type param return type, attempt to find a concrete type by looking: on the receiver's type params, the method's type params, or if the type param is used for one of the inputs, use the concrete type of the arg
 fn method_return_type_generic_resolve_to_rust_type(
-    item_type_params: &Vec<RustTypeParam>,
+    item_type_params: &[RustTypeParam],
     return_type_param: &RustTypeParam,
     fn_info: &FnInfo,
     method_turbofish_rust_types: &Option<Vec<RustType>>,
-    args_rust_types: &Vec<RustType>,
+    args_rust_types: &[RustType],
 ) -> RustType {
     // Is type param defined on item?
     if let Some(item_type_param) = item_type_params
@@ -2493,8 +2448,7 @@ pub fn handle_expr_block(
         .block
         .stmts
         .iter()
-        .map(|stmt| handle_stmt(stmt, global_data, current_module))
-        .flatten()
+        .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
         .unzip();
 
     // pop block scope
@@ -2779,7 +2733,7 @@ fn handle_expr_call(
                             // RustType::Fn returns a different type when called (which is obviously what is happening given we are handling expr_call), and also might be nested, ie inside other types that take generics eg Some(fn_returns_i32()) => RustType::Option(RustType::i32), so need to resolve this
                             fn get_fn_type_returns(
                                 return_type: RustType,
-                                current_type_params: &Vec<RustTypeParam>,
+                                current_type_params: &[RustTypeParam],
                             ) -> RustType {
                                 match &return_type {
                                     RustType::Unknown => todo!(),
@@ -2912,7 +2866,7 @@ fn handle_expr_call(
         // }
         _ => (
             JsExpr::FnCall(
-                Box::new(handle_expr(&*expr_call.func, global_data, current_module).0),
+                Box::new(handle_expr(&expr_call.func, global_data, current_module).0),
                 args_js_expr,
             ),
             RustType::Todo,
@@ -2960,7 +2914,7 @@ fn handle_expr_path_inner(
     let module = global_data
         .modules
         .iter()
-        .find(|module| &module.path == current_module)
+        .find(|module| module.path == current_module)
         .unwrap();
 
     // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
@@ -3066,7 +3020,7 @@ fn handle_expr_path_inner(
                     let item_def = prelude_module
                         .item_definitons
                         .iter()
-                        .find_map(|item_def| (item_def.ident == "Option").then_some(item_def))
+                        .find(|item_def| item_def.ident == "Option")
                         .unwrap();
                     assert_eq!(item_def.generics.len(), 1);
                     let rust_type_type_param = match &item_def.struct_or_enum_info {
@@ -3141,7 +3095,7 @@ fn handle_expr_path_inner(
 
             if var.is_some() || fn_info.is_some() || item_def.is_some() || const_def.is_some() {
                 Some(found_item_to_partial_rust_type(
-                    &item_path_seg,
+                    item_path_seg,
                     var,
                     fn_info,
                     item_def,
@@ -3163,7 +3117,7 @@ fn handle_expr_path_inner(
                 let item_module = global_data
                     .modules
                     .iter()
-                    .find(|module| &module.path == &segs_copy_module_path)
+                    .find(|module| module.path == segs_copy_module_path)
                     .unwrap();
                 let func = item_module
                     .fn_info
@@ -3179,7 +3133,7 @@ fn handle_expr_path_inner(
                     .find(|const_def| const_def.name == item_path_seg.ident);
 
                 found_item_to_partial_rust_type(
-                    &item_path_seg,
+                    item_path_seg,
                     None,
                     func,
                     item_def,
@@ -3216,7 +3170,7 @@ fn handle_expr_path_inner(
         // dbg!(&item_def);
 
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-        let item_generics = if item_path_seg.turbofish.len() > 0 {
+        let item_generics = if !item_path_seg.turbofish.is_empty() {
             item_path_seg
                 .turbofish
                 .iter()
@@ -3228,7 +3182,7 @@ fn handle_expr_path_inner(
                 .collect::<Vec<_>>()
         } else {
             // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-            assert!(item_def.generics.len() == 0);
+            assert!(item_def.generics.is_empty());
             item_def
                 .generics
                 .iter()
@@ -3244,12 +3198,12 @@ fn handle_expr_path_inner(
             &item_generics,
             &segs_copy_module_path,
             &segs_copy_item_scope,
-            &sub_path,
+            sub_path,
             &item_path_seg.ident,
             &item_def,
         );
         // dbg!(&impl_method);
-        let impl_method = impl_method.map(|impl_method| PartialRustType::RustType(impl_method));
+        let impl_method = impl_method.map(PartialRustType::RustType);
 
         let enum_variant = match item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
@@ -3261,7 +3215,7 @@ fn handle_expr_path_inner(
                     .iter()
                     .find(|member| member.ident == sub_path.ident);
 
-                let enum_variant_generics = if sub_path.turbofish.len() > 0 {
+                let enum_variant_generics = if !sub_path.turbofish.is_empty() {
                     sub_path
                         .turbofish
                         .iter()
@@ -3284,21 +3238,21 @@ fn handle_expr_path_inner(
 
                 let mut enum_generics = Vec::new();
                 // An enum variant instantiation cannot have turbofish on both the enum and the variant
-                if item_path_seg.turbofish.len() > 0 {
-                    assert!(sub_path.turbofish.len() > 0);
+                if !item_path_seg.turbofish.is_empty() {
+                    assert!(!sub_path.turbofish.is_empty());
                     enum_generics = item_generics;
                 }
-                if sub_path.turbofish.len() > 0 {
-                    assert!(item_path_seg.turbofish.len() > 0);
+                if !sub_path.turbofish.is_empty() {
+                    assert!(!item_path_seg.turbofish.is_empty());
                     enum_generics = enum_variant_generics;
                 }
                 // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-                if item_def.generics.len() > 0 {
-                    assert!(enum_generics.len() > 0);
+                if !item_def.generics.is_empty() {
+                    assert!(!enum_generics.is_empty());
                 }
 
                 enum_variant.map(|enum_variant| {
-                    if enum_variant.inputs.len() == 0 {
+                    if enum_variant.inputs.is_empty() {
                         PartialRustType::RustType(RustType::StructOrEnum(
                             enum_generics,
                             segs_copy_module_path.clone(),
@@ -3349,10 +3303,7 @@ fn handle_expr_path_inner(
         panic!("a mutable reference can only be taken of a mutable var");
     }
     let is_mut_ref_js_primative = match &partial_rust_type {
-        PartialRustType::RustType(rust_type) => match rust_type {
-            RustType::MutRef(rust_type2) => rust_type2.is_js_primative(),
-            _ => false,
-        },
+        PartialRustType::RustType(RustType::MutRef(rust_type)) => rust_type.is_js_primative(),
         _ => false,
     };
 
@@ -3367,7 +3318,7 @@ fn handle_expr_path_inner(
         .collect::<Vec<_>>();
     // dbg!(&js_segs);
 
-    if segs_copy_module_path == &["web_prelude"] && segs_copy_item_path[0].ident == "Document" {
+    if segs_copy_module_path == ["web_prelude"] && segs_copy_item_path[0].ident == "Document" {
         js_segs[0] = "document".to_string();
     }
 
@@ -3377,19 +3328,17 @@ fn handle_expr_path_inner(
     if segs_copy_item_scope.is_none() {
         if let Some(dup) = global_data.duplicates.iter().find(|dup| {
             dup.name == segs_copy_item_path[0].ident
-                && &dup.original_module_path == &segs_copy_module_path
+                && dup.original_module_path == segs_copy_module_path
         }) {
             js_segs[0] = dup
                 .namespace
                 .iter()
-                .map(|seg| case_convert(seg))
+                .map(case_convert)
                 .collect::<Vec<_>>()
                 .join("__");
         }
-    } else {
-        if js_segs[0] == "self" {
-            js_segs[0] = "this".to_string();
-        }
+    } else if js_segs[0] == "self" {
+        js_segs[0] = "this".to_string();
     }
 
     // let segs = segs_copy.iter()
@@ -3502,9 +3451,7 @@ fn handle_match_pat(
             let arm_field_defs = enum_def_info
                 .members
                 .iter()
-                .find(|member| {
-                    member.ident == pat_struct.path.segments.last().unwrap().ident.to_string()
-                })
+                .find(|member| pat_struct.path.segments.last().unwrap().ident == member.ident)
                 .unwrap();
 
             let scoped_vars = pat_struct
@@ -3542,7 +3489,7 @@ fn handle_match_pat(
                 type_: LocalType::Var,
                 lhs: LocalName::DestructureObject(DestructureObject(names)),
                 value: JsExpr::Field(
-                    Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
+                    Box::new(handle_expr(&expr_match.expr, global_data, current_module).0),
                     "data".to_string(),
                 ),
             });
@@ -3625,16 +3572,7 @@ fn handle_match_pat(
             let variant_def = enum_def_info
                 .members
                 .iter()
-                .find(|member| {
-                    member.ident
-                        == pat_tuple_struct
-                            .path
-                            .segments
-                            .last()
-                            .unwrap()
-                            .ident
-                            .to_string()
-                })
+                .find(|member| pat_tuple_struct.path.segments.last().unwrap().ident == member.ident)
                 .unwrap();
 
             let scoped_vars = pat_tuple_struct
@@ -3707,7 +3645,7 @@ fn handle_match_pat(
                                     }
                                 }
                             }
-                            type_to_type(match_condition_type, rust_type_param, &global_data)
+                            type_to_type(match_condition_type, rust_type_param, global_data)
                         }
                         _ => field_type,
                     };
@@ -3728,7 +3666,7 @@ fn handle_match_pat(
                     export: false,
                     type_: LocalType::Let,
                     lhs: names.remove(0),
-                    value: handle_expr(&*expr_match.expr, global_data, current_module).0,
+                    value: handle_expr(&expr_match.expr, global_data, current_module).0,
                 })
             } else {
                 JsStmt::Local(JsLocal {
@@ -3737,7 +3675,7 @@ fn handle_match_pat(
                     type_: LocalType::Var,
                     lhs: LocalName::DestructureArray(names),
                     value: JsExpr::Field(
-                        Box::new(handle_expr(&*expr_match.expr, global_data, current_module).0),
+                        Box::new(handle_expr(&expr_match.expr, global_data, current_module).0),
                         "data".to_string(),
                     ),
                 })
@@ -3771,7 +3709,7 @@ pub fn handle_expr_match(
     debug_span!("handle_expr_match", expr_match = ?quote! { #expr_match }.to_string());
 
     let (match_condition_expr, match_condition_type) =
-        handle_expr(&*expr_match.expr, global_data, current_module);
+        handle_expr(&expr_match.expr, global_data, current_module);
 
     fn handle_option_match(
         match_condition_expr: &JsExpr,
@@ -3809,7 +3747,7 @@ pub fn handle_expr_match(
                     expr_match,
                     global_data,
                     current_module,
-                    &match_condition_type,
+                    match_condition_type,
                 );
 
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
@@ -3829,8 +3767,7 @@ pub fn handle_expr_match(
                             .block
                             .stmts
                             .iter()
-                            .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                            .flatten()
+                            .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                             .unzip();
 
                         let last_type = types_.last().unwrap().clone();
@@ -3844,11 +3781,11 @@ pub fn handle_expr_match(
                     }
                 };
 
-                body_data_destructure.extend(succeed_body_js_stmts.into_iter());
+                body_data_destructure.extend(succeed_body_js_stmts);
                 let mut succeed_body_js_stmts = body_data_destructure;
 
                 // If last stmt is returned, add return stmt
-                if succeed_body_js_stmts.len() > 0 {
+                if !succeed_body_js_stmts.is_empty() {
                     let last_stmt = succeed_body_js_stmts.pop().unwrap();
                     let new_stmt = match last_stmt {
                         JsStmt::Expr(js_expr, has_semi) if !has_semi => {
@@ -3879,7 +3816,7 @@ pub fn handle_expr_match(
                     expr_match,
                     global_data,
                     current_module,
-                    &match_condition_type,
+                    match_condition_type,
                 );
 
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
@@ -3897,8 +3834,7 @@ pub fn handle_expr_match(
                             .block
                             .stmts
                             .iter()
-                            .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                            .flatten()
+                            .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                             .unzip();
 
                         let last_type = types_.last().unwrap().clone();
@@ -3913,7 +3849,7 @@ pub fn handle_expr_match(
                 };
 
                 // If last stmt is returned, add return stmt
-                if fail_body_js_stmts.len() > 0 {
+                if !fail_body_js_stmts.is_empty() {
                     let last_stmt = fail_body_js_stmts.pop().unwrap();
                     let new_stmt = match last_stmt {
                         JsStmt::Expr(js_expr, has_semi) if !has_semi => {
@@ -4019,8 +3955,7 @@ pub fn handle_expr_match(
                         .block
                         .stmts
                         .iter()
-                        .map(|stmt| handle_stmt(stmt, global_data, current_module))
-                        .flatten()
+                        .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                         .unzip();
 
                     let last_type = types_.last().unwrap().clone();
@@ -4036,7 +3971,7 @@ pub fn handle_expr_match(
             // pop match arm scope stuff
             global_data.pop_scope();
 
-            body_data_destructure.extend(body_js_stmts.into_iter());
+            body_data_destructure.extend(body_js_stmts);
             let body = body_data_destructure;
 
             let (prev_if_expr, prev_body_return_type) = acc;

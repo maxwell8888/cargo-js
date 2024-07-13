@@ -202,17 +202,13 @@ pub mod web {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Action {}
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, Default)]
     pub enum Method {
         Delete,
+        #[default]
         Get,
         Post,
         Put,
-    }
-    impl Default for Method {
-        fn default() -> Self {
-            Method::Get
-        }
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#body

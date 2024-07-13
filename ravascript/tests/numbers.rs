@@ -1,10 +1,9 @@
 mod utils;
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
+use ravascript::format_js;
 use ravascript::prelude::web::Math;
 use ravascript::prelude::JsNumber;
-use ravascript::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use ravascript_macros::fn_stmts_as_str;
 use utils::*;
 
 #[ignore]

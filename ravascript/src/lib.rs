@@ -1,3 +1,9 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unreachable_code)]
+#![allow(unused_mut)]
+#![allow(unused_imports)]
+
 pub use ravascript_core::*;
 pub use ravascript_macros::include_ravascript;
 // pub mod prelude;
@@ -52,7 +58,7 @@ mod tests {
 
     fn get_rust_module_and_expected_js(dir_path: PathBuf) {
         let dir_name = dir_path.file_name().unwrap();
-        
+
         let rust_file_name = format!("{}.rs", dir_name.to_string_lossy());
         let rust_file_path = dir_path.join(rust_file_name);
         dbg!(&rust_file_path);
@@ -61,7 +67,7 @@ mod tests {
         let js_file_name = format!("{}.js", dir_name.to_string_lossy());
         let js_file_path = dir_path.join(js_file_name);
         let expected_js = fs::read_to_string(js_file_path).unwrap();
-        
+
         let stmts = from_file(&rust_input, false);
         let generated_js = stmts
             .iter()

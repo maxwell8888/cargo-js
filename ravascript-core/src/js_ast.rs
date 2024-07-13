@@ -1,7 +1,7 @@
 use heck::{AsKebabCase, AsPascalCase};
 use syn::BinOp;
 
-use crate::{camel, ItemDefinition, RustType};
+use crate::camel;
 
 #[derive(Clone, Debug)]
 pub enum JsOp {
@@ -169,12 +169,10 @@ impl JsExpr {
                         .map(|(i, stmt)| handle_fn_body_stmt(i, stmt, body.len()))
                         .collect::<Vec<_>>()
                         .join("\n")
+                } else if body.len() > 1 {
+                    panic!("closures with no block should only have 1 statement")
                 } else {
-                    if body.len() > 1 {
-                        panic!("closures with no block should only have 1 statement")
-                    } else {
-                        body.first().unwrap().js_string()
-                    }
+                    body.first().unwrap().js_string()
                 };
                 format!(
                     "{}{} => {}",
@@ -281,10 +279,9 @@ impl JsExpr {
                 // TODO improve this - ideally use existing code eg from rustc
 
                 let parts = message
-                    .split(",")
-                    .into_iter()
+                    .split(',')
                     .map(|part| part.trim().to_string())
-                    .collect::<Vec<String>>();
+                    .collect::<Vec<_>>();
                 let expanded_message = if parts.len() > 1 {
                     let mut text = parts[0].clone();
                     if text.is_ascii() {
@@ -297,7 +294,7 @@ impl JsExpr {
                     }
                     text = text.replacen("{}", format!("${{{}}}", &parts[1]).as_str(), 1);
                     text
-                } else if parts[0].chars().next() == Some('"') {
+                } else if parts[0].starts_with('"') {
                     parts[0].clone()
                 } else {
                     format!(r#""{}""#, parts[0])
@@ -382,6 +379,7 @@ impl JsIf {
                             .map(|(i, stmt)| {
                                 if i == stmts.len() - 1 {
                                     if let Some(assignment) = assignment {
+                                        #[allow(clippy::all)]
                                         let is_error = match stmt {
                                             JsStmt::Expr(expr, _) => match expr {
                                                 JsExpr::ThrowError(_) => todo!(),
@@ -406,10 +404,7 @@ impl JsIf {
                         // else { expr }
                         _ => {
                             if let Some(assignment) = assignment {
-                                let is_error = match &**else_ {
-                                    JsExpr::ThrowError(_) => true,
-                                    _ => false,
-                                };
+                                let is_error = matches!(&**else_, JsExpr::ThrowError(_));
                                 // let is_error = match stmt {
                                 //     JsStmt::Expr(expr, _) => match expr {
                                 //         JsExpr::ThrowError(_) => true,
@@ -477,13 +472,7 @@ impl JsIf {
                             //     }
                             // }
 
-                            let is_error = match stmt {
-                                JsStmt::Expr(expr, _) => match expr {
-                                    JsExpr::ThrowError(_) => true,
-                                    _ => false,
-                                },
-                                _ => false,
-                            };
+                            let is_error = matches!(stmt, JsStmt::Expr(JsExpr::ThrowError(_), _));
                             if is_error {
                                 stmt.js_string()
                             } else {
@@ -829,10 +818,10 @@ impl JsStmt {
                             path_seg.clone()
                         } else {
                             path_seg
-                                .split(".")
+                                .split('.')
                                 .enumerate()
                                 .map(|(i, word)| {
-                                    if i == 0 && path_seg.split(".").count() > 1 {
+                                    if i == 0 && path_seg.split('.').count() > 1 {
                                         AsPascalCase(word).to_string()
                                     } else {
                                         AsKebabCase(word).to_string()
@@ -851,7 +840,7 @@ impl JsStmt {
                     } else {
                         "".to_string()
                     },
-                    if exports.len() > 0 {
+                    if !exports.is_empty() {
                         let exports = exports
                             .iter()
                             .map(|export| {
@@ -896,7 +885,7 @@ impl JsStmt {
                     "class {} {{\n{}{}\n{}}}",
                     js_class.name,
                     // name,
-                    if js_class.inputs.len() > 0 {
+                    if !js_class.inputs.is_empty() {
                         format!(
                             "constructor({}) {{\n{}\n}}\n",
                             js_class.inputs.join(", "),

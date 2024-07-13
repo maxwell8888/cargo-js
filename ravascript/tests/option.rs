@@ -1,15 +1,8 @@
 mod utils;
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 use std::panic::catch_unwind;
-
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
 use utils::*;
 
 // TODO avoid rename if same var name is used for condition and some value
@@ -41,7 +34,7 @@ async fn option_match() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -66,7 +59,7 @@ async fn option_is_some_and() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -91,7 +84,7 @@ async fn option_unwrap_some() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO is error"]
@@ -114,7 +107,7 @@ async fn option_unwrap_none() {
             console.assert(resultIsErr(err));
         "#,
     );
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
     assert_eq!(expected, actual);
 }
 
@@ -139,7 +132,7 @@ async fn option_unwrap_or() {
         ",
     ));
 
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 
     assert_eq!(expected, actual);
 }
@@ -165,7 +158,7 @@ async fn option_unwrap_or_else() {
         ",
     ));
 
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 
     assert_eq!(expected, actual);
 }
@@ -192,7 +185,7 @@ async fn option_unwrap_or_default() {
         "#,
     ));
 
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 
     assert_eq!(expected, actual);
 }

@@ -1,3 +1,6 @@
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
 use axum::{
     extract::State,
     http::StatusCode,

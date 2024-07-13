@@ -1,13 +1,7 @@
 mod utils;
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 use utils::*;
 
 #[tokio::test]
@@ -213,6 +207,7 @@ async fn destructure_shadowing() {
             baz: i32,
         }
         let foo = Foo { bar: 5, baz: 6 };
+        #[allow(unused_variables)]
         let bar = 2;
         let Foo { bar, baz } = foo;
         assert!(bar == 5);
@@ -239,7 +234,7 @@ async fn destructure_shadowing() {
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
 
-// #[ignore = "TODO implement"]
+#[ignore = "TODO implement"]
 #[tokio::test]
 async fn destructure_shadowing_with_block_scoping() {
     // setup_tracing();
@@ -274,6 +269,6 @@ async fn destructure_shadowing_with_block_scoping() {
         "#,
     );
 
-    // assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    assert_eq!(expected, actual);
+    let _ = execute_js_with_assertions(&expected).await.unwrap();
 }

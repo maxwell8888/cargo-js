@@ -1,19 +1,13 @@
 mod utils;
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 use utils::*;
 
 #[tokio::test]
 async fn testing_asserts() -> Result<(), Box<dyn std::error::Error>> {
     let js_should_not_throw = "console.assert(3 === 3, { msg: 'numbers do not match' });";
-    let _ = execute_js_with_assertions(js_should_not_throw).await?;
+    execute_js_with_assertions(js_should_not_throw).await?;
 
     let js_should_throw = "console.assert(3 === 2, { msg: 'numbers do not match' });";
     assert!(execute_js_with_assertions(js_should_throw).await.is_err());
@@ -26,6 +20,7 @@ async fn it_executes_simple_expressions() {
         let my_num = 5;
         assert!(my_num == 2 + 3);
         enum Colors {
+            #[allow(dead_code)]
             Red,
             Blue,
         }
@@ -37,7 +32,7 @@ async fn it_executes_simple_expressions() {
         assert!(answer == 2);
     });
 
-    let _ = execute_js_with_assertions(&generated_js).await.unwrap();
+    execute_js_with_assertions(&generated_js).await.unwrap();
 }
 
 #[tokio::test]
@@ -62,7 +57,7 @@ async fn it_transpiles_vec_macro2() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -87,7 +82,7 @@ async fn it_transpiles_iter_map() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -156,7 +151,7 @@ async fn reassign_box_new() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "low priority"]
@@ -175,7 +170,7 @@ async fn boxed_iter_type_infer() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]

@@ -1,36 +1,21 @@
-use biome_formatter::{FormatLanguage, IndentStyle, IndentWidth};
-use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
-use biome_js_parser::JsParserOptions;
-use biome_js_syntax::JsFileSource;
-use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
-use quote::quote;
-use std::{
-    default,
-    fmt::{self, Debug},
-    fs,
-    net::ToSocketAddrs,
-    path::{Path, PathBuf},
-};
+use heck::AsPascalCase;
+use std::fs;
 use syn::{
-    parenthesized, parse_macro_input, BinOp, DeriveInput, Expr, ExprAssign, ExprBlock, ExprCall,
-    ExprClosure, ExprMatch, ExprMethodCall, ExprPath, Fields, FnArg, GenericArgument, GenericParam,
-    Ident, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
-    ItemTrait, ItemUse, Lit, Local, Macro, Member, Meta, Pat, PathArguments, PathSegment,
-    ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp, UseTree, Visibility, WherePredicate,
+    Fields, FnArg, GenericParam, ImplItem, ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemImpl,
+    ItemMod, ItemStruct, ItemTrait, Meta, Pat, ReturnType, TraitItem, Type, TypeParamBound,
+    Visibility,
 };
-use tracing::{debug, debug_span, info, span, warn};
+use tracing::{debug, debug_span, info};
 
 use crate::{
     camel, get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
     js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType},
-    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, ConstDef,
-    EnumDefinitionInfo, EnumVariantInfo, EnumVariantInputsInfo, FnInfo, GlobalData,
-    GlobalDataScope, ItemDefinition, ItemDefintionImpls, JsImplBlock2, JsImplItem, RustGeneric,
-    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs,
-    RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, ScopedVar,
-    StructDefinitionInfo, StructFieldInfo, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field, EnumVariantInfo,
+    EnumVariantInputsInfo, FnInfo, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem,
+    RustGeneric, RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs,
+    RustType, RustTypeParam, RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };
 
 pub fn handle_item_fn(
@@ -49,7 +34,7 @@ pub fn handle_item_fn(
         match &thing.meta {
             Meta::Path(path) => {
                 if let Some(seg) = path.segments.first() {
-                    seg.ident.to_string() == "ignore".to_string()
+                    seg.ident == "ignore"
                 } else {
                     false
                 }
@@ -66,12 +51,12 @@ pub fn handle_item_fn(
         let in_module_level_duplicates = global_data
             .duplicates
             .iter()
-            .find(|dup| dup.name == name && &dup.original_module_path == current_module);
+            .find(|dup| dup.name == name && dup.original_module_path == current_module);
 
         if let Some(dup) = in_module_level_duplicates {
             dup.namespace
                 .iter()
-                .map(|seg| camel(seg))
+                .map(camel)
                 .collect::<Vec<_>>()
                 .join("__")
         } else {
@@ -163,6 +148,7 @@ pub fn handle_item_fn(
     // record which vars are mut and/or &mut
     let mut copy_stmts = Vec::new();
     for input in &item_fn.sig.inputs {
+        #[allow(clippy::all)]
         match input {
             FnArg::Receiver(_) => {}
             FnArg::Typed(pat_type) => match &*pat_type.pat {
@@ -335,10 +321,7 @@ pub fn handle_item_fn(
         // If we are returning a type which is *not* &mut, then we need to `.copy()` or `.inner()` if the value being returned is mut (if the value is &mut, the compiler will have ensured there is a deref, so we will have already added a `.copy()` or `.inner()`).
         let returns_non_mut_ref_val = match &item_fn.sig.output {
             ReturnType::Default => false,
-            ReturnType::Type(_, type_) => match &**type_ {
-                Type::Reference(_) => false,
-                _ => true,
-            },
+            ReturnType::Type(_, type_) => matches!(&**type_, Type::Reference(_)),
         };
         // dbg!(&item_fn.block.stmts);
 
@@ -451,7 +434,7 @@ pub fn handle_item_const(
         name = dup
             .namespace
             .iter()
-            .map(|seg| camel(seg))
+            .map(camel)
             .collect::<Vec<_>>()
             .join("__");
     }
@@ -464,7 +447,7 @@ pub fn handle_item_const(
         },
         type_: LocalType::Const,
         lhs: LocalName::Single(name),
-        value: handle_expr(&*item_const.expr, global_data, current_module).0,
+        value: handle_expr(&item_const.expr, global_data, current_module).0,
     })
 }
 
@@ -618,10 +601,7 @@ pub fn handle_item_enum(
                     public: false,
                     export: false,
                     type_: LocalType::Static,
-                    lhs: LocalName::Single(format!(
-                        "{}",
-                        AsPascalCase(variant.ident.to_string()).to_string()
-                    )),
+                    lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
                     value: JsExpr::New(
                         vec![class_name.clone()],
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
@@ -689,10 +669,7 @@ pub fn handle_item_enum(
                     public: false,
                     export: false,
                     type_: LocalType::Static,
-                    lhs: LocalName::Single(format!(
-                        "{}",
-                        AsPascalCase(variant.ident.to_string()).to_string()
-                    )),
+                    lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
                     value: JsExpr::New(
                         vec![class_name.clone()],
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
@@ -753,7 +730,7 @@ pub fn handle_item_enum(
             }
             syn::Fields::Unit => (Vec::new(), Vec::new()),
         };
-        if body_stmts.len() > 0 {
+        if !body_stmts.is_empty() {
             methods.push((
                 item_enum.ident.to_string(),
                 true,
@@ -799,12 +776,12 @@ pub fn handle_item_enum(
     if let Some(dup) = global_data
         .duplicates
         .iter()
-        .find(|dup| dup.name == class_name && &dup.original_module_path == current_module)
+        .find(|dup| dup.name == class_name && dup.original_module_path == current_module)
     {
         class_name = dup
             .namespace
             .iter()
-            .map(|seg| camel(seg))
+            .map(camel)
             .collect::<Vec<_>>()
             .join("__");
     }
@@ -845,10 +822,7 @@ pub fn handle_impl_item_fn(
         *scope_count
     };
 
-    let static_ = match impl_item_fn.sig.inputs.first() {
-        Some(FnArg::Receiver(_)) => false,
-        _ => true,
-    };
+    let static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
     // dbg!(item_impl_fn);
     // let private = !export;
     let js_input_names = impl_item_fn
@@ -1070,14 +1044,10 @@ pub fn handle_impl_item_fn(
         .stmts
         .clone()
         .into_iter()
-        .map(|stmt| stmt)
         .collect::<Vec<_>>();
     let returns_non_mut_ref_val = match &impl_item_fn.sig.output {
         ReturnType::Default => false,
-        ReturnType::Type(_, type_) => match &**type_ {
-            Type::Reference(_) => false,
-            _ => true,
-        },
+        ReturnType::Type(_, type_) => matches!(&**type_, Type::Reference(_)),
     };
 
     // so this is just used for the inital/one off analysis of the impl method, and when actually going through the code from main, we will store a self var in the scope like the other vars????
@@ -1150,12 +1120,12 @@ pub fn handle_impl_item_fn(
                         _ => todo!(),
                     },
                     parse_fn_input_or_field(
-                        &*pat_type.ty,
+                        &pat_type.ty,
                         match &*pat_type.pat {
                             Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
                             _ => todo!(),
                         },
-                        &fn_rust_type_params,
+                        fn_rust_type_params,
                         current_module_path,
                         global_data,
                     ),
@@ -1180,14 +1150,14 @@ pub fn handle_impl_item_fn(
         let fn_info = FnInfo {
             ident: impl_item_fn.sig.ident.to_string(),
             is_pub,
-            inputs_types: inputs_types,
+            inputs_types,
             generics: fn_generics,
             return_type: match &impl_item_fn.sig.output {
                 ReturnType::Default => RustType::Unit,
                 ReturnType::Type(_, type_) => parse_fn_input_or_field(
-                    &*type_,
+                    type_,
                     false,
-                    &fn_rust_type_params,
+                    fn_rust_type_params,
                     current_module_path,
                     global_data,
                 ),
@@ -1203,7 +1173,7 @@ pub fn handle_impl_item_fn(
             is_method: true,
             name: camel(impl_item_fn.sig.ident.clone()),
             input_names: js_input_names,
-            body_stmts: body_stmts,
+            body_stmts,
         };
         js_impl_items.push(RustImplItemJs {
             ident: impl_item_fn.sig.ident.to_string(),
@@ -1250,7 +1220,7 @@ pub fn handle_item_impl(
     let module = global_data
         .modules
         .iter()
-        .find(|m| &m.path == current_module_path)
+        .find(|m| m.path == current_module_path)
         .unwrap();
 
     // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
@@ -1289,7 +1259,7 @@ pub fn handle_item_impl(
                                     .lookup_trait_definition_any_module(
                                         current_module_path,
                                         &global_data.scope_id_as_option(),
-                                        &trait_path,
+                                        trait_path,
                                     );
                                 Some((module_path, scope_id, trait_def.name))
                             }
@@ -1309,9 +1279,7 @@ pub fn handle_item_impl(
             if type_path.path.segments.len() == 1 {
                 rust_impl_block_generics
                     .iter()
-                    .find(|generic| {
-                        generic.ident == type_path.path.segments.first().unwrap().ident.to_string()
-                    })
+                    .find(|generic| type_path.path.segments.first().unwrap().ident == generic.ident)
                     .cloned()
             } else {
                 None
@@ -1325,7 +1293,7 @@ pub fn handle_item_impl(
         let (module_path, scope_id, trait_def) = global_data.lookup_trait_definition_any_module(
             current_module_path,
             &global_data.scope_id_as_option(),
-            &trait_
+            trait_
                 .segments
                 .iter()
                 .map(|seg| seg.ident.to_string())
@@ -1412,7 +1380,7 @@ pub fn handle_item_impl(
                     export: false,
                     type_: LocalType::Static,
                     lhs: LocalName::Single(impl_item_const.ident.to_string()),
-                    value: handle_expr(&impl_item_const.expr, global_data, &current_module_path).0,
+                    value: handle_expr(&impl_item_const.expr, global_data, current_module_path).0,
                 };
 
                 rust_impl_items.push(RustImplItemJs {
@@ -1428,7 +1396,7 @@ pub fn handle_item_impl(
                         impl_block
                             .rust_items
                             .iter()
-                            .find(|i| i.ident == impl_item_fn.sig.ident.to_string())
+                            .find(|i| impl_item_fn.sig.ident == i.ident)
                     })
                     .unwrap();
                 handle_impl_item_fn(
@@ -1581,8 +1549,8 @@ pub fn handle_item_impl(
     };
     let mut stmts = vec![class_stmt];
 
-    fn prelude_item_def_name_to_js(item_def_name: &String) -> &'static str {
-        match item_def_name.as_str() {
+    fn prelude_item_def_name_to_js(item_def_name: &str) -> &'static str {
+        match item_def_name {
             "i32" => "Number",
             "String" => "String",
             "str" => "String",
@@ -1612,8 +1580,11 @@ pub fn handle_item_impl(
             }
         })
         .collect::<Vec<_>>();
-    dedup_rust_prelude_definitions.sort_by_key(|(js_name, item_def)| js_name.clone());
-    dedup_rust_prelude_definitions.dedup_by_key(|(js_name, item_def)| js_name.clone());
+    // Need to use sort by because of lifetimes: https://users.rust-lang.org/t/sort-by-key-and-probably-a-simple-lifetime-issue/73358
+    dedup_rust_prelude_definitions
+        .sort_by(|(js_name, item_def), (js_name2, item_def2)| js_name.cmp(js_name2));
+    dedup_rust_prelude_definitions
+        .dedup_by(|(js_name, item_def), (js_name2, item_def2)| js_name == js_name2);
 
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         if prelude_item_def.impl_block_ids.contains(&unique_id) {
@@ -2079,22 +2050,20 @@ pub fn handle_item_mod(
     let items = if let Some(content) = &item_mod.content {
         // TODO how does `mod bar { mod foo; }` work?
         content.1.clone()
-    } else {
-        if let Some(crate_path) = &global_data.crate_path {
-            let mut file_path = crate_path.clone();
-            file_path.push("src");
-            if module_path_copy.is_empty() {
-                file_path.push("main.rs");
-            } else {
-                let last = module_path_copy.last_mut().unwrap();
-                last.push_str(".rs");
-                file_path.extend(module_path_copy);
-            }
-            let code = fs::read_to_string(&file_path).unwrap();
-            syn::parse_file(&code).unwrap().items
+    } else if let Some(crate_path) = &global_data.crate_path {
+        let mut file_path = crate_path.clone();
+        file_path.push("src");
+        if module_path_copy.is_empty() {
+            file_path.push("main.rs");
         } else {
-            panic!("not allowed `mod foo` outside of crate")
+            let last = module_path_copy.last_mut().unwrap();
+            last.push_str(".rs");
+            file_path.extend(module_path_copy);
         }
+        let code = fs::read_to_string(&file_path).unwrap();
+        syn::parse_file(&code).unwrap().items
+    } else {
+        panic!("not allowed `mod foo` outside of crate")
     };
 
     // NOTE excluding use of attributes, only modules that are the directory parent can `mod foo`, any anywhere else we have to use `use` not `mod`.
@@ -2170,13 +2139,12 @@ pub fn handle_item_trait(
                         body_stmts: default
                             .stmts
                             .iter()
-                            .map(|stmt| {
+                            .flat_map(|stmt| {
                                 handle_stmt(stmt, global_data, current_module_path)
                                     .into_iter()
                                     .map(|(stmt, type_)| stmt)
                             })
-                            .flatten()
-                            .collect::<Vec<_>>(),
+                            .collect(),
                     };
                     global_data.default_trait_impls.push((
                         item_trait.ident.to_string(),
