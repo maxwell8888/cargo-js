@@ -46,6 +46,17 @@ pub fn r2j_block(code: &str, include_web: bool) -> String {
     let generated_js = format_js(generated_js);
     generated_js
 }
+
+pub fn r2j_block_unformatted(code: &str, include_web: bool) -> String {
+    let stmts = from_block(code, false, include_web);
+    let generated_js = stmts
+        .iter()
+        .map(|stmt| stmt.js_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    generated_js
+}
+
 /// Input code should be in a block as this allow rustfmt to work on the code, however the block (braces) are removed from the the output code and instead just the lines of code inside the block are used to generate the Javascript
 #[macro_export]
 macro_rules! r2j_block {
@@ -57,6 +68,20 @@ macro_rules! r2j_block {
         fn fn_wrapper() $block
 
         r2j_block(block_code_str(), false)
+    }};
+}
+
+// For debugging new lines etc
+#[macro_export]
+macro_rules! r2j_block_unformatted {
+    ($block:block) => {{
+        // Output the block to ensure that it runs without errors, eg failed asserts
+        $block
+
+        #[fn_stmts_as_str]
+        fn fn_wrapper() $block
+
+        r2j_block_unformatted(block_code_str(), false)
     }};
 }
 

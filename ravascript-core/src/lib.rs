@@ -16,8 +16,8 @@ use handle_syn_item::{
 use handle_syn_stmt::handle_stmt;
 use heck::{AsLowerCamelCase, AsPascalCase};
 use js_ast::{
-    DestructureObject, DestructureValue, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, LocalName,
-    LocalType,
+    DestructureObject, DestructureValue, FmtExtensions, JsClass, JsExpr, JsFn, JsIf, JsLocal,
+    JsModule, LocalName, LocalType,
 };
 use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
@@ -6619,7 +6619,7 @@ pub fn process_items(
         }
     }
 
-    global_data.transpiled_modules.clone()
+    global_data.transpiled_modules
 }
 
 fn update_classes2(js_stmt_modules: &mut Vec<JsModule>, global_data: &GlobalData) {
@@ -6804,15 +6804,17 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
 //     }
 // }
 
+use std::fmt::Write;
+
 pub fn modules_to_string(modules: &[JsModule], run_main: bool) -> String {
-    let mut module_strings = modules
-        .iter()
-        .map(|module| module.js_string())
-        .collect::<Vec<_>>();
-    if run_main {
-        module_strings.push("main();".to_string());
+    let mut temp = String::new();
+    for module in modules {
+        write!(&mut temp, "{module}\n\n").unwrap();
     }
-    module_strings.join("\n\n")
+    if run_main {
+        write!(&mut temp, "main();").unwrap();
+    }
+    temp
 }
 
 pub fn from_crate(crate_path: PathBuf, with_rust_types: bool, run_main: bool) -> String {
@@ -8211,11 +8213,10 @@ fn found_item_to_partial_rust_type(
 }
 
 pub fn generate_js_from_module(js: impl ToString) -> String {
-    from_module(js.to_string().as_str(), false)
-        .iter()
-        .map(|stmt| stmt.js_string())
-        .collect::<Vec<_>>()
-        .join("\n")
+    let stmts = from_module(js.to_string().as_str(), false);
+    let mut temp = String::new();
+    write!(&mut temp, "{}", stmts.fmt_join("\n")).unwrap();
+    temp
 }
 
 pub fn format_js(js: impl ToString) -> String {

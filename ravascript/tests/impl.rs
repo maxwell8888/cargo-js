@@ -383,6 +383,7 @@ async fn scoped_inherent_impl_in_different_module() {
 #[tokio::test]
 async fn shadowed_structs_with_shadowed_methods() {
     setup_tracing();
+    // let actual = r2j_block_unformatted!({
     let actual = r2j_file_run_main!(
         fn main() {
             struct Foo {}
@@ -406,6 +407,8 @@ async fn shadowed_structs_with_shadowed_methods() {
             cool();
         }
     );
+    // });
+    // println!("{actual}");
 
     let expected = format_js(
         r#"
@@ -1039,7 +1042,7 @@ async fn mut_method_call_num() {
                 self + 1
             }
         }
-        let mut num =  1 ;
+        let mut num = 1;
         let result = num.plus_one();
         let mut mut_result = num.plus_one();
         mut_result += 1;

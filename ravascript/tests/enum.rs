@@ -13,6 +13,7 @@ use utils::*;
 #[tokio::test]
 async fn enum_match() {
     setup_tracing();
+    // let actual = r2j_block_unformatted!({
     let actual = r2j_block!({
         enum MyEnum {
             FooBar,
@@ -36,10 +37,12 @@ async fn enum_match() {
         assert!(match_result == 5);
     });
 
+    // println!("{actual}");
+
     // include_str!("string_prototype_extensions.js"),
     // "\n",
     // include_str!("number_prototype_extensions.js"),
-    let expected = format_js(concat!(
+    let expected = format_js(
         r#"
             class MyEnum {
                 static fooBarId = "FooBar";
@@ -76,8 +79,8 @@ async fn enum_match() {
                 throw new Error("couldn't match enum variant");
             }
             console.assert(matchResult === 5);
-            "#
-    ));
+            "#,
+    );
     assert_eq!(expected, actual);
     let _ = execute_js_with_assertions(&expected).await.unwrap();
 }
