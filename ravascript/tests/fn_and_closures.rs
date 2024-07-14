@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
@@ -76,7 +78,7 @@ async fn function_body_returns_and_async() {
   5;
 };";
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -111,7 +113,7 @@ async fn function_returns_if_else_if_else() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -157,7 +159,7 @@ async fn closure_return_match() {
         };"#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO problem with r2j_block is that I believe we are parsing it as `fn temp() { ... }` which means if the last item is an expr with no semi-colon it will add `return`
@@ -189,5 +191,5 @@ async fn hoisting_fn_def_inside_block() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -44,7 +44,7 @@ async fn destructure_struct() {
         "#,
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -87,7 +87,7 @@ async fn destructure_struct_nested() {
     );
 
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -131,7 +131,7 @@ async fn destructure_array() {
     ));
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -194,7 +194,7 @@ async fn destructure_array_of_copy_structs() {
     ));
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO implement"]
@@ -231,7 +231,7 @@ async fn destructure_shadowing() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO implement"]
@@ -270,5 +270,5 @@ async fn destructure_shadowing_with_block_scoping() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

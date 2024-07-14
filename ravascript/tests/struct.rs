@@ -127,7 +127,7 @@ async fn struct_and_impl_methods() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -171,7 +171,7 @@ async fn tuple_struct() {
         "#
     );
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -232,7 +232,7 @@ async fn tuple_struct_multiple_fields() {
         "#
     );
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -275,7 +275,7 @@ async fn mutate_non_copy_struct() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO need solution for taking &mut field like let num = &mut foo.num;"]
@@ -339,7 +339,7 @@ async fn mutate_mut_ref_of_non_copy_structs_primative_field() {
     ));
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -385,7 +385,7 @@ async fn mutate_mut_ref_of_non_copy_structs_struct_field() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -438,5 +438,5 @@ async fn mutate_copy_struct() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

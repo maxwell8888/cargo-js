@@ -58,7 +58,7 @@ async fn impl_in_fn_scope() {
         "#,
     );
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore]
@@ -138,5 +138,5 @@ async fn impl_with_generic_arguments() {
     );
     // assert!(false);
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

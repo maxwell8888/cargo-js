@@ -137,7 +137,7 @@ async fn it_transpiles_crate_directory() {
     // println!("{}", format_js(&actual));
 
     assert_eq!(expected, format_js(actual));
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust
@@ -169,7 +169,7 @@ async fn simple_module() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -202,7 +202,7 @@ async fn module_super() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -228,7 +228,7 @@ async fn module_self() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn module_crate() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO the Rust code is not being run, causing an assert! to fail is not reported - SOLUTION need to use r2j_file_run_main not r2j_file
@@ -416,7 +416,7 @@ async fn scoped_modules() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO"]
@@ -462,7 +462,7 @@ async fn scoped_modules_duplicate_names() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO"]
@@ -505,5 +505,5 @@ async fn scoped_use() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -227,7 +227,7 @@ async fn option_map() {
         "#,
     );
 
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    // execute_js_with_assertions(&expected).await.unwrap();
 
     assert_eq!(expected, actual);
 }

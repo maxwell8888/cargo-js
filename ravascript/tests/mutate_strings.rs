@@ -74,5 +74,5 @@ async fn mutating_strings() {
     ));
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

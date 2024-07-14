@@ -46,7 +46,7 @@ async fn mut_ref_field() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -101,7 +101,7 @@ async fn reassign_mut_ref_field() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -157,5 +157,5 @@ async fn copy_struct_with_ref_field() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -89,7 +89,7 @@ async fn dom_nodes_and_elements() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "navigator should be lower case so not a const"]

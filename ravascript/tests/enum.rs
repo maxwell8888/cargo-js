@@ -1,15 +1,10 @@
 mod utils;
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 use utils::*;
 
+#[allow(unused_variables)]
 #[tokio::test]
 async fn enum_match() {
     setup_tracing();
@@ -82,7 +77,7 @@ async fn enum_match() {
             "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -223,5 +218,5 @@ async fn enum_methods() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -56,5 +56,5 @@ async fn if_let_some() {
     );
 
     // assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

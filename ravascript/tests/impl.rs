@@ -1,13 +1,7 @@
 mod utils;
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 use utils::*;
 
 // The rule seems to be the the enum/struct must be defined, or a use path to it must be defined, in either the same scope as the impl block (order of appearance does not matter) or in a surrounding scope, including the module top level.
@@ -146,7 +140,7 @@ async fn full_qualified_method_call() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "todo"]
@@ -199,7 +193,7 @@ async fn full_qualified_trait_method_call() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -240,7 +234,7 @@ async fn call_method_before_impl_block_definition() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -287,7 +281,7 @@ async fn multiple_impls_with_same_signature() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -330,7 +324,7 @@ async fn inherent_impl_in_different_module() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -376,7 +370,7 @@ async fn scoped_inherent_impl_in_different_module() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // In the majority of cases, we could simply store all impl blocks globally, and apply them to all classes. However, there are some cases which mean we need to record the scope of the impl (assuming it is scoped) to properly apply it to the correct struct. The intention of this test is to demonstrate this case.
@@ -438,7 +432,7 @@ async fn shadowed_structs_with_shadowed_methods() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // There doesn't seem any reason to implement this given that if a method is impl'd on a Struct then we expect it to be used somewhere, even if it is not accessible from certain places, so will always need it on the struct. See test private_method_in_scoped_impl below for an example.
@@ -479,7 +473,7 @@ async fn dont_need_to_impl_private_method() {
         "#,
     );
     assert_eq!(expected, actual);
-    // let _ = execute_js_with_assertions(&expected).await.unwrap();
+    // execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO move assert! to before impl to check this works or make another test for this
@@ -534,7 +528,7 @@ async fn private_method_in_scoped_impl() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -592,7 +586,7 @@ async fn module_level_shadowing_of_struct_name() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -646,7 +640,7 @@ async fn scoped_shadowing_of_struct_name() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // Need to be able to lookup return type of other method call, before we have finished processing the impl block, this is a problem no matter where we do the processing, once we want to process the body to get the JS and return type, we also need to do the same for the other method, but it might appear afterwards. I think the only solutions are:
@@ -698,7 +692,7 @@ async fn call_method_in_same_impl_block_before_method_definition() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -749,7 +743,7 @@ async fn simple_inherent_impl() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -802,7 +796,7 @@ async fn module_level_struct_scoped_inherent_impl() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -847,7 +841,7 @@ async fn scoped_simple_method_impl() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -887,7 +881,7 @@ async fn simple_impl_trait_for_concrete() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -927,7 +921,7 @@ async fn simple_scoped_impl_trait_for_type_param() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO `imp Foo for T` static vs method
@@ -986,7 +980,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO"]
@@ -1027,7 +1021,7 @@ async fn mut_method_call_struct() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore = "TODO"]
@@ -1063,5 +1057,5 @@ async fn mut_method_call_num() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }

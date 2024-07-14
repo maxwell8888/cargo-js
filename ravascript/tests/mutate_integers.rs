@@ -74,7 +74,7 @@ async fn mutating_integers() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -113,7 +113,7 @@ async fn deref_vs_normal_assign() {
     );
 
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -171,7 +171,7 @@ async fn ownership_mut() {
     );
 
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -193,7 +193,7 @@ async fn mutate_int() {
         console.assert(num.inner === 1)"#
     );
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -221,7 +221,7 @@ async fn copy_and_mutate() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -248,7 +248,7 @@ async fn copy_mut_ref() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -275,7 +275,7 @@ async fn non_mut_copy_to_mut() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn mut_ref_from_non_mut() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -342,7 +342,7 @@ async fn mutate_int_fn_arg() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -396,7 +396,7 @@ async fn mut_ref_int_fn_arg() {
         "#
     );
     assert_eq!(format_js(expected), actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -437,7 +437,7 @@ async fn copy_mut_inside_fn() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -490,7 +490,7 @@ async fn mut_ref_to_copy() {
         "#
     ));
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -551,7 +551,7 @@ async fn fn_call_return_mut_ref_to_copy() {
     ));
     // println!("{expected}");
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -601,7 +601,7 @@ async fn mutating_non_copy_value() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -631,7 +631,7 @@ async fn reassign_im_val_to_mut_var() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -668,7 +668,7 @@ async fn pass_mut_var_as_im_ref() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -701,7 +701,7 @@ async fn get_box_contents() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -758,7 +758,7 @@ async fn get_box_contents_with_mut() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // TODO we could use let and still be able to shadow variables by for each local assignment, looking up whether a var with that name already exists in scope, and if so just do a reassignment instead. This allows use to use let which (*also mirrors the Rust keyword which arguably makes the JS a bit nicer to read for a Rust dev) behaves better than var for scoping/blocks. Although JS blocks probably aren't useful for blocks that return like:
@@ -783,7 +783,7 @@ async fn shadow_variable_using_let() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -809,7 +809,7 @@ async fn simple_block_using_let_keyword() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -842,7 +842,7 @@ async fn assign_mut_ref_from_mut_var() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -877,7 +877,7 @@ async fn return_value_from_block() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -906,7 +906,7 @@ async fn return_value_from_block2() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -940,7 +940,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -971,7 +971,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var2() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -1002,7 +1002,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var3() {
         "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[tokio::test]
@@ -1037,7 +1037,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var4() {
             "#,
     );
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // https://www.reddit.com/r/rust/comments/3l3fgo/what_if_rust_had_mutablebox_and_immutablebox/
@@ -1077,5 +1077,5 @@ async fn mut_ref_box_contents() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&expected).await.unwrap();
+    execute_js_with_assertions(&expected).await.unwrap();
 }
