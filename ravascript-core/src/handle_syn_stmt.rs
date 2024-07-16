@@ -4,14 +4,15 @@ use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
 use tracing::debug_span;
 
 use crate::{
-    handle_item_use, handle_pat,
+    extract_modules::{handle_item_use, ItemUseModuleOrScope},
+    handle_pat,
     handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro},
     handle_syn_item::{
         handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
         handle_item_trait,
     },
     js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType},
-    parse_fn_input_or_field, GlobalData, ItemUseModuleOrScope, RustType, ScopedVar,
+    parse_fn_input_or_field, GlobalData, RustType, ScopedVar,
 };
 
 fn handle_local(
