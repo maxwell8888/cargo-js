@@ -1,5 +1,6 @@
 use syn::{
-    Expr, GenericParam, ImplItem, Item, ItemConst, ItemStruct, Member, Meta, Stmt, Type, Visibility,
+    Expr, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemStruct,
+    ItemTrait, Member, Meta, Stmt, Type, Visibility,
 };
 use tracing::debug_span;
 
@@ -320,7 +321,15 @@ pub struct FnInfo {
     // /// type of fn eg Fn(i32) -> ()
     // rust_type: RustType,
     // TODO optionally add enum for Field, AssociatedFn, Method, etc
+    pub syn: FnInfoSyn,
 }
+
+#[derive(Debug, Clone)]
+pub enum FnInfoSyn {
+    Standalone(ItemFn),
+    Impl(ImplItemFn),
+}
+
 impl FnInfo {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
@@ -440,7 +449,7 @@ fn populate_item_definitions_items_individual_item(
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
                     members: members_for_scope,
-                    // syn_object: item_enum.clone(),
+                    syn_object: item_enum.clone(),
                 }),
                 impl_block_ids: Vec::new(),
             });
@@ -471,6 +480,7 @@ fn populate_item_definitions_items_individual_item(
                 generics,
                 // return_type: RustType::Uninit,
                 return_type: RustType::Todo,
+                syn: FnInfoSyn::Standalone(item_fn.clone()),
             });
 
             // Get scoped definitions
@@ -647,7 +657,7 @@ fn populate_item_definitions_items_individual_item(
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                     fields,
-                    syn_object: Some(item_struct.clone()),
+                    syn_object: item_struct.clone(),
                 }),
                 impl_block_ids: Vec::new(),
             });
@@ -661,6 +671,7 @@ fn populate_item_definitions_items_individual_item(
             various_defs.trait_definitons.push(RustTraitDefinition {
                 name: item_trait.ident.to_string(),
                 is_pub,
+                syn: item_trait.clone(),
             })
         }
         Item::TraitAlias(_) => todo!(),
@@ -1015,7 +1026,7 @@ pub enum StructFieldInfo {
 #[derive(Debug, Clone)]
 pub struct StructDefinitionInfo {
     pub fields: StructFieldInfo,
-    syn_object: Option<ItemStruct>,
+    pub syn_object: ItemStruct,
 }
 
 #[derive(Debug, Clone)]
@@ -1037,7 +1048,7 @@ pub struct EnumVariantInfo {
 #[derive(Debug, Clone)]
 pub struct EnumDefinitionInfo {
     pub members: Vec<EnumVariantInfo>,
-    // syn_object: Option<ItemEnum>,
+    pub syn_object: ItemEnum,
 }
 
 #[derive(Debug, Clone)]
@@ -1094,6 +1105,7 @@ pub struct RustTraitDefinition {
     pub name: String,
     pub is_pub: bool,
     // impl_items:
+    pub syn: ItemTrait,
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.

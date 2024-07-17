@@ -7,7 +7,7 @@ use tracing::debug_span;
 use crate::{
     get_item_impl_unique_id,
     make_item_definitions::{
-        EnumVariantInfo, EnumVariantInputsInfo, FnInfo, ModuleData, StructFieldInfo,
+        EnumVariantInfo, EnumVariantInputsInfo, FnInfo, FnInfoSyn, ModuleData, StructFieldInfo,
         StructOrEnumDefitionInfo,
     },
     parse_types_for_populate_item_definitions, GlobalData, RustGeneric, RustImplBlockSimple,
@@ -706,6 +706,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                                     inputs_types,
                                     generics: fn_generics,
                                     return_type,
+                                    syn: FnInfoSyn::Impl(impl_item_fn.clone()),
                                 },
                             )
                         }

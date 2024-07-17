@@ -23,8 +23,8 @@ use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{
     Expr, ExprBlock, ExprPath, FnArg, GenericArgument, GenericParam, ImplItem, Item, ItemConst,
-    ItemFn, ItemImpl, ItemMod, ItemStruct, ItemUse, Member, Meta, Pat, PathArguments, ReturnType,
-    Stmt, Type, TypeParamBound, UseTree, Visibility,
+    ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Member, Meta, Pat, PathArguments,
+    ReturnType, Stmt, Type, TypeParamBound, UseTree, Visibility,
 };
 use tracing::{debug, debug_span, info};
 
@@ -4076,12 +4076,14 @@ pub fn process_items(
         .push(RustTraitDefinition {
             name: "FnOnce".to_string(),
             is_pub: true,
+            syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
         });
     prelude_module_data
         .trait_definitons
         .push(RustTraitDefinition {
             name: "Copy".to_string(),
             is_pub: true,
+            syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
         });
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
