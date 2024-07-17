@@ -4500,6 +4500,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         various_definitions: VariousDefintions::default(),
         items: Vec::new(),
         scoped_various_definitions: Vec::new(),
+        scoped_syn_impl_items: Vec::new(),
     });
     let mut get_names_module_path = ["crate".to_string()];
 
