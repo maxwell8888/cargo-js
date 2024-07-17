@@ -1571,6 +1571,7 @@ pub fn handle_item_impl(
         .find(|m| m.path == [PRELUDE_MODULE_PATH])
         .unwrap();
     let mut dedup_rust_prelude_definitions = prelude_module
+        .various_definitions
         .item_definitons
         .iter()
         .cloned()

@@ -28,10 +28,11 @@ pub fn make_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleDat
             pub_use_mappings: module_first_pass.pub_use_mappings,
             private_use_mappings: module_first_pass.private_use_mappings,
             resolved_mappings: Vec::new(),
-            fn_info: Vec::new(),
-            item_definitons: Vec::new(),
-            consts: Vec::new(),
-            trait_definitons: Vec::new(),
+            // fn_info: Vec::new(),
+            // item_definitons: Vec::new(),
+            // consts: Vec::new(),
+            // trait_definitons: Vec::new(),
+            various_definitions: VariousDefintions::default(),
             items: module_first_pass.items,
             scoped_various_definitions: Vec::new(),
         };
@@ -53,10 +54,17 @@ pub fn make_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleDat
                 &mut scope_count,
             )
         }
-        module.fn_info.extend(var_defs.fn_info);
-        module.item_definitons.extend(var_defs.item_definitons);
-        module.consts.extend(var_defs.consts);
-        module.trait_definitons.extend(var_defs.trait_definitons);
+        // module.various_definitions.fn_info.extend(var_defs.fn_info);
+        // module
+        //     .various_definitions
+        //     .item_definitons
+        //     .extend(var_defs.item_definitons);
+        // module.various_definitions.consts.extend(var_defs.consts);
+        // module
+        //     .various_definitions
+        //     .trait_definitons
+        //     .extend(var_defs.trait_definitons);
+        module.various_definitions = var_defs;
         new_modules.push(module);
     }
     new_modules
@@ -100,12 +108,13 @@ pub struct ModuleData {
     /// Top-level defined fns (possibly from other modules) available in this module, including cases like `use some_module; some_module::some_fn()`
     ///
     /// (<name>, <module path>)
-    // fn_info: Vec<(String, Vec<String>)>,
-    pub fn_info: Vec<FnInfo>,
-    pub item_definitons: Vec<ItemDefinition>,
-    /// (name, type, syn const)
-    pub consts: Vec<ConstDef>,
-    pub trait_definitons: Vec<RustTraitDefinition>,
+    // // fn_info: Vec<(String, Vec<String>)>,
+    // pub fn_info: Vec<FnInfo>,
+    // pub item_definitons: Vec<ItemDefinition>,
+    // /// (name, type, syn const)
+    // pub consts: Vec<ConstDef>,
+    // pub trait_definitons: Vec<RustTraitDefinition>,
+    pub various_definitions: VariousDefintions,
 
     // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but is populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
     pub items: Vec<Item>,
@@ -129,10 +138,11 @@ impl ModuleData {
             pub_use_mappings: Vec::new(),
             private_use_mappings: Vec::new(),
             resolved_mappings: Vec::new(),
-            fn_info: Vec::new(),
-            item_definitons: Vec::new(),
-            trait_definitons: Vec::new(),
-            consts: Vec::new(),
+            // fn_info: Vec::new(),
+            // item_definitons: Vec::new(),
+            // trait_definitons: Vec::new(),
+            // consts: Vec::new(),
+            various_definitions: VariousDefintions::default(),
             items: Vec::new(),
             scoped_various_definitions: Vec::new(),
         }
@@ -146,19 +156,29 @@ impl ModuleData {
         // } else {
         //     definitions.any(|definition| definition == item)
         // }
-        self.item_definitons
+        self.various_definitions
+            .item_definitons
             .iter()
             .filter_map(|item_def| (use_private || item_def.is_pub).then_some(&item_def.ident))
             .chain(
-                self.fn_info.iter().filter_map(|fn_info| {
-                    (use_private || fn_info.is_pub).then_some(&fn_info.ident)
-                }),
+                self.various_definitions
+                    .fn_info
+                    .iter()
+                    .filter_map(|fn_info| {
+                        (use_private || fn_info.is_pub).then_some(&fn_info.ident)
+                    }),
             )
-            .chain(self.trait_definitons.iter().filter_map(|trait_def| {
-                (use_private || trait_def.is_pub).then_some(&trait_def.name)
-            }))
             .chain(
-                self.consts
+                self.various_definitions
+                    .trait_definitons
+                    .iter()
+                    .filter_map(|trait_def| {
+                        (use_private || trait_def.is_pub).then_some(&trait_def.name)
+                    }),
+            )
+            .chain(
+                self.various_definitions
+                    .consts
                     .iter()
                     .filter_map(|const_| (use_private || const_.is_pub).then_some(&const_.name)),
             )
@@ -194,6 +214,7 @@ impl ModuleData {
                     .find(|item_def| item_def.ident == name)
             });
         let module_item_def = self
+            .various_definitions
             .item_definitons
             .iter_mut()
             .find(|item_def| item_def.ident == name);
@@ -220,6 +241,7 @@ impl ModuleData {
                     .find(|const_def| const_def.name == name)
             });
         let module_const_def = self
+            .various_definitions
             .consts
             .iter_mut()
             .find(|const_def| const_def.name == name);
@@ -246,6 +268,7 @@ impl ModuleData {
                     .find(|const_def| const_def.ident == name)
             });
         let module_fn_info = self
+            .various_definitions
             .fn_info
             .iter_mut()
             .find(|const_def| const_def.ident == name);
@@ -272,6 +295,7 @@ impl ModuleData {
                     .find(|trait_def| trait_def.name == name)
             });
         let module_trait_def = self
+            .various_definitions
             .trait_definitons
             .iter_mut()
             .find(|trait_def| trait_def.name == name);

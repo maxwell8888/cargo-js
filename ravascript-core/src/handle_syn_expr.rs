@@ -2094,6 +2094,7 @@ fn get_receiver_params_and_method_impl_item(
                 .find(|m| m.path == [PRELUDE_MODULE_PATH])
                 .unwrap();
             let i32_def = prelude_module
+                .various_definitions
                 .item_definitons
                 .iter()
                 .find(|item_def| item_def.ident == "i32")
@@ -2136,6 +2137,7 @@ fn get_receiver_params_and_method_impl_item(
                 .find(|m| m.path == [PRELUDE_MODULE_PATH])
                 .unwrap();
             let string_def = prelude_module
+                .various_definitions
                 .item_definitons
                 .iter()
                 .find(|item_def| item_def.ident == "String")
@@ -2158,6 +2160,7 @@ fn get_receiver_params_and_method_impl_item(
                 .find(|m| m.path == [PRELUDE_MODULE_PATH])
                 .unwrap();
             let item_def = prelude_module
+                .various_definitions
                 .item_definitons
                 .iter()
                 .find(|item_def| item_def.ident == "Option")
@@ -2234,6 +2237,7 @@ fn get_receiver_params_and_method_impl_item(
                 .find(|m| m.path == [PRELUDE_MODULE_PATH])
                 .unwrap();
             let vec_def = prelude_module
+                .various_definitions
                 .item_definitons
                 .iter()
                 .find(|item_def| item_def.ident == "Vec")
@@ -3018,6 +3022,7 @@ fn handle_expr_path_inner(
                         .find(|m| m.path == [PRELUDE_MODULE_PATH])
                         .unwrap();
                     let item_def = prelude_module
+                        .various_definitions
                         .item_definitons
                         .iter()
                         .find(|item_def| item_def.ident == "Option")
@@ -3120,14 +3125,17 @@ fn handle_expr_path_inner(
                     .find(|module| module.path == segs_copy_module_path)
                     .unwrap();
                 let func = item_module
+                    .various_definitions
                     .fn_info
                     .iter()
                     .find(|se| se.ident == item_path_seg.ident);
                 let item_def = item_module
+                    .various_definitions
                     .item_definitons
                     .iter()
                     .find(|se| se.ident == item_path_seg.ident);
                 let const_def = item_module
+                    .various_definitions
                     .consts
                     .iter()
                     .find(|const_def| const_def.name == item_path_seg.ident);
@@ -3544,6 +3552,7 @@ fn handle_match_pat(
                             .unwrap();
                         (
                             prelude_module
+                                .various_definitions
                                 .item_definitons
                                 .iter()
                                 .find_map(|item_def| {

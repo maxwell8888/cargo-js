@@ -25,17 +25,17 @@ pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
     let mut names_to_dedup = Vec::new();
     let mut scoped_names_to_dedup = Vec::new();
     for m in modules {
-        for item_def in &m.item_definitons {
+        for item_def in &m.various_definitions.item_definitons {
             names_to_dedup.push((&m.path, &item_def.ident));
         }
-        for fn_info in &m.fn_info {
+        for fn_info in &m.various_definitions.fn_info {
             names_to_dedup.push((&m.path, &fn_info.ident));
         }
         // TODO adding traits names means their names will be taken into account when finding duplicates and namespacing, which we don't always want because traits don't always actually appear in the transpiled JS
-        for trait_def in &m.trait_definitons {
+        for trait_def in &m.various_definitions.trait_definitons {
             names_to_dedup.push((&m.path, &trait_def.name));
         }
-        for const_ in &m.consts {
+        for const_ in &m.various_definitions.consts {
             names_to_dedup.push((&m.path, &const_.name));
         }
         for svd in &m.scoped_various_definitions {

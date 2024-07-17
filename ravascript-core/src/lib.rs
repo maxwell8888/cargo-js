@@ -46,6 +46,7 @@ mod make_item_definitions;
 use make_item_definitions::{
     make_item_definitions, ConstDef, EnumVariantInfo, EnumVariantInputsInfo, FnInfo,
     ItemDefinition, ModuleData, RustTraitDefinition, StructFieldInfo, StructOrEnumDefitionInfo,
+    VariousDefintions,
 };
 
 mod update_item_definitions;
@@ -2521,7 +2522,11 @@ impl GlobalData {
                     .find(|svd| &svd.0 == scope_id)
             })
             .and_then(|svd| svd.1.fn_info.iter().find(|fn_info| fn_info.ident == name));
-        let module_fn_info = module.fn_info.iter().find(|fn_info| fn_info.ident == name);
+        let module_fn_info = module
+            .various_definitions
+            .fn_info
+            .iter()
+            .find(|fn_info| fn_info.ident == name);
 
         scoped_fn_info.or(module_fn_info).unwrap().clone()
     }
@@ -2548,6 +2553,7 @@ impl GlobalData {
                     .find(|item_def| item_def.ident == name)
             });
         let module_item_def = module
+            .various_definitions
             .item_definitons
             .iter()
             .find(|item_def| item_def.ident == name);
@@ -2706,7 +2712,7 @@ impl GlobalData {
                 .1
                 .item_definitons
         } else {
-            &item_module.item_definitons
+            &item_module.various_definitions.item_definitons
         };
         let item_def = item_defintions
             .iter()
@@ -2772,6 +2778,7 @@ impl GlobalData {
                 .find(|trait_def| trait_def.name == item_path[0].ident)
         } else {
             item_module
+                .various_definitions
                 .trait_definitons
                 .iter()
                 .find(|t| t.name == item_path[0].ident)
@@ -3581,6 +3588,7 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
                     .map(|item_def| (item_def, Some(svd.0.clone())))
             });
         let module_item_defs = module
+            .various_definitions
             .item_definitons
             .iter_mut()
             .map(|item_def| (item_def, None));
@@ -4072,6 +4080,7 @@ pub fn process_items(
         .find(|m| m.path == [PRELUDE_MODULE_PATH])
         .unwrap();
     prelude_module_data
+        .various_definitions
         .trait_definitons
         .push(RustTraitDefinition {
             name: "FnOnce".to_string(),
@@ -4079,6 +4088,7 @@ pub fn process_items(
             syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
         });
     prelude_module_data
+        .various_definitions
         .trait_definitons
         .push(RustTraitDefinition {
             name: "Copy".to_string(),
@@ -4483,10 +4493,11 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
         pub_use_mappings: Vec::new(),
         private_use_mappings: Vec::new(),
         resolved_mappings: Vec::new(),
-        fn_info: Vec::new(),
-        item_definitons: Vec::new(),
-        trait_definitons: Vec::new(),
-        consts: Vec::new(),
+        // fn_info: Vec::new(),
+        // item_definitons: Vec::new(),
+        // trait_definitons: Vec::new(),
+        // consts: Vec::new(),
+        various_definitions: VariousDefintions::default(),
         items: Vec::new(),
         scoped_various_definitions: Vec::new(),
     });
