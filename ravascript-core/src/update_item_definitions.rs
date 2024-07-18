@@ -5,14 +5,14 @@ use syn::{
 use tracing::debug_span;
 
 use crate::{
-    get_item_impl_unique_id, parse_types_for_populate_item_definitions, GlobalData, RustGeneric,
-    RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustType, RustTypeParam,
-    RustTypeParamValue,
+    get_item_impl_unique_id, make_item_definitions, parse_types_for_populate_item_definitions,
+    GlobalData, RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustType,
+    RustTypeParam, RustTypeParamValue,
 };
 
 pub fn update_item_definitions(
-    global_data_copy: &GlobalData,
-    modules: Vec<ModuleData>,
+    global_data_copy: &make_item_definitions::GlobalData,
+    modules: Vec<make_item_definitions::ModuleData>,
 ) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
     // let global_data_copy = global_data.clone();
 
@@ -381,7 +381,7 @@ pub fn update_item_definitions(
 fn populate_impl_blocks_items_and_item_def_fields_stmts(
     stmts: &Vec<Stmt>,
     module: &mut ModuleData,
-    global_data_copy: &GlobalData,
+    global_data_copy: &make_item_definitions::GlobalData,
     module_path: &[String],
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
     // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
@@ -439,7 +439,7 @@ fn populate_impl_blocks_items_and_item_def_fields_stmts(
 fn populate_impl_blocks_items_and_item_def_fields_expr(
     expr: &Expr,
     module: &mut ModuleData,
-    global_data_copy: &GlobalData,
+    global_data_copy: &make_item_definitions::GlobalData,
     module_path: &[String],
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
     // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
@@ -629,8 +629,8 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
 }
 
 fn update_various_def(
-    various_definition: VariousDefintions,
-    global_data_copy: &GlobalData,
+    various_definition: make_item_definitions::VariousDefintions,
+    global_data_copy: &make_item_definitions::GlobalData,
     module_path: &[String],
     current_scope: &Option<Vec<usize>>,
 ) -> VariousDefintions {
@@ -659,7 +659,7 @@ fn update_various_def(
         .into_iter()
         .map(|item_def| {
             let new_struct_or_enum_info = match item_def.struct_or_enum_info {
-                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                make_item_definitions::StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                     let fields = if struct_def_info.syn_object.fields.is_empty() {
                         StructFieldInfo::UnitStruct
                     } else if struct_def_info
@@ -713,7 +713,7 @@ fn update_various_def(
                         syn_object: struct_def_info.syn_object,
                     })
                 }
-                StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                make_item_definitions::StructOrEnumDefitionInfo::Enum(enum_def_info) => {
                     let members_for_scope = enum_def_info
                         .syn_object
                         .variants
@@ -764,8 +764,8 @@ fn update_various_def(
         .into_iter()
         .map(|fn_info| {
             let item_fn = match &fn_info.syn {
-                FnInfoSyn::Standalone(item_fn) => item_fn,
-                FnInfoSyn::Impl(_) => todo!(),
+                make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
+                make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
             };
             let inputs_types = item_fn
                 .sig
@@ -798,17 +798,19 @@ fn update_various_def(
                 .collect::<Vec<_>>();
 
             let return_type = match &fn_info.syn {
-                FnInfoSyn::Standalone(item_fn) => match &item_fn.sig.output {
-                    ReturnType::Default => RustType::Unit,
-                    ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                        type_,
-                        &fn_info.generics,
-                        module_path,
-                        current_scope,
-                        global_data_copy,
-                    ),
-                },
-                FnInfoSyn::Impl(_) => todo!(),
+                make_item_definitions::FnInfoSyn::Standalone(item_fn) => {
+                    match &item_fn.sig.output {
+                        ReturnType::Default => RustType::Unit,
+                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                            type_,
+                            &fn_info.generics,
+                            module_path,
+                            current_scope,
+                            global_data_copy,
+                        ),
+                    }
+                }
+                make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
             };
 
             FnInfo {
@@ -817,27 +819,43 @@ fn update_various_def(
                 inputs_types,
                 generics: fn_info.generics,
                 return_type,
-                syn: fn_info.syn,
+                syn: match fn_info.syn {
+                    make_item_definitions::FnInfoSyn::Standalone(item_fn) => {
+                        FnInfoSyn::Standalone(item_fn)
+                    }
+                    make_item_definitions::FnInfoSyn::Impl(impl_item_fn) => {
+                        FnInfoSyn::Impl(impl_item_fn)
+                    }
+                },
             }
         })
         .collect();
 
-    for _trait_def in &various_definition.trait_definitons {
-        // Currently trait defs don't store any info other than the name, so we don't need to do anything
-    }
+    let new_trait_defs = various_definition
+        .trait_definitons
+        .into_iter()
+        .map(|trait_def| {
+            // Currently trait defs don't store any info other than the name, so we don't need to do anything
+            RustTraitDefinition {
+                name: trait_def.name,
+                is_pub: trait_def.is_pub,
+                syn: trait_def.syn,
+            }
+        })
+        .collect();
 
     VariousDefintions {
         fn_info: new_fn_info,
         item_definitons: new_item_defs,
         consts: new_const_defs,
-        trait_definitons: various_definition.trait_definitons,
+        trait_definitons: new_trait_defs,
     }
 }
 
 fn populate_impl_blocks_items_and_item_def_fields_individual(
     item: &Item,
     module: &mut ModuleData,
-    global_data_copy: &GlobalData,
+    global_data_copy: &make_item_definitions::GlobalData,
     module_path: &[String],
     global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
     // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,

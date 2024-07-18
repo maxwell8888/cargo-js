@@ -778,7 +778,7 @@ fn parse_types_for_populate_item_definitions(
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     current_scope_id: &Option<Vec<usize>>,
-    global_data: &GlobalData,
+    global_data: &make_item_definitions::GlobalData,
 ) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
@@ -882,7 +882,7 @@ fn parse_types_for_populate_item_definitions(
 
                             // TODO lookup trait in global data to get module path
                             let (trait_module_path, trait_item_path, trait_item_scope) =
-                                resolve_path(
+                                make_item_definitions::resolve_path(
                                     false,
                                     true,
                                     true,
@@ -1075,16 +1075,17 @@ fn parse_types_for_populate_item_definitions(
                     //         &global_data.scope_id_as_option(),
                     //         &vec![struct_or_enum_name.to_string()],
                     //     );
-                    let (item_module_path, item_path_seg, item_scope) = resolve_path(
-                        false,
-                        true,
-                        true,
-                        rust_path,
-                        global_data,
-                        current_module,
-                        current_module,
-                        current_scope_id,
-                    );
+                    let (item_module_path, item_path_seg, item_scope) =
+                        make_item_definitions::resolve_path(
+                            false,
+                            true,
+                            true,
+                            rust_path,
+                            global_data,
+                            current_module,
+                            current_module,
+                            current_scope_id,
+                        );
                     let item_seg = &item_path_seg[0];
 
                     let mut type_params = item_seg
@@ -4081,7 +4082,7 @@ pub fn process_items(
     prelude_module_data
         .various_definitions
         .trait_definitons
-        .push(RustTraitDefinition {
+        .push(make_item_definitions::RustTraitDefinition {
             name: "FnOnce".to_string(),
             is_pub: true,
             syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
@@ -4089,14 +4090,14 @@ pub fn process_items(
     prelude_module_data
         .various_definitions
         .trait_definitons
-        .push(RustTraitDefinition {
+        .push(make_item_definitions::RustTraitDefinition {
             name: "Copy".to_string(),
             is_pub: true,
             syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
         });
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = GlobalData::new(crate_path);
+    let mut global_data = make_item_definitions::GlobalData::new(crate_path.clone());
     global_data.modules = actual_modules;
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
@@ -4104,6 +4105,7 @@ pub fn process_items(
     let global_data_copy = global_data.clone();
     let (new_modules, impl_blocks) =
         update_item_definitions(&global_data_copy, global_data.modules.clone());
+    let mut global_data = GlobalData::new(crate_path);
     global_data.modules = new_modules;
     global_data.impl_blocks_simpl = impl_blocks;
 
