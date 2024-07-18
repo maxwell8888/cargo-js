@@ -10,12 +10,15 @@ use crate::{
     RustTypeParamValue,
 };
 
-pub fn update_item_definitions(global_data: &mut GlobalData) {
-    let global_data_copy = global_data.clone();
+pub fn update_item_definitions(
+    global_data_copy: &GlobalData,
+    modules: &mut [ModuleData],
+) -> Vec<RustImplBlockSimple> {
+    // let global_data_copy = global_data.clone();
 
     let mut global_impl_blocks_simpl = Vec::new();
 
-    for module in &mut global_data.modules {
+    for module in modules {
         debug_span!(
             "extract_data_populate_item_definitions module: {:?}",
             module_path = ?module.path
@@ -24,7 +27,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
 
         update_various_def(
             &mut module.various_definitions,
-            &global_data_copy,
+            global_data_copy,
             &module_path,
             &None,
         );
@@ -32,7 +35,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
         for (scope, various_def) in &mut module.scoped_various_definitions {
             update_various_def(
                 various_def,
-                &global_data_copy,
+                global_data_copy,
                 &module_path,
                 &Some(scope.clone()),
             );
@@ -222,7 +225,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
                                             &combined_generics,
                                             &module_path,
                                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                            &global_data_copy,
+                                            global_data_copy,
                                         ),
                                     ),
                                 })
@@ -236,7 +239,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
                                         &combined_generics,
                                         &module_path,
                                         &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                        &global_data_copy,
+                                        global_data_copy,
                                     )
                                 }
                             };
@@ -324,8 +327,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
         // populate_item_def_impl_blocks(&mut global_data);
         // update_item_def_block_ids(...
     }
-
-    global_data.impl_blocks_simpl = global_impl_blocks_simpl;
+    global_impl_blocks_simpl
 }
 
 // fn populate_impl_blocks_items_and_item_def_fields(

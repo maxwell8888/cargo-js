@@ -4101,7 +4101,9 @@ pub fn process_items(
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    update_item_definitions(&mut global_data);
+    let global_data_copy = global_data.clone();
+    let impl_blocks = update_item_definitions(&global_data_copy, &mut global_data.modules);
+    global_data.impl_blocks_simpl = impl_blocks;
 
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class. What??? there doesn't seem to be any JS parsing here?
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
@@ -4547,7 +4549,7 @@ pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
     global_data.modules = modules;
 
     // populate_item_definitions(&mut global_data.modules);
-    update_item_definitions(&mut global_data);
+    // update_item_definitions(&mut global_data);
     populate_item_def_impl_blocks(&mut global_data);
 
     global_data.transpiled_modules.push(JsModule {
