@@ -22,9 +22,9 @@ use js_ast::{
 use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{
-    Expr, ExprBlock, ExprPath, FnArg, GenericArgument, GenericParam, ImplItem, Item, ItemConst,
-    ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, ItemUse, Member, Meta, Pat, PathArguments,
-    ReturnType, Stmt, Type, TypeParamBound, UseTree, Visibility,
+    Expr, ExprBlock, ExprPath, GenericArgument, GenericParam, ImplItem, Item, ItemFn, ItemImpl,
+    ItemMod, ItemTrait, Member, Pat, PathArguments, ReturnType, Stmt, Type, TypeParamBound,
+    UseTree,
 };
 use tracing::{debug, debug_span, info};
 
@@ -107,7 +107,7 @@ fn handle_destructure_pat(
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                             // dbg!(&module_path);
                             // dbg!(&scope_id);
                             // dbg!(&name);
@@ -191,7 +191,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                             let item_def = global_data
                                 .lookup_item_def_known_module_assert_not_func2(
                                     module_path,
@@ -211,7 +211,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 .collect::<Vec<_>>();
             LocalName::DestructureObject(DestructureObject(fields))
         }
-        Pat::Tuple(pat_tuple) => {
+        Pat::Tuple(_pat_tuple) => {
             todo!();
             // LocalName::DestructureArray(
             //     pat_tuple
@@ -483,7 +483,7 @@ fn parse_fn_input_or_field(
         Type::Group(_) => todo!(),
         Type::ImplTrait(type_impl_trait) => {
             // TODO handle len > 1
-            let type_param_bound = type_impl_trait.bounds.first().unwrap();
+            let _type_param_bound = type_impl_trait.bounds.first().unwrap();
             // get_return_type_of_type_param_bound(
             //     type_param_bound,
             //     parent_item_definition_generics,
@@ -963,6 +963,7 @@ fn parse_types_for_populate_item_definitions(
             // dbg!(seg_name_str);
 
             // For impl blocks
+            #[allow(unreachable_code)]
             match seg_name_str {
                 // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
                 "Option" => {
@@ -1045,7 +1046,7 @@ fn parse_types_for_populate_item_definitions(
                                     .args
                                     .iter()
                                     .enumerate()
-                                    .filter_map(|(i, arg)| match arg {
+                                    .filter_map(|(_i, arg)| match arg {
                                         GenericArgument::Lifetime(_) => None,
                                         GenericArgument::Type(arg_type_) => {
                                             Some(parse_types_for_populate_item_definitions(
@@ -1442,7 +1443,7 @@ fn js_stmts_from_syn_items(
                 ));
             }
             Item::Macro(_) => todo!(),
-            Item::Mod(item_mod) => {
+            Item::Mod(_item_mod) => {
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
                 // handle_item_mod(item_mod, global_data, current_module)
             }
@@ -1458,7 +1459,7 @@ fn js_stmts_from_syn_items(
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
-            Item::Use(item_use) => {
+            Item::Use(_item_use) => {
                 //
                 // handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
@@ -2873,7 +2874,7 @@ impl GlobalData {
 
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                     let fn_generics = if !sub_path.turbofish.is_empty() {
                         sub_path
@@ -4097,7 +4098,7 @@ pub fn process_items(
         });
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = make_item_definitions::GlobalData::new(crate_path.clone());
+    let mut global_data = make_item_definitions::GlobalData::new();
     global_data.modules = actual_modules;
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
@@ -4301,11 +4302,11 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                         let is_generic_impl =
                             matches!(js_impl_block.target, RustType::TypeParam(_));
 
-                        for (used, impl_item) in &js_impl_block.items {
+                        for (_used, impl_item) in &js_impl_block.items {
                             // TODO implement used
                             // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
                             match &impl_item.item {
-                                RustImplItemItemJs::Fn(static_, fn_info, js_fn) => {
+                                RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
                                     if is_generic_impl {
                                         js_class.static_fields.push(JsLocal {
                                             public: false,
@@ -4461,7 +4462,7 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
     process_items(items, None, with_rust_types, false)
 }
 
-pub fn from_block(code: &str, with_rust_types: bool, include_web: bool) -> Vec<JsStmt> {
+pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<JsStmt> {
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
     // Blocks should only be 1 module and optionally include a second module for rust prelude
@@ -4479,7 +4480,7 @@ pub fn from_block(code: &str, with_rust_types: bool, include_web: bool) -> Vec<J
 }
 
 #[allow(clippy::vec_init_then_push)]
-pub fn from_block_old(code: &str, with_rust_types: bool) -> Vec<JsStmt> {
+pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
     // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. NO because a block can still have inline modules. Should web prelude be allowed?
 
     // let file = syn::parse_file(code).unwrap();
