@@ -43,14 +43,13 @@ mod extract_modules;
 use extract_modules::{extract_modules, ModuleDataFirstPass};
 
 mod make_item_definitions;
-use make_item_definitions::{
-    make_item_definitions, ConstDef, EnumVariantInfo, EnumVariantInputsInfo, FnInfo,
-    ItemDefinition, ModuleData, RustTraitDefinition, StructFieldInfo, StructOrEnumDefitionInfo,
-    VariousDefintions,
-};
+use make_item_definitions::make_item_definitions;
 
 mod update_item_definitions;
-use update_item_definitions::update_item_definitions;
+use update_item_definitions::{
+    update_item_definitions, ConstDef, FnInfo, ItemDefinition, ModuleData, RustTraitDefinition,
+    StructOrEnumDefitionInfo, VariousDefintions,
+};
 
 pub use js_ast::JsStmt;
 

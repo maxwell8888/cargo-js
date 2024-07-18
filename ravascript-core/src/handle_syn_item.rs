@@ -12,10 +12,9 @@ use crate::{
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
     js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType},
-    js_stmts_from_syn_items,
-    make_item_definitions::FnInfoSyn,
-    parse_fn_body_stmts, parse_fn_input_or_field, EnumVariantInfo, EnumVariantInputsInfo, FnInfo,
-    GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric, RustImplItemItemJs,
+    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field,
+    update_item_definitions::{EnumVariantInfo, EnumVariantInputsInfo, FnInfoSyn},
+    FnInfo, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric, RustImplItemItemJs,
     RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType, RustTypeParam,
     RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };

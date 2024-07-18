@@ -12,10 +12,11 @@ use crate::{
         DestructureObject, DestructureValue, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt, LocalName,
         LocalType,
     },
-    parse_fn_body_stmts, parse_fn_input_or_field, resolve_path, EnumVariantInputsInfo, FnInfo,
-    GlobalData, ItemDefinition, PartialRustType, RustImplItemItemNoJs, RustImplItemNoJs,
+    parse_fn_body_stmts, parse_fn_input_or_field, resolve_path,
+    update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
+    FnInfo, GlobalData, ItemDefinition, PartialRustType, RustImplItemItemNoJs, RustImplItemNoJs,
     RustPathSegment, RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar,
-    StructFieldInfo, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
+    StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
 };
 
 fn handle_expr_assign(
