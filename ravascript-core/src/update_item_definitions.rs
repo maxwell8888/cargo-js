@@ -12,34 +12,13 @@ use crate::{
 
 pub fn update_item_definitions(
     global_data_copy: &GlobalData,
-    modules: &mut [ModuleData],
-) -> Vec<RustImplBlockSimple> {
+    modules: Vec<ModuleData>,
+) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
     // let global_data_copy = global_data.clone();
 
     let mut global_impl_blocks_simpl = Vec::new();
-
-    for module in modules {
-        debug_span!(
-            "extract_data_populate_item_definitions module: {:?}",
-            module_path = ?module.path
-        );
+    for module in &modules {
         let module_path = module.path.clone();
-
-        update_various_def(
-            &mut module.various_definitions,
-            global_data_copy,
-            &module_path,
-            &None,
-        );
-
-        for (scope, various_def) in &mut module.scoped_various_definitions {
-            update_various_def(
-                various_def,
-                global_data_copy,
-                &module_path,
-                &Some(scope.clone()),
-            );
-        }
 
         for (scope_id, item_impl) in &module.scoped_syn_impl_items {
             // Temporarily store impl block's type params on global data
@@ -327,7 +306,51 @@ pub fn update_item_definitions(
         // populate_item_def_impl_blocks(&mut global_data);
         // update_item_def_block_ids(...
     }
-    global_impl_blocks_simpl
+
+    let new_modules = modules
+        .into_iter()
+        .map(|module| {
+            debug_span!(
+                "extract_data_populate_item_definitions module: {:?}",
+                module_path = ?module.path
+            );
+            let module_path = module.path.clone();
+
+            let updated_various_defs = update_various_def(
+                module.various_definitions,
+                global_data_copy,
+                &module_path,
+                &None,
+            );
+
+            let updated_scoped_various_defs = module
+                .scoped_various_definitions
+                .into_iter()
+                .map(|(scope, various_def)| {
+                    let scope_id = Some(scope.clone());
+                    (
+                        scope,
+                        update_various_def(various_def, global_data_copy, &module_path, &scope_id),
+                    )
+                })
+                .collect();
+
+            ModuleData {
+                name: module.name,
+                path: module.path,
+                pub_submodules: module.pub_submodules,
+                private_submodules: module.private_submodules,
+                pub_use_mappings: module.pub_use_mappings,
+                private_use_mappings: module.private_use_mappings,
+                resolved_mappings: module.resolved_mappings,
+                various_definitions: updated_various_defs,
+                items: module.items,
+                scoped_various_definitions: updated_scoped_various_defs,
+                scoped_syn_impl_items: module.scoped_syn_impl_items,
+            }
+        })
+        .collect();
+    (new_modules, global_impl_blocks_simpl)
 }
 
 // fn populate_impl_blocks_items_and_item_def_fields(
@@ -606,178 +629,208 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
 }
 
 fn update_various_def(
-    various_definition: &mut VariousDefintions,
+    various_definition: VariousDefintions,
     global_data_copy: &GlobalData,
     module_path: &[String],
     current_scope: &Option<Vec<usize>>,
-) {
-    for const_def in &mut various_definition.consts {
-        let rust_type = parse_types_for_populate_item_definitions(
-            &const_def.syn_object.ty,
-            &Vec::new(),
-            module_path,
-            current_scope,
-            global_data_copy,
-        );
+) -> VariousDefintions {
+    let new_const_defs = various_definition
+        .consts
+        .into_iter()
+        .map(|const_def| {
+            let rust_type = parse_types_for_populate_item_definitions(
+                &const_def.syn_object.ty,
+                &Vec::new(),
+                module_path,
+                current_scope,
+                global_data_copy,
+            );
+            ConstDef {
+                name: const_def.name,
+                is_pub: const_def.is_pub,
+                type_: rust_type,
+                syn_object: const_def.syn_object,
+            }
+        })
+        .collect();
 
-        const_def.type_ = rust_type;
-    }
-
-    for item_def in &mut various_definition.item_definitons {
-        match &mut item_def.struct_or_enum_info {
-            StructOrEnumDefitionInfo::Struct(struct_def_info) => {
-                let fields = if struct_def_info.syn_object.fields.is_empty() {
-                    StructFieldInfo::UnitStruct
-                } else if struct_def_info
-                    .syn_object
-                    .fields
-                    .iter()
-                    .next()
-                    .unwrap()
-                    .ident
-                    .is_some()
-                {
-                    StructFieldInfo::RegularStruct(
-                        struct_def_info
-                            .syn_object
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                (
-                                    f.ident.as_ref().unwrap().to_string(),
+    let new_item_defs = various_definition
+        .item_definitons
+        .into_iter()
+        .map(|item_def| {
+            let new_struct_or_enum_info = match item_def.struct_or_enum_info {
+                StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                    let fields = if struct_def_info.syn_object.fields.is_empty() {
+                        StructFieldInfo::UnitStruct
+                    } else if struct_def_info
+                        .syn_object
+                        .fields
+                        .iter()
+                        .next()
+                        .unwrap()
+                        .ident
+                        .is_some()
+                    {
+                        StructFieldInfo::RegularStruct(
+                            struct_def_info
+                                .syn_object
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        f.ident.as_ref().unwrap().to_string(),
+                                        parse_types_for_populate_item_definitions(
+                                            &f.ty,
+                                            &item_def.generics,
+                                            module_path,
+                                            current_scope,
+                                            global_data_copy,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        StructFieldInfo::TupleStruct(
+                            struct_def_info
+                                .syn_object
+                                .fields
+                                .iter()
+                                .map(|f| {
                                     parse_types_for_populate_item_definitions(
                                         &f.ty,
                                         &item_def.generics,
                                         module_path,
                                         current_scope,
                                         global_data_copy,
-                                    ),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                } else {
-                    StructFieldInfo::TupleStruct(
-                        struct_def_info
-                            .syn_object
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                parse_types_for_populate_item_definitions(
-                                    &f.ty,
-                                    &item_def.generics,
-                                    module_path,
-                                    current_scope,
-                                    global_data_copy,
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
-                struct_def_info.fields = fields;
-            }
-            StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-                let members_for_scope = enum_def_info
-                    .syn_object
-                    .variants
-                    .iter()
-                    .map(|v| EnumVariantInfo {
-                        ident: v.ident.to_string(),
-                        inputs: v
-                            .fields
-                            .iter()
-                            .map(|f| {
-                                let input_type = parse_types_for_populate_item_definitions(
-                                    &f.ty,
-                                    &item_def.generics,
-                                    module_path,
-                                    current_scope,
-                                    global_data_copy,
-                                );
-                                match &f.ident {
-                                    Some(input_name) => EnumVariantInputsInfo::Named {
-                                        ident: input_name.to_string(),
-                                        input_type,
-                                    },
-                                    None => EnumVariantInputsInfo::Unnamed(input_type),
-                                }
-                            })
-                            .collect::<Vec<_>>(),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+                    StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
+                        fields,
+                        syn_object: struct_def_info.syn_object,
                     })
-                    .collect::<Vec<_>>();
-                enum_def_info.members = members_for_scope;
-            }
-        }
-    }
-
-    for fn_info in &mut various_definition.fn_info {
-        let item_fn = match &fn_info.syn {
-            FnInfoSyn::Standalone(item_fn) => item_fn,
-            FnInfoSyn::Impl(_) => todo!(),
-        };
-        let inputs_types = item_fn
-            .sig
-            .inputs
-            .iter()
-            .map(|input| match input {
-                FnArg::Receiver(_) => {
-                    // standalone functions cannot have self/receiver inputs
-                    panic!();
                 }
-                FnArg::Typed(pat_type) => (
-                    false,
-                    match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                        _ => todo!(),
-                    },
-                    match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                        _ => todo!(),
-                    },
-                    parse_types_for_populate_item_definitions(
-                        &pat_type.ty,
+                StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                    let members_for_scope = enum_def_info
+                        .syn_object
+                        .variants
+                        .iter()
+                        .map(|v| EnumVariantInfo {
+                            ident: v.ident.to_string(),
+                            inputs: v
+                                .fields
+                                .iter()
+                                .map(|f| {
+                                    let input_type = parse_types_for_populate_item_definitions(
+                                        &f.ty,
+                                        &item_def.generics,
+                                        module_path,
+                                        current_scope,
+                                        global_data_copy,
+                                    );
+                                    match &f.ident {
+                                        Some(input_name) => EnumVariantInputsInfo::Named {
+                                            ident: input_name.to_string(),
+                                            input_type,
+                                        },
+                                        None => EnumVariantInputsInfo::Unnamed(input_type),
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        })
+                        .collect::<Vec<_>>();
+                    StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
+                        members: members_for_scope,
+                        syn_object: enum_def_info.syn_object,
+                    })
+                }
+            };
+            ItemDefinition {
+                ident: item_def.ident,
+                is_copy: item_def.is_copy,
+                is_pub: item_def.is_pub,
+                generics: item_def.generics,
+                struct_or_enum_info: new_struct_or_enum_info,
+                impl_block_ids: item_def.impl_block_ids,
+            }
+        })
+        .collect();
+
+    let new_fn_info = various_definition
+        .fn_info
+        .into_iter()
+        .map(|fn_info| {
+            let item_fn = match &fn_info.syn {
+                FnInfoSyn::Standalone(item_fn) => item_fn,
+                FnInfoSyn::Impl(_) => todo!(),
+            };
+            let inputs_types = item_fn
+                .sig
+                .inputs
+                .iter()
+                .map(|input| match input {
+                    FnArg::Receiver(_) => {
+                        // standalone functions cannot have self/receiver inputs
+                        panic!();
+                    }
+                    FnArg::Typed(pat_type) => (
+                        false,
+                        match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                            _ => todo!(),
+                        },
+                        match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                            _ => todo!(),
+                        },
+                        parse_types_for_populate_item_definitions(
+                            &pat_type.ty,
+                            &fn_info.generics,
+                            module_path,
+                            current_scope,
+                            global_data_copy,
+                        ),
+                    ),
+                })
+                .collect::<Vec<_>>();
+
+            let return_type = match &fn_info.syn {
+                FnInfoSyn::Standalone(item_fn) => match &item_fn.sig.output {
+                    ReturnType::Default => RustType::Unit,
+                    ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                        type_,
                         &fn_info.generics,
                         module_path,
                         current_scope,
                         global_data_copy,
                     ),
-                ),
-            })
-            .collect::<Vec<_>>();
+                },
+                FnInfoSyn::Impl(_) => todo!(),
+            };
 
-        let return_type = match &fn_info.syn {
-            FnInfoSyn::Standalone(item_fn) => match &item_fn.sig.output {
-                ReturnType::Default => RustType::Unit,
-                ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                    type_,
-                    &fn_info.generics,
-                    module_path,
-                    current_scope,
-                    global_data_copy,
-                ),
-            },
-            FnInfoSyn::Impl(_) => todo!(),
-        };
-
-        fn_info.inputs_types = inputs_types;
-        fn_info.return_type = return_type;
-
-        // *scope_count += 1;
-        // scope_id.push(*scope_count);
-        // populate_impl_blocks_items_and_item_def_fields_stmts(
-        //     &item_fn.block.stmts,
-        //     module,
-        //     global_data_copy,
-        //     module_path,
-        //     global_impl_blocks_simpl,
-        //     // scoped_various_definitions,
-        //     scope_id,
-        // );
-        // scope_id.pop();
-    }
+            FnInfo {
+                ident: fn_info.ident,
+                is_pub: fn_info.is_pub,
+                inputs_types,
+                generics: fn_info.generics,
+                return_type,
+                syn: fn_info.syn,
+            }
+        })
+        .collect();
 
     for _trait_def in &various_definition.trait_definitons {
         // Currently trait defs don't store any info other than the name, so we don't need to do anything
+    }
+
+    VariousDefintions {
+        fn_info: new_fn_info,
+        item_definitons: new_item_defs,
+        consts: new_const_defs,
+        trait_definitons: various_definition.trait_definitons,
     }
 }
 
