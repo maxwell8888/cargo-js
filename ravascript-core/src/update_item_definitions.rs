@@ -25,22 +25,11 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
             module_path = ?module.path
         );
         let module_path = module.path.clone();
-        let items = module.items.clone();
-        // populate_impl_blocks_items_and_item_def_fields(
-        //     &items,
-        //     module,
-        //     &global_data_copy,
-        //     &module_path,
-        //     &mut global_data.impl_blocks_simpl,
-        //     // &mut module.scoped_various_definitions,
-        //     &mut scope_id,
-        // );
 
         update_various_def(
             &mut module.various_definitions,
             &global_data_copy,
             &module_path,
-            &mut global_impl_blocks_simpl,
             &None,
         );
 
@@ -49,7 +38,6 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
                 various_def,
                 &global_data_copy,
                 &module_path,
-                &mut global_impl_blocks_simpl,
                 &Some(scope.clone()),
             );
         }
@@ -136,7 +124,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
                 (module_path, trait_scope_id, trait_def.name)
             });
 
-            let (target_rust_type, is_target_type_param) =
+            let (target_rust_type, _is_target_type_param) =
                 if let Some(target_type_param) = target_type_param {
                     (
                         RustType::TypeParam(RustTypeParam {
@@ -312,7 +300,7 @@ pub fn update_item_definitions(global_data: &mut GlobalData) {
                 unique_id: get_item_impl_unique_id(
                     &module_path,
                     &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                    &item_impl,
+                    item_impl,
                 ),
                 generics: rust_impl_block_generics,
                 trait_: trait_path_and_name,
@@ -620,15 +608,9 @@ fn populate_impl_blocks_items_and_item_def_fields_expr(
 }
 
 fn update_various_def(
-    // item: &Item,
     various_definition: &mut VariousDefintions,
-    // module: &mut ModuleData,
     global_data_copy: &GlobalData,
     module_path: &[String],
-    global_impl_blocks_simpl: &mut Vec<RustImplBlockSimple>,
-    // scoped_various_definitions: &mut Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
-    // scope_id: &mut Vec<usize>,
-    // scope_count: &mut usize,
     current_scope: &Option<Vec<usize>>,
 ) {
     for const_def in &mut various_definition.consts {
@@ -687,7 +669,7 @@ fn update_various_def(
                                     &f.ty,
                                     &item_def.generics,
                                     module_path,
-                                    &current_scope,
+                                    current_scope,
                                     global_data_copy,
                                 )
                             })
@@ -758,7 +740,7 @@ fn update_various_def(
                         &pat_type.ty,
                         &fn_info.generics,
                         module_path,
-                        &current_scope,
+                        current_scope,
                         global_data_copy,
                     ),
                 ),
@@ -772,7 +754,7 @@ fn update_various_def(
                     type_,
                     &fn_info.generics,
                     module_path,
-                    &current_scope,
+                    current_scope,
                     global_data_copy,
                 ),
             },
@@ -796,7 +778,7 @@ fn update_various_def(
         // scope_id.pop();
     }
 
-    for trait_def in &various_definition.trait_definitons {
+    for _trait_def in &various_definition.trait_definitons {
         // Currently trait defs don't store any info other than the name, so we don't need to do anything
     }
 }
@@ -1020,7 +1002,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
                 (module_path, trait_scope_id, trait_def.name)
             });
 
-            let (target_rust_type, is_target_type_param) =
+            let (target_rust_type, _is_target_type_param) =
                 if let Some(target_type_param) = target_type_param {
                     (
                         RustType::TypeParam(RustTypeParam {
@@ -1201,7 +1183,7 @@ fn populate_impl_blocks_items_and_item_def_fields_individual(
             });
         }
         Item::Macro(_) => {}
-        Item::Mod(item_mod) => {
+        Item::Mod(_item_mod) => {
             // Modules should have already been converted to `ModuleData`s
             // TODO Can't assert because these items will still exist even though we now have `ModuleData`s, should clean this up so we can assert or be more confident from simplicity
             // assert!(item_mod.content.is_none());

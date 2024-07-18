@@ -24,7 +24,7 @@ use crate::{
 // TODO should cache the syn::File parsed for each module to avoid repeating this expensive operation (read file and parse) during the parse stage
 /// gets names of module level items, creates `ModuleData` for each module, and adds `use` data to module's `.use_mapping`
 pub fn extract_modules(
-    module_level_items: bool,
+    _module_level_items: bool,
     items: &Vec<Item>,
     // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
     // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
@@ -46,8 +46,8 @@ pub fn extract_modules(
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
     for item in items {
         match item {
-            Item::Const(item_const) => {}
-            Item::Enum(item_enum) => {}
+            Item::Const(_) => {}
+            Item::Enum(_) => {}
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => {
                 // Record scoped ident names so we can ensure any module level items with the same name are namespaced
@@ -103,7 +103,7 @@ pub fn extract_modules(
                         .push(item_mod.ident.to_string()),
                 }
 
-                let parent_name = current_path.last().cloned();
+                let _parent_name = current_path.last().cloned();
                 current_path.push(item_mod.ident.to_string());
 
                 let mut partial_module_data = ModuleDataFirstPass::new(
@@ -146,8 +146,8 @@ pub fn extract_modules(
                 current_path.pop();
             }
             Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {}
-            Item::Trait(item_trait) => {}
+            Item::Struct(_) => {}
+            Item::Trait(_) => {}
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
             Item::Union(_) => todo!(),
@@ -210,9 +210,9 @@ pub enum ItemUseModuleOrScope<'a> {
 
 /// Populates module pub/private and scoped `.use_mappings`s
 pub fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModuleOrScope) {
-    let public = matches!(item_use.vis, Visibility::Public(_));
+    let _public = matches!(item_use.vis, Visibility::Public(_));
 
-    let (root_module_or_crate, sub_modules) = match &item_use.tree {
+    let (_root_module_or_crate, _sub_modules) = match &item_use.tree {
         UseTree::Path(use_path) => {
             // Capture the name of the root of the "use_mapping", ie not the root of the absolute path which would be a crate name but the root of this specific use path
             let root_module_or_crate = use_path.ident.to_string();
@@ -221,7 +221,7 @@ pub fn handle_item_use(item_use: &ItemUse, item_use_module_or_scope: ItemUseModu
             (root_module_or_crate, sub_modules)
         }
         // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
-        UseTree::Name(use_name) => todo!(),
+        UseTree::Name(_use_name) => todo!(),
         _ => panic!("root of use trees are always a path or name"),
     };
 
