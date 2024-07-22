@@ -4,7 +4,7 @@ use syn::{
 };
 use tracing::{debug, debug_span};
 
-use crate::{extract_modules::ModuleDataFirstPass, GlobalDataScope, RustPathSegment, RustType};
+use crate::{extract_modules::ModuleDataFirstPass, GlobalDataScope, RustPathSegment};
 
 pub fn make_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleData> {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
@@ -89,7 +89,6 @@ fn populate_item_definitions_items_individual_item(
             various_defs.consts.push(ConstDef {
                 name: const_name,
                 is_pub,
-                type_: RustType::Todo,
                 syn_object: item_const.clone(),
             });
         }
@@ -105,14 +104,6 @@ fn populate_item_definitions_items_individual_item(
                     GenericParam::Lifetime(_) => todo!(),
                     GenericParam::Type(type_param) => type_param.ident.to_string(),
                     GenericParam::Const(_) => todo!(),
-                })
-                .collect::<Vec<_>>();
-            let members_for_scope = item_enum
-                .variants
-                .iter()
-                .map(|v| EnumVariantInfo {
-                    ident: v.ident.to_string(),
-                    inputs: Vec::new(),
                 })
                 .collect::<Vec<_>>();
 
@@ -149,7 +140,7 @@ fn populate_item_definitions_items_individual_item(
                 is_pub,
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                    members: members_for_scope,
+                    // members: members_for_scope,
                     syn_object: item_enum.clone(),
                 }),
                 impl_block_ids: Vec::new(),
@@ -177,10 +168,8 @@ fn populate_item_definitions_items_individual_item(
             various_defs.fn_info.push(FnInfo {
                 ident: item_fn.sig.ident.to_string(),
                 is_pub,
-                inputs_types: Vec::new(),
                 generics,
                 // return_type: RustType::Uninit,
-                return_type: RustType::Todo,
                 syn: FnInfoSyn::Standalone(item_fn.clone()),
             });
 
@@ -306,14 +295,6 @@ fn populate_item_definitions_items_individual_item(
                 })
                 .collect::<Vec<_>>();
 
-            let fields = if item_struct.fields.is_empty() {
-                StructFieldInfo::UnitStruct
-            } else if item_struct.fields.iter().next().unwrap().ident.is_some() {
-                StructFieldInfo::RegularStruct(Vec::new())
-            } else {
-                StructFieldInfo::TupleStruct(Vec::new())
-            };
-
             let is_copy = item_struct.attrs.iter().any(|attr| match &attr.meta {
                 Meta::Path(_) => todo!(),
                 Meta::List(meta_list) => {
@@ -348,7 +329,7 @@ fn populate_item_definitions_items_individual_item(
                 is_copy,
                 generics,
                 struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                    fields,
+                    // fields,
                     syn_object: item_struct.clone(),
                 }),
                 impl_block_ids: Vec::new(),
@@ -706,40 +687,15 @@ fn populate_item_definitions_expr(
     }
 }
 
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone)]
-pub enum StructFieldInfo {
-    UnitStruct,
-    TupleStruct(Vec<RustType>),
-    /// (name, type)
-    RegularStruct(Vec<(String, RustType)>),
-}
-
 #[derive(Debug, Clone)]
 pub struct StructDefinitionInfo {
-    pub fields: StructFieldInfo,
+    // pub fields: StructFieldInfo,
     pub syn_object: ItemStruct,
 }
 
 #[derive(Debug, Clone)]
-pub enum EnumVariantInputsInfo {
-    Named {
-        ident: String,
-        input_type: RustType,
-    },
-    /// (input type)
-    Unnamed(RustType),
-}
-
-#[derive(Debug, Clone)]
-pub struct EnumVariantInfo {
-    pub ident: String,
-    pub inputs: Vec<EnumVariantInputsInfo>,
-}
-
-#[derive(Debug, Clone)]
 pub struct EnumDefinitionInfo {
-    pub members: Vec<EnumVariantInfo>,
+    // pub members: Vec<EnumVariantInfo>,
     pub syn_object: ItemEnum,
 }
 
@@ -758,9 +714,6 @@ pub struct ItemDefinition {
     // module_path: Option<Vec<String>>,
     pub is_copy: bool,
     pub is_pub: bool,
-    // /// Fields and enum variants. Methods etc are stored in impl blocks?
-    // members: Vec<StructFieldInfo>,
-    // members: Vec<ImplItem>,
     // TODO do we need to know eg bounds for each generic?
     pub generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
@@ -998,29 +951,19 @@ pub struct VariousDefintions {
 pub struct ConstDef {
     pub name: String,
     pub is_pub: bool,
-    pub type_: RustType,
     pub syn_object: ItemConst,
 }
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 pub struct FnInfo {
-    // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
     pub ident: String,
     pub is_pub: bool,
-    /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything. NO again, updated to include self inputs because we need them.
-    /// TODO probably don't actually need `is_self`
-    /// (is_self, is_mut, name, type)
-    pub inputs_types: Vec<(bool, bool, String, RustType)>,
     pub generics: Vec<String>,
-    // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
-    pub return_type: RustType,
-    // /// type of fn eg Fn(i32) -> ()
-    // rust_type: RustType,
-    // TODO optionally add enum for Field, AssociatedFn, Method, etc
     pub syn: FnInfoSyn,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FnInfoSyn {
     Standalone(ItemFn),
