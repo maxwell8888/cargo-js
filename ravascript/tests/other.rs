@@ -35,6 +35,7 @@ async fn it_executes_simple_expressions() {
     execute_js_with_assertions(&generated_js).await.unwrap();
 }
 
+#[allow(clippy::useless_vec)]
 #[tokio::test]
 async fn it_transpiles_vec_macro() {
     let actual = r2j_block!({
@@ -43,6 +44,7 @@ async fn it_transpiles_vec_macro() {
     assert_eq!("let _data = [1, 2, 3];", actual);
 }
 
+#[allow(clippy::useless_vec)]
 #[tokio::test]
 async fn it_transpiles_vec_macro2() {
     let actual = r2j_block_with_prelude!({
@@ -60,6 +62,7 @@ async fn it_transpiles_vec_macro2() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(clippy::useless_vec)]
 #[tokio::test]
 async fn it_transpiles_iter_map() {
     let actual = r2j_block!({
@@ -175,3 +178,113 @@ async fn boxed_iter_type_infer() {
 
 #[tokio::test]
 async fn array() {}
+
+#[allow(non_camel_case_types)]
+#[allow(dead_code)]
+#[allow(unused_variables)]
+#[allow(clippy::disallowed_names)]
+#[ignore = "TODO LOW PRIORITY JS class and let declarations clash"]
+// TODO where items and vars in the same scope have the same name, Rust seems to intelligently figure which to use based on how the thing is being used eg are we calling a method on it or adding a number to it. JS doesn't allow defining a let variable followed by a class with the same name, so we need to use analysis to determine when to either rename the variable/item or use `var` in that case and handle the scoping issues that that brings (the reason we started using let).
+#[tokio::test]
+async fn resolve_path_to_item_vs_var_same_scope() {
+    let actual = r2j_block!({
+        struct foo {
+            num: i32,
+        }
+        let foo = 1;
+        let bar = 2;
+        struct bar {
+            num: i32,
+        }
+        impl bar {
+            fn get_num() -> i32 {
+                3
+            }
+        }
+        assert!(foo == 1);
+        assert!(bar::get_num() == 3);
+    });
+    let expected = format_js(
+        r#"
+            class foo {
+                constructor(num) {
+                    this.num = num;
+                }
+            }
+            let foo = 1;
+            let bar = 2;
+            class bar {
+                constructor(num) {
+                    this.num = num;
+                }
+
+                static getNum() {
+                    return 3;
+                }
+            }
+
+            console.assert(foo === 1);
+            console.assert(bar.getNum() === 3);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[allow(non_camel_case_types)]
+#[allow(dead_code)]
+#[allow(unused_variables)]
+#[tokio::test]
+// Ensure we are correctly looking up paths scope by scope rather than eg looking for vars in all scopes *then* looking for item definitions in all scopes.
+async fn resolve_path_to_item_vs_var_parent_scopes() {
+    let actual = r2j_block!({
+        struct foo {
+            num: i32,
+        }
+        let bar = 2;
+
+        fn inner_scope() {
+            let foo = 1;
+            struct bar {
+                num: i32,
+            }
+            impl bar {
+                fn get_num() -> i32 {
+                    3
+                }
+            }
+            assert!(foo == 1);
+            assert!(bar::get_num() == 3);
+        }
+
+        inner_scope();
+    });
+    let expected = format_js(
+        r#"
+        class foo {
+            constructor(num) {
+              this.num = num;
+            }
+        }
+        let bar = 2;
+        function innerScope() {
+            let foo = 1;
+            class bar {
+                constructor(num) {
+                  this.num = num;
+                }
+  
+                static getNum() {
+                  return 3;
+                }
+            }
+  
+            console.assert(foo === 1);
+            console.assert(bar.getNum() === 3);
+        }
+        innerScope();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}

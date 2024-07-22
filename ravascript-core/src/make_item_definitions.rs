@@ -1058,10 +1058,6 @@ impl GlobalData {
         scope_id: &Option<Vec<usize>>,
         path: &[String],
     ) -> (Vec<String>, Option<Vec<usize>>, ItemDefinition) {
-        // dbg!(&path);
-        // dbg!(&current_module_path);
-        // dbg!(&scope_id);
-        // dbg!("get_path");
         let (item_module_path, item_path, item_scope) = resolve_path(
             false,
             true,
