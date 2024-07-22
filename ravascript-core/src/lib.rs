@@ -778,7 +778,8 @@ fn parse_types_for_populate_item_definitions(
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     current_scope_id: &Option<Vec<usize>>,
-    global_data: &make_item_definitions::GlobalData,
+    // global_data: &make_item_definitions::GlobalData,
+    modules: &[make_item_definitions::ModuleData],
 ) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
@@ -808,7 +809,7 @@ fn parse_types_for_populate_item_definitions(
                                                     root_parent_item_definition_generics,
                                                     current_module,
                                                     current_scope_id,
-                                                    global_data,
+                                                    modules,
                                                 )
                                             })
                                             .collect();
@@ -820,7 +821,7 @@ fn parse_types_for_populate_item_definitions(
                                                     root_parent_item_definition_generics,
                                                     current_module,
                                                     current_scope_id,
-                                                    global_data,
+                                                    modules,
                                                 )
                                             }
                                         };
@@ -862,7 +863,7 @@ fn parse_types_for_populate_item_definitions(
                                                         root_parent_item_definition_generics,
                                                         current_module,
                                                         current_scope_id,
-                                                        global_data,
+                                                        modules,
                                                     )
                                                 }
                                                 GenericArgument::Const(_) => todo!(),
@@ -883,11 +884,10 @@ fn parse_types_for_populate_item_definitions(
                             // TODO lookup trait in global data to get module path
                             let (trait_module_path, trait_item_path, trait_item_scope) =
                                 make_item_definitions::resolve_path(
-                                    false,
                                     true,
                                     true,
                                     trait_bound_path,
-                                    global_data,
+                                    modules,
                                     current_module,
                                     current_module,
                                     current_scope_id,
@@ -979,7 +979,7 @@ fn parse_types_for_populate_item_definitions(
                                         root_parent_item_definition_generics,
                                         current_module,
                                         current_scope_id,
-                                        global_data,
+                                        modules,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1009,7 +1009,7 @@ fn parse_types_for_populate_item_definitions(
                                         root_parent_item_definition_generics,
                                         current_module,
                                         current_scope_id,
-                                        global_data,
+                                        modules,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1054,7 +1054,7 @@ fn parse_types_for_populate_item_definitions(
                                                 root_parent_item_definition_generics,
                                                 current_module,
                                                 current_scope_id,
-                                                global_data,
+                                                modules,
                                             ))
                                         }
                                         GenericArgument::Const(_) => todo!(),
@@ -1078,11 +1078,10 @@ fn parse_types_for_populate_item_definitions(
                     //     );
                     let (item_module_path, item_path_seg, item_scope) =
                         make_item_definitions::resolve_path(
-                            false,
                             true,
                             true,
                             rust_path,
-                            global_data,
+                            modules,
                             current_module,
                             current_module,
                             current_scope_id,
@@ -1156,7 +1155,7 @@ fn parse_types_for_populate_item_definitions(
                 root_parent_item_definition_generics,
                 current_module,
                 current_scope_id,
-                global_data,
+                modules,
             );
             if type_reference.mutability.is_some() {
                 RustType::MutRef(Box::new(type_))
@@ -3343,7 +3342,7 @@ fn get_traits_implemented_for_item(
 }
 
 fn get_traits_implemented_for_item2(
-    item_impls: &Vec<RustImplBlockSimple>,
+    item_impls: &[RustImplBlockSimple],
     item_module_path: &[String],
     item_scope_id: &Option<Vec<usize>>,
     item_name: &str,
@@ -3563,13 +3562,14 @@ fn get_traits_implemented_for_item2(
 // }
 
 /// Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
+fn populate_item_def_impl_blocks(modules: &mut [ModuleData], impl_blocks: &[RustImplBlockSimple]) {
     let span = debug_span!("update_classes");
     let _guard = span.enter();
 
-    let impl_blocks = global_data.impl_blocks_simpl.clone();
+    // let impl_blocks = global_data.impl_blocks_simpl.clone();
     // First update item defs in modules, then update the rust prelude item defs which are global and don't sit in a module
-    for module in &mut global_data.modules {
+    // for module in &mut global_data.modules {
+    for module in modules {
         // dbg!(&module.parent_name);
         // let clone_scoped_various_definitions = module.scoped_various_definitions.clone();
         // let scoped_impl_blocks = clone_scoped_various_definitions
@@ -3601,7 +3601,7 @@ fn populate_item_def_impl_blocks(global_data: &mut GlobalData) {
                 item_def,
                 &item_def_scope_id,
                 &module.path.clone(),
-                &impl_blocks,
+                impl_blocks,
             );
         }
     }
@@ -3626,7 +3626,7 @@ fn update_item_def_block_ids(
     item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
     // global_data: &GlobalData,
-    impl_blocks: &Vec<RustImplBlockSimple>,
+    impl_blocks: &[RustImplBlockSimple],
 ) {
     let traits_impld_for_class =
         get_traits_implemented_for_item2(impl_blocks, module_path, &None, &item_def.ident);
@@ -4097,15 +4097,11 @@ pub fn process_items(
             syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
         });
 
-    // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = make_item_definitions::GlobalData::new();
-    global_data.modules = actual_modules;
-
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let global_data_copy = global_data.clone();
-    let (new_modules, impl_blocks) =
-        update_item_definitions(&global_data_copy, global_data.modules.clone());
+    let (new_modules, impl_blocks) = update_item_definitions(actual_modules);
+
+    // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
     let mut global_data = GlobalData::new(crate_path);
     global_data.modules = new_modules;
     global_data.impl_blocks_simpl = impl_blocks;
@@ -4114,7 +4110,7 @@ pub fn process_items(
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-    populate_item_def_impl_blocks(&mut global_data);
+    populate_item_def_impl_blocks(&mut global_data.modules, &global_data.impl_blocks_simpl);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -4555,7 +4551,7 @@ pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
 
     // populate_item_definitions(&mut global_data.modules);
     // update_item_definitions(&mut global_data);
-    populate_item_def_impl_blocks(&mut global_data);
+    // populate_item_def_impl_blocks(&mut global_data);
 
     global_data.transpiled_modules.push(JsModule {
         public: true,

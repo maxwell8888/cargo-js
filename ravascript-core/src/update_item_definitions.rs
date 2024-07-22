@@ -5,13 +5,13 @@ use syn::{
 use tracing::debug_span;
 
 use crate::{
-    get_item_impl_unique_id, make_item_definitions, parse_types_for_populate_item_definitions,
-    RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustType,
-    RustTypeParam, RustTypeParamValue,
+    get_item_impl_unique_id,
+    make_item_definitions::{self, ModuleMethods},
+    parse_types_for_populate_item_definitions, RustGeneric, RustImplBlockSimple,
+    RustImplItemItemNoJs, RustImplItemNoJs, RustType, RustTypeParam, RustTypeParamValue,
 };
 
 pub fn update_item_definitions(
-    global_data_copy: &make_item_definitions::GlobalData,
     modules: Vec<make_item_definitions::ModuleData>,
 ) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
     // let global_data_copy = global_data.clone();
@@ -54,7 +54,7 @@ pub fn update_item_definitions(
                                             .iter()
                                             .map(|seg| seg.ident.to_string());
 
-                                        let (module_path, scope_id, trait_def) = global_data_copy
+                                        let (module_path, scope_id, trait_def) = modules
                                             .lookup_trait_definition_any_module(
                                                 &module_path,
                                                 &(!scope_id.is_empty()).then_some(scope_id.clone()),
@@ -93,7 +93,7 @@ pub fn update_item_definitions(
             };
 
             let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-                let (module_path, trait_scope_id, trait_def) = global_data_copy
+                let (module_path, trait_scope_id, trait_def) = modules
                     .lookup_trait_definition_any_module(
                         &module_path,
                         &(!scope_id.is_empty()).then_some(scope_id.clone()),
@@ -117,7 +117,7 @@ pub fn update_item_definitions(
                     // dbg!(&module_path);
                     // dbg!(&temp_scope_id);
                     // dbg!(&impl_item_target_path);
-                    let (target_item_module, resolved_scope_id, target_item) = global_data_copy
+                    let (target_item_module, resolved_scope_id, target_item) = modules
                         .lookup_item_definition_any_module_or_scope(
                             &module_path,
                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
@@ -204,7 +204,7 @@ pub fn update_item_definitions(
                                             &combined_generics,
                                             &module_path,
                                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                            global_data_copy,
+                                            &modules,
                                         ),
                                     ),
                                 })
@@ -218,7 +218,7 @@ pub fn update_item_definitions(
                                         &combined_generics,
                                         &module_path,
                                         &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                        global_data_copy,
+                                        &modules,
                                     )
                                 }
                             };
@@ -307,6 +307,8 @@ pub fn update_item_definitions(
         // update_item_def_block_ids(...
     }
 
+    // TODO avoid clone
+    let modules_copy = modules.clone();
     let new_modules = modules
         .into_iter()
         .map(|module| {
@@ -318,9 +320,9 @@ pub fn update_item_definitions(
 
             let updated_various_defs = update_various_def(
                 module.various_definitions,
-                global_data_copy,
                 &module_path,
                 &None,
+                &modules_copy,
             );
 
             let updated_scoped_various_defs = module
@@ -330,7 +332,7 @@ pub fn update_item_definitions(
                     let scope_id = Some(scope.clone());
                     (
                         scope,
-                        update_various_def(various_def, global_data_copy, &module_path, &scope_id),
+                        update_various_def(various_def, &module_path, &scope_id, &modules_copy),
                     )
                 })
                 .collect();
@@ -350,14 +352,16 @@ pub fn update_item_definitions(
             }
         })
         .collect();
+
     (new_modules, global_impl_blocks_simpl)
 }
 
 fn update_various_def(
     various_definition: make_item_definitions::VariousDefintions,
-    global_data_copy: &make_item_definitions::GlobalData,
+    // global_data_copy: &make_item_definitions::GlobalData,
     module_path: &[String],
     current_scope: &Option<Vec<usize>>,
+    modules: &[make_item_definitions::ModuleData],
 ) -> VariousDefintions {
     let new_const_defs = various_definition
         .consts
@@ -368,7 +372,7 @@ fn update_various_def(
                 &Vec::new(),
                 module_path,
                 current_scope,
-                global_data_copy,
+                modules,
             );
             ConstDef {
                 name: const_def.name,
@@ -409,7 +413,7 @@ fn update_various_def(
                                             &item_def.generics,
                                             module_path,
                                             current_scope,
-                                            global_data_copy,
+                                            modules,
                                         ),
                                     )
                                 })
@@ -427,7 +431,7 @@ fn update_various_def(
                                         &item_def.generics,
                                         module_path,
                                         current_scope,
-                                        global_data_copy,
+                                        modules,
                                     )
                                 })
                                 .collect::<Vec<_>>(),
@@ -454,7 +458,7 @@ fn update_various_def(
                                         &item_def.generics,
                                         module_path,
                                         current_scope,
-                                        global_data_copy,
+                                        modules,
                                     );
                                     match &f.ident {
                                         Some(input_name) => EnumVariantInputsInfo::Named {
@@ -516,7 +520,7 @@ fn update_various_def(
                             &fn_info.generics,
                             module_path,
                             current_scope,
-                            global_data_copy,
+                            modules,
                         ),
                     ),
                 })
@@ -531,7 +535,7 @@ fn update_various_def(
                             &fn_info.generics,
                             module_path,
                             current_scope,
-                            global_data_copy,
+                            modules,
                         ),
                     }
                 }
