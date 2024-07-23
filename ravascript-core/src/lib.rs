@@ -16,8 +16,8 @@ use handle_syn_item::{
 use handle_syn_stmt::handle_stmt;
 use heck::{AsLowerCamelCase, AsPascalCase};
 use js_ast::{
-    DestructureObject, DestructureValue, FmtExtensions, JsClass, JsExpr, JsFn, JsIf, JsLocal,
-    JsModule, LocalName, LocalType,
+    DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf,
+    JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
 use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
@@ -4316,14 +4316,14 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                             export: false,
                                             type_: LocalType::None,
                                             lhs: LocalName::Single(js_fn.name.clone()),
-                                            value: JsExpr::Path(
+                                            value: JsExpr::Path(PathIdent::Path(
                                                 [
-                                                    js_impl_block.js_name(),
-                                                    "prototype".to_string(),
-                                                    js_fn.name.clone(),
+                                                    Ident::String(js_impl_block.js_name()),
+                                                    Ident::Str("prototype"),
+                                                    Ident::String(js_fn.name.clone()),
                                                 ]
                                                 .to_vec(),
-                                            ),
+                                            )),
                                         });
                                     } else {
                                         js_class.methods.push((
@@ -4805,9 +4805,9 @@ fn parse_fn_body_stmts(
                                 handle_expr_match(expr_match, true, global_data, current_module);
                             js_stmts.push(JsStmt::Expr(if_expr, true));
                             js_stmts.push(JsStmt::Expr(
-                                JsExpr::Return(Box::new(JsExpr::Path(vec![
-                                    "ifTempAssignment".to_string()
-                                ]))),
+                                JsExpr::Return(Box::new(JsExpr::Path(PathIdent::Single(
+                                    Ident::Str("ifTempAssignment"),
+                                )))),
                                 true,
                             ));
                             return_type = Some(type_);
@@ -4826,7 +4826,7 @@ fn parse_fn_body_stmts(
                             .rev()
                             .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
                             .unwrap();
-                        let mut js_var = JsExpr::Path(vec![var_name]);
+                        let mut js_var = JsExpr::Path(PathIdent::Single(Ident::String(var_name)));
                         if var_info.mut_ {
                             js_var = JsExpr::Field(Box::new(js_var), "inner".to_string())
                         }
@@ -4918,16 +4918,19 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
     if segments.last().unwrap() == "fetch2" {
         // TODO improve this code
         Some((
-            JsExpr::FnCall(Box::new(JsExpr::Path(vec!["fetch".to_string()])), args),
+            JsExpr::FnCall(
+                Box::new(JsExpr::Path(PathIdent::Single(Ident::Str("fetch")))),
+                args,
+            ),
             RustType::Todo,
         ))
     } else if segments.last().unwrap() == "stringify" {
         Some((
             JsExpr::FnCall(
-                Box::new(JsExpr::Path(vec![
-                    "JSON".to_string(),
-                    "stringify".to_string(),
-                ])),
+                Box::new(JsExpr::Path(PathIdent::Path(vec![
+                    Ident::Str("JSON"),
+                    Ident::Str("stringify"),
+                ]))),
                 args,
             ),
             RustType::Todo,
@@ -4935,23 +4938,29 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
     } else if segments.len() == 2 && segments[0] == "Json" && segments[1] == "parse" {
         Some((
             JsExpr::FnCall(
-                Box::new(JsExpr::Path(vec!["JSON".to_string(), "parse".to_string()])),
+                Box::new(JsExpr::Path(PathIdent::PathTwo([
+                    Ident::Str("JSON"),
+                    Ident::Str("parse"),
+                ]))),
                 args,
             ),
             RustType::Todo,
         ))
     } else if segments.len() == 2 && segments[0] == "Date" && segments[1] == "from_iso_string" {
-        Some((JsExpr::New(vec!["Date".to_string()], args), RustType::Todo))
+        Some((
+            JsExpr::New(PathIdent::Single(Ident::Str("Date")), args),
+            RustType::Todo,
+        ))
     } else if segments.len() == 2
         && segments[0] == "Document"
         && segments[1] == "query_selector_body"
     {
         Some((
             JsExpr::FnCall(
-                Box::new(JsExpr::Path(vec![
-                    "document".to_string(),
-                    "querySelector".to_string(),
-                ])),
+                Box::new(JsExpr::Path(PathIdent::PathTwo([
+                    Ident::Str("document"),
+                    Ident::Str("querySelector"),
+                ]))),
                 vec![JsExpr::LitStr("body".to_string())],
             ),
             RustType::Todo,
@@ -4962,10 +4971,10 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
     {
         Some((
             JsExpr::FnCall(
-                Box::new(JsExpr::Path(vec![
-                    "document".to_string(),
-                    "createElement".to_string(),
-                ])),
+                Box::new(JsExpr::Path(PathIdent::PathTwo([
+                    Ident::Str("document"),
+                    Ident::Str("createElement"),
+                ]))),
                 vec![JsExpr::LitStr("div".to_string())],
             ),
             RustType::Todo,

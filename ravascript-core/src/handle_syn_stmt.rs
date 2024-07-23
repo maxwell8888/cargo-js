@@ -11,7 +11,7 @@ use crate::{
         handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
         handle_item_trait,
     },
-    js_ast::{JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType},
+    js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
     parse_fn_input_or_field, GlobalData, RustType, ScopedVar,
 };
 
@@ -312,13 +312,13 @@ fn handle_local(
             RustType::TypeParam(_) => todo!(),
             RustType::I32 => {
                 global_data.rust_prelude_types.rust_integer = true;
-                JsExpr::New(vec!["RustInteger".to_string()], vec![rhs_expr])
+                JsExpr::New("RustInteger".into(), vec![rhs_expr])
             }
             RustType::F32 => todo!(),
             RustType::Bool => todo!(),
             RustType::String => {
                 global_data.rust_prelude_types.rust_string = true;
-                JsExpr::New(vec!["RustString".to_string()], vec![rhs_expr])
+                JsExpr::New("RustString".into(), vec![rhs_expr])
             }
             RustType::Option(_) => todo!(),
             RustType::Result(_) => todo!(),
@@ -356,7 +356,7 @@ fn handle_local(
                 JsStmt::Expr(
                     JsExpr::Assignment(
                         Box::new(match lhs {
-                            LocalName::Single(name) => JsExpr::Path(vec![name]),
+                            LocalName::Single(name) => JsExpr::Path(PathIdent::Single(Ident::String(name))),
                             LocalName::DestructureObject(_) => todo!(),
                             LocalName::DestructureArray(_) => todo!(),
                         }),

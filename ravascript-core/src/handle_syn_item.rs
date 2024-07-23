@@ -11,7 +11,7 @@ use crate::{
     camel, get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
-    js_ast::{JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType},
+    js_ast::{Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent},
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field,
     update_item_definitions::{EnumVariantInfo, EnumVariantInputsInfo, FnInfoSyn},
     FnInfo, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric, RustImplItemItemJs,
@@ -280,8 +280,8 @@ pub fn handle_item_fn(
                                     //     )],
                                     // )
                                     JsExpr::New(
-                                        vec!["RustInteger".to_string()],
-                                        vec![JsExpr::Path(vec![pat_ident.ident.to_string()])],
+                                        "RustInteger".into(),
+                                        vec![JsExpr::Path(pat_ident.ident.clone().into())],
                                     )
                                 }
                                 RustType::F32 => todo!(),
@@ -604,7 +604,7 @@ pub fn handle_item_enum(
                     type_: LocalType::Static,
                     lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
                     value: JsExpr::New(
-                        vec![class_name.clone()],
+                        item_enum.ident.clone().into(),
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
                     ),
                     // Box::new(JsExpr::LitStr(variant.ident.to_string())),
@@ -672,7 +672,7 @@ pub fn handle_item_enum(
                     type_: LocalType::Static,
                     lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
                     value: JsExpr::New(
-                        vec![class_name.clone()],
+                        item_enum.ident.clone().into(),
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
                     ),
                     // Box::new(JsExpr::LitStr(variant.ident.to_string())),
@@ -694,7 +694,7 @@ pub fn handle_item_enum(
 
                 let stmt = JsStmt::Expr(
                     JsExpr::Return(Box::new(JsExpr::New(
-                        vec![class_name.clone()],
+                        item_enum.ident.clone().into(),
                         vec![
                             JsExpr::LitStr(variant.ident.to_string()),
                             JsExpr::Var("data".to_string()),
@@ -716,13 +716,15 @@ pub fn handle_item_enum(
                     .collect::<Vec<_>>();
 
                 let return_expr = JsExpr::Return(Box::new(JsExpr::New(
-                    vec![class_name.clone()],
+                    item_enum.ident.clone().into(),
                     vec![
                         JsExpr::LitStr(variant.ident.to_string()),
                         JsExpr::Array(
                             arg_names
                                 .iter()
-                                .map(|name| JsExpr::Path(vec![name.clone()]))
+                                .map(|name| {
+                                    JsExpr::Path(PathIdent::Single(Ident::String(name.clone())))
+                                })
                                 .collect::<Vec<_>>(),
                         ),
                     ],

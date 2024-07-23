@@ -1,7 +1,7 @@
 use quote::quote;
 use syn::{
     BinOp, Expr, ExprAssign, ExprBlock, ExprCall, ExprClosure, ExprMatch, ExprMethodCall, ExprPath,
-    GenericArgument, Ident, Index, Lit, Macro, Member, Pat, Stmt, UnOp,
+    GenericArgument, Index, Lit, Macro, Member, Pat, Stmt, UnOp,
 };
 use tracing::{debug, debug_span, warn};
 
@@ -9,8 +9,8 @@ use crate::{
     camel, case_convert, found_item_to_partial_rust_type, handle_pat,
     handle_syn_stmt::handle_stmt,
     js_ast::{
-        DestructureObject, DestructureValue, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt, LocalName,
-        LocalType,
+        DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
+        LocalName, LocalType, PathIdent,
     },
     parse_fn_body_stmts, parse_fn_input_or_field, resolve_path,
     update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
@@ -503,7 +503,7 @@ pub fn handle_expr(
                     fn get_field_type(
                         base_type: RustType,
                         global_data: &GlobalData,
-                        ident: &Ident,
+                        ident: &syn::Ident,
                     ) -> RustType {
                         match base_type {
                             RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
@@ -751,7 +751,7 @@ pub fn handle_expr(
                 global_data.rust_prelude_types.float = true;
                 (
                     JsExpr::New(
-                        vec!["RustFloat".to_string()],
+                        PathIdent::Single(Ident::Str("RustFloat")),
                         vec![JsExpr::LitFloat(lit_float.base10_parse::<f32>().unwrap())],
                     ),
                     RustType::F32,
@@ -845,7 +845,10 @@ pub fn handle_expr(
                             RustType::I32 => {
                                 global_data.rust_prelude_types.rust_integer = true;
                                 (
-                                    JsExpr::New(vec!["RustInteger".to_string()], vec![js_expr]),
+                                    JsExpr::New(
+                                        PathIdent::Single(Ident::Str("RustInteger")),
+                                        vec![js_expr],
+                                    ),
                                     rust_type,
                                 )
                             }
@@ -854,7 +857,10 @@ pub fn handle_expr(
                             RustType::String => {
                                 global_data.rust_prelude_types.rust_string = true;
                                 (
-                                    JsExpr::New(vec!["RustString".to_string()], vec![js_expr]),
+                                    JsExpr::New(
+                                        PathIdent::Single(Ident::Str("RustString")),
+                                        vec![js_expr],
+                                    ),
                                     rust_type,
                                 )
                             }
@@ -1283,9 +1289,11 @@ fn handle_expr_closure(
                     RustType::I32 => {
                         global_data.rust_prelude_types.rust_integer = true;
                         JsExpr::New(
-                            vec!["RustInteger".to_string()],
+                            PathIdent::Single(Ident::Str("RustInteger")),
                             vec![JsExpr::MethodCall(
-                                Box::new(JsExpr::Path(vec![input_name])),
+                                Box::new(JsExpr::Path(PathIdent::Single(Ident::String(
+                                    input_name,
+                                )))),
                                 "inner".to_string(),
                                 Vec::new(),
                             )],
@@ -1451,7 +1459,7 @@ pub fn handle_expr_and_stmt_macro(
 
             return (
                 JsExpr::MethodCall(
-                    Box::new(JsExpr::Path(vec!["console".to_string()])),
+                    Box::new(JsExpr::Path(PathIdent::Single(Ident::Str("console")))),
                     "assert".to_string(),
                     vec![condition_js],
                 ),
@@ -1554,7 +1562,7 @@ pub fn handle_expr_and_stmt_macro(
             }
             return (
                 JsExpr::MethodCall(
-                    Box::new(JsExpr::Path(vec!["console".to_string()])),
+                    Box::new(JsExpr::Path(PathIdent::Single(Ident::Str("console")))),
                     "assert".to_string(),
                     vec![equality_check],
                 ),
@@ -1930,29 +1938,35 @@ fn handle_expr_method_call(
     if let JsExpr::Path(path) = &receiver {
         #[allow(clippy::all)]
         if path.len() == 2 {
-            if path[0] == "JSON" && path[1] == "parse" {
-                // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
-                let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
-                return (
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
-                            iife: false,
-                            public: false,
-                            export: false,
-                            async_: false,
-                            is_method: false,
-                            name: "jsonParse".to_string(),
-                            input_names: vec!["text".to_string()],
-                            body_stmts: vec![JsStmt::Raw(body)],
-                        })))),
-                        expr_method_call
-                            .args
-                            .iter()
-                            .map(|arg| handle_expr(arg, global_data, current_module).0)
-                            .collect::<Vec<_>>(),
-                    ),
-                    RustType::Todo,
-                );
+            match path {
+                PathIdent::PathTwo(path) => {
+                    // TODO impl PartialEq for str or remove this
+                    if path[0] == Ident::Str("JSON") && path[1] == Ident::Str("parse") {
+                        // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
+                        let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
+                        return (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Paren(Box::new(JsExpr::Fn(JsFn {
+                                    iife: false,
+                                    public: false,
+                                    export: false,
+                                    async_: false,
+                                    is_method: false,
+                                    name: "jsonParse".to_string(),
+                                    input_names: vec!["text".to_string()],
+                                    body_stmts: vec![JsStmt::Raw(body)],
+                                })))),
+                                expr_method_call
+                                    .args
+                                    .iter()
+                                    .map(|arg| handle_expr(arg, global_data, current_module).0)
+                                    .collect::<Vec<_>>(),
+                            ),
+                            RustType::Todo,
+                        );
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -3423,7 +3437,9 @@ fn handle_expr_path_inner(
     let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         JsExpr::Null
     } else if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
-        JsExpr::Path(js_segs)
+        JsExpr::Path(PathIdent::Path(
+            js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
+        ))
 
         // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
     } else {
@@ -3432,10 +3448,17 @@ fn handle_expr_path_inner(
             PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
             PartialRustType::RustType(rust_type) => {
                 if rust_type.is_js_primative() {
-                    JsExpr::Field(Box::new(JsExpr::Path(js_segs)), "inner".to_string())
+                    JsExpr::Field(
+                        Box::new(JsExpr::Path(PathIdent::Path(
+                            js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
+                        ))),
+                        "inner".to_string(),
+                    )
                 } else {
                     // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-                    JsExpr::Path(js_segs)
+                    JsExpr::Path(PathIdent::Path(
+                        js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
+                    ))
                 }
             }
         }
@@ -4064,7 +4087,9 @@ pub fn handle_expr_match(
                             "id".to_string(),
                         )),
                         JsOp::Eq,
-                        Box::new(JsExpr::Path(cond_rhs)),
+                        Box::new(JsExpr::Path(PathIdent::Path(
+                            cond_rhs.into_iter().map(|seg| Ident::String(seg)).collect(),
+                        ))),
                     )),
                     succeed: body,
                     // TODO

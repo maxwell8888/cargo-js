@@ -107,14 +107,16 @@ pub enum JsExpr {
     MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
     Minus(Box<JsExpr>),
     /// (Class path, args)
-    New(Vec<String>, Vec<JsExpr>),
+    New(PathIdent, Vec<JsExpr>),
     Null,
     Not(Box<JsExpr>),
     Object(Vec<(String, Box<JsExpr>)>),
     ObjectForModule(Vec<JsStmt>),
     Paren(Box<JsExpr>),
     /// eg module::struct::associated_fn -> module.struct.associated_fn;
-    Path(Vec<String>),
+    /// NOTE each path segment is a Vec<String> rather than a String because the name might be a deduplicated and so needs to be joined
+    /// This seems inefficient given 99% of cases will be len=1 so we are adding extra allocations/indirection for no reason. Just use an Enum instead
+    Path(PathIdent),
     Raw(String),
     Return(Box<JsExpr>),
     ThrowError(String),
@@ -125,6 +127,80 @@ pub enum JsExpr {
     While(Box<JsExpr>, Vec<JsStmt>),
     TryBlock(Vec<JsStmt>),
     CatchBlock(String, Vec<JsStmt>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ident {
+    Syn(syn::Ident),
+    String(String),
+    Str(&'static str),
+    Deduped(Vec<String>),
+}
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ident::Syn(ident) => write!(f, "{ident}"),
+            Ident::String(ident) => write!(f, "{ident}"),
+            Ident::Str(ident) => write!(f, "{ident}"),
+            Ident::Deduped(idents) => write!(
+                f,
+                "{}",
+                idents
+                    .iter()
+                    // TODO avoid needing to convert to String
+                    .map(|ident| ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PathIdent {
+    Single(Ident),
+    Path(Vec<Ident>),
+    // TODO support using arrays instead of Vec for known size paths, to avoid allocations
+    PathTwo([Ident; 2]),
+}
+impl From<&'static str> for PathIdent {
+    fn from(value: &'static str) -> Self {
+        PathIdent::Single(Ident::Str(value))
+    }
+}
+impl From<syn::Ident> for PathIdent {
+    fn from(value: syn::Ident) -> Self {
+        PathIdent::Single(Ident::Syn(value))
+    }
+}
+
+impl PathIdent {
+    pub fn len(&self) -> usize {
+        match self {
+            PathIdent::Single(_) => 1,
+            PathIdent::Path(idents) => idents.len(),
+            PathIdent::PathTwo(_) => 2,
+        }
+    }
+}
+
+impl fmt::Display for PathIdent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathIdent::Single(ident) => write!(f, "{ident}"),
+            PathIdent::Path(idents) => write!(
+                f,
+                "{}",
+                idents
+                    .iter()
+                    // TODO avoid needing to convert to String
+                    .map(|ident| ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            ),
+            PathIdent::PathTwo(idents) => write!(f, "{}.{}", idents[0], idents[1]),
+        }
+    }
 }
 
 // impl fmt::Display for Transfer {
@@ -289,7 +365,7 @@ impl fmt::Display for JsExpr {
                 //         .join(", ")
                 // )
 
-                write!(f, "new {}({})", path.fmt_join("."), args.fmt_join(", "))
+                write!(f, "new {path}({})", args.fmt_join(", "))
             }
             JsExpr::MethodCall(receiver_name, method_name, args) => {
                 // format!(
@@ -310,7 +386,7 @@ impl fmt::Display for JsExpr {
             }
             JsExpr::Path(segments) => {
                 // segments.join(".")
-                write!(f, "{}", segments.fmt_join("."))
+                write!(f, "{segments}")
             }
             JsExpr::Assignment(left, right) => write!(f, "{left} = {right}"),
             JsExpr::ForLoop(pat, expr, block) => {
