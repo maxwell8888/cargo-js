@@ -1759,12 +1759,15 @@ impl RustType {
             RustType::Box(_) => todo!(),
         }
     }
-    fn is_mut_ref_of_js_primative(&self) -> bool {
+    fn is_mut_ref_of_js_primative(&self, impl_targets: &[RustType]) -> bool {
         match self {
             RustType::NotAllowed => todo!(),
             RustType::Unknown => todo!(),
             RustType::Todo => todo!(),
-            RustType::ParentItem => todo!(),
+            RustType::ParentItem => {
+                // TODO do we need to consider some kind of recursive
+                impl_targets.last().unwrap().is_mut_ref_of_js_primative(&[])
+            }
             RustType::Unit => false,
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),
@@ -1977,6 +1980,10 @@ impl JsImplBlock2 {
                         RustTypeParamValue::RustType(resolved) => rust_type_js_name(resolved),
                     };
                     format!("Option_{}_", generic_name)
+                }
+                RustType::I32 => {
+                    // The idea here is to differeniate between eg Option<T> and Option<i32>
+                    "i32".to_string()
                 }
                 _ => {
                     dbg!(rust_type);
@@ -4858,7 +4865,8 @@ fn parse_fn_body_stmts(
 
                             // TODO leave false for now until I clean up/refactor this code since this `is_js_primative_mut_var` should get caught be the Expr::Path branch
                             let is_js_primative_mut_var = false;
-                            let is_js_primative_mut_ref = type_.is_mut_ref_of_js_primative();
+                            let is_js_primative_mut_ref = type_
+                                .is_mut_ref_of_js_primative(&global_data.impl_block_target_type);
 
                             if returns_non_mut_ref_val
                                 && (is_js_primative_mut_var || is_js_primative_mut_ref)

@@ -641,6 +641,7 @@ pub struct ItemDefinition {
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
     // impl_blocks: Vec<ItemDefintionImpls>,
+    /// These are uuids/references to all the impl blocks whose target match this struct/enum
     /// (unique impl id)
     pub impl_block_ids: Vec<String>,
 }

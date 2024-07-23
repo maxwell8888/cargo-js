@@ -885,6 +885,47 @@ async fn simple_impl_trait_for_concrete() {
 }
 
 #[tokio::test]
+async fn impl_trait_for_number() {
+    setup_tracing();
+
+    let actual = r2j_block_with_prelude!({
+        trait Foo {
+            fn plus_one(&self) -> i32;
+        }
+        impl Foo for i32 {
+            fn plus_one(&self) -> i32 {
+                self + 1
+            }
+        }
+
+        let one = 1;
+        let two = one.plus_one();
+        assert!(one == 1);
+        assert!(two == 2);
+        let four = 3.plus_one();
+        assert!(four == 4);
+    });
+    let expected = format_js(
+        r#"
+            class Foo__i32 {
+                plusOne() {
+                    return this + 1;
+                }
+            }
+            Number.prototype.plusOne = Foo__i32.prototype.plusOne;
+            let one = 1;
+            let two = one.plusOne();
+            console.assert(one === 1);
+            console.assert(two === 2);
+            let four = (3).plusOne();
+            console.assert(four === 4);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
 async fn simple_scoped_impl_trait_for_type_param() {
     setup_tracing();
 

@@ -448,14 +448,14 @@ pub fn handle_expr(
             let (rhs_expr, _rhs_type) =
                 handle_expr(&expr_binary.right, global_data, current_module);
 
-            fn types_are_primative(rust_type: RustType) -> bool {
+            fn types_are_primative(rust_type: &RustType, impl_target_types: &[RustType]) -> bool {
                 match rust_type {
                     RustType::TypeParam(rust_type_param) => {
-                        match rust_type_param.type_ {
+                        match &rust_type_param.type_ {
                             // TODO if one side is unresolved, then we should use the type of the other side to resovle it
                             RustTypeParamValue::Unresolved => false,
                             RustTypeParamValue::RustType(resolved_rust_type) => {
-                                types_are_primative(*resolved_rust_type)
+                                types_are_primative(resolved_rust_type, &[])
                             }
                         }
                     }
@@ -466,12 +466,17 @@ pub fn handle_expr(
                     RustType::Option(_) => todo!(),
                     RustType::Result(_) => todo!(),
                     RustType::MutRef(_) => todo!(),
-                    RustType::Ref(inner) => types_are_primative(*inner),
+                    RustType::Ref(inner) => types_are_primative(inner, &[]),
                     RustType::Fn(_, _, _, _, _) => todo!(),
+                    RustType::ParentItem => {
+                        //
+                        types_are_primative(impl_target_types.last().unwrap(), &[])
+                    }
                     _ => false,
                 }
             }
-            let lhs_is_primative = types_are_primative(lhs_type);
+            let lhs_is_primative =
+                types_are_primative(&lhs_type, &global_data.impl_block_target_type);
 
             let expr = if lhs_is_primative {
                 JsExpr::Binary(Box::new(lhs_expr), js_op, Box::new(rhs_expr))
@@ -1589,6 +1594,64 @@ fn handle_expr_method_call(
     //     struct_or_enum.and_then(|se| se.members.iter().find(|m| m.ident == method_name));
     // // End of type lookup
 
+    // JS doesn't allow eg `1.foo()` so need to check for literals and wrap them in parens like `(1).foo()`
+    // TODO also want to check for other things like sting literals etc
+    let receiver_needs_parens = match &*expr_method_call.receiver {
+        Expr::Array(_) => todo!(),
+        Expr::Assign(_) => todo!(),
+        Expr::Async(_) => todo!(),
+        Expr::Await(_) => todo!(),
+        Expr::Binary(_) => todo!(),
+        Expr::Block(_) => todo!(),
+        Expr::Break(_) => todo!(),
+        Expr::Call(_) => todo!(),
+        Expr::Cast(_) => todo!(),
+        Expr::Closure(_) => todo!(),
+        Expr::Const(_) => todo!(),
+        Expr::Continue(_) => todo!(),
+        Expr::Field(_) => false,
+        Expr::ForLoop(_) => todo!(),
+        Expr::Group(_) => todo!(),
+        Expr::If(_) => todo!(),
+        Expr::Index(_) => todo!(),
+        Expr::Infer(_) => todo!(),
+        Expr::Let(_) => todo!(),
+        Expr::Lit(_expr_lit) => {
+            // match expr_lit.lit {
+            //     Lit::Str(_) => todo!(),
+            //     Lit::ByteStr(_) => todo!(),
+            //     Lit::CStr(_) => todo!(),
+            //     Lit::Byte(_) => todo!(),
+            //     Lit::Char(_) => todo!(),
+            //     Lit::Int(_) => todo!(),
+            //     Lit::Float(_) => todo!(),
+            //     Lit::Bool(_) => todo!(),
+            //     Lit::Verbatim(_) => todo!(),
+            //     _ => todo!(),
+            // }
+            true
+        }
+        Expr::Loop(_) => todo!(),
+        Expr::Macro(_) => todo!(),
+        Expr::Match(_) => todo!(),
+        Expr::MethodCall(_) => false,
+        Expr::Paren(_) => todo!(),
+        Expr::Path(_) => false,
+        Expr::Range(_) => todo!(),
+        Expr::Reference(_) => todo!(),
+        Expr::Repeat(_) => todo!(),
+        Expr::Return(_) => todo!(),
+        Expr::Struct(_) => todo!(),
+        Expr::Try(_) => todo!(),
+        Expr::TryBlock(_) => todo!(),
+        Expr::Tuple(_) => todo!(),
+        Expr::Unary(_) => todo!(),
+        Expr::Unsafe(_) => todo!(),
+        Expr::Verbatim(_) => todo!(),
+        Expr::While(_) => todo!(),
+        Expr::Yield(_) => todo!(),
+        _ => todo!(),
+    };
     let mut method_name = expr_method_call.method.to_string();
     let (receiver, receiver_type) =
         handle_expr(&expr_method_call.receiver, global_data, current_module);
@@ -1962,6 +2025,11 @@ fn handle_expr_method_call(
         _ => {}
     }
 
+    let receiver = if receiver_needs_parens {
+        JsExpr::Paren(Box::new(receiver))
+    } else {
+        receiver
+    };
     (
         JsExpr::MethodCall(Box::new(receiver), camel(method_name), args_js_exprs),
         method_return_type,

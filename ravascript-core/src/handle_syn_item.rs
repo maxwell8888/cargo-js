@@ -1353,7 +1353,14 @@ pub fn handle_item_impl(
                             false,
                         )
                     }
-                    _ => todo!(),
+                    "i32" => {
+                        assert_eq!(target_item_type_params.len(), 0);
+                        (RustType::I32, false)
+                    }
+                    _ => {
+                        dbg!(target_item);
+                        todo!()
+                    }
                 }
             } else {
                 (
@@ -1401,6 +1408,7 @@ pub fn handle_item_impl(
                             .find(|i| impl_item_fn.sig.ident == i.ident)
                     })
                     .unwrap();
+
                 handle_impl_item_fn(
                     &mut rust_impl_items,
                     impl_item,
@@ -1510,7 +1518,7 @@ pub fn handle_item_impl(
 
     global_data.impl_block_target_type.pop();
 
-    let class_stmt = if is_target_type_param {
+    let class_stmt = if is_target_type_param || matches!(target_rust_type, RustType::I32) {
         let static_fields = rust_impl_block
             .items
             .iter()
