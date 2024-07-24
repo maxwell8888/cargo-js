@@ -2988,12 +2988,6 @@ fn handle_expr_path_inner(
     is_having_mut_ref_taken: bool,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
-    let path_idents = expr_path
-        .segments
-        .iter()
-        .map(|seg| seg.ident.to_string())
-        .collect::<Vec<_>>();
-
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
@@ -3402,28 +3396,22 @@ fn handle_expr_path_inner(
     // Lookup module path to find what it's deduplicated name is
     // Check whether it is not globally unique and so has been namespaced
     // dbg!(&segs_copy_item_path);
-    let mut js_segs = segs_copy_item_path
-        .iter()
-        .map(|seg| case_convert(seg.ident.to_string()))
-        .collect::<Vec<_>>();
-    // dbg!(&js_segs);
 
-    if segs_copy_module_path == ["web_prelude"] && segs_copy_item_path[0].ident == "Document" {
-        js_segs[0] = "document".to_string();
-    }
-
-    let mut js_segs_path = js_segs
+    let mut js_segs_path = segs_copy_item_path
         .into_iter()
-        .map(|seg| Ident::String(seg))
+        .map(|seg| Ident::String(seg.ident))
         .collect::<Vec<_>>();
+
+    if segs_copy_module_path == ["web_prelude"] && js_segs_path[0] == "Document" {
+        js_segs_path[0] = Ident::Str("document");
+    }
 
     // TODO why are we converting to JS ident here? JS AST should just store namespace ident and do the join("__") at `.to_string()` time
     // TODO Surely this should be `.is_none()`?
     // if segs_copy_item_scope.is_some() {
     if segs_copy_item_scope.is_none() {
         if let Some(dup) = global_data.duplicates.iter().find(|dup| {
-            dup.name == segs_copy_item_path[0].ident
-                && dup.original_module_path == segs_copy_module_path
+            js_segs_path[0] == dup.name && dup.original_module_path == segs_copy_module_path
         }) {
             js_segs_path[0] =
                 Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());

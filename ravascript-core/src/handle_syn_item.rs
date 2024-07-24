@@ -633,7 +633,7 @@ pub fn handle_item_enum(
 
     // TODO using syn types like JsImplItem {impl_item: ImplItem, body_stmts: Vec<JsStmt>} is no good if you want to manually construct eg a method! Unless we had two version ie a syn type version and a manual version, using either an enum or trait objects.
     methods.push((
-        item_enum.ident.to_string(),
+        Ident::Syn(item_enum.ident.clone()),
         false,
         JsFn {
             iife: false,
@@ -709,7 +709,7 @@ pub fn handle_item_enum(
                     .unnamed
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| format!("arg_{i}"))
+                    .map(|(i, _)| format!("arg{i}"))
                     .collect::<Vec<_>>();
 
                 let return_expr = JsExpr::Return(Box::new(JsExpr::New(
@@ -732,7 +732,7 @@ pub fn handle_item_enum(
         };
         if !body_stmts.is_empty() {
             methods.push((
-                item_enum.ident.to_string(),
+                Ident::Syn(item_enum.ident.clone()),
                 true,
                 JsFn {
                     iife: false,
@@ -1538,7 +1538,7 @@ pub fn handle_item_impl(
             public: false,
             export: false,
             tuple_struct: false,
-            name: Ident::String(rust_impl_block.js_name()),
+            name: rust_impl_block.js_name(),
             inputs: Vec::new(),
             static_fields,
             methods,
@@ -1852,7 +1852,7 @@ pub fn handle_item_struct(
     if is_copy {
         let stmt = JsStmt::Raw("return JSON.parse(JSON.stringify(this));".to_string());
         methods.push((
-            name.clone(),
+            Ident::String(name.clone()),
             false,
             JsFn {
                 iife: false,
@@ -1872,7 +1872,7 @@ pub fn handle_item_struct(
     if name == "Option" {
         let stmt = JsStmt::Raw("return JSON.stringify(this) === JSON.stringify(other)".to_string());
         methods.push((
-            name.clone(),
+            Ident::String(name.clone()),
             false,
             JsFn {
                 iife: false,

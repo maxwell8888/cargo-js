@@ -3,7 +3,7 @@ use heck::{AsKebabCase, AsPascalCase};
 // use std::io::{self, Write};
 use syn::BinOp;
 
-use crate::camel;
+use crate::{camel, case_convert};
 
 #[derive(Clone, Debug)]
 pub enum JsOp {
@@ -136,6 +136,8 @@ pub enum Ident {
     String(String),
     Str(&'static str),
     Deduped(Vec<String>),
+    // TODO this should be a wrapper or something rather than a variant so we can use str or String or syn::Ident
+    NoConversion(String),
 }
 impl PartialEq<String> for Ident {
     fn eq(&self, other: &String) -> bool {
@@ -144,6 +146,7 @@ impl PartialEq<String> for Ident {
             Ident::String(ident) => ident == other,
             Ident::Str(ident) => ident == other,
             Ident::Deduped(_idents) => todo!(),
+            Ident::NoConversion(ident) => ident == other,
         }
     }
 }
@@ -154,25 +157,27 @@ impl PartialEq<&'static str> for Ident {
             Ident::String(ident) => ident == other,
             Ident::Str(ident) => ident == other,
             Ident::Deduped(_idents) => todo!(),
+            Ident::NoConversion(ident) => ident == other,
         }
     }
 }
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ident::Syn(ident) => write!(f, "{ident}"),
-            Ident::String(ident) => write!(f, "{ident}"),
-            Ident::Str(ident) => write!(f, "{ident}"),
+            Ident::Syn(ident) => write!(f, "{}", case_convert(ident)),
+            Ident::String(ident) => write!(f, "{}", case_convert(ident)),
+            Ident::Str(ident) => write!(f, "{}", case_convert(ident)),
             Ident::Deduped(idents) => write!(
                 f,
                 "{}",
                 idents
                     .iter()
                     // TODO avoid needing to convert to String
-                    .map(|ident| ident.to_string())
+                    .map(|ident| case_convert(ident))
                     .collect::<Vec<_>>()
                     .join("__")
             ),
+            Ident::NoConversion(ident) => write!(f, "{ident}"),
         }
     }
 }
@@ -710,7 +715,7 @@ pub struct JsClass {
     pub inputs: Vec<String>,
     pub static_fields: Vec<JsLocal>,
     /// (class name, static, JsFn)  
-    pub methods: Vec<(String, bool, JsFn)>,
+    pub methods: Vec<(Ident, bool, JsFn)>,
     // NOTE dropped the idea of just storing eg a list of impld items or the path to an impl block, because there is methods and fields we might want to add manually eg for an enum, so it makes more sense
     // struct_or_enum: StructOrEnumSynObject,
     // /// all methods impl'd specifically for the type ie `impl MyStructOrEnum { ... }` and `impl MyTrait for MyStructOrEnum { ... }`

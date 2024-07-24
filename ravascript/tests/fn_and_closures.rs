@@ -144,8 +144,8 @@ async fn closure_return_match() {
               this.id = id;
               this.data = data;
             }
-            static Some(arg_0) {
-              return new Number("Some", [arg_0]);
+            static Some(arg0) {
+              return new Number("Some", [arg0]);
             }
           }
           let _closure = (arg) => {

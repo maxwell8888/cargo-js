@@ -1962,7 +1962,7 @@ struct JsImplBlock2 {
     items: Vec<(bool, RustImplItemJs)>,
 }
 impl JsImplBlock2 {
-    fn js_name(&self) -> String {
+    fn js_name(&self) -> Ident {
         let trait_name = match &self.trait_ {
             Some((module_path, scope_id, name)) => name,
             None => "no_trait",
@@ -1995,7 +1995,7 @@ impl JsImplBlock2 {
             }
         }
         let target_name = rust_type_js_name(&self.target);
-        format!("{trait_name}__{target_name}")
+        Ident::NoConversion(format!("{trait_name}__{target_name}"))
     }
 }
 
@@ -3801,7 +3801,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     if rust_prelude_types.vec {
         let methods = [
             (
-                "new".to_string(),
+                Ident::Str("new"),
                 true,
                 JsFn {
                     iife: false,
@@ -3815,7 +3815,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                 },
             ),
             (
-                "push".to_string(),
+                Ident::Str("push"),
                 false,
                 JsFn {
                     iife: false,
@@ -4324,7 +4324,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                             lhs: LocalName::Single(js_fn.name.clone()),
                                             value: JsExpr::Path(PathIdent::Path(
                                                 [
-                                                    Ident::String(js_impl_block.js_name()),
+                                                    js_impl_block.js_name(),
                                                     Ident::Str("prototype"),
                                                     js_fn.name.clone(),
                                                 ]
@@ -4333,7 +4333,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                         });
                                     } else {
                                         js_class.methods.push((
-                                            item_def.ident.clone(),
+                                            Ident::String(item_def.ident.clone()),
                                             *static_,
                                             js_fn.clone(),
                                         ));

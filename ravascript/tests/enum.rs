@@ -51,8 +51,8 @@ async fn enum_match() {
                 static Bar(data) {
                     return new MyEnum("Bar", data);
                 }
-                static Baz(arg_0, arg_1) {
-                    return new MyEnum("Baz", [arg_0, arg_1]);
+                static Baz(arg0, arg1) {
+                    return new MyEnum("Baz", [arg0, arg1]);
                 }
             }
             let myData = MyEnum.FooBar;
@@ -155,8 +155,8 @@ async fn enum_methods() {
             static Bar(data) {
                 return new Animal("Bar", data);
             }
-            static Baz(arg_0, arg_1) {
-                return new Animal("Baz", [arg_0, arg_1]);
+            static Baz(arg0, arg1) {
+                return new Animal("Baz", [arg0, arg1]);
             }
             static five() {
                 return 5;
