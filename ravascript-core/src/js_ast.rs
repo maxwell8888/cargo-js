@@ -92,7 +92,7 @@ pub enum JsExpr {
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
     /// (pat, expr, block)
-    ForLoop(String, Box<JsExpr>, Vec<JsStmt>),
+    ForLoop(Ident, Box<JsExpr>, Vec<JsStmt>),
     Index(Box<JsExpr>, Box<JsExpr>),
     /// `if else` statements are achieved by nesting an additional if statement as the fail arg.
     /// A problem is that Some assignment triggers a `var = x;`, however we also need to know whether we are doing assignment in nested If's (if else) but without adding a new var declaration. need to add another flag just to say when we need to declare the var

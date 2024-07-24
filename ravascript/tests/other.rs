@@ -406,3 +406,31 @@ async fn field_case_convert() {
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[allow(unused_variables)]
+#[tokio::test]
+async fn for_loop_pat_case_convert() {
+    let actual = r2j_block_with_prelude!({
+        let data = vec![2, 3, 4];
+        for data_element in data {
+            assert!(data_element > 1);
+            assert!(data_element < 5);
+        }
+        // TODO remove when we are parsing as block, not fn
+        let todo = 1;
+    });
+
+    let expected = format_js(
+        r#"
+            let data = [2, 3, 4];
+            for (var dataElement of data) {
+                console.assert(dataElement > 1);
+                console.assert(dataElement < 5);
+            }
+            let todo = 1;
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}

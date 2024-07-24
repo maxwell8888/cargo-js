@@ -4472,6 +4472,7 @@ pub fn from_file(code: &str, with_rust_types: bool) -> Vec<JsModule> {
 }
 
 pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<JsStmt> {
+    // TODO IMPORTANT why are we parsing the code a fn? this adds `return` in some cases which I keep forgetting and then waste time debugging!
     let item_fn = syn::parse_str::<Item>(&format!("fn temp() {code}")).unwrap();
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
     // Blocks should only be 1 module and optionally include a second module for rust prelude
@@ -4692,6 +4693,7 @@ fn parse_fn_body_stmts(
 ) -> (Vec<JsStmt>, RustType) {
     // let mut return_type = RustType::Todo;
     let mut js_stmts = Vec::new();
+
     // let (js_stmts, types): (Vec<_>, Vec<_>) = stmts
     //     .iter()
     //     .enumerate()

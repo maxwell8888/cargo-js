@@ -427,11 +427,11 @@ pub fn handle_expr(
                 BinOp::Shl(_) => todo!(),
                 BinOp::Shr(_) => todo!(),
                 BinOp::Eq(_) => JsOp::Eq,
-                BinOp::Lt(_) => todo!(),
+                BinOp::Lt(_) => JsOp::Lt,
                 BinOp::Le(_) => todo!(),
                 BinOp::Ne(_) => todo!(),
                 BinOp::Ge(_) => JsOp::GtEq,
-                BinOp::Gt(_) => todo!(),
+                BinOp::Gt(_) => JsOp::Gt,
                 BinOp::AddAssign(_) => JsOp::AddAssign,
                 BinOp::SubAssign(_) => todo!(),
                 BinOp::MulAssign(_) => todo!(),
@@ -609,26 +609,73 @@ pub fn handle_expr(
                 }
             }
         }
-        Expr::ForLoop(expr_for_loop) => (
-            JsExpr::ForLoop(
-                match &*expr_for_loop.pat {
-                    Pat::Ident(pat_ident) => camel(&pat_ident.ident),
-                    _ => todo!(),
-                },
-                Box::new(handle_expr(&expr_for_loop.expr, global_data, current_module).0),
-                expr_for_loop
-                    .body
-                    .stmts
-                    .iter()
-                    .flat_map(|stmt| {
-                        handle_stmt(stmt, global_data, current_module)
-                            .into_iter()
-                            .map(|(stmt, type_)| stmt)
-                    })
-                    .collect(),
-            ),
-            RustType::Unit,
-        ),
+        Expr::ForLoop(expr_for_loop) => {
+            // TODO handle multiple vars/patterns like `for (one, two, three) in data {}`
+            let pat = match &*expr_for_loop.pat {
+                Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
+                _ => todo!(),
+            };
+            let name = match &*expr_for_loop.pat {
+                Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                _ => todo!(),
+            };
+            let mut_ = match &*expr_for_loop.pat {
+                Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                _ => todo!(),
+            };
+
+            let (iter_expr, iter_type) =
+                handle_expr(&expr_for_loop.expr, global_data, current_module);
+
+            let element_type = match iter_type {
+                RustType::Vec(element_type) => *element_type,
+                RustType::Array(element_type) => *element_type,
+                RustType::Tuple(_) => todo!(),
+                _ => todo!(),
+            };
+
+            // let stmts = expr_for_loop
+            //     .body
+            //     .stmts
+            //     .iter()
+            //     .flat_map(|stmt| {
+            //         handle_stmt(stmt, global_data, current_module)
+            //             .into_iter()
+            //             .map(|(stmt, type_)| stmt)
+            //     })
+            //     .collect();
+
+            // Create new scope for fn vars
+            global_data.push_new_scope(true, Vec::new());
+
+            global_data
+                .scopes
+                .last_mut()
+                .unwrap()
+                .variables
+                .push(ScopedVar {
+                    name,
+                    mut_,
+                    type_: element_type,
+                });
+
+            let (stmts, _return_type) = parse_fn_body_stmts(
+                false,
+                false,
+                false,
+                &expr_for_loop.body.stmts,
+                global_data,
+                current_module,
+            );
+
+            // pop fn scope
+            global_data.pop_scope();
+
+            (
+                JsExpr::ForLoop(pat, Box::new(iter_expr), stmts),
+                RustType::Unit,
+            )
+        }
         Expr::Group(_) => todo!(),
         Expr::If(expr_if) => {
             #[allow(clippy::all)]

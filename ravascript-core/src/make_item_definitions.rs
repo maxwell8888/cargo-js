@@ -547,7 +547,28 @@ fn populate_item_definitions_expr(
         Expr::Const(_) => {}
         Expr::Continue(_) => {}
         Expr::Field(_) => {}
-        Expr::ForLoop(_) => {}
+        Expr::ForLoop(expr_for_loop) => {
+            *scope_count += 1;
+            scope_id.push(*scope_count);
+
+            let mut scoped_various_defs = VariousDefintions::default();
+            populate_item_definitions_stmts(
+                &expr_for_loop.body.stmts,
+                // global_data,
+                module_path,
+                &mut scoped_various_defs,
+                module,
+                scope_id,
+            );
+
+            module.scoped_various_definitions.push((
+                scope_id.clone(),
+                scoped_various_defs,
+                // Vec::new(),
+            ));
+
+            scope_id.pop();
+        }
         Expr::Group(_) => {}
         Expr::If(_) => {}
         Expr::Index(_) => {}
