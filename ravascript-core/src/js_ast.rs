@@ -150,7 +150,7 @@ impl fmt::Display for Ident {
                     // TODO avoid needing to convert to String
                     .map(|ident| ident.to_string())
                     .collect::<Vec<_>>()
-                    .join(".")
+                    .join("__")
             ),
         }
     }

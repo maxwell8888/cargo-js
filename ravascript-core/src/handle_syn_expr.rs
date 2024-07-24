@@ -3413,6 +3413,11 @@ fn handle_expr_path_inner(
         js_segs[0] = "document".to_string();
     }
 
+    let mut js_segs_path = js_segs
+        .into_iter()
+        .map(|seg| Ident::String(seg))
+        .collect::<Vec<_>>();
+
     // TODO why are we converting to JS ident here? JS AST should just store namespace ident and do the join("__") at `.to_string()` time
     // TODO Surely this should be `.is_none()`?
     // if segs_copy_item_scope.is_some() {
@@ -3421,15 +3426,13 @@ fn handle_expr_path_inner(
             dup.name == segs_copy_item_path[0].ident
                 && dup.original_module_path == segs_copy_module_path
         }) {
-            js_segs[0] = dup
-                .namespace
-                .iter()
-                .map(case_convert)
-                .collect::<Vec<_>>()
-                .join("__");
+            js_segs_path[0] =
+                Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
         }
-    } else if js_segs[0] == "self" {
-        js_segs[0] = "this".to_string();
+    } else if js_segs_path[0] == Ident::Str("self")
+        || js_segs_path[0] == Ident::String("self".to_string())
+    {
+        js_segs_path[0] = Ident::Str("this");
     }
 
     // let segs = segs_copy.iter()
@@ -3437,9 +3440,7 @@ fn handle_expr_path_inner(
     let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         JsExpr::Null
     } else if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
-        JsExpr::Path(PathIdent::Path(
-            js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
-        ))
+        JsExpr::Path(PathIdent::Path(js_segs_path))
 
         // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
     } else {
@@ -3449,16 +3450,12 @@ fn handle_expr_path_inner(
             PartialRustType::RustType(rust_type) => {
                 if rust_type.is_js_primative() {
                     JsExpr::Field(
-                        Box::new(JsExpr::Path(PathIdent::Path(
-                            js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
-                        ))),
+                        Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
                         "inner".to_string(),
                     )
                 } else {
                     // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-                    JsExpr::Path(PathIdent::Path(
-                        js_segs.into_iter().map(|seg| Ident::String(seg)).collect(),
-                    ))
+                    JsExpr::Path(PathIdent::Path(js_segs_path))
                 }
             }
         }
@@ -4088,7 +4085,7 @@ pub fn handle_expr_match(
                         )),
                         JsOp::Eq,
                         Box::new(JsExpr::Path(PathIdent::Path(
-                            cond_rhs.into_iter().map(|seg| Ident::String(seg)).collect(),
+                            cond_rhs.into_iter().map(Ident::String).collect(),
                         ))),
                     )),
                     succeed: body,
