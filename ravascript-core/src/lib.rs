@@ -3806,7 +3806,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                     public: false,
                     async_: false,
                     is_method: true,
-                    name: "new".to_string(),
+                    name: Ident::Str("new"),
                     input_names: Vec::new(),
                     body_stmts: vec![JsStmt::Raw("this.vec = [];".to_string())],
                 },
@@ -3820,7 +3820,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                     public: false,
                     async_: false,
                     is_method: true,
-                    name: "push".to_string(),
+                    name: Ident::Str("push"),
                     input_names: vec!["elem".to_string()],
                     body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
                 },
@@ -4162,8 +4162,16 @@ pub fn process_items(
             let stmts = if is_block {
                 assert_eq!(stmts.len(), 1);
                 match stmts.first_mut().unwrap() {
-                    JsStmt::Function(js_fn) if js_fn.name == "temp" => &mut js_fn.body_stmts,
-                    _ => todo!(),
+                    JsStmt::Function(js_fn)
+                        if js_fn.name == Ident::Str("temp")
+                            || js_fn.name == Ident::String("temp".to_string()) =>
+                    {
+                        &mut js_fn.body_stmts
+                    }
+                    other => {
+                        dbg!(other);
+                        todo!()
+                    }
                 }
             } else {
                 &mut stmts
@@ -4315,12 +4323,17 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                             public: false,
                                             export: false,
                                             type_: LocalType::None,
-                                            lhs: LocalName::Single(js_fn.name.clone()),
+                                            lhs: LocalName::Single(match &js_fn.name {
+                                                Ident::Syn(_) => todo!(),
+                                                Ident::String(s) => s.clone(),
+                                                Ident::Str(s) => s.to_string(),
+                                                Ident::Deduped(_) => todo!(),
+                                            }),
                                             value: JsExpr::Path(PathIdent::Path(
                                                 [
                                                     Ident::String(js_impl_block.js_name()),
                                                     Ident::Str("prototype"),
-                                                    Ident::String(js_fn.name.clone()),
+                                                    js_fn.name.clone(),
                                                 ]
                                                 .to_vec(),
                                             )),

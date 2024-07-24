@@ -11,7 +11,9 @@ use crate::{
     camel, get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
-    js_ast::{Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent},
+    js_ast::{
+        Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
+    },
     js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field,
     update_item_definitions::{EnumVariantInfo, EnumVariantInputsInfo, FnInfoSyn},
     FnInfo, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric, RustImplItemItemJs,
@@ -47,7 +49,7 @@ pub fn handle_item_fn(
     };
 
     let js_name = if !at_module_top_level {
-        camel(name.clone())
+        Ident::String(camel(name.clone()))
     } else {
         let in_module_level_duplicates = global_data
             .duplicates
@@ -55,13 +57,9 @@ pub fn handle_item_fn(
             .find(|dup| dup.name == name && dup.original_module_path == current_module);
 
         if let Some(dup) = in_module_level_duplicates {
-            dup.namespace
-                .iter()
-                .map(camel)
-                .collect::<Vec<_>>()
-                .join("__")
+            Ident::Deduped(dup.namespace.iter().map(camel).collect::<Vec<_>>())
         } else {
-            camel(name.clone())
+            Ident::String(camel(name.clone()))
         }
     };
 
@@ -646,7 +644,7 @@ pub fn handle_item_enum(
             export: false,
             async_: false,
             is_method: true,
-            name: "constructor".to_string(),
+            name: Ident::Str("constructor"),
             input_names: vec!["id".to_string(), "data".to_string()],
             body_stmts,
         },
@@ -743,7 +741,7 @@ pub fn handle_item_enum(
                     export: false,
                     async_: false,
                     is_method: true,
-                    name: variant.ident.to_string(),
+                    name: Ident::Syn(variant.ident.clone()),
                     input_names,
                     body_stmts,
                 },
@@ -1175,7 +1173,7 @@ pub fn handle_impl_item_fn(
             // TODO
             async_: false,
             is_method: true,
-            name: camel(impl_item_fn.sig.ident.clone()),
+            name: Ident::String(camel(impl_item_fn.sig.ident.clone())),
             input_names: js_input_names,
             body_stmts,
         };
@@ -1868,7 +1866,7 @@ pub fn handle_item_struct(
                 export: false,
                 async_: false,
                 is_method: true,
-                name: "copy".to_string(),
+                name: Ident::Str("copy"),
                 input_names: Vec::new(),
                 body_stmts: vec![stmt],
             },
@@ -1888,7 +1886,7 @@ pub fn handle_item_struct(
                 export: false,
                 async_: false,
                 is_method: true,
-                name: "eq".to_string(),
+                name: Ident::Str("eq"),
                 input_names: vec!["other".to_string()],
                 body_stmts: vec![stmt],
             },
@@ -2136,7 +2134,7 @@ pub fn handle_item_trait(
                         export: false,
                         async_: false,
                         is_method: true,
-                        name: camel(trait_item_fn.sig.ident.to_string()),
+                        name: Ident::String(camel(trait_item_fn.sig.ident.to_string())),
                         input_names: trait_item_fn
                             .sig
                             .inputs

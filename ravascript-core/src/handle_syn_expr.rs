@@ -1952,7 +1952,7 @@ fn handle_expr_method_call(
                                     export: false,
                                     async_: false,
                                     is_method: false,
-                                    name: "jsonParse".to_string(),
+                                    name: Ident::Str("jsonParse"),
                                     input_names: vec!["text".to_string()],
                                     body_stmts: vec![JsStmt::Raw(body)],
                                 })))),

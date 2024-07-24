@@ -834,7 +834,7 @@ pub struct JsFn {
     pub async_: bool,
     pub is_method: bool,
     // Camel case?
-    pub name: String,
+    pub name: Ident,
     pub input_names: Vec<String>,
     pub body_stmts: Vec<JsStmt>,
 }
