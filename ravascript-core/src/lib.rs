@@ -4,7 +4,7 @@
 // #![allow(unused_mut)]
 // #![allow(unused_imports)]
 
-use biome_formatter::IndentStyle;
+use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
@@ -5869,7 +5869,7 @@ pub fn format_js(js: impl ToString) -> String {
     let parse = biome_js_parser::parse_script(js.to_string().as_str(), JsParserOptions::default());
     let stmt = parse.syntax().children().nth(1).unwrap();
     let opts = JsFormatOptions::new(JsFileSource::default())
-        // .with_indent_width(IndentWidth::from(1))
+        .with_indent_width(IndentWidth::from(4))
         .with_indent_style(IndentStyle::Space);
     let formatted_js = biome_formatter::format_node(&stmt, JsFormatLanguage::new(opts)).unwrap();
     formatted_js.print().unwrap().as_code().to_string()

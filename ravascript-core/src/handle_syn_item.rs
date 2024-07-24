@@ -781,7 +781,7 @@ pub fn handle_item_enum(
         class_name = dup
             .namespace
             .iter()
-            .map(camel)
+            .map(case_convert)
             .collect::<Vec<_>>()
             .join("__");
     }

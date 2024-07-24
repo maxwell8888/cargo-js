@@ -323,3 +323,57 @@ async fn const_duplicate_name() {
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[tokio::test]
+async fn enum_duplicate_name() {
+    let actual = r2j_file_run_main!(
+        enum Foo {
+            Bar,
+        }
+        mod foo {
+            pub enum Foo {
+                Bar,
+            }
+        }
+        fn main() {
+            let foo = Foo::Bar;
+            let foo2 = foo::Foo::Bar;
+            // TODO add support for PartialEq or matches!
+            // assert!(foo == Foo::Bar);
+            // assert!(matches!(foo2, foo::Foo::Bar));
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            class Foo {
+                static barId = "Bar";
+                static Bar = new Foo("Bar", null);
+                constructor(id, data) {
+                    this.id = id;
+                    this.data = data;
+                }
+            }
+            function main() {
+                let foo = Foo.Bar;
+                let foo2 = foo__Foo.Bar;
+            }
+
+            // foo
+            class foo__Foo {
+                static barId = "Bar";
+                static Bar = new Foo("Bar", null);
+                constructor(id, data) {
+                    this.id = id;
+                    this.data = data;
+                }
+            }
+
+            main();
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}

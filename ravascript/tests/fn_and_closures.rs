@@ -74,9 +74,13 @@ async fn function_body_returns_and_async() {
             5;
         };
     });
-    let expected = "let _closure = () => {
-  5;
-};";
+    let expected = format_js(
+        "
+            let _closure = () => {
+                5;
+            };
+        ",
+    );
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
