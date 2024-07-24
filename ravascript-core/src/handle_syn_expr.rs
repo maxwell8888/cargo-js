@@ -1277,7 +1277,7 @@ fn handle_expr_closure(
                 public: false,
                 export: false,
                 type_: LocalType::Var,
-                lhs: LocalName::Single(input_name.clone()),
+                lhs: LocalName::Single(Ident::String(input_name.clone())),
                 // value: JsExpr::MethodCall(
                 //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
                 //     "copy".to_string(),
@@ -1940,8 +1940,7 @@ fn handle_expr_method_call(
         if path.len() == 2 {
             match path {
                 PathIdent::PathTwo(path) => {
-                    // TODO impl PartialEq for str or remove this
-                    if path[0] == Ident::Str("JSON") && path[1] == Ident::Str("parse") {
+                    if path[0] == "JSON" && path[1] == "parse" {
                         // function parse(text) {try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }}
                         let body = "try { return Result.Ok(JSON.parse(text)); } catch(err) { return Result.Err(err) }".to_string();
                         return (
@@ -3429,9 +3428,7 @@ fn handle_expr_path_inner(
             js_segs_path[0] =
                 Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
         }
-    } else if js_segs_path[0] == Ident::Str("self")
-        || js_segs_path[0] == Ident::String("self".to_string())
-    {
+    } else if js_segs_path[0] == "self" {
         js_segs_path[0] = Ident::Str("this");
     }
 
@@ -3506,7 +3503,7 @@ fn handle_match_pat(
                 .fields
                 .iter()
                 .map(|field| match &field.member {
-                    Member::Named(ident) => DestructureValue::KeyName(ident.to_string()),
+                    Member::Named(ident) => DestructureValue::KeyName(Ident::Syn(ident.clone())),
                     Member::Unnamed(_) => todo!(),
                 })
                 .collect::<Vec<_>>();
@@ -4076,7 +4073,7 @@ pub fn handle_expr_match(
             (
                 JsExpr::If(JsIf {
                     assignment: is_returned
-                        .then_some(LocalName::Single("ifTempAssignment".to_string())),
+                        .then_some(LocalName::Single(Ident::Str("ifTempAssignment"))),
                     declare_var: is_returned,
                     condition: Box::new(JsExpr::Binary(
                         Box::new(JsExpr::Field(

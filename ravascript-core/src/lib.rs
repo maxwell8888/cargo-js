@@ -83,9 +83,12 @@ fn handle_destructure_pat(
                 Member::Unnamed(_) => todo!(),
             };
             if member == pat_ident {
-                DestructureValue::KeyName(camel(member))
+                DestructureValue::KeyName(Ident::String(camel(member)))
             } else {
-                DestructureValue::Rename(camel(member), camel(pat_ident))
+                DestructureValue::Rename(
+                    Ident::String(camel(member)),
+                    Ident::String(camel(pat_ident)),
+                )
             }
         }
         Pat::Lit(_) => todo!(),
@@ -126,7 +129,7 @@ fn handle_destructure_pat(
                 })
                 .collect::<Vec<_>>();
 
-            DestructureValue::Nesting(camel(member), DestructureObject(fields))
+            DestructureValue::Nesting(Ident::String(camel(member)), DestructureObject(fields))
         }
         Pat::Tuple(_) => todo!(),
         Pat::TupleStruct(_) => todo!(),
@@ -151,7 +154,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 mut_: pat_ident.mutability.is_some(),
                 type_: current_type,
             });
-            LocalName::Single(camel(&pat_ident.ident))
+            LocalName::Single(Ident::String(camel(&pat_ident.ident)))
         }
         Pat::Lit(_) => todo!(),
         Pat::Macro(_) => todo!(),
@@ -230,7 +233,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
         // for `let _ = foo();` the lhs will be `Pat::Wild`
         Pat::Wild(_) => {
             // "in expressions, `_` can only be used on the left-hand side of an assignment" So we don't need to add _ to scope.vars
-            LocalName::Single("_".to_string())
+            LocalName::Single(Ident::Str("_"))
         }
         other => {
             dbg!(other);
@@ -4162,12 +4165,7 @@ pub fn process_items(
             let stmts = if is_block {
                 assert_eq!(stmts.len(), 1);
                 match stmts.first_mut().unwrap() {
-                    JsStmt::Function(js_fn)
-                        if js_fn.name == Ident::Str("temp")
-                            || js_fn.name == Ident::String("temp".to_string()) =>
-                    {
-                        &mut js_fn.body_stmts
-                    }
+                    JsStmt::Function(js_fn) if js_fn.name == "temp" => &mut js_fn.body_stmts,
                     other => {
                         dbg!(other);
                         todo!()
@@ -4323,12 +4321,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                                             public: false,
                                             export: false,
                                             type_: LocalType::None,
-                                            lhs: LocalName::Single(match &js_fn.name {
-                                                Ident::Syn(_) => todo!(),
-                                                Ident::String(s) => s.clone(),
-                                                Ident::Str(s) => s.to_string(),
-                                                Ident::Deduped(_) => todo!(),
-                                            }),
+                                            lhs: LocalName::Single(js_fn.name.clone()),
                                             value: JsExpr::Path(PathIdent::Path(
                                                 [
                                                     Ident::String(js_impl_block.js_name()),
@@ -4785,9 +4778,9 @@ fn parse_fn_body_stmts(
                             });
                             let stmt = JsStmt::Expr(
                                 JsExpr::If(JsIf {
-                                    assignment: Some(LocalName::Single(
-                                        "ifTempAssignment".to_string(),
-                                    )),
+                                    assignment: Some(LocalName::Single(Ident::Str(
+                                        "ifTempAssignment",
+                                    ))),
                                     declare_var: true,
                                     condition,
                                     succeed: expr_if

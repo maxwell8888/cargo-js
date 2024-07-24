@@ -256,7 +256,7 @@ pub fn handle_item_fn(
                             public: false,
                             export: false,
                             type_: LocalType::None,
-                            lhs: LocalName::Single(pat_ident.ident.to_string()),
+                            lhs: LocalName::Single(Ident::Syn(pat_ident.ident.clone())),
                             // value: JsExpr::MethodCall(
                             //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
                             //     "copy".to_string(),
@@ -383,7 +383,7 @@ pub fn handle_item_const(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
-    let mut name = item_const.ident.to_string();
+    let mut name = Ident::Syn(item_const.ident.clone());
     debug!(name = ?name, "handle_item_const");
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
@@ -428,14 +428,9 @@ pub fn handle_item_const(
     if let Some(dup) = global_data
         .duplicates
         .iter()
-        .find(|dup| dup.name == name && dup.original_module_path == *current_module)
+        .find(|dup| name == dup.name && dup.original_module_path == *current_module)
     {
-        name = dup
-            .namespace
-            .iter()
-            .map(case_convert)
-            .collect::<Vec<_>>()
-            .join("__");
+        name = Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
     }
     JsStmt::Local(JsLocal {
         export: false,
@@ -588,7 +583,7 @@ pub fn handle_item_enum(
             public: false,
             export: false,
             type_: LocalType::Static,
-            lhs: LocalName::Single(format!("{}Id", camel(&variant.ident))),
+            lhs: LocalName::Single(Ident::String(format!("{}Id", camel(&variant.ident)))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
 
@@ -600,7 +595,9 @@ pub fn handle_item_enum(
                     public: false,
                     export: false,
                     type_: LocalType::Static,
-                    lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
+                    lhs: LocalName::Single(Ident::String(
+                        AsPascalCase(variant.ident.to_string()).to_string(),
+                    )),
                     value: JsExpr::New(
                         item_enum.ident.clone().into(),
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
@@ -656,7 +653,7 @@ pub fn handle_item_enum(
             public: false,
             export: false,
             type_: LocalType::Static,
-            lhs: LocalName::Single(format!("{}Id", camel(&variant.ident))),
+            lhs: LocalName::Single(Ident::String(format!("{}Id", camel(&variant.ident)))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
 
@@ -668,7 +665,9 @@ pub fn handle_item_enum(
                     public: false,
                     export: false,
                     type_: LocalType::Static,
-                    lhs: LocalName::Single(AsPascalCase(variant.ident.to_string()).to_string()),
+                    lhs: LocalName::Single(Ident::String(
+                        AsPascalCase(variant.ident.to_string()).to_string(),
+                    )),
                     value: JsExpr::New(
                         item_enum.ident.clone().into(),
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
@@ -1388,7 +1387,7 @@ pub fn handle_item_impl(
                     public: false,
                     export: false,
                     type_: LocalType::Static,
-                    lhs: LocalName::Single(impl_item_const.ident.to_string()),
+                    lhs: LocalName::Single(Ident::Syn(impl_item_const.ident.clone())),
                     value: handle_expr(&impl_item_const.expr, global_data, current_module_path).0,
                 };
 

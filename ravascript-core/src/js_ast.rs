@@ -129,12 +129,33 @@ pub enum JsExpr {
     CatchBlock(String, Vec<JsStmt>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+// #[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Ident {
     Syn(syn::Ident),
     String(String),
     Str(&'static str),
     Deduped(Vec<String>),
+}
+impl PartialEq<String> for Ident {
+    fn eq(&self, other: &String) -> bool {
+        match self {
+            Ident::Syn(ident) => ident == other,
+            Ident::String(ident) => ident == other,
+            Ident::Str(ident) => ident == other,
+            Ident::Deduped(_idents) => todo!(),
+        }
+    }
+}
+impl PartialEq<&'static str> for Ident {
+    fn eq(&self, other: &&'static str) -> bool {
+        match self {
+            Ident::Syn(ident) => ident == other,
+            Ident::String(ident) => ident == other,
+            Ident::Str(ident) => ident == other,
+            Ident::Deduped(_idents) => todo!(),
+        }
+    }
 }
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -740,11 +761,11 @@ pub enum LocalType {
 #[derive(Clone, Debug)]
 pub enum DestructureValue {
     /// A simple destructure like `var { a } = obj;`
-    KeyName(String),
+    KeyName(Ident),
     /// A rename destructure like `var { a: b } = obj;`
-    Rename(String, String),
+    Rename(Ident, Ident),
     /// A nested destructure like `var { a: { b } } = obj;`
-    Nesting(String, DestructureObject),
+    Nesting(Ident, DestructureObject),
 }
 impl DestructureValue {
     // fn js_string(&self) -> String {}
@@ -775,7 +796,7 @@ impl fmt::Display for DestructureObject {
 
 #[derive(Clone, Debug)]
 pub enum LocalName {
-    Single(String),
+    Single(Ident),
     DestructureObject(DestructureObject),
     DestructureArray(Vec<LocalName>),
 }

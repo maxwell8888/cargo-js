@@ -356,7 +356,7 @@ fn handle_local(
                 JsStmt::Expr(
                     JsExpr::Assignment(
                         Box::new(match lhs {
-                            LocalName::Single(name) => JsExpr::Path(PathIdent::Single(Ident::String(name))),
+                            LocalName::Single(name) => JsExpr::Path(PathIdent::Single(name)),
                             LocalName::DestructureObject(_) => todo!(),
                             LocalName::DestructureArray(_) => todo!(),
                         }),
