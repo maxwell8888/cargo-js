@@ -102,7 +102,7 @@ fn handle_expr_assign(
     // let is_lhs_mut = scoped_var.unwrap().mut_;
 
     if !lhs_is_mut_ref && rhs_is_mut_ref {
-        rhs_expr = JsExpr::Field(Box::new(rhs_expr), "inner".to_string());
+        rhs_expr = JsExpr::Field(Box::new(rhs_expr), Ident::Str("inner"));
     }
     JsExpr::Assignment(Box::new(lhs_expr), Box::new(rhs_expr))
 
@@ -549,7 +549,10 @@ pub fn handle_expr(
                         }
                     }
                     let field_type = get_field_type(base_type, global_data, ident);
-                    (JsExpr::Field(Box::new(base_expr), camel(ident)), field_type)
+                    (
+                        JsExpr::Field(Box::new(base_expr), Ident::Syn(ident.clone())),
+                        field_type,
+                    )
                 }
                 Member::Unnamed(index) => {
                     fn get_unnamed_field_type(
@@ -968,7 +971,7 @@ pub fn handle_expr(
                                 _ => false,
                             };
                             if !field_is_mut && arg_is_mut {
-                                JsExpr::Field(Box::new(js_expr), "inner".to_string())
+                                JsExpr::Field(Box::new(js_expr), Ident::Str("inner"))
                             } else {
                                 js_expr
                             }
@@ -1091,7 +1094,7 @@ pub fn handle_expr(
                         };
 
                         let new_expr = if add_inner {
-                            JsExpr::Field(Box::new(expr), "inner".to_string())
+                            JsExpr::Field(Box::new(expr), Ident::Str("inner"))
                         } else {
                             expr
                         };
@@ -1450,7 +1453,7 @@ pub fn handle_expr_and_stmt_macro(
                     Box::new(JsExpr::Paren(Box::new(
                         handle_expr(&condition_expr, global_data, current_module).0,
                     ))),
-                    "jsBoolean".to_string(),
+                    Ident::Str("jsBoolean"),
                 )
             } else {
                 handle_expr(&condition_expr, global_data, current_module).0
@@ -1557,7 +1560,7 @@ pub fn handle_expr_and_stmt_macro(
             if bool_is_mut {
                 equality_check = JsExpr::Field(
                     Box::new(JsExpr::Paren(Box::new(equality_check))),
-                    "jsBoolean".to_string(),
+                    Ident::Str("jsBoolean"),
                 );
             }
             return (
@@ -1876,7 +1879,7 @@ fn handle_expr_method_call(
             // If receiver var has a RustString wrapper ie is `mut`, then take the inner
             if receiver_is_mut_var {
                 return (
-                    JsExpr::Field(Box::new(receiver.clone()), "inner".to_string()),
+                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
                     RustType::String,
                 );
             } else {
@@ -1905,7 +1908,7 @@ fn handle_expr_method_call(
             if method_name == "to_string" || method_name == "clone" {
                 // Receiver is &mut so has a RustString wrapper so take the inner
                 return (
-                    JsExpr::Field(Box::new(receiver.clone()), "inner".to_string()),
+                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
                     RustType::String,
                 );
             } else if method_name == "push_str" {
@@ -1995,7 +1998,7 @@ fn handle_expr_method_call(
     }
     if method_name == "length" {
         return (
-            JsExpr::Field(Box::new(receiver), "length".to_string()),
+            JsExpr::Field(Box::new(receiver), Ident::Str("length")),
             RustType::I32,
         );
     }
@@ -3440,7 +3443,7 @@ fn handle_expr_path_inner(
                 if rust_type.is_js_primative() {
                     JsExpr::Field(
                         Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
-                        "inner".to_string(),
+                        Ident::Str("inner"),
                     )
                 } else {
                     // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
@@ -3576,7 +3579,7 @@ fn handle_match_pat(
                 lhs: LocalName::DestructureObject(DestructureObject(names)),
                 value: JsExpr::Field(
                     Box::new(handle_expr(&expr_match.expr, global_data, current_module).0),
-                    "data".to_string(),
+                    Ident::Str("data"),
                 ),
             });
             let rhs = pat_struct
@@ -3763,7 +3766,7 @@ fn handle_match_pat(
                     lhs: LocalName::DestructureArray(names),
                     value: JsExpr::Field(
                         Box::new(handle_expr(&expr_match.expr, global_data, current_module).0),
-                        "data".to_string(),
+                        Ident::Str("data"),
                     ),
                 })
             };
@@ -4070,7 +4073,7 @@ pub fn handle_expr_match(
                     condition: Box::new(JsExpr::Binary(
                         Box::new(JsExpr::Field(
                             Box::new(match_condition_expr.clone()),
-                            "id".to_string(),
+                            Ident::Str("id"),
                         )),
                         JsOp::Eq,
                         Box::new(JsExpr::Path(PathIdent::Path(

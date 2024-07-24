@@ -4834,7 +4834,7 @@ fn parse_fn_body_stmts(
                             .unwrap();
                         let mut js_var = JsExpr::Path(PathIdent::Single(Ident::String(var_name)));
                         if var_info.mut_ {
-                            js_var = JsExpr::Field(Box::new(js_var), "inner".to_string())
+                            js_var = JsExpr::Field(Box::new(js_var), Ident::Str("inner"))
                         }
                         let stmt = JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true);
                         // Lookup path to get return type
@@ -4877,7 +4877,7 @@ fn parse_fn_body_stmts(
                             if returns_non_mut_ref_val
                                 && (is_js_primative_mut_var || is_js_primative_mut_ref)
                             {
-                                js_expr = JsExpr::Field(Box::new(js_expr), "inner".to_string());
+                                js_expr = JsExpr::Field(Box::new(js_expr), Ident::Str("inner"));
                             }
 
                             let return_expr =

@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_names)]
+
 mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
@@ -371,6 +373,33 @@ async fn enum_duplicate_name() {
             }
 
             main();
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// Case conversion
+#[tokio::test]
+async fn field_case_convert() {
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            foo_bar: i32,
+        }
+        let foo = Foo { foo_bar: 1 };
+        assert!(foo.foo_bar == 1);
+    });
+
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(fooBar) {
+                    this.fooBar = fooBar;
+                }
+            }
+            let foo = new Foo(1);
+            console.assert(foo.fooBar === 1);
         "#,
     );
 

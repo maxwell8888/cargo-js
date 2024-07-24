@@ -87,7 +87,7 @@ pub enum JsExpr {
     /// use const for immutatble, let for mutable, var for shadowing
     Declaration(bool, String, Box<JsExpr>),
     /// (base expr, field name)
-    Field(Box<JsExpr>, String),
+    Field(Box<JsExpr>, Ident),
     Fn(JsFn),
     /// (name, args)
     FnCall(Box<JsExpr>, Vec<JsExpr>),
@@ -128,164 +128,6 @@ pub enum JsExpr {
     TryBlock(Vec<JsStmt>),
     CatchBlock(String, Vec<JsStmt>),
 }
-
-// #[derive(Clone, Debug, PartialEq)]
-#[derive(Clone, Debug)]
-pub enum Ident {
-    Syn(syn::Ident),
-    String(String),
-    Str(&'static str),
-    Deduped(Vec<String>),
-    // TODO this should be a wrapper or something rather than a variant so we can use str or String or syn::Ident
-    NoConversion(String),
-}
-impl PartialEq<String> for Ident {
-    fn eq(&self, other: &String) -> bool {
-        match self {
-            Ident::Syn(ident) => ident == other,
-            Ident::String(ident) => ident == other,
-            Ident::Str(ident) => ident == other,
-            Ident::Deduped(_idents) => todo!(),
-            Ident::NoConversion(ident) => ident == other,
-        }
-    }
-}
-impl PartialEq<&'static str> for Ident {
-    fn eq(&self, other: &&'static str) -> bool {
-        match self {
-            Ident::Syn(ident) => ident == other,
-            Ident::String(ident) => ident == other,
-            Ident::Str(ident) => ident == other,
-            Ident::Deduped(_idents) => todo!(),
-            Ident::NoConversion(ident) => ident == other,
-        }
-    }
-}
-impl fmt::Display for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Ident::Syn(ident) => write!(f, "{}", case_convert(ident)),
-            Ident::String(ident) => write!(f, "{}", case_convert(ident)),
-            Ident::Str(ident) => write!(f, "{}", case_convert(ident)),
-            Ident::Deduped(idents) => write!(
-                f,
-                "{}",
-                idents
-                    .iter()
-                    // TODO avoid needing to convert to String
-                    .map(|ident| case_convert(ident))
-                    .collect::<Vec<_>>()
-                    .join("__")
-            ),
-            Ident::NoConversion(ident) => write!(f, "{ident}"),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum PathIdent {
-    Single(Ident),
-    Path(Vec<Ident>),
-    // TODO support using arrays instead of Vec for known size paths, to avoid allocations
-    PathTwo([Ident; 2]),
-}
-impl From<&'static str> for PathIdent {
-    fn from(value: &'static str) -> Self {
-        PathIdent::Single(Ident::Str(value))
-    }
-}
-impl From<syn::Ident> for PathIdent {
-    fn from(value: syn::Ident) -> Self {
-        PathIdent::Single(Ident::Syn(value))
-    }
-}
-
-impl PathIdent {
-    pub fn len(&self) -> usize {
-        match self {
-            PathIdent::Single(_) => 1,
-            PathIdent::Path(idents) => idents.len(),
-            PathIdent::PathTwo(_) => 2,
-        }
-    }
-}
-
-impl fmt::Display for PathIdent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PathIdent::Single(ident) => write!(f, "{ident}"),
-            PathIdent::Path(idents) => write!(
-                f,
-                "{}",
-                idents
-                    .iter()
-                    // TODO avoid needing to convert to String
-                    .map(|ident| ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join(".")
-            ),
-            PathIdent::PathTwo(idents) => write!(f, "{}.{}", idents[0], idents[1]),
-        }
-    }
-}
-
-// impl fmt::Display for Transfer {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         let Transfer {
-//             source_owner,
-//             destination_owner,
-//             formatted_amount,
-//         } = self;
-//         write!(
-//             f,
-//             "TX detected: {source_owner} sent {formatted_amount} USDC to {destination_owner}"
-//         )
-//     }
-// }
-
-// fn fmt_join<T: fmt::Display, Seperator: fmt::Display>(
-//     f: &mut fmt::Formatter<'_>,
-//     slice: &[T],
-//     sep: Seperator,
-// ) -> fmt::Result {
-//     for (i, item) in slice.iter().enumerate() {
-//         write!(f, "{item}")?;
-//         if i != slice.len() - 1 {
-//             write!(f, "{sep}")?;
-//         }
-//     }
-//     Ok(())
-// }
-
-pub trait FmtExtensions<'a, T: fmt::Display, Seperator: fmt::Display> {
-    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator>;
-}
-pub struct DisplayIter<'a, T: fmt::Display, Seperator: fmt::Display> {
-    slice: &'a [T],
-    sep: Seperator,
-}
-impl<'a, T: fmt::Display, Seperator: fmt::Display> fmt::Display for DisplayIter<'a, T, Seperator> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, item) in self.slice.iter().enumerate() {
-            write!(f, "{item}")?;
-            if i != self.slice.len() - 1 {
-                write!(f, "{}", self.sep)?;
-            }
-        }
-        Ok(())
-    }
-}
-impl<'a, T: fmt::Display, Seperator: fmt::Display> FmtExtensions<'a, T, Seperator> for &[T] {
-    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator> {
-        DisplayIter { slice: self, sep }
-    }
-}
-impl<'a, T: fmt::Display, Seperator: fmt::Display> FmtExtensions<'a, T, Seperator> for Vec<T> {
-    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator> {
-        DisplayIter { slice: self, sep }
-    }
-}
-
 impl fmt::Display for JsExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -543,6 +385,163 @@ impl fmt::Display for JsExpr {
                 )
             }
         }
+    }
+}
+
+// #[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+pub enum Ident {
+    Syn(syn::Ident),
+    String(String),
+    Str(&'static str),
+    Deduped(Vec<String>),
+    // TODO this should be a wrapper or something rather than a variant so we can use str or String or syn::Ident
+    NoConversion(String),
+}
+impl PartialEq<String> for Ident {
+    fn eq(&self, other: &String) -> bool {
+        match self {
+            Ident::Syn(ident) => ident == other,
+            Ident::String(ident) => ident == other,
+            Ident::Str(ident) => ident == other,
+            Ident::Deduped(_idents) => todo!(),
+            Ident::NoConversion(ident) => ident == other,
+        }
+    }
+}
+impl PartialEq<&'static str> for Ident {
+    fn eq(&self, other: &&'static str) -> bool {
+        match self {
+            Ident::Syn(ident) => ident == other,
+            Ident::String(ident) => ident == other,
+            Ident::Str(ident) => ident == other,
+            Ident::Deduped(_idents) => todo!(),
+            Ident::NoConversion(ident) => ident == other,
+        }
+    }
+}
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ident::Syn(ident) => write!(f, "{}", case_convert(ident)),
+            Ident::String(ident) => write!(f, "{}", case_convert(ident)),
+            Ident::Str(ident) => write!(f, "{}", case_convert(ident)),
+            Ident::Deduped(idents) => write!(
+                f,
+                "{}",
+                idents
+                    .iter()
+                    // TODO avoid needing to convert to String
+                    .map(|ident| case_convert(ident))
+                    .collect::<Vec<_>>()
+                    .join("__")
+            ),
+            Ident::NoConversion(ident) => write!(f, "{ident}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PathIdent {
+    Single(Ident),
+    Path(Vec<Ident>),
+    // TODO support using arrays instead of Vec for known size paths, to avoid allocations
+    PathTwo([Ident; 2]),
+}
+impl From<&'static str> for PathIdent {
+    fn from(value: &'static str) -> Self {
+        PathIdent::Single(Ident::Str(value))
+    }
+}
+impl From<syn::Ident> for PathIdent {
+    fn from(value: syn::Ident) -> Self {
+        PathIdent::Single(Ident::Syn(value))
+    }
+}
+
+impl PathIdent {
+    pub fn len(&self) -> usize {
+        match self {
+            PathIdent::Single(_) => 1,
+            PathIdent::Path(idents) => idents.len(),
+            PathIdent::PathTwo(_) => 2,
+        }
+    }
+}
+
+impl fmt::Display for PathIdent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathIdent::Single(ident) => write!(f, "{ident}"),
+            PathIdent::Path(idents) => write!(
+                f,
+                "{}",
+                idents
+                    .iter()
+                    // TODO avoid needing to convert to String
+                    .map(|ident| ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            ),
+            PathIdent::PathTwo(idents) => write!(f, "{}.{}", idents[0], idents[1]),
+        }
+    }
+}
+
+// impl fmt::Display for Transfer {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         let Transfer {
+//             source_owner,
+//             destination_owner,
+//             formatted_amount,
+//         } = self;
+//         write!(
+//             f,
+//             "TX detected: {source_owner} sent {formatted_amount} USDC to {destination_owner}"
+//         )
+//     }
+// }
+
+// fn fmt_join<T: fmt::Display, Seperator: fmt::Display>(
+//     f: &mut fmt::Formatter<'_>,
+//     slice: &[T],
+//     sep: Seperator,
+// ) -> fmt::Result {
+//     for (i, item) in slice.iter().enumerate() {
+//         write!(f, "{item}")?;
+//         if i != slice.len() - 1 {
+//             write!(f, "{sep}")?;
+//         }
+//     }
+//     Ok(())
+// }
+
+pub trait FmtExtensions<'a, T: fmt::Display, Seperator: fmt::Display> {
+    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator>;
+}
+pub struct DisplayIter<'a, T: fmt::Display, Seperator: fmt::Display> {
+    slice: &'a [T],
+    sep: Seperator,
+}
+impl<'a, T: fmt::Display, Seperator: fmt::Display> fmt::Display for DisplayIter<'a, T, Seperator> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, item) in self.slice.iter().enumerate() {
+            write!(f, "{item}")?;
+            if i != self.slice.len() - 1 {
+                write!(f, "{}", self.sep)?;
+            }
+        }
+        Ok(())
+    }
+}
+impl<'a, T: fmt::Display, Seperator: fmt::Display> FmtExtensions<'a, T, Seperator> for &[T] {
+    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator> {
+        DisplayIter { slice: self, sep }
+    }
+}
+impl<'a, T: fmt::Display, Seperator: fmt::Display> FmtExtensions<'a, T, Seperator> for Vec<T> {
+    fn fmt_join(&'a self, sep: Seperator) -> DisplayIter<'a, T, Seperator> {
+        DisplayIter { slice: self, sep }
     }
 }
 
