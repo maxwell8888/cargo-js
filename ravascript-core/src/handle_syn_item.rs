@@ -1887,7 +1887,7 @@ pub fn handle_item_struct(
         ));
     }
 
-    let mut js_name = name.clone();
+    let mut js_name = Ident::Syn(item_struct.ident.clone());
     // dbg!(&global_data.duplicates);
     // dbg!(&name);
     // dbg!(&current_module_path);
@@ -1897,19 +1897,19 @@ pub fn handle_item_struct(
             .iter()
             .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
         {
-            js_name = dup
-                .namespace
-                .iter()
-                .enumerate()
-                .map(|(i, seg)| {
-                    if i == dup.namespace.len() - 1 {
-                        seg.clone()
-                    } else {
-                        camel(seg)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("__");
+            js_name = Ident::Deduped(
+                dup.namespace
+                    .iter()
+                    .enumerate()
+                    .map(|(i, seg)| {
+                        if i == dup.namespace.len() - 1 {
+                            seg.clone()
+                        } else {
+                            camel(seg)
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
         }
     }
     // dbg!(&js_name);
@@ -1941,7 +1941,7 @@ pub fn handle_item_struct(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name: Ident::String(js_name),
+        name: js_name,
         tuple_struct,
         inputs,
         static_fields,
