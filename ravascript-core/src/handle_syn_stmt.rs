@@ -297,7 +297,7 @@ fn handle_local(
     // };
     // if rhs_should_add_copy || rhs_should_add_copy2 {
     if rhs_should_add_copy {
-        rhs_expr = JsExpr::MethodCall(Box::new(rhs_expr), "copy".to_string(), Vec::new());
+        rhs_expr = JsExpr::MethodCall(Box::new(rhs_expr), Ident::Str("copy"), Vec::new());
     }
 
     if lhs_is_mut && rhs_type.is_js_primative() {

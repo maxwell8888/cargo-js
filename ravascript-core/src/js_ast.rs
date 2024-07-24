@@ -104,7 +104,7 @@ pub enum JsExpr {
     LitBool(bool),
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
-    MethodCall(Box<JsExpr>, String, Vec<JsExpr>),
+    MethodCall(Box<JsExpr>, Ident, Vec<JsExpr>),
     Minus(Box<JsExpr>),
     /// (Class path, args)
     New(PathIdent, Vec<JsExpr>),
@@ -406,7 +406,7 @@ impl fmt::Display for JsExpr {
                 write!(
                     f,
                     "{receiver_name}.{}({})",
-                    method_name,
+                    camel(method_name),
                     args.fmt_join(", ")
                 )
             }

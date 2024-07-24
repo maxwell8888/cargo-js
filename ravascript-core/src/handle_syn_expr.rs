@@ -482,7 +482,7 @@ pub fn handle_expr(
                 JsExpr::Binary(Box::new(lhs_expr), js_op, Box::new(rhs_expr))
             } else {
                 let lhs = Box::new(JsExpr::Paren(Box::new(lhs_expr)));
-                JsExpr::MethodCall(lhs, camel(method_name), vec![rhs_expr])
+                JsExpr::MethodCall(lhs, Ident::Str(method_name), vec![rhs_expr])
             };
             (expr, type_)
         }
@@ -896,7 +896,7 @@ pub fn handle_expr(
                         UnOp::Deref(_) => {
                             let (expr, type_) = handle_expr(expr, global_data, current_module);
                             (
-                                JsExpr::MethodCall(Box::new(expr), "copy".to_string(), Vec::new()),
+                                JsExpr::MethodCall(Box::new(expr), Ident::Str("copy"), Vec::new()),
                                 type_,
                             )
                         }
@@ -1294,7 +1294,7 @@ fn handle_expr_closure(
                                 Box::new(JsExpr::Path(PathIdent::Single(Ident::String(
                                     input_name,
                                 )))),
-                                "inner".to_string(),
+                                Ident::Str("inner"),
                                 Vec::new(),
                             )],
                         )
@@ -1460,7 +1460,7 @@ pub fn handle_expr_and_stmt_macro(
             return (
                 JsExpr::MethodCall(
                     Box::new(JsExpr::Path(PathIdent::Single(Ident::Str("console")))),
-                    "assert".to_string(),
+                    Ident::Str("assert"),
                     vec![condition_js],
                 ),
                 RustType::Unit,
@@ -1547,7 +1547,7 @@ pub fn handle_expr_and_stmt_macro(
             let mut equality_check = if !lhs_is_primative || lhs_is_mut || lhs_is_mut_ref {
                 // global_data.rust_prelude_types.number_prototype_extensions = true;
                 // global_data.rust_prelude_types.string_prototype_extensions = true;
-                JsExpr::MethodCall(Box::new(lhs.0), "eq".to_string(), vec![rhs.0])
+                JsExpr::MethodCall(Box::new(lhs.0), Ident::Str("eq"), vec![rhs.0])
             } else {
                 JsExpr::Binary(Box::new(lhs.0), JsOp::Eq, Box::new(rhs.0))
             };
@@ -1563,7 +1563,7 @@ pub fn handle_expr_and_stmt_macro(
             return (
                 JsExpr::MethodCall(
                     Box::new(JsExpr::Path(PathIdent::Single(Ident::Str("console")))),
-                    "assert".to_string(),
+                    Ident::Str("assert"),
                     vec![equality_check],
                 ),
                 RustType::Unit,
@@ -2044,7 +2044,11 @@ fn handle_expr_method_call(
         receiver
     };
     (
-        JsExpr::MethodCall(Box::new(receiver), camel(method_name), args_js_exprs),
+        JsExpr::MethodCall(
+            Box::new(receiver),
+            Ident::Syn(expr_method_call.method.clone()),
+            args_js_exprs,
+        ),
         method_return_type,
     )
 }
