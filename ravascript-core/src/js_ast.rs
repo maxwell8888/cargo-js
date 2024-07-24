@@ -705,7 +705,7 @@ pub struct JsClass {
     pub export: bool,
     pub tuple_struct: bool,
     // This should be camel cased because it is too late to get the deduped "fully qualified" name at this point
-    pub name: String,
+    pub name: Ident,
     /// we are assuming input names is equivalent to field names
     pub inputs: Vec<String>,
     pub static_fields: Vec<JsLocal>,

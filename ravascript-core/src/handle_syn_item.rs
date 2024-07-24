@@ -608,7 +608,7 @@ pub fn handle_item_enum(
         };
     }
 
-    let mut class_name = item_enum.ident.to_string();
+    let mut class_name = Ident::Syn(item_enum.ident.clone());
 
     let mut methods = Vec::new();
     let body_stmts = vec![
@@ -776,14 +776,9 @@ pub fn handle_item_enum(
     if let Some(dup) = global_data
         .duplicates
         .iter()
-        .find(|dup| dup.name == class_name && dup.original_module_path == current_module)
+        .find(|dup| class_name == dup.name && dup.original_module_path == current_module)
     {
-        class_name = dup
-            .namespace
-            .iter()
-            .map(case_convert)
-            .collect::<Vec<_>>()
-            .join("__");
+        class_name = Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
     }
     JsStmt::Class(JsClass {
         public: match item_enum.vis {
@@ -1543,7 +1538,7 @@ pub fn handle_item_impl(
             public: false,
             export: false,
             tuple_struct: false,
-            name: rust_impl_block.js_name(),
+            name: Ident::String(rust_impl_block.js_name()),
             inputs: Vec::new(),
             static_fields,
             methods,
@@ -1946,7 +1941,7 @@ pub fn handle_item_struct(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name: js_name,
+        name: Ident::String(js_name),
         tuple_struct,
         inputs,
         static_fields,
