@@ -288,3 +288,38 @@ async fn resolve_path_to_item_vs_var_parent_scopes() {
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
+
+// Duplicate names
+#[allow(clippy::assertions_on_constants)]
+#[tokio::test]
+async fn const_duplicate_name() {
+    let actual = r2j_file_run_main!(
+        const FOO: i32 = 1;
+        mod foo {
+            pub const FOO: i32 = 2;
+        }
+        fn main() {
+            assert!(FOO == 1);
+            assert!(foo::FOO == 2);
+        }
+    );
+
+    let expected = format_js(
+        r#"
+            // crate
+            const FOO = 1;
+            function main() {
+                console.assert(FOO === 1);
+                console.assert(foo__FOO === 2);
+            }
+
+            // foo
+            const foo__FOO = 2;
+
+            main();
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}

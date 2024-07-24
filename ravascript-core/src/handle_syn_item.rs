@@ -8,7 +8,7 @@ use syn::{
 use tracing::{debug, debug_span, info};
 
 use crate::{
-    camel, get_item_impl_unique_id,
+    camel, case_convert, get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
     js_ast::{
@@ -433,7 +433,7 @@ pub fn handle_item_const(
         name = dup
             .namespace
             .iter()
-            .map(camel)
+            .map(case_convert)
             .collect::<Vec<_>>()
             .join("__");
     }
