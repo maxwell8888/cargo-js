@@ -8,7 +8,7 @@ use syn::{
 use tracing::{debug, debug_span, info};
 
 use crate::{
-    camel, case_convert, get_item_impl_unique_id,
+    case_convert, get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
     js_ast::{
@@ -2115,7 +2115,7 @@ pub fn handle_item_trait(
                         export: false,
                         async_: false,
                         is_method: true,
-                        name: Ident::String(camel(trait_item_fn.sig.ident.to_string())),
+                        name: Ident::Syn(trait_item_fn.sig.ident.clone()),
                         input_names: trait_item_fn
                             .sig
                             .inputs
