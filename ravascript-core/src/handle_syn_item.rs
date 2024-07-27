@@ -1906,7 +1906,7 @@ pub fn handle_item_struct(
             fields_named
                 .named
                 .iter()
-                .map(|field| camel(field.ident.as_ref().unwrap()))
+                .map(|field| Ident::Syn(field.ident.as_ref().unwrap().clone()))
                 .collect::<Vec<_>>(),
         ),
         Fields::Unnamed(fields_unnamed) => (
@@ -1915,7 +1915,8 @@ pub fn handle_item_struct(
                 .unnamed
                 .iter()
                 .enumerate()
-                .map(|(i, _field)| format!("arg{i}"))
+                // TODO create Ident Variant for suffixing i to avoid allocating
+                .map(|(i, _field)| Ident::String(format!("arg{i}")))
                 .collect::<Vec<_>>(),
         ),
         Fields::Unit => todo!(),

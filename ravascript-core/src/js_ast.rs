@@ -711,7 +711,7 @@ pub struct JsClass {
     // This should be camel cased because it is too late to get the deduped "fully qualified" name at this point
     pub name: Ident,
     /// we are assuming input names is equivalent to field names
-    pub inputs: Vec<String>,
+    pub inputs: Vec<Ident>,
     pub static_fields: Vec<JsLocal>,
     /// (class name, static, JsFn)  
     pub methods: Vec<(Ident, bool, JsFn)>,
@@ -1151,7 +1151,7 @@ impl fmt::Display for JsStmt {
                     if !js_class.inputs.is_empty() {
                         format!(
                             "constructor({}) {{\n{}\n}}\n",
-                            js_class.inputs.join(", "),
+                            js_class.inputs.fmt_join(", "),
                             js_class
                                 .inputs
                                 .iter()
