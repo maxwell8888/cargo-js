@@ -1593,7 +1593,7 @@ pub fn handle_item_impl(
         if prelude_item_def.impl_block_ids.contains(&unique_id) {
             for (is_used, item) in &rust_impl_block.items {
                 // TODO only add if `is_used == true`
-                let item_name = camel(&item.ident);
+                let item_name = Ident::String(item.ident.clone());
                 let block_name = &rust_impl_block.js_name();
                 stmts.push(JsStmt::Raw(format!(
                     "{js_name}.prototype.{item_name} = {block_name}.prototype.{item_name}"
@@ -1895,19 +1895,7 @@ pub fn handle_item_struct(
             .iter()
             .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
         {
-            js_name = Ident::Deduped(
-                dup.namespace
-                    .iter()
-                    .enumerate()
-                    .map(|(i, seg)| {
-                        if i == dup.namespace.len() - 1 {
-                            seg.clone()
-                        } else {
-                            camel(seg)
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            );
+            js_name = Ident::Deduped(dup.namespace.clone());
         }
     }
     // dbg!(&js_name);
