@@ -8,7 +8,7 @@ use syn::{
 use tracing::{debug, debug_span, info};
 
 use crate::{
-    case_convert, get_item_impl_unique_id,
+    get_item_impl_unique_id,
     handle_syn_expr::handle_expr,
     handle_syn_stmt::handle_stmt,
     js_ast::{
@@ -430,7 +430,7 @@ pub fn handle_item_const(
         .iter()
         .find(|dup| name == dup.name && dup.original_module_path == *current_module)
     {
-        name = Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
+        name = Ident::Deduped(dup.namespace.clone());
     }
     JsStmt::Local(JsLocal {
         export: false,
@@ -776,7 +776,7 @@ pub fn handle_item_enum(
         .iter()
         .find(|dup| class_name == dup.name && dup.original_module_path == current_module)
     {
-        class_name = Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
+        class_name = Ident::Deduped(dup.namespace.clone());
     }
     JsStmt::Class(JsClass {
         public: match item_enum.vis {
