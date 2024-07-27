@@ -430,7 +430,7 @@ impl fmt::Display for Ident {
                 idents
                     .iter()
                     // TODO avoid needing to convert to String
-                    .map(|ident| case_convert(ident))
+                    .map(case_convert)
                     .collect::<Vec<_>>()
                     .join("__")
             ),
@@ -650,7 +650,7 @@ impl fmt::Display for JsIf {
                                 if i == stmts.len() - 1 {
                                     if let Some(assignment) = assignment {
                                         #[allow(clippy::all)]
-                                        let is_error = match stmt {
+                                        let _is_error = match stmt {
                                             JsStmt::Expr(expr, _) => match expr {
                                                 JsExpr::ThrowError(_) => todo!(),
                                                 _ => false,
@@ -1427,7 +1427,7 @@ impl fmt::Display for JsStmt {
 /// CONST_NAMES -> CONST_NAMES
 /// PascalCase -> PascalCase
 /// snake_case -> snakeCase
-pub fn case_convert(name: impl ToString) -> String {
+fn case_convert(name: impl ToString) -> String {
     let name = name.to_string();
 
     if name.chars().all(|c| c.is_uppercase() || c == '_') {
@@ -1441,7 +1441,7 @@ pub fn case_convert(name: impl ToString) -> String {
     }
 }
 
-pub fn camel(text: impl ToString) -> String {
+fn camel(text: impl ToString) -> String {
     let text = text.to_string();
 
     // rename JavaScript keywords
