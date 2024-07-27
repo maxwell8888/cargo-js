@@ -3,8 +3,7 @@ use std::{fs, path::PathBuf};
 use syn::{ImplItem, Item, ItemUse, Stmt, UseTree, Visibility};
 
 use crate::{
-    case_convert,
-    js_ast::{DestructureObject, DestructureValue, Ident},
+    js_ast::{case_convert, DestructureObject, DestructureValue, Ident},
     GlobalDataScope,
 };
 

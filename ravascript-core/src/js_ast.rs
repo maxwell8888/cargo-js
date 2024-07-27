@@ -1,9 +1,7 @@
 use core::fmt;
-use heck::{AsKebabCase, AsPascalCase};
+use heck::{AsKebabCase, AsLowerCamelCase, AsPascalCase};
 // use std::io::{self, Write};
 use syn::BinOp;
-
-use crate::{camel, case_convert};
 
 #[derive(Clone, Debug)]
 pub enum JsOp {
@@ -1425,3 +1423,39 @@ impl fmt::Display for JsStmt {
 //         }
 //     }
 // }
+
+/// CONST_NAMES -> CONST_NAMES
+/// PascalCase -> PascalCase
+/// snake_case -> snakeCase
+pub fn case_convert(name: impl ToString) -> String {
+    let name = name.to_string();
+
+    if name.chars().all(|c| c.is_uppercase() || c == '_') {
+        // NOTE JS seems to be okay with uppercase keywords so don't need to convert
+        name
+    } else if name.chars().next().unwrap().is_ascii_uppercase() {
+        // TODO this is redundant?
+        AsPascalCase(name).to_string()
+    } else {
+        camel(name)
+    }
+}
+
+pub fn camel(text: impl ToString) -> String {
+    let text = text.to_string();
+
+    // rename JavaScript keywords
+    let text = if text == "default" {
+        "default_vzxyw".to_string()
+    } else {
+        text
+    };
+
+    let underscore_prefix = text.starts_with('_');
+    let camel = AsLowerCamelCase(text).to_string();
+    if underscore_prefix {
+        format!("_{camel}")
+    } else {
+        camel
+    }
+}
