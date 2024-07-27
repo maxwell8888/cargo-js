@@ -75,7 +75,7 @@ pub enum JsExpr {
     Array(Vec<JsExpr>),
     /// (async, block, inputs, body)
     /// TODO shouldn't need to specify block, should just be able to infer from number of stmts/exprs when rendering?
-    ArrowFn(bool, bool, Vec<String>, Vec<JsStmt>),
+    ArrowFn(bool, bool, Vec<Ident>, Vec<JsStmt>),
     Assignment(Box<JsExpr>, Box<JsExpr>),
     Await(Box<JsExpr>),
     Binary(Box<JsExpr>, JsOp, Box<JsExpr>),
@@ -191,7 +191,7 @@ impl fmt::Display for JsExpr {
                 //     }
                 // )
 
-                let sig = format!("({})", inputs.join(", "));
+                let sig = format!("({})", inputs.fmt_join(", "));
 
                 write!(f, "{}{} => ", if *async_ { "async " } else { "" }, sig,)?;
 

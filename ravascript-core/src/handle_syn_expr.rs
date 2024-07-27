@@ -1222,15 +1222,12 @@ fn handle_expr_closure(
         .inputs
         .iter()
         .map(|input| match input {
-            Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+            Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
             Pat::Tuple(_) => todo!(),
-            Pat::Type(pat_type) => {
-                let name = match &*pat_type.pat {
-                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                    _ => todo!(),
-                };
-                camel(name)
-            }
+            Pat::Type(pat_type) => match &*pat_type.pat {
+                Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
+                _ => todo!(),
+            },
             other => {
                 dbg!(other);
                 todo!()
