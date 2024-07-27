@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use syn::{ImplItem, Item, ItemUse, Stmt, UseTree, Visibility};
 
 use crate::{
-    js_ast::{case_convert, DestructureObject, DestructureValue, Ident},
+    js_ast::{DestructureObject, DestructureValue, Ident},
     GlobalDataScope,
 };
 
@@ -312,12 +312,12 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
     match use_tree {
         UseTree::Path(use_path) => DestructureObject(vec![DestructureValue::Nesting(
             // TODO shouldn't be converting case here
-            Ident::String(case_convert(&use_path.ident)),
+            Ident::Syn(use_path.ident.clone()),
             tree_to_destructure_object(&use_path.tree),
         )]),
-        UseTree::Name(use_name) => DestructureObject(vec![DestructureValue::KeyName(
-            Ident::String(case_convert(&use_name.ident)),
-        )]),
+        UseTree::Name(use_name) => DestructureObject(vec![DestructureValue::KeyName(Ident::Syn(
+            use_name.ident.clone(),
+        ))]),
         UseTree::Rename(_) => todo!(),
         UseTree::Glob(_) => DestructureObject(vec![]),
         UseTree::Group(use_group) => DestructureObject(
@@ -326,11 +326,11 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
                 .iter()
                 .map(|item| match item {
                     UseTree::Path(use_path) => DestructureValue::Nesting(
-                        Ident::String(case_convert(&use_path.ident)),
+                        Ident::Syn(use_path.ident.clone()),
                         tree_to_destructure_object(&use_path.tree),
                     ),
                     UseTree::Name(use_name) => {
-                        DestructureValue::KeyName(Ident::String(case_convert(&use_name.ident)))
+                        DestructureValue::KeyName(Ident::Syn(use_name.ident.clone()))
                     }
                     UseTree::Rename(_) => todo!(),
                     UseTree::Glob(_) => todo!(),
