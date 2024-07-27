@@ -15,7 +15,7 @@ use handle_syn_item::{
 };
 use handle_syn_stmt::handle_stmt;
 use js_ast::{
-    camel, DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf,
+    DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf,
     JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
 use quote::quote;
@@ -1931,7 +1931,7 @@ impl JsImplBlock2 {
             match rust_type {
                 RustType::StructOrEnum(_, _, _, name) => {
                     // TODO get proper deduplicated js name
-                    camel(name.clone())
+                    name.clone()
                 }
                 RustType::TypeParam(rust_type_param) => {
                     format!("for__{}", rust_type_param.name)
@@ -5061,12 +5061,12 @@ fn get_path_old(
             .iter()
             .find(|dup| dup.name == segs[0] && dup.original_module_path == current_module)
         {
-            segs[0] = dup
-                .namespace
-                .iter()
-                .map(camel)
-                .collect::<Vec<_>>()
-                .join("__");
+            // segs[0] = dup
+            //     .namespace
+            //     .iter()
+            //     .map(camel)
+            //     .collect::<Vec<_>>()
+            //     .join("__");
         }
 
         // dbg!("item defined in module");
@@ -5184,12 +5184,12 @@ fn get_path_old(
             .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
         {
             // If the item has been namespaced, we need to replace it with the namespace
-            segs[0] = dup
-                .namespace
-                .iter()
-                .map(camel)
-                .collect::<Vec<_>>()
-                .join("__");
+            // segs[0] = dup
+            //     .namespace
+            //     .iter()
+            //     .map(camel)
+            //     .collect::<Vec<_>>()
+            //     .join("__");
             segs
         } else {
             // If the item has not been namespaced, we don't need to do anything
