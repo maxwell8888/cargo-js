@@ -6,7 +6,7 @@ use syn::{
 use tracing::{debug, debug_span, warn};
 
 use crate::{
-    camel, case_convert, found_item_to_partial_rust_type, handle_pat,
+    found_item_to_partial_rust_type, handle_pat,
     handle_syn_stmt::handle_stmt,
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
@@ -3464,8 +3464,7 @@ fn handle_expr_path_inner(
         if let Some(dup) = global_data.duplicates.iter().find(|dup| {
             js_segs_path[0] == dup.name && dup.original_module_path == segs_copy_module_path
         }) {
-            js_segs_path[0] =
-                Ident::Deduped(dup.namespace.iter().map(case_convert).collect::<Vec<_>>());
+            js_segs_path[0] = Ident::Deduped(dup.namespace.clone());
         }
     } else if js_segs_path[0] == "self" {
         js_segs_path[0] = Ident::Str("this");
