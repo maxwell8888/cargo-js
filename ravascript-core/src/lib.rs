@@ -15,7 +15,8 @@ use handle_syn_item::{
 };
 use handle_syn_stmt::handle_stmt;
 use js_ast::{
-    camel, DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf, JsLocal, JsModule, LocalName, LocalType, PathIdent
+    camel, DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf,
+    JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
 use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
@@ -75,18 +76,15 @@ fn handle_destructure_pat(
                 type_: current_type,
             });
 
-            let pat_ident = pat_ident.ident.to_string();
-            let member = match member {
-                Member::Named(ident) => ident.to_string(),
+            let pat_ident = pat_ident.ident.clone();
+            let member_ident = match member.clone() {
+                Member::Named(ident) => ident,
                 Member::Unnamed(_) => todo!(),
             };
-            if member == pat_ident {
-                DestructureValue::KeyName(Ident::String(camel(member)))
+            if member_ident == pat_ident {
+                DestructureValue::KeyName(Ident::Syn(member_ident))
             } else {
-                DestructureValue::Rename(
-                    Ident::String(camel(member)),
-                    Ident::String(camel(pat_ident)),
-                )
+                DestructureValue::Rename(Ident::Syn(member_ident), Ident::Syn(pat_ident))
             }
         }
         Pat::Lit(_) => todo!(),
@@ -99,8 +97,8 @@ fn handle_destructure_pat(
         Pat::Rest(_) => todo!(),
         Pat::Slice(_) => todo!(),
         Pat::Struct(pat_struct) => {
-            let member = match member {
-                Member::Named(ident) => ident.to_string(),
+            let member = match member.clone() {
+                Member::Named(ident) => ident,
                 Member::Unnamed(_) => todo!(),
             };
             let fields = pat_struct
@@ -127,7 +125,7 @@ fn handle_destructure_pat(
                 })
                 .collect::<Vec<_>>();
 
-            DestructureValue::Nesting(Ident::String(camel(member)), DestructureObject(fields))
+            DestructureValue::Nesting(Ident::Syn(member), DestructureObject(fields))
         }
         Pat::Tuple(_) => todo!(),
         Pat::TupleStruct(_) => todo!(),
@@ -152,7 +150,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 mut_: pat_ident.mutability.is_some(),
                 type_: current_type,
             });
-            LocalName::Single(Ident::String(camel(&pat_ident.ident)))
+            LocalName::Single(Ident::Syn(pat_ident.ident.clone()))
         }
         Pat::Lit(_) => todo!(),
         Pat::Macro(_) => todo!(),
