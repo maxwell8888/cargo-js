@@ -350,7 +350,7 @@ async fn enum_duplicate_name() {
         r#"
             // crate
             class Foo {
-                static barId = "Bar";
+                static BarId = "Bar";
                 static Bar = new Foo("Bar", null);
                 constructor(id, data) {
                     this.id = id;
@@ -364,7 +364,7 @@ async fn enum_duplicate_name() {
 
             // foo
             class foo__Foo {
-                static barId = "Bar";
+                static BarId = "Bar";
                 static Bar = new Foo("Bar", null);
                 constructor(id, data) {
                     this.id = id;

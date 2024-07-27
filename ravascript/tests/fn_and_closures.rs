@@ -137,8 +137,8 @@ async fn closure_return_match() {
     });
     let expected = format_js(
         r#"class Number {
-            static someId = "Some";
-            static noneId = "None";
+            static SomeId = "Some";
+            static NoneId = "None";
             static None = new Number("None", null);
             constructor(id, data) {
               this.id = id;
@@ -150,11 +150,11 @@ async fn closure_return_match() {
           }
           let _closure = (arg) => {
           var ifTempAssignment;
-          if (arg.id === Number.someId) {
+          if (arg.id === Number.SomeId) {
             var [num] = arg.data;
             let sum = num + 5;
             ifTempAssignment = sum;
-          } else if (arg.id === Number.noneId) {
+          } else if (arg.id === Number.NoneId) {
             ifTempAssignment = 0;
           } else {
             throw new Error("couldn't match enum variant");

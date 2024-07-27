@@ -40,10 +40,10 @@ async fn enum_match() {
     let expected = format_js(
         r#"
             class MyEnum {
-                static fooBarId = "FooBar";
+                static FooBarId = "FooBar";
                 static FooBar = new MyEnum("FooBar", null);
-                static barId = "Bar";
-                static bazId = "Baz";
+                static BarId = "Bar";
+                static BazId = "Baz";
                 constructor(id, data) {
                     this.id = id;
                     this.data = data;
@@ -62,12 +62,12 @@ async fn enum_match() {
             });
             myData = MyEnum.Baz("Hi", 5);
             var matchResult;
-            if (myData.id === MyEnum.fooBarId) {
+            if (myData.id === MyEnum.FooBarId) {
                 matchResult = 1;
-            } else if (myData.id === MyEnum.barId) {
+            } else if (myData.id === MyEnum.BarId) {
                 var { x, y } = myData.data;
                 matchResult = x;
-            } else if (myData.id === MyEnum.bazId) {
+            } else if (myData.id === MyEnum.BazId) {
                 var [text, num] = myData.data;
                 matchResult = num;
             } else {
@@ -142,12 +142,12 @@ async fn enum_methods() {
     let expected = format_js(concat!(
         r#"
         class Animal {
-            static catId = "Cat";
+            static CatId = "Cat";
             static Cat = new Animal("Cat", null);
-            static dogId = "Dog";
+            static DogId = "Dog";
             static Dog = new Animal("Dog", null);
-            static barId = "Bar";
-            static bazId = "Baz";
+            static BarId = "Bar";
+            static BazId = "Baz";
             constructor(id, data) {
                 this.id = id;
                 this.data = data;
@@ -163,14 +163,14 @@ async fn enum_methods() {
             }
             barY() {
                 var ifTempAssignment;
-                if (this.id === Animal.catId) {
+                if (this.id === Animal.CatId) {
                     ifTempAssignment = "Cat";
-                } else if (this.id === Animal.dogId) {
+                } else if (this.id === Animal.DogId) {
                     ifTempAssignment = "Dog";
-                } else if (this.id === Animal.barId) {
+                } else if (this.id === Animal.BarId) {
                     var { x, y } = this.data;
                     ifTempAssignment = y;
-                } else if (this.id === Animal.bazId) {
+                } else if (this.id === Animal.BazId) {
                     var [text, num] = this.data;
                     ifTempAssignment = text;
                 } else {
@@ -180,14 +180,14 @@ async fn enum_methods() {
             }
             bazNum() {
                 var ifTempAssignment;
-                if (this.id === Animal.catId) {
+                if (this.id === Animal.CatId) {
                     ifTempAssignment = 0;
-                } else if (this.id === Animal.dogId) {
+                } else if (this.id === Animal.DogId) {
                     ifTempAssignment = 0;
-                } else if (this.id === Animal.barId) {
+                } else if (this.id === Animal.BarId) {
                     var { x, y } = this.data;
                     ifTempAssignment = 0;
-                } else if (this.id === Animal.bazId) {
+                } else if (this.id === Animal.BazId) {
                     var [text, num] = this.data;
                     ifTempAssignment = num;
                 } else {

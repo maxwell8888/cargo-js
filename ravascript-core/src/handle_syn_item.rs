@@ -583,7 +583,7 @@ pub fn handle_item_enum(
             public: false,
             export: false,
             type_: LocalType::Static,
-            lhs: LocalName::Single(Ident::String(format!("{}Id", camel(&variant.ident)))),
+            lhs: LocalName::Single(Ident::String(format!("{}Id", variant.ident))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
 
@@ -653,7 +653,7 @@ pub fn handle_item_enum(
             public: false,
             export: false,
             type_: LocalType::Static,
-            lhs: LocalName::Single(Ident::String(format!("{}Id", camel(&variant.ident)))),
+            lhs: LocalName::Single(Ident::String(format!("{}Id", variant.ident))),
             value: JsExpr::LitStr(variant.ident.to_string()),
         });
 

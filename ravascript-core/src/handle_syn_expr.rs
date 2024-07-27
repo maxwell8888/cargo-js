@@ -3886,7 +3886,7 @@ pub fn handle_expr_match(
 
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
                 let index = cond_rhs.len() - 1;
-                cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
+                cond_rhs[index] = format!("{}Id", cond_rhs[index].clone());
                 global_data.push_new_scope(true, scoped_vars);
 
                 let (mut succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body
@@ -3955,7 +3955,7 @@ pub fn handle_expr_match(
 
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
                 let index = cond_rhs.len() - 1;
-                cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
+                cond_rhs[index] = format!("{}_id", cond_rhs[index].clone());
                 global_data.push_new_scope(true, scoped_vars);
 
                 let (mut fail_body_js_stmts, fail_body_return_type) = match &*fail_arm.body {
@@ -4066,14 +4066,16 @@ pub fn handle_expr_match(
             //     cond_rhs.insert(0, "Option".to_string());
             // }
 
-            // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
-            let index = cond_rhs.len() - 1;
-            // dbg!(rhs);
-            // todo!();
-            // if rhs[0] == "Option" {
-            //     rhs = rhs[1..].to_vec();
-            // }
-            cond_rhs[index] = format!("{}Id", camel(cond_rhs[index].clone()));
+            assert_eq!(cond_rhs.len(), 2);
+
+            // // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
+            // let index = cond_rhs.len() - 1;
+            // // dbg!(rhs);
+            // // todo!();
+            // // if rhs[0] == "Option" {
+            // //     rhs = rhs[1..].to_vec();
+            // // }
+            // cond_rhs[index] = format!("{}_id", cond_rhs[index].clone());
 
             // Create new scope for match arm block
             // NOTE even if there is no curly braces it is still a scope
@@ -4120,9 +4122,11 @@ pub fn handle_expr_match(
                             Ident::Str("id"),
                         )),
                         JsOp::Eq,
-                        Box::new(JsExpr::Path(PathIdent::Path(
-                            cond_rhs.into_iter().map(Ident::String).collect(),
-                        ))),
+                        Box::new(JsExpr::Field(
+                            Box::new(JsExpr::Var(cond_rhs[0].clone())),
+                            // Ident::String(format!("{}_id", cond_rhs[index].clone())),
+                            Ident::NoConversion(format!("{}Id", cond_rhs[1].clone())),
+                        )),
                     )),
                     succeed: body,
                     // TODO
