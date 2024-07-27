@@ -319,7 +319,7 @@ impl fmt::Display for JsExpr {
             JsExpr::ObjectForModule(js_stmts) => {
                 let js_stmt_module = JsModule {
                     public: false,
-                    name: "whatever".to_string(),
+                    name: Ident::Str("whatever"),
                     module_path: vec![],
                     stmts: js_stmts.clone(),
                 };
@@ -949,7 +949,7 @@ impl fmt::Display for JsFn {
 pub struct JsModule {
     pub public: bool,
     /// camelCase JS name
-    pub name: String,
+    pub name: Ident,
     /// snake_case Rust path starting with "crate"
     pub module_path: Vec<String>,
     // TODO consider having JsItems like syn::Items to enforce what is allowed at the module level

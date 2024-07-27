@@ -2068,7 +2068,7 @@ pub fn handle_item_mod(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name: camel(item_mod.ident),
+        name: Ident::Syn(item_mod.ident),
         module_path: current_module_path_copy.clone(),
         stmts: Vec::new(),
     };

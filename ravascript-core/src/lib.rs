@@ -4179,7 +4179,7 @@ pub fn process_items(
 
         global_data.transpiled_modules.push(JsModule {
             public: true,
-            name: camel(module_data.name.clone()),
+            name: Ident::String(module_data.name.clone()),
             module_path: module_data.path.clone(),
             stmts,
         });
@@ -4569,7 +4569,7 @@ pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
 
     global_data.transpiled_modules.push(JsModule {
         public: true,
-        name: "crate".to_string(),
+        name: Ident::Str("crate"),
         module_path: vec!["crate".to_string()],
         stmts: Vec::new(),
     });
