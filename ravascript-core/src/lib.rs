@@ -3824,7 +3824,7 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
                     async_: false,
                     is_method: true,
                     name: Ident::Str("push"),
-                    input_names: vec!["elem".to_string()],
+                    input_names: vec![Ident::Str("elem")],
                     body_stmts: vec![JsStmt::Raw("this.vec.push(elem);".to_string())],
                 },
             ),

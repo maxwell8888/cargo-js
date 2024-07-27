@@ -49,7 +49,7 @@ pub fn handle_item_fn(
     };
 
     let js_name = if !at_module_top_level {
-        Ident::String(camel(name.clone()))
+        Ident::Syn(item_fn.sig.ident.clone())
     } else {
         let in_module_level_duplicates = global_data
             .duplicates
@@ -57,9 +57,9 @@ pub fn handle_item_fn(
             .find(|dup| dup.name == name && dup.original_module_path == current_module);
 
         if let Some(dup) = in_module_level_duplicates {
-            Ident::Deduped(dup.namespace.iter().map(camel).collect::<Vec<_>>())
+            Ident::Deduped(dup.namespace.clone())
         } else {
-            Ident::String(camel(name.clone()))
+            Ident::Syn(item_fn.sig.ident.clone())
         }
     };
 
@@ -356,7 +356,7 @@ pub fn handle_item_fn(
                 .map(|input| match input {
                     FnArg::Receiver(_) => todo!(),
                     FnArg::Typed(pat_type) => match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => camel(&pat_ident.ident),
+                        Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
                         _ => todo!(),
                     },
                 })
@@ -642,7 +642,7 @@ pub fn handle_item_enum(
             async_: false,
             is_method: true,
             name: Ident::Str("constructor"),
-            input_names: vec!["id".to_string(), "data".to_string()],
+            input_names: vec![Ident::Str("id"), Ident::Str("data")],
             body_stmts,
         },
     ));
@@ -699,7 +699,7 @@ pub fn handle_item_enum(
                     ))),
                     true,
                 );
-                (vec!["data".to_string()], vec![stmt])
+                (vec![Ident::Str("data")], vec![stmt])
             }
             syn::Fields::Unnamed(fields_unnamed) => {
                 // const data = { id: "Baz" };
@@ -709,7 +709,7 @@ pub fn handle_item_enum(
                     .unnamed
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| format!("arg{i}"))
+                    .map(|(i, _)| Ident::String(format!("arg{i}")))
                     .collect::<Vec<_>>();
 
                 let return_expr = JsExpr::Return(Box::new(JsExpr::New(
@@ -719,9 +719,7 @@ pub fn handle_item_enum(
                         JsExpr::Array(
                             arg_names
                                 .iter()
-                                .map(|name| {
-                                    JsExpr::Path(PathIdent::Single(Ident::String(name.clone())))
-                                })
+                                .map(|name| JsExpr::Path(PathIdent::Single(name.clone())))
                                 .collect::<Vec<_>>(),
                         ),
                     ],
@@ -828,7 +826,7 @@ pub fn handle_impl_item_fn(
         .filter_map(|input| match input {
             FnArg::Receiver(_) => None,
             FnArg::Typed(pat_type) => match *pat_type.pat {
-                Pat::Ident(pat_ident) => Some(camel(pat_ident.ident)),
+                Pat::Ident(pat_ident) => Some(Ident::Syn(pat_ident.ident.clone())),
                 _ => todo!(),
             },
         })
@@ -1167,7 +1165,7 @@ pub fn handle_impl_item_fn(
             // TODO
             async_: false,
             is_method: true,
-            name: Ident::String(camel(impl_item_fn.sig.ident.clone())),
+            name: Ident::Syn(impl_item_fn.sig.ident.clone()),
             input_names: js_input_names,
             body_stmts,
         };
@@ -1881,7 +1879,7 @@ pub fn handle_item_struct(
                 async_: false,
                 is_method: true,
                 name: Ident::Str("eq"),
-                input_names: vec!["other".to_string()],
+                input_names: vec![Ident::Str("other")],
                 body_stmts: vec![stmt],
             },
         ));
@@ -2136,7 +2134,9 @@ pub fn handle_item_trait(
                             .filter_map(|input| match input {
                                 FnArg::Receiver(_) => None,
                                 FnArg::Typed(pat_type) => match &*pat_type.pat {
-                                    Pat::Ident(pat_ident) => Some(camel(&pat_ident.ident)),
+                                    Pat::Ident(pat_ident) => {
+                                        Some(Ident::Syn(pat_ident.ident.clone()))
+                                    }
                                     _ => todo!(),
                                 },
                             })

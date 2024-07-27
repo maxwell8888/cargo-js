@@ -860,7 +860,7 @@ pub struct JsFn {
     pub is_method: bool,
     // Camel case?
     pub name: Ident,
-    pub input_names: Vec<String>,
+    pub input_names: Vec<Ident>,
     pub body_stmts: Vec<JsStmt>,
 }
 
@@ -933,7 +933,7 @@ impl fmt::Display for JsFn {
             if self.async_ { "async " } else { "" },
             if self.is_method { "" } else { "function " },
             self.name,
-            self.input_names.join(", "),
+            self.input_names.fmt_join(", "),
             self.body_stmts.fmt_join("\n")
         )?;
 
