@@ -1,10 +1,11 @@
 #![allow(unused_variables)]
 
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block;
 
 #[tokio::test]
 async fn function_body_returns_and_async() {

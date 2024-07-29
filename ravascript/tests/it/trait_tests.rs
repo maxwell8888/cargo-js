@@ -1,8 +1,9 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block_with_prelude;
 
 #[ignore]
 #[tokio::test]
@@ -31,9 +32,9 @@ async fn impl_in_fn_scope() {
         assert_eq!(bob.age_plus_twenty(), 50);
     });
     let expected = concat!(
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_string_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        include_str!("../rust_integer_prelude.js"),
+        include_str!("../rust_string_prelude.js"),
+        include_str!("../rust_bool_prelude.js"),
         r#"
         class Person {
             constructor(age) {

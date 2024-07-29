@@ -1,10 +1,11 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript::format_js;
 use ravascript::prelude::web::Math;
 use ravascript::prelude::JsNumber;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block_with_prelude;
 
 #[ignore]
 #[tokio::test]
@@ -45,8 +46,8 @@ async fn abs() {
 
     let expected = format_js(concat!(
         // include_str!("option_prelude.js"),
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_float_prelude.js"),
+        include_str!("../rust_integer_prelude.js"),
+        include_str!("../rust_float_prelude.js"),
         r#"let num = -5;
         let abs = num.abs();
         console.assert(abs.eq(5));

@@ -1,4 +1,3 @@
-mod utils;
 use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
@@ -8,7 +7,9 @@ use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block_with_prelude;
 
 #[ignore]
 #[tokio::test]
@@ -31,11 +32,11 @@ async fn if_let_some() {
     });
 
     let expected = concat!(
-        include_str!("option_prelude.js"),
+        include_str!("../option_prelude.js"),
         "let Some = Option.Some;",
         "let None = Option.None;",
-        include_str!("rust_integer_prelude.js"),
-        include_str!("rust_bool_prelude.js"),
+        include_str!("../rust_integer_prelude.js"),
+        include_str!("../rust_bool_prelude.js"),
         r#"let counter = 0;
         let someNum = Some(5);
         if (someNum.id === Option.someId) {

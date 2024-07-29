@@ -1,4 +1,3 @@
-mod utils;
 use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError, Json,
@@ -9,7 +8,9 @@ use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
-use utils::*;
+
+use super::utils::*;
+use crate::{r2j_block, r2j_file_run_main};
 
 #[ignore]
 #[tokio::test]
@@ -41,7 +42,6 @@ async fn it_transpiles_json_parse() {
         }
         "#,
     );
-    println!("{actual}");
     assert_eq!(expected, actual);
 }
 

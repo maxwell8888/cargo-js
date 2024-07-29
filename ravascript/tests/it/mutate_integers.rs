@@ -1,4 +1,3 @@
-mod utils;
 use pretty_assertions::{assert_eq, assert_ne};
 use ravascript::prelude::web::{
     try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
@@ -8,7 +7,9 @@ use ravascript::{catch, try_};
 use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
 use ravascript_macros::module_as_str;
 use ravascript_macros::{fn_as_str, fn_stmts_as_str};
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block_with_prelude;
 
 #[tokio::test]
 async fn mutating_integers() {

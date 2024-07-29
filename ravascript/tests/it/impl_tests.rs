@@ -1,8 +1,9 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::{r2j_block, r2j_block_with_prelude, r2j_file_run_main};
 
 // The rule seems to be the the enum/struct must be defined, or a use path to it must be defined, in either the same scope as the impl block (order of appearance does not matter) or in a surrounding scope, including the module top level.
 

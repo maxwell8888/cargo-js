@@ -1,8 +1,9 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::{r2j_block, r2j_block_with_prelude};
 
 #[tokio::test]
 async fn destructure_struct() {

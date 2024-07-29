@@ -1,8 +1,9 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block;
 
 #[allow(unused_variables)]
 #[tokio::test]

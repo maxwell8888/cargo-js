@@ -1,10 +1,11 @@
 #![allow(clippy::disallowed_names)]
 
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
-use utils::*;
+
+use super::utils::*;
+use crate::{r2j_block, r2j_block_with_prelude, r2j_file_run_main};
 
 #[tokio::test]
 async fn testing_asserts() -> Result<(), Box<dyn std::error::Error>> {

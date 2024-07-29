@@ -1,9 +1,10 @@
-mod utils;
 use pretty_assertions::assert_eq;
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
 use std::panic::catch_unwind;
-use utils::*;
+
+use super::utils::*;
+use crate::r2j_block_with_prelude;
 
 // TODO avoid rename if same var name is used for condition and some value
 // TODO if condition is an expression (and the Some() inner is actually used) it should be evaluated and assigned to a var before being used
@@ -122,7 +123,7 @@ async fn option_unwrap_or() {
     });
 
     let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
+        include_str!("../option_prelude.js"),
         "let Some = Option.Some;
         let None = Option.None;",
         "let five = Some(5);
@@ -148,7 +149,7 @@ async fn option_unwrap_or_else() {
     });
 
     let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
+        include_str!("../option_prelude.js"),
         "let Some = Option.Some;
         let None = Option.None;",
         "let five = Some(5);
@@ -175,7 +176,7 @@ async fn option_unwrap_or_default() {
     });
 
     let expected = format_js(concat!(
-        include_str!("option_prelude.js"),
+        include_str!("../option_prelude.js"),
         "let Some = Option.Some;
         let None = Option.None;",
         r#"let five = Some(5);
