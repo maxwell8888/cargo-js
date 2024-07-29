@@ -49,7 +49,8 @@ use crate::{r2j_block, r2j_block_with_prelude, r2j_file_run_main};
 // }
 // error[E0592]: duplicate definitions with name `whatever`
 
-fn notes() {
+#[allow(unused_variables, dead_code)]
+fn _notes() {
     // IMPORTANT TODO in Rust we can `impl Foo` with a method returning `Bar`, both defined in a lower scope than Foo, then in a higher scope, eg Foo's scope and call that method which means we have a Bar, even though it was defined in a lower scope, even though we could not directly instantiate a Bar from that scope and we might even have an identically named struct defined in the Scope. This is hard to fully recreate in JS because either we add to Foo's prototype in the scope, we can use the method, but only after the scope appears, not before like in Rust; or we hoist the impl to the scope of the target, but then the other used types from the lower scope won't be available, so they need hoisting too. This is because Rust effectively does some pretty clever hoisting, where the impl will get hoisted to the same scope as the target (surely higher if we can return it in a parent scope? NO because we need the target item to call the method on so must be in same scope or lower, well actually we can still return the instance from eg simple blocks without needing the type definition, so it can actually be used in higher scopes, just not higher fn scopes) and also "capture" any definitions it needs from the scope of the impl. This means to implement this in JS, given we need to hoist the impl def (be that adding methods to a class, adding to prototype, or having a standalone impl) to the target scope so that the methods can be used anywhere in the target impl scope, we would also need to have a duplicate Bar definition in the scope, but given there might already be another *different* Bar definition in the scope, it would need to eg be block scoped with the impl, so it is only accessible by the impl, not the rest of the scope.
     // eg:
     {
@@ -328,6 +329,7 @@ async fn inherent_impl_in_different_module() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn scoped_inherent_impl_in_different_module() {
     setup_tracing();
@@ -437,6 +439,7 @@ async fn shadowed_structs_with_shadowed_methods() {
 }
 
 // There doesn't seem any reason to implement this given that if a method is impl'd on a Struct then we expect it to be used somewhere, even if it is not accessible from certain places, so will always need it on the struct. See test private_method_in_scoped_impl below for an example.
+#[allow(dead_code, unused_variables)]
 #[ignore = "dont implement"]
 #[tokio::test]
 async fn dont_need_to_impl_private_method() {
@@ -478,6 +481,7 @@ async fn dont_need_to_impl_private_method() {
 }
 
 // TODO move assert! to before impl to check this works or make another test for this
+#[allow(unused_variables)]
 #[tokio::test]
 async fn private_method_in_scoped_impl() {
     setup_tracing();
@@ -590,6 +594,7 @@ async fn module_level_shadowing_of_struct_name() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn scoped_shadowing_of_struct_name() {
     setup_tracing();
@@ -747,6 +752,7 @@ async fn simple_inherent_impl() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn module_level_struct_scoped_inherent_impl() {
     setup_tracing();
@@ -800,6 +806,7 @@ async fn module_level_struct_scoped_inherent_impl() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn scoped_simple_method_impl() {
     setup_tracing();
@@ -1026,6 +1033,7 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
 }
 
 #[ignore = "TODO"]
+#[allow(dead_code, unused_mut)]
 #[tokio::test]
 async fn mut_method_call_struct() {
     let actual = r2j_block_with_prelude!({
@@ -1067,6 +1075,7 @@ async fn mut_method_call_struct() {
 }
 
 #[ignore = "TODO"]
+#[allow(unused_mut)]
 #[tokio::test]
 async fn mut_method_call_num() {
     let actual = r2j_block_with_prelude!({

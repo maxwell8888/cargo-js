@@ -1,5 +1,7 @@
 // Using single integration test binary to reduce incremental compile times from over 2mins to around 10secs. See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html and https://doc.rust-lang.org/cargo/guide/project-layout.html
 
+#![allow(clippy::disallowed_names)]
+
 mod destructuring;
 mod enum_tests;
 mod fn_and_closures;

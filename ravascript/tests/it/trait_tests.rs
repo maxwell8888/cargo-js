@@ -31,7 +31,7 @@ async fn impl_in_fn_scope() {
         assert_eq!(bob.age_plus_ten(), 40);
         assert_eq!(bob.age_plus_twenty(), 50);
     });
-    let expected = concat!(
+    let expected = format_js(concat!(
         include_str!("../rust_integer_prelude.js"),
         include_str!("../rust_string_prelude.js"),
         include_str!("../rust_bool_prelude.js"),
@@ -57,12 +57,13 @@ async fn impl_in_fn_scope() {
         console.assert(bob.agePlusTen().eq(40));
         console.assert(bob.agePlusTwenty().eq(50));
         "#,
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
 #[ignore]
+#[allow(dead_code)]
 #[tokio::test]
 async fn impl_with_generic_arguments() {
     let actual = r2j_block_with_prelude!({
@@ -99,7 +100,7 @@ async fn impl_with_generic_arguments() {
         assert_eq!(one_result, 5);
         assert_eq!(two_result, 4);
     });
-    let expected = concat!(
+    let expected = format_js(concat!(
         // include_str!("rust_integer_prelude.js"),
         // include_str!("rust_string_prelude.js"),
         // include_str!("rust_bool_prelude.js"),
@@ -136,8 +137,8 @@ async fn impl_with_generic_arguments() {
         console.assert(oneResult === 5);
         console.assert(twoResult === 4);
         "#,
-    );
+    ));
     // assert!(false);
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }

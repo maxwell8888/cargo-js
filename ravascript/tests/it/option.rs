@@ -63,6 +63,7 @@ async fn option_is_some_and() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(clippy::unnecessary_literal_unwrap)]
 #[tokio::test]
 async fn option_unwrap_some() {
     let actual = r2j_block_with_prelude!({
@@ -88,6 +89,7 @@ async fn option_unwrap_some() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(clippy::unnecessary_literal_unwrap)]
 #[ignore = "TODO is error"]
 #[tokio::test]
 async fn option_unwrap_none() {
@@ -112,6 +114,7 @@ async fn option_unwrap_none() {
     assert_eq!(expected, actual);
 }
 
+#[allow(clippy::unnecessary_literal_unwrap)]
 #[ignore]
 #[tokio::test]
 async fn option_unwrap_or() {
@@ -138,6 +141,7 @@ async fn option_unwrap_or() {
     assert_eq!(expected, actual);
 }
 
+#[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_literal_unwrap)]
 #[ignore]
 #[tokio::test]
 async fn option_unwrap_or_else() {
@@ -164,6 +168,7 @@ async fn option_unwrap_or_else() {
     assert_eq!(expected, actual);
 }
 
+#[allow(clippy::unnecessary_literal_unwrap)]
 // TODO unwrap_or_default uses T::default() which means we would need to know the type of five or none so we can convert it to eg i32.default() ???
 #[ignore = "needs to know type of instance"]
 #[tokio::test]
@@ -192,6 +197,7 @@ async fn option_unwrap_or_default() {
 }
 
 #[ignore]
+#[allow(clippy::partialeq_to_none)]
 #[tokio::test]
 async fn option_map() {
     let actual = r2j_block_with_prelude!({

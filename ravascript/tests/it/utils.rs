@@ -4,7 +4,7 @@ use chromiumoxide::{
         EventPaused, PausedReason, ResumeParams, SetPauseOnExceptionsParams,
         SetPauseOnExceptionsState,
     },
-    Page,
+    // Page,
 };
 // use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 //     CallArgument, CallFunctionOnParams, EvaluateParams,
@@ -12,19 +12,17 @@ use chromiumoxide::{
 use anyhow::{anyhow, Context, Result};
 // use chromiumoxide::cdp::js_protocol::debugger::*;
 use futures::StreamExt;
-use prettify_js::prettyprint;
+// use prettify_js::prettyprint;
 // use std::sync::Arc;
 // use biome_formatter::format;
 // use biome_formatter::prelude::*;
-use pretty_assertions::assert_eq;
 use std::{fs, path::PathBuf};
-use tokio;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 
 use ravascript::{from_file, modules_to_string};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
+use ravascript_core::{format_js, from_block};
 
 // macro_rules! stmts_to_code_str {
 //     ($($stmts:tt)*) => {
@@ -43,11 +41,10 @@ pub fn r2j_block(code: &str, include_web: bool) -> String {
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let generated_js = format_js(generated_js);
-    generated_js
+    format_js(generated_js)
 }
 
-pub fn r2j_block_unformatted(code: &str, include_web: bool) -> String {
+pub fn _r2j_block_unformatted(code: &str, include_web: bool) -> String {
     let stmts = from_block(code, false, include_web);
     let generated_js = stmts
         .iter()
@@ -105,8 +102,7 @@ pub fn r2j_block_with_prelude(code: &str) -> String {
         .map(|stmt| stmt.js_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let generated_js = format_js(generated_js);
-    generated_js
+    format_js(generated_js)
 }
 /// Input code should be in a block as this allow rustfmt to work on the code, however the block (braces) are removed from the the output code and instead just the lines of code inside the block are used to generate the Javascript
 #[macro_export]
@@ -125,8 +121,7 @@ macro_rules! r2j_block_with_prelude {
 pub fn r2j_file(code: &str, run_main: bool) -> String {
     let modules = from_file(code, false);
     let generated_js = modules_to_string(&modules, run_main);
-    let generated_js = format_js(generated_js);
-    generated_js
+    format_js(generated_js)
 }
 
 #[macro_export]
@@ -191,7 +186,7 @@ macro_rules! r2j_assert_eq {
     };
 }
 
-pub async fn exexute_js(js: &str) -> Result<bool, Box<dyn std::error::Error>> {
+pub async fn _exexute_js(js: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let (mut browser, mut handler) = Browser::launch(BrowserConfig::builder().build()?).await?;
     let handle = tokio::task::spawn(async move {
         while let Some(h) = handler.next().await {
@@ -201,15 +196,14 @@ pub async fn exexute_js(js: &str) -> Result<bool, Box<dyn std::error::Error>> {
             }
         }
     });
-    let expression = format!("{js}");
     let page = browser.new_page("about:blank").await?;
-    let outcome: bool = page.evaluate_expression(expression).await?.into_value()?;
+    let outcome: bool = page.evaluate_expression(js).await?.into_value()?;
     browser.close().await?;
     handle.await?;
     Ok(outcome)
 }
 
-pub async fn get_rust_module_and_expected_js(
+pub async fn _get_rust_module_and_expected_js(
     dir_path: PathBuf,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     let dir_name = dir_path.file_name().unwrap();
@@ -290,7 +284,8 @@ pub async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::err
 
     browser.close().await.context("Failed to close browser")?;
     handle.await.context("Failed in handle.await")?;
-    let event_result = events_handle
+
+    events_handle
         .await
         .context("Failed in events_handle.await")??;
 
@@ -298,11 +293,11 @@ pub async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::err
 }
 
 pub fn setup_tracing() {
-    if let Ok(level) = std::env::var("RUST_LOG") {
+    if let Ok(_level) = std::env::var("RUST_LOG") {
         let filter = EnvFilter::new("ravascript=debug"); // Set to 'debug' or your desired log level
 
         // Configure a custom event formatter
-        let format = fmt::format()
+        let _format = fmt::format()
             .with_level(false) // don't include levels in formatted output
             .with_target(false) // don't include targets
             .with_thread_ids(false) // include the thread ID of the current thread

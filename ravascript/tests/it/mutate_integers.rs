@@ -1,12 +1,6 @@
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;
 use crate::r2j_block_with_prelude;
@@ -94,7 +88,7 @@ async fn deref_vs_normal_assign() {
         assert!(*result == 6);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
         "class RustInteger {
             constructor(inner) {
                 this.inner = inner;
@@ -111,12 +105,13 @@ async fn deref_vs_normal_assign() {
         console.assert(six.inner === 10);
         console.assert(result.inner === 6);
         "#
-    );
+    ));
 
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(unused_mut)]
 #[tokio::test]
 async fn ownership_mut() {
     let actual = r2j_block_with_prelude!({
@@ -143,7 +138,7 @@ async fn ownership_mut() {
         assert!(*six == 6);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
         "class RustInteger {
             constructor(inner) {
                 this.inner = inner;
@@ -169,9 +164,9 @@ async fn ownership_mut() {
         let six = five;
         console.assert(six.inner === 6);
         "#
-    );
+    ));
 
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -183,7 +178,7 @@ async fn mutate_int() {
         assert!(num == 1);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
         "class RustInteger {
             constructor(inner) {
                 this.inner = inner;
@@ -192,8 +187,8 @@ async fn mutate_int() {
         r#"let num = new RustInteger(0);
         num.inner += 1;
         console.assert(num.inner === 1)"#
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -371,7 +366,7 @@ async fn mut_ref_int_fn_arg() {
         assert!(orig_num == 3);
     });
 
-    let expected = concat!(
+    let expected = format_js(concat!(
         "class RustInteger {
             constructor(inner) {
                 this.inner = inner;
@@ -395,8 +390,8 @@ async fn mut_ref_int_fn_arg() {
         origNum.inner += 1;
         console.assert(origNum.inner === 3);
         "#
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
@@ -944,6 +939,7 @@ async fn assign_mut_ref_of_im_ref_of_mut_var() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(unused_mut)]
 #[tokio::test]
 async fn assign_mut_ref_of_im_ref_of_mut_var2() {
     let actual = r2j_block_with_prelude!({

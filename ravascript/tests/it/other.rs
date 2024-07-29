@@ -327,6 +327,7 @@ async fn const_duplicate_name() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(unused_variables)]
 #[tokio::test]
 async fn enum_duplicate_name() {
     let actual = r2j_file_run_main!(

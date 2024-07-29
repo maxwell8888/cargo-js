@@ -69,7 +69,7 @@ async fn destructure_struct_nested() {
     // include_str!("string_prototype_extensions.js"),
     // "\n",
     // include_str!("number_prototype_extensions.js"),
-    let expected = concat!(
+    let expected = format_js(
         r#"
         class Bar {
             constructor(baz) {
@@ -87,7 +87,7 @@ async fn destructure_struct_nested() {
         "#
     );
 
-    assert_eq!(format_js(expected), actual);
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 

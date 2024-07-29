@@ -81,6 +81,8 @@ async fn enum_match() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
+#[allow(unused_variables)]
 #[tokio::test]
 async fn enum_methods() {
     setup_tracing();

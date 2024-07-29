@@ -1,18 +1,20 @@
-use pretty_assertions::{assert_eq, assert_ne};
+#![allow(unused_imports)]
+
+use pretty_assertions::assert_eq;
 use ravascript::prelude::web::{
     try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError, Json,
     Node, SyntaxError, NAVIGATOR,
 };
 use ravascript::prelude::*;
 use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;
 use crate::{r2j_block, r2j_file_run_main};
 
 #[ignore]
+#[allow(dead_code, clippy::needless_return)]
 #[tokio::test]
 async fn it_transpiles_json_parse() {
     let actual = r2j_file_run_main!(
@@ -46,6 +48,7 @@ async fn it_transpiles_json_parse() {
 }
 
 // #[ignore = "reason"]
+#[allow(unused_variables)]
 #[tokio::test]
 async fn dom_nodes_and_elements() {
     setup_tracing();

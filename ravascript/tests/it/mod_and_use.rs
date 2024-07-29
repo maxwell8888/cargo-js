@@ -1,12 +1,5 @@
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::{format_js, from_crate};
 
 use super::utils::*;
 use crate::{r2j_file, r2j_file_run_main, r2j_file_unchecked};
@@ -142,6 +135,7 @@ async fn it_transpiles_crate_directory() {
 }
 
 // TODO it might be better to rely on the for-testing dir for testing `crate` rather than using unchecked Rust
+#[allow(dead_code)]
 #[tokio::test]
 async fn simple_module() {
     // let actual = r2j_file_unchecked!(
@@ -173,6 +167,7 @@ async fn simple_module() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code, clippy::let_unit_value, unused_variables)]
 #[tokio::test]
 async fn module_super() {
     // let actual = r2j_file_unchecked!(
@@ -206,6 +201,7 @@ async fn module_super() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code, clippy::let_unit_value, unused_variables)]
 #[tokio::test]
 async fn module_self() {
     let actual = r2j_file!(
@@ -362,7 +358,7 @@ async fn use_paths() {
     );
 
     assert_eq!(expected, actual);
-    let _ = execute_js_with_assertions(&actual).await.unwrap();
+    execute_js_with_assertions(&actual).await.unwrap();
 }
 
 // TODO IMPORTANT scoped modules. I think scoped modules might break

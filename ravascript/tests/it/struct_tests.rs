@@ -1,16 +1,11 @@
-use pretty_assertions::{assert_eq, assert_ne};
-use ravascript::prelude::web::{
-    try_, Console, Document, Event, HTMLInputElement, JsError, Json, Node, SyntaxError, NAVIGATOR,
-};
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
-use ravascript_core::{format_js, from_block, from_crate, generate_js_from_module};
-use ravascript_macros::module_as_str;
-use ravascript_macros::{fn_as_str, fn_stmts_as_str};
+use pretty_assertions::assert_eq;
+use ravascript_core::format_js;
+use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;
 use crate::r2j_block_with_prelude;
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn it_transpiles_struct_no_new() {
     setup_tracing();
@@ -33,6 +28,7 @@ async fn it_transpiles_struct_no_new() {
 }
 
 // #[ignore = "wait to support impl Trait for T"]
+#[allow(dead_code)]
 #[tokio::test]
 async fn struct_and_impl_methods() {
     setup_tracing();
@@ -131,6 +127,7 @@ async fn struct_and_impl_methods() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
 #[tokio::test]
 async fn tuple_struct() {
     let actual = r2j_block_with_prelude!({
@@ -151,7 +148,7 @@ async fn tuple_struct() {
 
     // include_str!("rust_integer_prelude.js"),
     // include_str!("rust_bool_prelude.js"),
-    let expected = concat!(
+    let expected = format_js(concat!(
         r#"class Cool {
             constructor(arg0) {
                 this[0] = arg0;
@@ -170,11 +167,12 @@ async fn tuple_struct() {
         console.assert(cool.getInner() === 5);
         console.assert(cool.otherNumber() === 4);
         "#
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code, clippy::cmp_owned, clippy::bool_comparison)]
 #[tokio::test]
 async fn tuple_struct_multiple_fields() {
     let actual = r2j_block_with_prelude!({
@@ -202,7 +200,7 @@ async fn tuple_struct_multiple_fields() {
     // include_str!("rust_integer_prelude.js"),
     // include_str!("rust_string_prelude.js"),
     // include_str!("rust_bool_prelude.js"),
-    let expected = concat!(
+    let expected = format_js(concat!(
         r#"class Cool {
             constructor(arg0, arg1, arg2, arg3) {
                 this[0] = arg0;
@@ -231,8 +229,8 @@ async fn tuple_struct_multiple_fields() {
         console.assert(cool[2] === true);
         console.assert(cool[3] === 4);
         "#
-    );
-    assert_eq!(format_js(expected), actual);
+    ));
+    assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 

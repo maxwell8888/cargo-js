@@ -7,6 +7,7 @@ use ravascript_macros::fn_stmts_as_str;
 use super::utils::*;
 use crate::r2j_block;
 
+#[allow(clippy::no_effect)]
 #[tokio::test]
 async fn function_body_returns_and_async() {
     // TODO return large if else expression that must be converted to js using temp var which is then returned
@@ -121,6 +122,8 @@ async fn function_returns_if_else_if_else() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(dead_code)]
+#[allow(clippy::let_and_return)]
 #[tokio::test]
 async fn closure_return_match() {
     let actual = r2j_block!({
