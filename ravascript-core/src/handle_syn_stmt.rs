@@ -186,7 +186,7 @@ fn handle_local(
                         RustType::String => todo!(),
                         RustType::Option(_) => todo!(),
                         RustType::Result(_) => todo!(),
-                        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                             let item_def = global_data
                                 .lookup_item_def_known_module_assert_not_func2(
                                     module_path,
@@ -205,9 +205,9 @@ fn handle_local(
                                     // If element_type is `Copy` struct/enum then should add `.copy()` to rhs array
                                     match &**element_type {
                                         RustType::StructOrEnum(
-                                            type_params,
+                                            _type_params,
                                             module_path,
-                                            scope_id,
+                                            _scope_id,
                                             name,
                                         ) => {
                                             let item_def = global_data
@@ -783,7 +783,7 @@ pub fn handle_stmt(
 ) -> Vec<(JsStmt, RustType)> {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
-            let (mut js_expr, type_) = handle_expr(expr, global_data, current_module_path);
+            let (js_expr, type_) = handle_expr(expr, global_data, current_module_path);
             // copying etc should be handled in handle_expr, not here?
             // if should_copy_expr_unary(expr, global_data) {
             //     js_expr = JsExpr::MethodCall(Box::new(js_expr), "copy".to_string(), Vec::new());

@@ -1174,6 +1174,7 @@ fn parse_types_for_populate_item_definitions(
 // In some cases we are only extracting the type, in others we have more info because we are extracting an existing variable or there is also info about the mutability, so wrap in this enum for convenience
 // TODO probably shouldn't be using ScopedVar though because we will never extract the name or `mut` here
 // TODO revisit if this enum is necessary or the best approach
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 enum TypeOrVar {
     RustType(RustType),
@@ -1311,16 +1312,16 @@ enum TypeOrVar {
 //     }
 // }
 
-fn js_stmts_from_syn_items2(
+fn _js_stmts_from_syn_items2(
     items: Vec<Vec<Item>>,
     // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &mut Vec<String>,
-    global_data: &mut GlobalData,
+    _global_data: &mut GlobalData,
 ) -> Vec<JsStmt> {
     let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
     let _guard = span.enter();
 
-    let mut js_stmts = Vec::new();
+    let mut _js_stmts = Vec::new();
     // let mut modules = Vec::new();
     // TODO this should be optional/configurable, might not always want it
 
@@ -1335,11 +1336,11 @@ fn js_stmts_from_syn_items2(
     // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
 
-    for item in items {
+    for _item in items {
         // handle_item(item, global_data, current_module, &mut js_stmts);
     }
 
-    js_stmts
+    _js_stmts
 }
 
 // TODO remove this as it is unnecessary redirection
@@ -1434,6 +1435,7 @@ fn js_stmts_from_syn_items(
     js_stmts
 }
 
+#[allow(dead_code)]
 #[derive(Default, Clone, Debug)]
 struct RustPreludeTypes {
     vec: bool,
@@ -1471,6 +1473,7 @@ struct RustPreludeTypes {
     result_unwrap: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum JsImplItem {
     /// This means that `foo() {}` will be used in place of `function foo() {}`  
@@ -1481,6 +1484,8 @@ enum JsImplItem {
     ClassMethod(String, bool, bool, JsFn),
     ClassStatic(JsLocal),
 }
+
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ImplItemTemp {
     /// snake case
@@ -1497,11 +1502,11 @@ struct ImplItemTemp {
 // Third party crates
 #[derive(Debug, Clone)]
 struct CrateData {
-    name: String,
+    _name: String,
     // Ideally we would just store the data like this, but we need to be able to resolve third party crate use statements, which might chain use statements, using `get_path_without_namespacing` just like any other module, so we need to maintain the same data structure? Yes we need to parse the third party crate anyway since we need to include it's source the JS output so will already have all it's ModuleData. Although in theory we could just do a one off calculation of all it's crate level pub module paths/items and only look for those when resolving paths in the main crate, which would reduce work, for now we will just resolve the paths just like any other module
     // (name, module path, definition)
     // items: Vec<(String, Vec<String>, ItemDefinition)>,
-    modules: Vec<ModuleData>,
+    _modules: Vec<ModuleData>,
 }
 
 /// Types are ultimately needed for:
@@ -1589,6 +1594,7 @@ struct CrateData {
 //
 // It makes sense to just use one of ItemType/InstanceType because they are practically the same and type instances will need to look up impls that match their type
 // Also, for matching, Foo<i32> will need to match Foo<T>, etc so it is not as easy as doing `x == y`
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustType {
     /// For cases/expressions we know cannot return a type, eg `break`
@@ -1764,6 +1770,7 @@ enum RustTypeFnType {
     AssociatedFn(String, String),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeImplTrait {
     SimpleTrait(String),
@@ -1796,6 +1803,7 @@ struct ScopedVar {
     type_: RustType,
 }
 impl ScopedVar {
+    #[allow(dead_code)]
     fn is_mut_ref(&self) -> bool {
         matches!(self.type_, RustType::MutRef(_))
     }
@@ -1825,6 +1833,7 @@ impl ScopedVar {
 //     Variant,
 // }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ItemDefintionImpls {
     /// For impls like `impl<T> Foo for T {}` where multiple types use the same impl so we transpile the impl block itself into a class, and point to this classes methods using eg `getFoo = impl__Foo__for__T.prototype.getFoo` or whatever.
@@ -1837,6 +1846,7 @@ enum ItemDefintionImpls {
     ConcreteImpl(Vec<ImplItem>),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ItemDefinitions {
     Struct,
@@ -1914,7 +1924,7 @@ fn get_item_impl_unique_id(
 #[derive(Debug, Clone)]
 struct JsImplBlock2 {
     unique_id: String,
-    generics: Vec<RustGeneric>,
+    _generics: Vec<RustGeneric>,
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
     target: RustType,
@@ -1924,7 +1934,7 @@ struct JsImplBlock2 {
 impl JsImplBlock2 {
     fn js_name(&self) -> Ident {
         let trait_name = match &self.trait_ {
-            Some((module_path, scope_id, name)) => name,
+            Some((_module_path, _scope_id, name)) => name,
             None => "no_trait",
         };
         fn rust_type_js_name(rust_type: &RustType) -> String {
@@ -1976,6 +1986,7 @@ struct RustImplItemJs {
     // syn_object: ImplItem,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum RustImplItemItemNoJs {
     /// (static, fn info),
@@ -2040,15 +2051,15 @@ struct GlobalDataScope {
     // trait_definitons: Vec<RustTraitDefinition>,
     // consts: Vec<ConstDef>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
-    look_in_outer_scope: bool,
+    _look_in_outer_scope: bool,
     use_mappings: Vec<(String, Vec<String>)>,
 }
 
 #[derive(Debug, Clone)]
 struct GlobalData {
-    crate_path: Option<PathBuf>,
+    _crate_path: Option<PathBuf>,
     modules: Vec<ModuleData>,
-    crates: Vec<CrateData>,
+    _crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
@@ -2063,7 +2074,7 @@ struct GlobalData {
     impl_block_target_type: Vec<RustType>,
     /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
     /// TODO Should be Vec of Vecs for same reason impl_block_target_type is a Vec
-    impl_block_type_params: Vec<RustTypeParam>,
+    _impl_block_type_params: Vec<RustTypeParam>,
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     rust_prelude_types: RustPreludeTypes,
@@ -2077,7 +2088,7 @@ struct GlobalData {
     /// Used for working out which `default_trait_impls` elements to add to which classes
     ///
     /// (class name, trait name)
-    default_trait_impls_class_mapping: Vec<(String, String)>,
+    _default_trait_impls_class_mapping: Vec<(String, String)>,
     /// For temporary storage of JS methods prior to adding to JS classes
     /// TODO doesn't seem like we are actually populating this even though it has been used for a while?
     // impl_items_for_js: Vec<ImplItemTemp>,
@@ -2092,7 +2103,7 @@ struct GlobalData {
     /// We don't have to
     /// ((module path, scope id), rust impl block))
     #[allow(clippy::type_complexity)]
-    scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
+    _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     impl_blocks_simpl: Vec<RustImplBlockSimple>,
     duplicates: Vec<Duplicate>,
@@ -2205,29 +2216,29 @@ impl GlobalData {
         // }
 
         GlobalData {
-            crate_path,
+            _crate_path: crate_path,
             modules: Vec::new(),
             // crates: vec![ravascript_prelude_crate],
-            crates: vec![],
+            _crates: vec![],
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
                 scope_id: Vec::new(),
                 variables: Vec::new(),
-                look_in_outer_scope: false,
+                _look_in_outer_scope: false,
                 use_mappings: Vec::new(),
             }],
             // struct_or_enum_methods: Vec::new(),
             impl_block_target_type: Vec::new(),
-            impl_block_type_params: Vec::new(),
+            _impl_block_type_params: Vec::new(),
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
-            default_trait_impls_class_mapping: Vec::new(),
+            _default_trait_impls_class_mapping: Vec::new(),
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
             duplicates: Vec::new(),
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
-            scoped_impl_blocks: Vec::new(),
+            _scoped_impl_blocks: Vec::new(),
             impl_blocks_simpl: Vec::new(),
             scope_id: Vec::new(),
             scope_count: vec![0],
@@ -2253,7 +2264,7 @@ impl GlobalData {
         let var_scope = GlobalDataScope {
             scope_id: self.scope_id.clone(),
             variables,
-            look_in_outer_scope,
+            _look_in_outer_scope: look_in_outer_scope,
             use_mappings: Vec::new(),
         };
         self.scopes.push(var_scope);
@@ -2535,7 +2546,7 @@ impl GlobalData {
         //     .find_map(|(_name, _js_name, item_def)| (&item_def.ident == name).then_some(item_def));
 
         // Might want to check/assert these or useful for debugging
-        let is_box_prelude =
+        let _is_box_prelude =
             module_path == [PRELUDE_MODULE_PATH] && scope_id.is_none() && name == "Box";
 
         // if let Some(item_def) = scoped_item_def.or(module_item_def).or(prelude_item_def) {
@@ -2760,6 +2771,7 @@ impl GlobalData {
         )
     }
 
+    #[allow(dead_code)]
     fn get_module_mut(&mut self, module_path: &[String]) -> &mut ModuleData {
         self.modules
             .iter_mut()
@@ -2775,7 +2787,7 @@ impl GlobalData {
         item_module_path: &[String],
         item_scope_id: &Option<Vec<usize>>,
         sub_path: &RustPathSegment,
-        item_path_seg: &str,
+        _item_path_seg: &str,
         item_def: &ItemDefinition,
         // ) -> Option<PartialRustType> {
     ) -> Option<RustType> {
@@ -3203,6 +3215,7 @@ impl GlobalData {
     // }
 }
 
+#[allow(dead_code)]
 enum VarItemFn {
     Var(ScopedVar),
     StructOrEnum(ItemDefinition),
@@ -3240,6 +3253,7 @@ enum VarItemFn {
 //     }
 // }
 
+#[allow(dead_code)]
 fn get_traits_implemented_for_item(
     impl_items: &Vec<RustImplBlockSimple>,
     item_module_path: &[String],
@@ -4218,7 +4232,7 @@ pub fn process_items(
 
 fn update_classes2(js_stmt_modules: &mut Vec<JsModule>, global_data: &GlobalData) {
     for js_module in js_stmt_modules {
-        let module = global_data
+        let _module = global_data
             .modules
             .iter()
             .find(|m| m.path == js_module.module_path)
@@ -4478,7 +4492,7 @@ pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
         scoped_various_definitions: Vec::new(),
         scoped_syn_impl_items: Vec::new(),
     });
-    let mut get_names_module_path = ["crate".to_string()];
+    let mut _get_names_module_path = ["crate".to_string()];
 
     // let mut get_names_crate_path = crate_path.join("src/main.rs");
     // let mut get_names_crate_path = crate_path.clone();
@@ -4606,10 +4620,10 @@ pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
 }
 
 // TODO combine this with from_file
-pub fn from_module(code: &str, with_vec: bool) -> Vec<JsStmt> {
+pub fn from_module(code: &str, _with_vec: bool) -> Vec<JsStmt> {
     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
     let items = item_mod.content.unwrap().1;
-    let mut current_module = Vec::new();
+    let current_module = Vec::new();
     let mut global_data = GlobalData::new(None);
     js_stmts_from_syn_items(items, &current_module, &mut global_data)
 }
@@ -4621,7 +4635,7 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
     for stmt in &item_fn.block.stmts {
         let new_js_stmts = handle_stmt(stmt, &mut GlobalData::new(None), &Vec::new())
             .into_iter()
-            .map(|(stmt, type_)| stmt);
+            .map(|(stmt, _type_)| stmt);
         js_stmts.extend(new_js_stmts);
     }
     js_stmts
@@ -4708,9 +4722,9 @@ fn parse_fn_body_stmts(
                     // TODO how is this different to the normal Expr::If handling??? Is this unnecessary duplication?
                     Expr::If(expr_if) => {
                         if semi.is_some() {
-                            let mut stmts = handle_stmt(stmt, global_data, current_module);
+                            let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, type_)| stmt));
+                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
                         } else {
                             // TODO should be using same code to parse Expr::If as elsewhere in code
                             let (condition, type_) =
@@ -4752,7 +4766,7 @@ fn parse_fn_body_stmts(
                                         .flat_map(|stmt| {
                                             handle_stmt(stmt, global_data, current_module)
                                                 .into_iter()
-                                                .map(|(stmt, type_)| stmt)
+                                                .map(|(stmt, _type_)| stmt)
                                         })
                                         .collect(),
                                     fail,
@@ -4765,9 +4779,9 @@ fn parse_fn_body_stmts(
                     }
                     Expr::Match(expr_match) => {
                         if semi.is_some() {
-                            let mut stmts = handle_stmt(stmt, global_data, current_module);
+                            let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, type_)| stmt));
+                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
                         } else {
                             let (if_expr, type_) =
                                 handle_expr_match(expr_match, true, global_data, current_module);
@@ -4817,13 +4831,13 @@ fn parse_fn_body_stmts(
                     //     return_type = Some(type_);
                     //     // (JsStmt::Expr(expr, false), type_)
                     // }
-                    other => {
+                    _other => {
                         // dbg!("parse_fn_body_stmts");
                         // println!("{}", quote! { #other });
                         if semi.is_some() {
-                            let mut stmts = handle_stmt(stmt, global_data, current_module);
+                            let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, type_)| stmt));
+                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
                         } else {
                             // dbg!("print expr");
                             // println!("{}", quote! { #expr });
@@ -4854,17 +4868,17 @@ fn parse_fn_body_stmts(
                     }
                 },
                 _ => {
-                    let mut stmts = handle_stmt(stmt, global_data, current_module);
+                    let stmts = handle_stmt(stmt, global_data, current_module);
                     return_type = Some(stmts.last().unwrap().1.clone());
-                    js_stmts.extend(stmts.into_iter().map(|(stmt, type_)| stmt));
+                    js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
                 }
             }
         } else {
             // dbg!("print the stmt");
             // println!("{}", quote! { #stmt }.to_string());
-            let mut stmts = handle_stmt(stmt, global_data, current_module);
+            let stmts = handle_stmt(stmt, global_data, current_module);
             return_type = Some(stmts.last().unwrap().1.clone());
-            js_stmts.extend(stmts.into_iter().map(|(stmt, type_)| stmt));
+            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
         }
     }
 
@@ -4875,7 +4889,7 @@ fn parse_fn_body_stmts(
     }
 }
 
-fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsExpr, RustType)> {
+fn _hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsExpr, RustType)> {
     let segments = expr_path
         .path
         .segments
@@ -4974,11 +4988,11 @@ fn hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsE
 // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
 // What happens if the path is to a scoped item, or a variable (ie not an item definition)? We return the path of the item/var, which I believe in all cases must be a 0 length path/Vec<String>?
 #[allow(clippy::too_many_arguments)]
-fn get_path_old(
+fn _get_path_old(
     look_for_scoped_vars: bool,
     use_private_items: bool,
     // So we know whether allow segs to simply be somthing in an outer scope
-    module_level_items_only: bool,
+    _module_level_items_only: bool,
     module: &ModuleData,
     mut segs: Vec<String>,
     global_data: &GlobalData,
@@ -5056,7 +5070,7 @@ fn get_path_old(
 
         // Check whether it is not globally unique and so has been namespaced
         // TODO surely the global namespacing could and should happen just before writing the JS? It just get's in the way if it is already done at this point and we could just be using the module paths to differentiate
-        if let Some(dup) = global_data
+        if let Some(_dup) = global_data
             .duplicates
             .iter()
             .find(|dup| dup.name == segs[0] && dup.original_module_path == current_module)
@@ -5086,7 +5100,7 @@ fn get_path_old(
             .unwrap();
 
         // dbg!("in super");
-        get_path_old(
+        _get_path_old(
             false,
             true,
             true,
@@ -5103,7 +5117,7 @@ fn get_path_old(
         // I believe this works because the only effect of self is to look for the item only at the module level, rather than up through the fn scopes first, so get_path without the self and `in_same_module = false` achieves this, including handling any subsequent `super`s
         // TODO problem is that we are conflating `in_same_module` with pub/private
         // dbg!("in self");
-        get_path_old(
+        _get_path_old(
             false,
             true,
             true,
@@ -5127,7 +5141,7 @@ fn get_path_old(
         segs.remove(0);
 
         // NOTE all modules are desecendants of crate so all items in crate are visible/public
-        get_path_old(
+        _get_path_old(
             false,
             true,
             true,
@@ -5152,7 +5166,7 @@ fn get_path_old(
         segs.remove(0);
 
         // dbg!("Path starts with a submodule of the current module");
-        get_path_old(
+        _get_path_old(
             false,
             false,
             true,
@@ -5167,7 +5181,7 @@ fn get_path_old(
         use_segs.push(use_mapping.0.clone());
         segs.remove(0);
         use_segs.extend(segs);
-        let mut segs = get_path_old(
+        let segs = _get_path_old(
             false,
             true,
             true,
@@ -5178,7 +5192,7 @@ fn get_path_old(
             original_module,
         );
 
-        if let Some(dup) = global_data
+        if let Some(_dup) = global_data
             .duplicates
             .iter()
             .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
@@ -5649,7 +5663,7 @@ enum PartialRustType {
 }
 
 /// For checking whether a struct item definition (possibly with resolved type params) matches the target type of a non-trait impl. Note this is not a simple equals since a Foo<i32> item matches a Foo<T> impl.
-fn struct_or_enum_types_match(
+fn _struct_or_enum_types_match(
     target_type: &RustType,
     item_generics: &[RustTypeParam],
     item_module_path: &[String],
@@ -5795,7 +5809,7 @@ fn found_item_to_partial_rust_type(
                 .collect::<Vec<_>>()
         };
         match &item_def.struct_or_enum_info {
-            StructOrEnumDefitionInfo::Struct(struct_definition_info) => {
+            StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
                 // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
                 (
                     PartialRustType::StructIdent(
@@ -5807,7 +5821,7 @@ fn found_item_to_partial_rust_type(
                     false,
                 )
             }
-            StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
+            StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
                 // So we are assuming you can't have a path where the final segment is an enum ident
                 panic!()
             }

@@ -1,3 +1,5 @@
+#![allow(unreachable_code, unused_variables)]
+
 mod array;
 pub use array::*;
 
@@ -355,6 +357,7 @@ pub mod web {
     #[derive(Debug, Default)]
     pub struct FormDataEntries {}
     impl FormDataEntries {
+        #[allow(clippy::new_ret_no_self)]
         pub fn new(_dom_node: AnyNode) -> FormData {
             FormData::default()
         }
@@ -588,6 +591,7 @@ pub mod web {
         /// mdn: "Note: A new HTMLElement is returned if the document is an HTMLDocument, which is the most common case. Otherwise a new Element is returned."
         pub fn create_element_untyped(_tag: &str) -> impl HtmlElement {
             // It doesn't matter what we return here, because the `-> impl HtmlElement` causes the type info to be lost so we are just left with "any" html element
+            #[allow(clippy::no_effect)]
             AnyHtmlElement {}; // Don't really need AnyHtmlElement
             HTMLInputElement { value: "" }
         }

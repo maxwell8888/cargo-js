@@ -48,7 +48,7 @@ fn handle_expr_assign(
     // lhs must be either an ident or a deref ident
     // NOTE I don't think we need to ignore derefs of not-mut refs because it is not possible to have a non-mut ref on the lhs of an assignment
     // NOTE need to know RustType of each derefed expr to know whether to add a `.inner` or not (ie only added to JS copy only primatives)
-    fn get_name_and_deref(expr: &Expr) -> (String, bool) {
+    fn _get_name_and_deref(expr: &Expr) -> (String, bool) {
         match expr {
             Expr::Array(_) => todo!(),
             Expr::Field(_) => todo!(),
@@ -65,7 +65,7 @@ fn handle_expr_assign(
             Expr::Struct(_) => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Unary(expr_unary) => match expr_unary.op {
-                UnOp::Deref(_) => (get_name_and_deref(&expr_unary.expr).0, true),
+                UnOp::Deref(_) => (_get_name_and_deref(&expr_unary.expr).0, true),
                 UnOp::Not(_) => todo!(),
                 UnOp::Neg(_) => todo!(),
                 _ => todo!(),
@@ -506,7 +506,7 @@ pub fn handle_expr(
                         ident: &syn::Ident,
                     ) -> RustType {
                         match base_type {
-                            RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                                 let item_definition = global_data
                                     .lookup_item_def_known_module_assert_not_func2(
                                         &module_path,
@@ -564,7 +564,7 @@ pub fn handle_expr(
                             RustType::Tuple(tuple_types) => {
                                 tuple_types[index.index as usize].clone()
                             }
-                            RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                                 let item_definition = global_data
                                     .lookup_item_def_known_module_assert_not_func2(
                                         &module_path,
@@ -689,7 +689,7 @@ pub fn handle_expr(
 
             // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
             // TODO For now assume first block return types
-            let (mut succeed_stmts, types): (Vec<_>, Vec<_>) = expr_if
+            let (succeed_stmts, types): (Vec<_>, Vec<_>) = expr_if
                 .then_branch
                 .stmts
                 .iter()
@@ -729,14 +729,14 @@ pub fn handle_expr(
         }
         Expr::Index(expr_index) => {
             let (expr, type_) = handle_expr(&expr_index.expr, global_data, current_module);
-            let (index_expr, index_type) =
+            let (index_expr, _index_type) =
                 handle_expr(&expr_index.index, global_data, current_module);
             // NOTE `Index` is a trait that can be implemented for any non primitive type (I think?), so need to look up the `Index` impl of the base expr's type to find what the `Output` type is
             // TODO we can use square bracket array[] indexing for arrays, but for other types which don't get transpiled to an array, we need to use `.index(i)` instead
             // "only traits defined in the current crate can be implemented for primitive types"
             // "only traits defined in the current crate can be implemented for arbitrary types"
             // "define and implement a trait or new type instead"
-            let (rust_type, use_square_brackets) = match type_ {
+            let (rust_type, _use_square_brackets) = match type_ {
                 RustType::NotAllowed => todo!(),
                 RustType::Todo => todo!(),
                 RustType::Unit => todo!(),
@@ -828,7 +828,7 @@ pub fn handle_expr(
                     .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
                             .into_iter()
-                            .map(|(stmt, type_)| stmt)
+                            .map(|(stmt, _type_)| stmt)
                     })
                     .collect::<Vec<_>>(),
             ),
@@ -1032,7 +1032,7 @@ pub fn handle_expr(
                     module_path,
                     scope_id,
                     enum_name,
-                    variant_name,
+                    _variant_name,
                 ) => {
                     let rust_type = RustType::StructOrEnum(
                         type_params,
@@ -1176,7 +1176,7 @@ pub fn handle_expr(
                     .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
                             .into_iter()
-                            .map(|(stmt, type_)| stmt)
+                            .map(|(stmt, _type_)| stmt)
                     })
                     .collect::<Vec<_>>(),
             ),
@@ -1299,6 +1299,7 @@ fn handle_expr_closure(
             // Could in theory return Uknown and resolve the type later, but even Rust will often error with:
             // `type must be known at this point. consider giving this closure parameter an explicit type.`
             // So need think more about which cases need type annotations and which don't, so just assume type annotations for now.
+            #[allow(unreachable_code)]
             RustType::Unknown
         };
 
@@ -1462,7 +1463,7 @@ pub fn handle_expr_and_stmt_macro(
                 .flat_map(|stmt| {
                     handle_stmt(stmt, global_data, current_module)
                         .into_iter()
-                        .map(|(stmt, type_)| stmt)
+                        .map(|(stmt, _type_)| stmt)
                 })
                 .collect();
             return (JsExpr::TryBlock(stmt_vec), RustType::Unit);
@@ -1480,7 +1481,7 @@ pub fn handle_expr_and_stmt_macro(
             let stmt_vec = catch_block.stmts.into_iter().flat_map(|stmt| {
                 handle_stmt(&stmt, global_data, current_module)
                     .into_iter()
-                    .map(|(stmt, type_)| stmt)
+                    .map(|(stmt, _type_)| stmt)
             });
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType::Unit);
@@ -1541,49 +1542,52 @@ pub fn handle_expr_and_stmt_macro(
                                     .rev()
                                     .find(|scoped_var| scoped_var.name == var_name)
                             })
-                            .map_or((false, false, false), |ScopedVar { name, mut_, type_ }| {
-                                let is_primative = match type_ {
-                                    RustType::Todo => {
-                                        // global_data
-                                        //     .rust_prelude_types
-                                        //     .number_prototype_extensions = true;
-                                        // global_data
-                                        //     .rust_prelude_types
-                                        //     .string_prototype_extensions = true;
-                                        false
-                                    }
-                                    RustType::Unit => true,
-                                    RustType::I32 => true,
-                                    RustType::F32 => true,
-                                    RustType::Bool => true,
-                                    RustType::String => true,
-                                    RustType::StructOrEnum(_, _, _, _) => false,
-                                    // RustType::Enum(_) => false,
-                                    RustType::NotAllowed => false,
-                                    RustType::Unknown => false,
-                                    RustType::Never => false,
-                                    RustType::Vec(_) => false,
-                                    RustType::Array(_) => false,
-                                    RustType::Tuple(_) => false,
-                                    RustType::MutRef(_) => false,
-                                    RustType::Fn(_, _, _, _, _) => false,
-                                    RustType::Option(_) => false,
-                                    RustType::Result(_) => false,
-                                    RustType::TypeParam(_) => false,
-                                    RustType::ImplTrait(_) => false,
-                                    RustType::ParentItem => todo!(),
-                                    RustType::UserType(_, _) => todo!(),
-                                    RustType::Ref(inner) => match &**inner {
+                            .map_or(
+                                (false, false, false),
+                                |ScopedVar { mut_, type_, .. }| {
+                                    let is_primative = match type_ {
+                                        RustType::Todo => {
+                                            // global_data
+                                            //     .rust_prelude_types
+                                            //     .number_prototype_extensions = true;
+                                            // global_data
+                                            //     .rust_prelude_types
+                                            //     .string_prototype_extensions = true;
+                                            false
+                                        }
+                                        RustType::Unit => true,
+                                        RustType::I32 => true,
+                                        RustType::F32 => true,
+                                        RustType::Bool => true,
                                         RustType::String => true,
-                                        _ => todo!(),
-                                    },
-                                    RustType::Closure(_, _) => todo!(),
-                                    RustType::FnVanish => todo!(),
-                                    RustType::Box(_) => todo!(),
-                                };
-                                let mut_ref = matches!(type_, RustType::MutRef(_));
-                                (*mut_, mut_ref, is_primative)
-                            })
+                                        RustType::StructOrEnum(_, _, _, _) => false,
+                                        // RustType::Enum(_) => false,
+                                        RustType::NotAllowed => false,
+                                        RustType::Unknown => false,
+                                        RustType::Never => false,
+                                        RustType::Vec(_) => false,
+                                        RustType::Array(_) => false,
+                                        RustType::Tuple(_) => false,
+                                        RustType::MutRef(_) => false,
+                                        RustType::Fn(_, _, _, _, _) => false,
+                                        RustType::Option(_) => false,
+                                        RustType::Result(_) => false,
+                                        RustType::TypeParam(_) => false,
+                                        RustType::ImplTrait(_) => false,
+                                        RustType::ParentItem => todo!(),
+                                        RustType::UserType(_, _) => todo!(),
+                                        RustType::Ref(inner) => match &**inner {
+                                            RustType::String => true,
+                                            _ => todo!(),
+                                        },
+                                        RustType::Closure(_, _) => todo!(),
+                                        RustType::FnVanish => todo!(),
+                                        RustType::Box(_) => todo!(),
+                                    };
+                                    let mut_ref = matches!(type_, RustType::MutRef(_));
+                                    (*mut_, mut_ref, is_primative)
+                                },
+                            )
                     } else {
                         (false, false, false)
                     }
@@ -1625,7 +1629,7 @@ fn handle_expr_method_call(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType) {
-    let method_name = expr_method_call.method.to_string();
+    let _method_name = expr_method_call.method.to_string();
     let span = debug_span!("handle_expr_method_call", expr_method_call = ?quote! { #expr_method_call }.to_string());
     let _guard = span.enter();
 
@@ -1754,7 +1758,7 @@ fn handle_expr_method_call(
 
     // Now that we have the method impl item, we can get the method input types, and if any of them contain type params, we can attempt to resolve them from receiver_type_params or method_turbofish_rust_types
     let resolved_input_types = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(static_, fn_info) => {
+        RustImplItemItemNoJs::Fn(_static_, fn_info) => {
             //
             fn_info
                 .inputs_types
@@ -1776,8 +1780,8 @@ fn handle_expr_method_call(
     // Lookup method impl to see if any of it's args are type params
 
     // Parse the args
-    let (args_js_exprs, args_rust_types): (Vec<_>, Vec<_>) = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(static_, fn_info) => {
+    let (args_js_exprs, _args_rust_types): (Vec<_>, Vec<_>) = match &method_impl_item.item {
+        RustImplItemItemNoJs::Fn(_static, fn_info) => {
             // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
             let first_input_is_self = fn_info
                 .inputs_types
@@ -1795,7 +1799,7 @@ fn handle_expr_method_call(
                 .iter()
                 .zip(resolved_input_types_slice)
                 .enumerate()
-                .map(|(i, (arg, resolved_input_type))| {
+                .map(|(_i, (arg, resolved_input_type))| {
                     // dbg!(i);
                     // dbg!(&arg);
                     // dbg!(&resolved_input_type);
@@ -2343,7 +2347,7 @@ fn get_receiver_params_and_method_impl_item(
             //     RustImplItemItemNoJs::Const => todo!(),
             // }
         }
-        RustType::Vec(element) => {
+        RustType::Vec(_element) => {
             // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
             // if method_name == "iter" || method_name == "collect" {
             //     // (Vec::new(), RustType::Vec(element))
@@ -2386,7 +2390,7 @@ fn get_receiver_params_and_method_impl_item(
                     .unwrap(),
             )
         }
-        RustType::Array(element) => {
+        RustType::Array(_element) => {
             // TODO need to think about the different between Array and Vec here
             // TODO we are assuming `.collect::<Vec<_>>()` here but should support other `.collect()`s
             if method_name == "iter" || method_name == "collect" {
@@ -2431,7 +2435,7 @@ fn get_receiver_params_and_method_impl_item(
     }
 }
 
-fn resolve_generics_for_return_type(
+fn _resolve_generics_for_return_type(
     return_type: RustType,
     item_type_params: &Vec<RustTypeParam>,
     fn_info: &FnInfo,
@@ -2453,7 +2457,7 @@ fn resolve_generics_for_return_type(
                 RustTypeParamValue::RustType(_) => false,
             });
 
-            method_return_type_generic_resolve_to_rust_type(
+            _method_return_type_generic_resolve_to_rust_type(
                 item_type_params,
                 &rust_type_param,
                 fn_info,
@@ -2485,7 +2489,7 @@ fn resolve_generics_for_return_type(
                     match tp.type_ {
                         RustTypeParamValue::Unresolved => {
                             let mut new_tp = tp.clone();
-                            let rust_type = method_return_type_generic_resolve_to_rust_type(
+                            let rust_type = _method_return_type_generic_resolve_to_rust_type(
                                 item_type_params,
                                 tp,
                                 fn_info,
@@ -2513,7 +2517,7 @@ fn resolve_generics_for_return_type(
         RustType::Tuple(_) => todo!(),
         RustType::UserType(_, _) => todo!(),
         RustType::MutRef(_) => todo!(),
-        RustType::Ref(inner_type) => RustType::Ref(Box::new(resolve_generics_for_return_type(
+        RustType::Ref(inner_type) => RustType::Ref(Box::new(_resolve_generics_for_return_type(
             *inner_type,
             item_type_params,
             fn_info,
@@ -2528,7 +2532,7 @@ fn resolve_generics_for_return_type(
 }
 
 /// For a type param return type, attempt to find a concrete type by looking: on the receiver's type params, the method's type params, or if the type param is used for one of the inputs, use the concrete type of the arg
-fn method_return_type_generic_resolve_to_rust_type(
+fn _method_return_type_generic_resolve_to_rust_type(
     item_type_params: &[RustTypeParam],
     return_type_param: &RustTypeParam,
     fn_info: &FnInfo,
@@ -2581,7 +2585,7 @@ pub fn handle_expr_block(
 
     global_data.push_new_scope(true, Vec::new());
     // TODO block needs to use something like parse_fn_body to be able to return the type
-    let (mut stmts, types): (Vec<_>, Vec<_>) = expr_block
+    let (stmts, types): (Vec<_>, Vec<_>) = expr_block
         .block
         .stmts
         .iter()
@@ -2717,7 +2721,7 @@ fn handle_expr_call(
                                     named_field_types
                                         .iter()
                                         .cloned()
-                                        .map(|(name, type_)| type_)
+                                        .map(|(_name, type_)| type_)
                                         .collect::<Vec<_>>()
                                 }
                             };
@@ -2827,7 +2831,7 @@ fn handle_expr_call(
                         }
                         RustType::Fn(
                             item_type_params,
-                            type_params,
+                            _type_params,
                             module_path,
                             scope_id,
                             rust_type_fn_type,
@@ -2837,7 +2841,7 @@ fn handle_expr_call(
                                 RustTypeFnType::Standalone(name) => global_data
                                     .lookup_fn_info_known_module(&module_path, &scope_id, &name),
                                 RustTypeFnType::AssociatedFn(item_name, fn_name) => {
-                                    let item_type_params = item_type_params.unwrap();
+                                    let _item_type_params = item_type_params.unwrap();
                                     let item_definition = global_data
                                         .lookup_item_def_known_module_assert_not_func2(
                                             &module_path,
@@ -2896,7 +2900,7 @@ fn handle_expr_call(
                                             }
                                         }
                                     }
-                                    RustType::Option(rust_type) => todo!(),
+                                    RustType::Option(_rust_type) => todo!(),
                                     RustType::Result(_) => todo!(),
                                     // RustType::StructOrEnum(_, _, _) => todo!(),
                                     RustType::Vec(_) => todo!(),
@@ -2911,7 +2915,7 @@ fn handle_expr_call(
                             }
                             get_fn_type_returns(fn_info.return_type, &new_type_params)
                         }
-                        RustType::Closure(input_types, return_type) => {
+                        RustType::Closure(_input_types, return_type) => {
                             //
                             *return_type
                         }
@@ -3105,7 +3109,7 @@ fn handle_expr_path_inner(
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
     let (partial_rust_type, is_mut_var) = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
-        if let Some(segs_copy_item_scope) = &segs_copy_item_scope {
+        if let Some(_segs_copy_item_scope) = &segs_copy_item_scope {
             // Look for var
             // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
             assert_eq!(segs_copy_item_path.len(), 1);
@@ -3342,7 +3346,7 @@ fn handle_expr_path_inner(
 
         let enum_variant = match item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
-            StructOrEnumDefitionInfo::Struct(struct_definition_info) => None,
+            StructOrEnumDefitionInfo::Struct(_struct_definition_info) => None,
             StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
                 // Check if we have a variant of the enum
                 let enum_variant = enum_definition_info
@@ -3548,7 +3552,7 @@ fn handle_match_pat(
 
             // A struct pattern in a match arm always implies an enum? if so, look up enum to find types of struct patterns
             let enum_def_info = match match_condition_type {
-                RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                     let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
                         module_path,
                         scope_id,
@@ -3561,7 +3565,7 @@ fn handle_match_pat(
                 }
                 RustType::ParentItem => match global_data.impl_block_target_type.last().unwrap() {
                     // TODO this is a duplicate of above
-                    RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                    RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
                         let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
                             module_path,
                             scope_id,
@@ -3660,7 +3664,7 @@ fn handle_match_pat(
                 global_data: &GlobalData,
             ) -> (ItemDefinition, bool) {
                 match match_condition_type {
-                    RustType::StructOrEnum(type_params, module_path, scope_id, name) => (
+                    RustType::StructOrEnum(_type_params, module_path, scope_id, name) => (
                         global_data.lookup_item_def_known_module_assert_not_func2(
                             module_path,
                             scope_id,
@@ -3725,7 +3729,7 @@ fn handle_match_pat(
                     // Get input from definition based on it's position
                     // TODO what about use of .. ??
                     let field_type = match &variant_def.inputs[i] {
-                        EnumVariantInputsInfo::Named { ident, input_type } => todo!(),
+                        EnumVariantInputsInfo::Named { .. } => todo!(),
                         EnumVariantInputsInfo::Unnamed(input_type) => input_type.clone(),
                     };
 
@@ -3735,8 +3739,8 @@ fn handle_match_pat(
                         RustType::TypeParam(rust_type_param) => {
                             fn type_to_type(
                                 match_condition_type: &RustType,
-                                rust_type_param: RustTypeParam,
-                                global_data: &GlobalData,
+                                _rust_type_param: RustTypeParam,
+                                _global_data: &GlobalData,
                             ) -> RustType {
                                 match match_condition_type {
                                     // TODO should just mutate rust_type_param rather than create a new one
@@ -3852,14 +3856,14 @@ pub fn handle_expr_match(
         current_module: &[String],
     ) -> Option<(JsExpr, RustType)> {
         match match_condition_type {
-            RustType::Ref(inner) => handle_option_match(
+            RustType::Ref(_inner) => handle_option_match(
                 match_condition_expr,
                 match_condition_type,
                 expr_match,
                 global_data,
                 current_module,
             ),
-            RustType::Option(inner) => {
+            RustType::Option(_inner) => {
                 assert_eq!(expr_match.arms.len(), 2);
 
                 // make succeed
@@ -3888,8 +3892,7 @@ pub fn handle_expr_match(
                 cond_rhs[index] = format!("{}Id", cond_rhs[index].clone());
                 global_data.push_new_scope(true, scoped_vars);
 
-                let (mut succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body
-                {
+                let (succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                     // TODO not sure what this is for???
                     Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
@@ -3944,7 +3947,7 @@ pub fn handle_expr_match(
                         _ => false,
                     })
                     .unwrap();
-                let (mut cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
+                let (mut cond_rhs, _body_data_destructure, scoped_vars) = handle_match_pat(
                     &fail_arm.pat,
                     expr_match,
                     global_data,
@@ -3957,7 +3960,7 @@ pub fn handle_expr_match(
                 cond_rhs[index] = format!("{}_id", cond_rhs[index].clone());
                 global_data.push_new_scope(true, scoped_vars);
 
-                let (mut fail_body_js_stmts, fail_body_return_type) = match &*fail_arm.body {
+                let (mut fail_body_js_stmts, _fail_body_return_type) = match &*fail_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                     // TODO not sure what this is for???
                     Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType::Todo),
@@ -4053,7 +4056,7 @@ pub fn handle_expr_match(
             None,
         ),
         |acc, arm| {
-            let (mut cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
+            let (cond_rhs, mut body_data_destructure, scoped_vars) = handle_match_pat(
                 &arm.pat,
                 expr_match,
                 global_data,

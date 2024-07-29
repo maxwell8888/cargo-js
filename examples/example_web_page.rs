@@ -1,3 +1,5 @@
+#![allow(dead_code, non_snake_case, unused_variables)]
+
 use ravascript::prelude::web::*;
 
 fn expanding_textarea() -> HTMLDivElement {

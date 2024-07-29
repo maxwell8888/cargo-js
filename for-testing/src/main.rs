@@ -24,6 +24,7 @@ fn duplicate_name() -> i32 {
 fn main() {
     duplicate_name();
     utils::duplicate_name();
+    #[allow(unused_variables)]
     let thing = External::new();
     let fido = Green {
         fluffy: true,

@@ -876,6 +876,7 @@ impl ModuleData {
     }
 }
 
+#[allow(dead_code)]
 trait GetModule {
     fn get_mut(&mut self, module_path: &[String]) -> &mut ModuleData;
 }

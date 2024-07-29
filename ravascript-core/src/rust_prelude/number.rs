@@ -1,9 +1,10 @@
+#![allow(dead_code)]
+
 use crate::prelude::{web::Math, JsBoolean, JsNumber, JsNumberTrait};
 use std::ops::Add;
 
 use super::RustBool;
 
-#[allow(dead_code)]
 /// ```js
 /// class RustInteger {
 ///     constructor(jsNumber) {

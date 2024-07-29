@@ -9,6 +9,7 @@ pub struct Document {
 }
 impl Document {
     // TODO given we need to keep the untyped `create_element`, it seems somewhat pointless having this and we may as well go straight to `create_element_div` etc??
+    #[allow(unused_variables)]
     pub fn create_element(tag_name: &'static str) -> Div {
         Div {}
     }
@@ -37,6 +38,7 @@ macro_rules! try_ {
         $try_block
     }};
 }
+
 #[macro_export]
 macro_rules! catch {
     ($err_ident:ident, $ErrType:ty, $catch_block:block) => {{

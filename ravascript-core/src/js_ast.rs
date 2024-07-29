@@ -33,7 +33,7 @@ impl JsOp {
             JsOp::Rem => "%",
         }
     }
-    fn from_binop(binop: BinOp) -> JsOp {
+    fn _from_binop(binop: BinOp) -> JsOp {
         match binop {
             BinOp::Add(_) => JsOp::Add,
             BinOp::Sub(_) => JsOp::Sub,

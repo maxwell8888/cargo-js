@@ -201,6 +201,7 @@ impl GetModuleFirstPass for Vec<ModuleDataFirstPass> {
     }
 }
 
+#[allow(dead_code)]
 pub enum ItemUseModuleOrScope<'a> {
     ExternalCrate,
     Module(&'a mut ModuleDataFirstPass),

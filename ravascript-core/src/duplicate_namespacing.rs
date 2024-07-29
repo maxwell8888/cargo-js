@@ -97,14 +97,14 @@ pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
     duplicates
 }
 
-fn update_dup_names(duplicates: &mut Vec<Duplicate>) -> bool {
+fn update_dup_names(duplicates: &mut [Duplicate]) -> bool {
     let mut found_duplicate = false;
 
     // We take a copy to make sure both duplicates have a path segment added to their namespace, rather than just the first one that is found
     // NOTE we add to the name space of all duplicates rather than just one because they eventually diverge eg we end up with:
     // [green__foo__Bar] and [blue__foo__Bar]. (Though this case will be rare as it relies on having two submodules named `foo` in different parent modules `green` and `blue`, in most cases there won't be duplicate module names so we will end up with something like:
     // [green__Bar] and [blue__Bar])
-    let dups_copy = duplicates.clone();
+    let dups_copy = duplicates.to_vec();
     for dup in duplicates.iter_mut() {
         if dups_copy
             .iter()

@@ -324,7 +324,7 @@ pub fn handle_item_fn(
         };
         // dbg!(&item_fn.block.stmts);
 
-        let (body_stmts, return_type) = parse_fn_body_stmts(
+        let (body_stmts, _return_type) = parse_fn_body_stmts(
             false,
             returns_non_mut_ref_val,
             true,
@@ -379,7 +379,7 @@ pub fn handle_item_fn(
 
 pub fn handle_item_const(
     item_const: &ItemConst,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -449,7 +449,7 @@ pub fn handle_item_const(
 /// We must store separate <variant name>Id fields because otherwise we end up in a situation where a variable containing an enum variant only contains the data returned the the method with that name and then we can't do myVariantVar === MyEnum::Variant because the lhs is data and the rhs is a function.
 pub fn handle_item_enum(
     item_enum: ItemEnum,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -495,7 +495,7 @@ pub fn handle_item_enum(
     // Not store the members and just look up methods etc on the syn object/value each time we want to eg check if a path is referrring to an associated fn??? (NOTE the main reason we started storing members in the first place is to store info about members defined impl blocks, but again could just store the syn object) I think just storing the syn objects initially is a good idea until I am clear what info is actually needed.
     // But all we are going to be doing with the syn objects is getting the return type and if there are generics, look to see if any of them have been resolved in `.generics` and we could do the same thing for `MemberInfo`?
 
-    let members_for_scope = item_enum
+    let _members_for_scope = item_enum
         .variants
         .iter()
         .map(|v| {
@@ -573,7 +573,7 @@ pub fn handle_item_enum(
     //     global_data_scope.item_definitons.push(item_def.clone());
     // }
 
-    let class_name = item_enum.ident.to_string();
+    let _class_name = item_enum.ident.to_string();
 
     // Populate methods and fields
 
@@ -802,7 +802,7 @@ pub fn handle_item_enum(
 
 pub fn handle_impl_item_fn(
     js_impl_items: &mut Vec<RustImplItemJs>,
-    impl_item: &ImplItem,
+    _impl_item: &ImplItem,
     impl_item_fn: &ImplItemFn,
     global_data: &mut GlobalData,
     current_module_path: &[String],
@@ -815,7 +815,7 @@ pub fn handle_impl_item_fn(
         *scope_count
     };
 
-    let static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
+    let _static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
     // dbg!(item_impl_fn);
     // let private = !export;
     let js_input_names = impl_item_fn
@@ -833,7 +833,7 @@ pub fn handle_impl_item_fn(
         .collect::<Vec<_>>();
 
     // Get generics
-    let mut fn_generics = impl_item_fn
+    let _fn_generics = impl_item_fn
         .sig
         .generics
         .params
@@ -931,7 +931,7 @@ pub fn handle_impl_item_fn(
                     // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
 
                     // NOTE THIS IS WRONG, we parsing the definition so the type params won't have changed from the first pass. It is once the method is *called* that we can attempt to further resolve type params eg the `T` in an `Option<T>`
-                    let type_ = if is_mut {
+                    let _type_ = if is_mut {
                         // TODO does this mean self in `fn foo(mut self) {}` goes to RustType::MutRef??
                         RustType::MutRef(Box::new(target_rust_type.clone()))
                     } else {
@@ -965,7 +965,7 @@ pub fn handle_impl_item_fn(
 
     // let mut fns = Vec::new();
     // record var and fn inputs
-    for input in &impl_item_fn.sig.inputs {
+    for _input in &impl_item_fn.sig.inputs {
         // match input {
         //     FnArg::Receiver(receiver) => {
         //         let type_ = if receiver.mutability.is_some() {
@@ -1021,7 +1021,7 @@ pub fn handle_impl_item_fn(
         // fns: Vec::new(),
         // generics: fn_generics,
         // item_definitons: Vec::new(),
-        look_in_outer_scope: false,
+        _look_in_outer_scope: false,
         // impl_blocks: Vec::new(),
         // trait_definitons: Vec::new(),
         // consts: Vec::new(),
@@ -1031,7 +1031,7 @@ pub fn handle_impl_item_fn(
     // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
     // TODO need to look up whether path is eg `rust_std::RustBool`, not just the item name
     // TODO see commented out code below this fn for old eg RustInteger + add_assign mappings/updates
-    let n_stmts = impl_item_fn.block.stmts.len();
+    let _n_stmts = impl_item_fn.block.stmts.len();
     let body_stmts = impl_item_fn
         .block
         .stmts
@@ -1076,7 +1076,7 @@ pub fn handle_impl_item_fn(
     let body_stmts = Some(body_stmts);
 
     // TODO no idea why body_stmts is an `Option`
-    if let Some((body_stmts, return_type)) = body_stmts {
+    if let Some((body_stmts, _return_type)) = body_stmts {
         // push to rust_impl_items
         let fn_generics = impl_item_fn
             .sig
@@ -1184,7 +1184,7 @@ pub fn handle_impl_item_fn(
 
 pub fn handle_item_impl(
     item_impl: &ItemImpl,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> Vec<JsStmt> {
@@ -1211,7 +1211,7 @@ pub fn handle_item_impl(
         .cloned()
         .collect::<Vec<_>>();
 
-    let module = global_data
+    let _module = global_data
         .modules
         .iter()
         .find(|m| m.path == current_module_path)
@@ -1420,7 +1420,7 @@ pub fn handle_item_impl(
 
     let rust_impl_block = JsImplBlock2 {
         unique_id: unique_id.clone(),
-        generics: rust_impl_block_generics,
+        _generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
         target: target_rust_type.clone(),
         items: rust_impl_items
@@ -1515,7 +1515,7 @@ pub fn handle_item_impl(
             .items
             .iter()
             .cloned()
-            .filter_map(|(used, item)| match item.item {
+            .filter_map(|(_used, item)| match item.item {
                 RustImplItemItemJs::Fn(_, _, _) => None,
                 RustImplItemItemJs::Const(js_local) => Some(js_local),
             })
@@ -1524,8 +1524,8 @@ pub fn handle_item_impl(
             .items
             .iter()
             .cloned()
-            .filter_map(|(used, item)| match item.item {
-                RustImplItemItemJs::Fn(static_, fn_info, js_fn) => {
+            .filter_map(|(_used, item)| match item.item {
+                RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
                     Some((rust_impl_block.js_name(), static_, js_fn))
                 }
                 RustImplItemItemJs::Const(_) => None,
@@ -1585,13 +1585,13 @@ pub fn handle_item_impl(
         .collect::<Vec<_>>();
     // Need to use sort by because of lifetimes: https://users.rust-lang.org/t/sort-by-key-and-probably-a-simple-lifetime-issue/73358
     dedup_rust_prelude_definitions
-        .sort_by(|(js_name, item_def), (js_name2, item_def2)| js_name.cmp(js_name2));
+        .sort_by(|(js_name, _item_def), (js_name2, _item_def2)| js_name.cmp(js_name2));
     dedup_rust_prelude_definitions
-        .dedup_by(|(js_name, item_def), (js_name2, item_def2)| js_name == js_name2);
+        .dedup_by(|(js_name, _item_def), (js_name2, _item_def2)| js_name == js_name2);
 
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         if prelude_item_def.impl_block_ids.contains(&unique_id) {
-            for (is_used, item) in &rust_impl_block.items {
+            for (_is_used, item) in &rust_impl_block.items {
                 // TODO only add if `is_used == true`
                 let item_name = Ident::String(item.ident.clone());
                 let block_name = &rust_impl_block.js_name();
@@ -1687,7 +1687,7 @@ pub fn handle_item_struct(
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
-    let mut name = item_struct.ident.to_string();
+    let name = item_struct.ident.to_string();
     // dbg!(&global_data.scopes);
     debug!(name = ?name, "handle_item_struct");
     // Attribute {
@@ -2012,7 +2012,7 @@ pub fn handle_item_struct(
 //     }
 // }
 
-pub fn handle_item_mod(
+pub fn _handle_item_mod(
     item_mod: ItemMod,
     global_data: &mut GlobalData,
     current_module_path: &mut Vec<String>,
@@ -2042,7 +2042,7 @@ pub fn handle_item_mod(
     let items = if let Some(content) = &item_mod.content {
         // TODO how does `mod bar { mod foo; }` work?
         content.1.clone()
-    } else if let Some(crate_path) = &global_data.crate_path {
+    } else if let Some(crate_path) = &global_data._crate_path {
         let mut file_path = crate_path.clone();
         file_path.push("src");
         if module_path_copy.is_empty() {
@@ -2089,7 +2089,7 @@ pub fn handle_item_mod(
 
 pub fn handle_item_trait(
     item_trait: &ItemTrait,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) {
@@ -2136,7 +2136,7 @@ pub fn handle_item_trait(
                             .flat_map(|stmt| {
                                 handle_stmt(stmt, global_data, current_module_path)
                                     .into_iter()
-                                    .map(|(stmt, type_)| stmt)
+                                    .map(|(stmt, _type_)| stmt)
                             })
                             .collect(),
                     };

@@ -1,3 +1,5 @@
+#![allow(clippy::assertions_on_constants)]
+
 fn duplicate_name() -> i32 {
     3
 }

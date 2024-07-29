@@ -141,7 +141,7 @@ async fn main() {
             };
             let output = format_js(js_str);
             if let Some(out) = out {
-                let _ = fs::write(out, output).unwrap();
+                fs::write(out, output).unwrap();
             } else {
                 println!("{output}");
             }
