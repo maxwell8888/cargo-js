@@ -10,8 +10,8 @@ use super::handle_syn_stmt::parse_fn_body_stmts;
 use super::parse_fn_input_or_field;
 
 use super::{handle_pat, resolve_path};
+use crate::update_item_definitions::ConstDef;
 use crate::{
-    found_item_to_partial_rust_type,
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
@@ -4175,4 +4175,100 @@ pub fn handle_expr_match(
     // }
     // todo!()
     (if_expr, rust_type.unwrap())
+}
+
+/// TODO This seems to be specifically for handling the case that `if segs_copy_item_path.len() == 1`. This fn and that branch that calls it needs cleaning up.
+/// Assumes that exactly 1 of var, func, or item_def is Some() and the rest are None
+/// -> (partial, is_mut)
+fn found_item_to_partial_rust_type(
+    item_path: &RustPathSegment,
+    var: Option<&ScopedVar>,
+    func: Option<&FnInfo>,
+    item_def: Option<&ItemDefinition>,
+    const_def: Option<&ConstDef>,
+    module_path: Vec<String>,
+    scope_id: Option<Vec<usize>>,
+) -> (PartialRustType, bool) {
+    debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
+    if let Some(var) = var {
+        // This branch is obviously only possible for scoped paths since we can't have module level vars
+        (PartialRustType::RustType(var.type_.clone()), var.mut_)
+    } else if let Some(fn_info) = func {
+        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
+        let fn_generics = if !item_path.turbofish.is_empty() {
+            item_path
+                .turbofish
+                .iter()
+                .enumerate()
+                .map(|(i, g)| RustTypeParam {
+                    name: fn_info.generics[i].clone(),
+                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            fn_info
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>()
+        };
+        (
+            PartialRustType::RustType(RustType::Fn(
+                None,
+                fn_generics,
+                module_path,
+                scope_id,
+                RustTypeFnType::Standalone(item_path.ident.clone()),
+            )),
+            false,
+        )
+    } else if let Some(item_def) = item_def {
+        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
+        let item_generics = if !item_path.turbofish.is_empty() {
+            item_path
+                .turbofish
+                .iter()
+                .enumerate()
+                .map(|(i, g)| RustTypeParam {
+                    name: item_def.generics[i].clone(),
+                    type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            item_def
+                .generics
+                .iter()
+                .map(|g| RustTypeParam {
+                    name: g.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                })
+                .collect::<Vec<_>>()
+        };
+        match &item_def.struct_or_enum_info {
+            StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
+                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
+                (
+                    PartialRustType::StructIdent(
+                        item_generics,
+                        module_path,
+                        scope_id,
+                        item_path.ident.clone(),
+                    ),
+                    false,
+                )
+            }
+            StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
+                // So we are assuming you can't have a path where the final segment is an enum ident
+                panic!()
+            }
+        }
+    } else if let Some(const_def) = const_def {
+        (PartialRustType::RustType(const_def.type_.clone()), false)
+    } else {
+        // dbg!(segs_copy);
+        todo!()
+    }
 }

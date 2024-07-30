@@ -15,7 +15,7 @@ use crate::{
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
-    js_stmts_from_syn_items, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric,
+    js_stmts_from_syn_items, GlobalData, GlobalDataScope, JsImplBlock2, RustGeneric,
     RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType,
     RustTypeParam, RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };
@@ -1788,4 +1788,30 @@ pub fn handle_item_trait(
             _ => todo!(),
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum JsImplItem {
+    /// This means that `foo() {}` will be used in place of `function foo() {}`  
+    ///
+    /// Some means it is a method, the first bool is whether it is private and thus should have # prepended to the name, the second bool is whether it is static  
+    ///
+    /// (class name, private, static, JsFn)  
+    ClassMethod(String, bool, bool, JsFn),
+    ClassStatic(JsLocal),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct ImplItemTemp {
+    /// snake case
+    class_name: String,
+    /// ie method name or const name. snake case
+    item_name: String,
+    /// snake case
+    module_path: Vec<String>,
+    item_stmt: JsImplItem,
+    // TODO what is this for can we delete it?
+    // return_type: RustType,
 }

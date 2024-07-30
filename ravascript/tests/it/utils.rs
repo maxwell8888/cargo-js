@@ -22,7 +22,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 
-use rstest::*;
+// use rstest::*;
 
 use ravascript::{from_file, modules_to_string};
 use ravascript_core::{format_js, from_block};

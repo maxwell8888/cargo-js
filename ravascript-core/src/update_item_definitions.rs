@@ -1,14 +1,10 @@
 use syn::{
-    FnArg, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStruct, ItemTrait, Member, Pat, ReturnType, Type, TypeParamBound, Visibility,
+    FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type, TypeParamBound, Visibility
 };
-use tracing::debug_span;
+use tracing::{debug, debug_span};
 
 use crate::{
-    get_item_impl_unique_id,
-    make_item_definitions::{self, ModuleMethods},
-    parse_types_for_populate_item_definitions, RustGeneric, RustImplBlockSimple,
-    RustImplItemItemNoJs, RustImplItemNoJs, RustType, RustTypeParam, RustTypeParamValue,
+    get_item_impl_unique_id, make_item_definitions::{self, ModuleMethods}, RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue
 };
 
 pub fn update_item_definitions(
@@ -960,5 +956,413 @@ impl FnInfo {
                 }
             })
             .collect::<Vec<_>>()
+    }
+}
+
+/// Similar to parse_fn_input_or_field but for the extract_data_populate_item_definitions() pass before parsing, so only dealing with top level items, so don't need to check for scoped item definitions, also given we are popualting `.item_definitions()` etc, we need to avoid using these. TODO IMPORTANT no I believe we are also dealing with scoped items in `extract_data_populate_item_definitions()`
+///
+/// Suitable for parsing: fn input types, fn return type, struct fields, enum variants with args
+///
+/// NOTE global data is required by get_path_without_namespacing which only uses pub_definitions etc, not `ItemDefintion`s
+///
+/// IMPORTANT NOTE this fn is never used in the first pass where item definitions are being recorded, only in the second pass where info about dependant types is being add, so we can safely lookup Path -> ItemDefinition here
+fn parse_types_for_populate_item_definitions(
+    type_: &Type,
+    // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
+    root_parent_item_definition_generics: &[String],
+    // TODO should just store the current module in GlobalData to save having to pass this around everywhere
+    current_module: &[String],
+    current_scope_id: &Option<Vec<usize>>,
+    // global_data: &make_item_definitions::GlobalData,
+    modules: &[make_item_definitions::ModuleData],
+) -> RustType {
+    match type_ {
+        Type::Array(_) => todo!(),
+        Type::BareFn(_) => todo!(),
+        Type::Group(_) => todo!(),
+        Type::ImplTrait(type_impl_trait) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
+
+            // We distinguish between normal traits which -> RustType::Impl, and fn/closure traits which -> RustType::Fn
+            if type_impl_trait.bounds.len() == 1 {
+                let bound = type_impl_trait.bounds.first().unwrap();
+                match bound {
+                    TypeParamBound::Trait(trait_bound) => {
+                        if trait_bound.path.segments.len() == 1 {
+                            let seg = trait_bound.path.segments.first().unwrap();
+                            if seg.ident == "Fn" || seg.ident == "FnOnce" || seg.ident == "FnMut" {
+                                return match &seg.arguments {
+                                    PathArguments::None => todo!(),
+                                    PathArguments::AngleBracketed(_) => todo!(),
+                                    PathArguments::Parenthesized(args) => {
+                                        let inputs = args
+                                            .inputs
+                                            .iter()
+                                            .map(|input_type| {
+                                                parse_types_for_populate_item_definitions(
+                                                    input_type,
+                                                    root_parent_item_definition_generics,
+                                                    current_module,
+                                                    current_scope_id,
+                                                    modules,
+                                                )
+                                            })
+                                            .collect();
+                                        let return_type = match &args.output {
+                                            ReturnType::Default => RustType::Unit,
+                                            ReturnType::Type(_, return_type) => {
+                                                parse_types_for_populate_item_definitions(
+                                                    return_type,
+                                                    root_parent_item_definition_generics,
+                                                    current_module,
+                                                    current_scope_id,
+                                                    modules,
+                                                )
+                                            }
+                                        };
+                                        RustType::Closure(inputs, Box::new(return_type))
+                                    }
+                                };
+                            }
+                        }
+                    }
+                    TypeParamBound::Lifetime(_) => {}
+                    TypeParamBound::Verbatim(_) => todo!(),
+                    _ => todo!(),
+                }
+            }
+
+            let bounds = type_impl_trait
+                .bounds
+                .iter()
+                .filter_map(|b| {
+                    match b {
+                        TypeParamBound::Trait(trait_bound) => {
+                            // TODO handle segment arguments because we might have eg `impl GenericFooTrait<Bar>`
+                            let trait_bound_path = trait_bound
+                                .path
+                                .segments
+                                .iter()
+                                .map(|seg| RustPathSegment {
+                                    ident: seg.ident.to_string(),
+                                    turbofish: match &seg.arguments {
+                                        PathArguments::None => Vec::new(),
+                                        PathArguments::AngleBracketed(args) => args
+                                            .args
+                                            .iter()
+                                            .map(|arg| match arg {
+                                                GenericArgument::Lifetime(_) => todo!(),
+                                                GenericArgument::Type(arg_type_) => {
+                                                    parse_types_for_populate_item_definitions(
+                                                        arg_type_,
+                                                        root_parent_item_definition_generics,
+                                                        current_module,
+                                                        current_scope_id,
+                                                        modules,
+                                                    )
+                                                }
+                                                GenericArgument::Const(_) => todo!(),
+                                                GenericArgument::AssocType(_) => todo!(),
+                                                GenericArgument::AssocConst(_) => todo!(),
+                                                GenericArgument::Constraint(_) => todo!(),
+                                                _ => todo!(),
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        PathArguments::Parenthesized(_) => {
+                                            dbg!(seg);
+                                            todo!();
+                                        }
+                                    },
+                                })
+                                .collect::<Vec<_>>();
+
+                            // TODO lookup trait in global data to get module path
+                            let (trait_module_path, trait_item_path, trait_item_scope) =
+                                make_item_definitions::resolve_path(
+                                    true,
+                                    true,
+                                    trait_bound_path,
+                                    modules,
+                                    current_module,
+                                    current_module,
+                                    current_scope_id,
+                                );
+                            // A Trait bound should just be a trait, no associated fn or whatever
+                            assert!(trait_item_path.len() == 1);
+
+                            // let (module_path, trait_definition) = global_data
+                            //     .lookup_trait_definition_any_module(&trait_name, current_module)
+                            //     .unwrap();
+                            Some((
+                                trait_module_path,
+                                trait_item_scope,
+                                RustTypeImplTrait::SimpleTrait(trait_item_path[0].ident.clone()),
+                            ))
+                        }
+                        TypeParamBound::Lifetime(_) => None,
+                        TypeParamBound::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            RustType::ImplTrait(bounds)
+        }
+        Type::Infer(_) => todo!(),
+        Type::Macro(_) => todo!(),
+        Type::Never(_) => todo!(),
+        Type::Paren(_) => todo!(),
+        Type::Path(type_path) => {
+            debug!(type_ = ?type_, "parse_fn_input_or_field Type::Path");
+            // eg:
+            // Foo<i32>
+            // Foo<T>
+            // Self (which given we are dealing with field or input, *must* be a different instance/type from self)
+            // T (where the types bounds of T are elsewhere eg `where T: FooTrait` or `<T: FooTrait>`)
+            // T: impl FooTrait
+
+            // If it is a field, a type with a generic like T or Foo<T> means the generic depends on the parent so for
+            // let foo = Foo { gen_field: i32 };
+            // let field = foo.gen_field;
+            // If we have just stored that the type of gen_field is T, we can just resolve T to i32 because we will haev the type of foo which will contain the resolved generics.
+            // What happens if it hasn't been resolved yet? eg it might get resolved by being passed as an argument to a fn, so the arg type defines it? Should be fine as long as know we have an unresolved generic, so can (should be able to) look up the input types for the fn/method
+
+            let seg = type_path.path.segments.first().unwrap();
+            let seg_name = seg.ident.to_string();
+            let seg_name_str = seg_name.as_str();
+
+            // Look to see if name is a generic which has been declared
+            let generic = root_parent_item_definition_generics
+                .iter()
+                .find(|generic| generic == &seg_name_str);
+            if let Some(generic) = generic {
+                // return match &generic.type_ {
+                //     RustTypeParamValue::Unresolved => todo!(),
+                //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
+                // };
+                return RustType::TypeParam(RustTypeParam {
+                    name: generic.clone(),
+                    type_: RustTypeParamValue::Unresolved,
+                });
+            }
+
+            // For fns:
+            // the names of generics should be stored on FnInfo
+            // Sometimes we can work out what the type of a generic is, eg it impls Fn in which case we only care about the return type, but mostly the generic will just be eg T, maybe with some trait bound, but that doesn't help us determine what the actual type is. We need to record where the generic type is inferred from, eg:
+            // 1. the generic is used as the type for an input: easy, just check the type of the thing that eventually gets passed as an arg
+            // 2. the generic is used as the return type: redundant, we don't need to know the type since we already determine the return type from the body
+
+            // For structs
+            // Can always be inferred from the arguments used to construct the struct?
+
+            // dbg!(seg_name_str);
+
+            // For impl blocks
+            #[allow(unreachable_code)]
+            match seg_name_str {
+                // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
+                "Option" => {
+                    todo!();
+                    let generic_type = match &seg.arguments {
+                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                            // Option only has
+                            match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                GenericArgument::Lifetime(_) => todo!(),
+                                GenericArgument::Type(type_) => {
+                                    parse_types_for_populate_item_definitions(
+                                        type_,
+                                        root_parent_item_definition_generics,
+                                        current_module,
+                                        current_scope_id,
+                                        modules,
+                                    )
+                                }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    };
+                    RustType::Option(RustTypeParam {
+                        // TODO "T" shouldn't be hardcoded here
+                        name: "T".to_string(),
+                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    })
+                }
+                "Result" => {
+                    let generic_type = match &seg.arguments {
+                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                            // Option only has
+                            match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                GenericArgument::Lifetime(_) => todo!(),
+                                GenericArgument::Type(type_) => {
+                                    parse_types_for_populate_item_definitions(
+                                        type_,
+                                        root_parent_item_definition_generics,
+                                        current_module,
+                                        current_scope_id,
+                                        modules,
+                                    )
+                                }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    };
+                    RustType::Result(RustTypeParam {
+                        // TODO "T" shouldn't be hardcoded here
+                        name: "T".to_string(),
+                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    })
+                }
+                _ => {
+                    // get full path
+                    // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
+                    // NOTE also, get_path_without_namespacing() only preserves `RustPathSeg`s/turbofish, it doesn't use or update them so we could just populate them later
+                    // dbg!("parse type path");
+                    // println!("{}", quote! { #type_path });
+
+                    let rust_path = type_path
+                        .path
+                        .segments
+                        .iter()
+                        .map(|seg| RustPathSegment {
+                            ident: seg.ident.to_string(),
+                            turbofish: match &seg.arguments {
+                                PathArguments::None => Vec::new(),
+                                PathArguments::AngleBracketed(args) => args
+                                    .args
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(_i, arg)| match arg {
+                                        GenericArgument::Lifetime(_) => None,
+                                        GenericArgument::Type(arg_type_) => {
+                                            Some(parse_types_for_populate_item_definitions(
+                                                arg_type_,
+                                                root_parent_item_definition_generics,
+                                                current_module,
+                                                current_scope_id,
+                                                modules,
+                                            ))
+                                        }
+                                        GenericArgument::Const(_) => todo!(),
+                                        GenericArgument::AssocType(_) => todo!(),
+                                        GenericArgument::AssocConst(_) => todo!(),
+                                        GenericArgument::Constraint(_) => todo!(),
+                                        _ => todo!(),
+                                    })
+                                    .collect(),
+                                PathArguments::Parenthesized(_) => todo!(),
+                            },
+                        })
+                        .collect();
+
+                    // TODO important should replace get_path with item lookup like below
+                    // let (item_definition_module_path, resolved_scope_id, item_definition) =
+                    //     global_data.lookup_item_definition_any_module_or_scope(
+                    //         current_module,
+                    //         &global_data.scope_id_as_option(),
+                    //         &vec![struct_or_enum_name.to_string()],
+                    //     );
+                    let (item_module_path, item_path_seg, item_scope) =
+                        make_item_definitions::resolve_path(
+                            true,
+                            true,
+                            rust_path,
+                            modules,
+                            current_module,
+                            current_module,
+                            current_scope_id,
+                        );
+                    let item_seg = &item_path_seg[0];
+
+                    let mut type_params = item_seg
+                        .turbofish
+                        .iter()
+                        .map(|rt| RustTypeParam {
+                            name: "unknown_todo".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
+                        })
+                        .collect::<Vec<_>>();
+
+                    if item_module_path == vec!["prelude_special_case".to_string()] {
+                        if item_seg.ident == "i32" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_integer = true;
+                            // }
+                            RustType::I32
+                        } else if item_seg.ident == "String" || item_seg.ident == "str" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            RustType::String
+                        } else if item_seg.ident == "bool" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            RustType::Bool
+                        } else if item_seg.ident == "Vec" {
+                            // if has_mut_keyword {
+                            //     global_data.rust_prelude_types.rust_string = true;
+                            // }
+                            // dbg!(&type_params);
+                            // dbg!(&type_path.path.segments);
+                            assert_eq!(type_params.len(), 1);
+                            RustType::Vec(Box::new(RustType::TypeParam(type_params.remove(0))))
+                        } else {
+                            dbg!(&item_seg.ident);
+                            todo!()
+                        }
+                    } else {
+                        // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
+                        RustType::StructOrEnum(
+                            type_params,
+                            item_module_path,
+                            item_scope,
+                            item_seg.ident.clone(),
+                        )
+                    }
+                }
+            }
+        }
+        Type::Ptr(_) => todo!(),
+        Type::Reference(type_reference) => {
+            // let type_ = parse_type(&type_reference.elem);
+            // let type_ = match type_ {
+            //     TypeOrVar::RustType(rust_type) => rust_type,
+            //     TypeOrVar::Unknown => RustType::Unknown,
+            // };
+            // TypeOrVar::Var(ScopedVar {
+            //     name: "donotuse".to_string(),
+            //     mut_: false,
+            //     mut_ref: type_reference.mutability.is_some(),
+            //     type_,
+            // })
+            let type_ = parse_types_for_populate_item_definitions(
+                &type_reference.elem,
+                root_parent_item_definition_generics,
+                current_module,
+                current_scope_id,
+                modules,
+            );
+            if type_reference.mutability.is_some() {
+                RustType::MutRef(Box::new(type_))
+            } else {
+                // RustType::Ref(Box::new(type_))
+                type_
+            }
+        }
+        Type::Slice(_) => todo!(),
+        Type::TraitObject(_) => todo!(),
+        Type::Tuple(_) => todo!(),
+        Type::Verbatim(_) => todo!(),
+        _ => todo!(),
     }
 }
