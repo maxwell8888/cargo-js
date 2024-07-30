@@ -2,29 +2,24 @@ use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
-use handle_syn_expr::{handle_expr, handle_expr_block, handle_expr_match};
-use handle_syn_item::{
+
+use handle_syn::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
-    handle_item_trait,
+    handle_item_trait, handle_stmt,
 };
-use handle_syn_stmt::handle_stmt;
 use js_ast::{
-    DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsIf,
-    JsLocal, JsModule, LocalName, LocalType, PathIdent,
+    DestructureObject, DestructureValue, FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal,
+    JsModule, LocalName, LocalType, PathIdent,
 };
 use quote::quote;
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{
-    Expr, ExprBlock, ExprPath, GenericArgument, GenericParam, ImplItem, Item, ItemFn, ItemImpl,
-    ItemMod, ItemTrait, Member, Pat, PathArguments, ReturnType, Stmt, Type, TypeParamBound,
-    UseTree,
+    ExprPath, GenericArgument, GenericParam, ImplItem, Item, ItemFn, ItemImpl, ItemMod, ItemTrait,
+    Member, Pat, PathArguments, ReturnType, Type, TypeParamBound, UseTree,
 };
 use tracing::{debug, debug_span, info};
 
-mod handle_syn_expr;
-mod handle_syn_item;
-// use crate::handle_syn_item::handle_item;
-mod handle_syn_stmt;
+mod handle_syn;
 mod js_ast;
 pub mod prelude;
 pub mod rust_prelude;
@@ -41,7 +36,7 @@ use make_item_definitions::make_item_definitions;
 mod update_item_definitions;
 use update_item_definitions::{
     update_item_definitions, ConstDef, FnInfo, ItemDefinition, ModuleData, RustTraitDefinition,
-    StructOrEnumDefitionInfo, VariousDefintions,
+    StructOrEnumDefitionInfo,
 };
 
 pub use js_ast::JsStmt;
@@ -51,7 +46,6 @@ const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
 // TODO consider how to get RA/cargo check to analyze rust inputs in `testing/`
-// TODO add assertions to output JS and run that JS to ensure assertions pass
 
 fn handle_destructure_pat(
     pat: &Pat,
@@ -101,9 +95,6 @@ fn handle_destructure_pat(
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                            // dbg!(&module_path);
-                            // dbg!(&scope_id);
-                            // dbg!(&name);
                             let item_def = global_data
                                 .lookup_item_def_known_module_assert_not_func2(
                                     module_path,
@@ -450,6 +441,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
 //     }
 // }
 
+/// Used when handling syn closures, locals, and items but I think the use in items might be redundant
 /// We can't use this for fns/methods *return types* because we need to actually parse the body to differentiate between self and another var with the type Self.
 /// So in all we are (*should be) using this for parsing: field types (which are kind of like self anyway?), and fn/method inputs
 /// * fn has "return_type" in the name...
@@ -4458,160 +4450,160 @@ pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<
 }
 
 #[allow(clippy::vec_init_then_push)]
-pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
-    // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. NO because a block can still have inline modules. Should web prelude be allowed?
+// pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
+//     // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. NO because a block can still have inline modules. Should web prelude be allowed?
 
-    // let file = syn::parse_file(code).unwrap();
-    let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
+//     // let file = syn::parse_file(code).unwrap();
+//     let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();
 
-    // let mut names = Vec::new();
-    let mut modules = Vec::new();
-    modules.push(ModuleData {
-        name: "crate".to_string(),
-        // parent_name: None,
-        path: vec!["crate".to_string()],
-        // pub_definitions: Vec::new(),
-        // private_definitions: Vec::new(),
-        pub_submodules: Vec::new(),
-        private_submodules: Vec::new(),
-        pub_use_mappings: Vec::new(),
-        private_use_mappings: Vec::new(),
-        resolved_mappings: Vec::new(),
-        // fn_info: Vec::new(),
-        // item_definitons: Vec::new(),
-        // trait_definitons: Vec::new(),
-        // consts: Vec::new(),
-        various_definitions: VariousDefintions::default(),
-        items: Vec::new(),
-        scoped_various_definitions: Vec::new(),
-        scoped_syn_impl_items: Vec::new(),
-    });
-    let mut _get_names_module_path = ["crate".to_string()];
+//     // let mut names = Vec::new();
+//     let mut modules = Vec::new();
+//     modules.push(ModuleData {
+//         name: "crate".to_string(),
+//         // parent_name: None,
+//         path: vec!["crate".to_string()],
+//         // pub_definitions: Vec::new(),
+//         // private_definitions: Vec::new(),
+//         pub_submodules: Vec::new(),
+//         private_submodules: Vec::new(),
+//         pub_use_mappings: Vec::new(),
+//         private_use_mappings: Vec::new(),
+//         resolved_mappings: Vec::new(),
+//         // fn_info: Vec::new(),
+//         // item_definitons: Vec::new(),
+//         // trait_definitons: Vec::new(),
+//         // consts: Vec::new(),
+//         various_definitions: VariousDefintions::default(),
+//         items: Vec::new(),
+//         scoped_various_definitions: Vec::new(),
+//         scoped_syn_impl_items: Vec::new(),
+//     });
+//     let mut _get_names_module_path = ["crate".to_string()];
 
-    // let mut get_names_crate_path = crate_path.join("src/main.rs");
-    // let mut get_names_crate_path = crate_path.clone();
-    // extract_data(
-    //     &file.items,
-    //     None,
-    //     &mut get_names_module_path,
-    //     &mut names,
-    //     &mut modules,
-    // );
+//     // let mut get_names_crate_path = crate_path.join("src/main.rs");
+//     // let mut get_names_crate_path = crate_path.clone();
+//     // extract_data(
+//     //     &file.items,
+//     //     None,
+//     //     &mut get_names_module_path,
+//     //     &mut names,
+//     //     &mut modules,
+//     // );
 
-    // let mut duplicates = Vec::new();
-    // for name in &names {
-    //     if names
-    //         .iter()
-    //         .filter(|(module_path, name2)| &name.1 == name2)
-    //         .collect::<Vec<_>>()
-    //         .len()
-    //         > 1
-    //     {
-    //         duplicates.push(Duplicate {
-    //             namespace: Vec::<String>::new(),
-    //             module_path: name.0.clone(),
-    //             name: name.1.clone(),
-    //             original_module_path: name.0.clone(),
-    //         });
-    //     }
-    // }
-    // update_dup_names(&mut duplicates);
-    // update_dup_names(&mut duplicates);
-    // update_dup_names(&mut duplicates);
-    // update_dup_names(&mut duplicates);
-    // update_dup_names(&mut duplicates);
-    // update_dup_names(&mut duplicates);
+//     // let mut duplicates = Vec::new();
+//     // for name in &names {
+//     //     if names
+//     //         .iter()
+//     //         .filter(|(module_path, name2)| &name.1 == name2)
+//     //         .collect::<Vec<_>>()
+//     //         .len()
+//     //         > 1
+//     //     {
+//     //         duplicates.push(Duplicate {
+//     //             namespace: Vec::<String>::new(),
+//     //             module_path: name.0.clone(),
+//     //             name: name.1.clone(),
+//     //             original_module_path: name.0.clone(),
+//     //         });
+//     //     }
+//     // }
+//     // update_dup_names(&mut duplicates);
+//     // update_dup_names(&mut duplicates);
+//     // update_dup_names(&mut duplicates);
+//     // update_dup_names(&mut duplicates);
+//     // update_dup_names(&mut duplicates);
+//     // update_dup_names(&mut duplicates);
 
-    // for dup in duplicates.iter_mut() {
-    //     dup.namespace.push(dup.name.clone());
-    // }
+//     // for dup in duplicates.iter_mut() {
+//     //     dup.namespace.push(dup.name.clone());
+//     // }
 
-    // resolve_use_stmts(&mut modules);
+//     // resolve_use_stmts(&mut modules);
 
-    let mut global_data = GlobalData::new(None);
-    global_data.modules = modules;
+//     let mut global_data = GlobalData::new(None);
+//     global_data.modules = modules;
 
-    // populate_item_definitions(&mut global_data.modules);
-    // update_item_definitions(&mut global_data);
-    // populate_item_def_impl_blocks(&mut global_data);
+//     // populate_item_definitions(&mut global_data.modules);
+//     // update_item_definitions(&mut global_data);
+//     // populate_item_def_impl_blocks(&mut global_data);
 
-    global_data.transpiled_modules.push(JsModule {
-        public: true,
-        name: Ident::Str("crate"),
-        module_path: vec!["crate".to_string()],
-        stmts: Vec::new(),
-    });
-    // let stmts = js_stmts_from_syn_items(
-    //     file.items,
-    //     true,
-    //     &mut vec!["crate".to_string()],
-    //     &mut global_data,
-    //     &mut None,
-    // );
+//     global_data.transpiled_modules.push(JsModule {
+//         public: true,
+//         name: Ident::Str("crate"),
+//         module_path: vec!["crate".to_string()],
+//         stmts: Vec::new(),
+//     });
+//     // let stmts = js_stmts_from_syn_items(
+//     //     file.items,
+//     //     true,
+//     //     &mut vec!["crate".to_string()],
+//     //     &mut global_data,
+//     //     &mut None,
+//     // );
 
-    // It is better to parse this as an actual block expression and then just remove the braces/take the stmts within, because `handle_stmt()` will parse any items as being not module level, which means impls are added to the scope, which we don't have, so calling update_classes() tries to use module level impls which don't exist.
-    // let mut stmts = expr_block
-    //     .block
-    //     .stmts
-    //     .iter()
-    //     .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
-    //     .collect::<Vec<_>>();
-    let (js_block, _rust_type) =
-        handle_expr_block(&expr_block, &mut global_data, &["crate".to_string()], false);
-    let stmts = match js_block {
-        JsExpr::Block(js_stmts) => js_stmts,
-        _ => todo!(),
-    };
+//     // It is better to parse this as an actual block expression and then just remove the braces/take the stmts within, because `handle_stmt()` will parse any items as being not module level, which means impls are added to the scope, which we don't have, so calling update_classes() tries to use module level impls which don't exist.
+//     // let mut stmts = expr_block
+//     //     .block
+//     //     .stmts
+//     //     .iter()
+//     //     .map(|stmt| handle_stmt(stmt, &mut global_data, &vec!["crate".to_string()]).0)
+//     //     .collect::<Vec<_>>();
+//     // let (js_block, _rust_type) =
+//     //     handle_expr_block(&expr_block, &mut global_data, &["crate".to_string()], false);
+//     let stmts = match js_block {
+//         JsExpr::Block(js_stmts) => js_stmts,
+//         _ => todo!(),
+//     };
 
-    // let stmts = if with_rust_types {
-    //     push_rust_types(&global_data, stmts)
-    // } else {
-    //     stmts
-    // };
+//     // let stmts = if with_rust_types {
+//     //     push_rust_types(&global_data, stmts)
+//     // } else {
+//     //     stmts
+//     // };
 
-    let crate_module = global_data
-        .transpiled_modules
-        .iter_mut()
-        .find(|tm| tm.module_path == vec!["crate".to_string()])
-        .unwrap();
-    crate_module.stmts = stmts;
+//     let crate_module = global_data
+//         .transpiled_modules
+//         .iter_mut()
+//         .find(|tm| tm.module_path == vec!["crate".to_string()])
+//         .unwrap();
+//     crate_module.stmts = stmts;
 
-    // update_classes(
-    //     &mut global_data.transpiled_modules,
-    //     &global_data.impl_items,
-    //     &global_data.default_trait_impls_class_mapping,
-    //     &global_data.default_trait_impls,
-    // );
-    // update_classes(
-    //     &mut global_data.transpiled_modules,
-    //     &global_data.impl_blocks,
-    //     &global_data.default_trait_impls_class_mapping,
-    //     &global_data.default_trait_impls,
-    // );
+//     // update_classes(
+//     //     &mut global_data.transpiled_modules,
+//     //     &global_data.impl_items,
+//     //     &global_data.default_trait_impls_class_mapping,
+//     //     &global_data.default_trait_impls,
+//     // );
+//     // update_classes(
+//     //     &mut global_data.transpiled_modules,
+//     //     &global_data.impl_blocks,
+//     //     &global_data.default_trait_impls_class_mapping,
+//     //     &global_data.default_trait_impls,
+//     // );
 
-    // and module name comments when there is more than 1 module
-    if global_data.transpiled_modules.len() > 1 {
-        for module in &mut global_data.transpiled_modules {
-            // dbg!(&module);
-            module.stmts.insert(
-                0,
-                JsStmt::Comment(if module.module_path == ["crate"] {
-                    "crate".to_string()
-                } else {
-                    module
-                        .module_path
-                        .iter()
-                        .skip(1)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("::")
-                }),
-            );
-        }
-    }
+//     // and module name comments when there is more than 1 module
+//     if global_data.transpiled_modules.len() > 1 {
+//         for module in &mut global_data.transpiled_modules {
+//             // dbg!(&module);
+//             module.stmts.insert(
+//                 0,
+//                 JsStmt::Comment(if module.module_path == ["crate"] {
+//                     "crate".to_string()
+//                 } else {
+//                     module
+//                         .module_path
+//                         .iter()
+//                         .skip(1)
+//                         .cloned()
+//                         .collect::<Vec<_>>()
+//                         .join("::")
+//                 }),
+//             );
+//         }
+//     }
 
-    global_data.transpiled_modules[0].stmts.clone()
-}
+//     global_data.transpiled_modules[0].stmts.clone()
+// }
 
 // TODO combine this with from_file
 pub fn from_module(code: &str, _with_vec: bool) -> Vec<JsStmt> {
@@ -4649,239 +4641,6 @@ pub fn from_fn(code: &str) -> Vec<JsStmt> {
 //     }
 //     js_stmts
 // }
-
-fn parse_fn_body_stmts(
-    is_arrow_fn: bool,
-    returns_non_mut_ref_val: bool,
-    // `return` can only be used in fns and closures so need this to prevent them being added to blocks
-    allow_return: bool,
-    stmts: &[Stmt],
-    global_data: &mut GlobalData,
-    current_module: &[String],
-) -> (Vec<JsStmt>, RustType) {
-    // let mut return_type = RustType::Todo;
-    let mut js_stmts = Vec::new();
-
-    // let (js_stmts, types): (Vec<_>, Vec<_>) = stmts
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(i, stmt)| )
-    //     .unzip();
-
-    // It is important to be able to generate no body arrow fns like `(x) => x + 1` eg for `.map()` etc but we need to be able to determine whether the resultant expression is suitable to fit in or should be within braces and thus require a return statement, which is not straightforward. Eg a call might be a single line depending on how many args/length of idents, a macro might be depending on what it expands/transpiles to, etc. Really we need to parse it, format it, then check whether it is a single line. We take a simplified approach here.
-    let is_single_expr_return = if stmts.len() == 1 {
-        match stmts.first().unwrap() {
-            Stmt::Local(_) => false,
-            Stmt::Item(_) => false,
-            Stmt::Expr(expr, _) => match expr {
-                Expr::Array(_) => true,
-                Expr::Assign(_) => true,
-                Expr::Async(_) => todo!(),
-                Expr::Await(_) => true,
-                Expr::Binary(_) => true,
-                Expr::Call(_) => true,
-                Expr::Cast(_) => true,
-                Expr::Field(_) => true,
-                // TODO should be true for if expressions that transpile to a (short) ternary
-                Expr::If(_) => false,
-                Expr::Index(_) => true,
-                Expr::Lit(_) => true,
-                Expr::Macro(_) => true,
-                Expr::MethodCall(_) => true,
-                Expr::Paren(_) => true,
-                Expr::Path(_) => true,
-                Expr::Range(_) => todo!(),
-                Expr::Reference(_) => true,
-                Expr::Repeat(_) => true,
-                Expr::Struct(_) => true,
-                Expr::Tuple(_) => true,
-                Expr::Unary(_) => true,
-                Expr::Unsafe(_) => todo!(),
-                Expr::Verbatim(_) => todo!(),
-                _ => false,
-            },
-            Stmt::Macro(_) => true,
-        }
-    } else {
-        false
-    };
-
-    // TODO loads of duplication here and needs documenting why each special case is requried
-    let mut return_type = None;
-    for (i, stmt) in stmts.iter().enumerate() {
-        // Manually set assignment var name for if expressions that are a return stmt
-        if i == stmts.len() - 1 {
-            match stmt {
-                Stmt::Expr(expr, semi) => match expr {
-                    // TODO how is this different to the normal Expr::If handling??? Is this unnecessary duplication?
-                    Expr::If(expr_if) => {
-                        if semi.is_some() {
-                            let stmts = handle_stmt(stmt, global_data, current_module);
-                            return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
-                        } else {
-                            // TODO should be using same code to parse Expr::If as elsewhere in code
-                            let (condition, type_) =
-                                handle_expr(&expr_if.cond, global_data, current_module);
-                            let condition = Box::new(condition);
-
-                            let fail = expr_if.else_branch.as_ref().map(|(_, expr)| {
-                                //
-                                match &**expr {
-                                    Expr::Block(expr_block) => {
-                                        // Box::new(handle_expr(&*expr, global_data, current_module).0)
-                                        Box::new(
-                                            handle_expr_block(
-                                                expr_block,
-                                                global_data,
-                                                current_module,
-                                                false,
-                                            )
-                                            .0,
-                                        )
-                                    }
-                                    Expr::If(_) => {
-                                        Box::new(handle_expr(expr, global_data, current_module).0)
-                                    }
-                                    _ => panic!(),
-                                }
-                            });
-                            let stmt = JsStmt::Expr(
-                                JsExpr::If(JsIf {
-                                    assignment: Some(LocalName::Single(Ident::Str(
-                                        "ifTempAssignment",
-                                    ))),
-                                    declare_var: true,
-                                    condition,
-                                    succeed: expr_if
-                                        .then_branch
-                                        .stmts
-                                        .iter()
-                                        .flat_map(|stmt| {
-                                            handle_stmt(stmt, global_data, current_module)
-                                                .into_iter()
-                                                .map(|(stmt, _type_)| stmt)
-                                        })
-                                        .collect(),
-                                    fail,
-                                }),
-                                false,
-                            );
-                            js_stmts.push(stmt);
-                            return_type = Some(type_);
-                        }
-                    }
-                    Expr::Match(expr_match) => {
-                        if semi.is_some() {
-                            let stmts = handle_stmt(stmt, global_data, current_module);
-                            return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
-                        } else {
-                            let (if_expr, type_) =
-                                handle_expr_match(expr_match, true, global_data, current_module);
-                            js_stmts.push(JsStmt::Expr(if_expr, true));
-                            js_stmts.push(JsStmt::Expr(
-                                JsExpr::Return(Box::new(JsExpr::Path(PathIdent::Single(
-                                    Ident::Str("ifTempAssignment"),
-                                )))),
-                                true,
-                            ));
-                            return_type = Some(type_);
-                        }
-                    }
-                    Expr::Path(expr_path)
-                        if returns_non_mut_ref_val
-                            && expr_path.path.segments.len() == 1
-                            && semi.is_none() =>
-                    {
-                        // NOTE a len=1 path could also be a const or a fn
-                        let var_name = expr_path.path.segments.first().unwrap().ident.to_string();
-                        let var_info = global_data
-                            .scopes
-                            .iter()
-                            .rev()
-                            .find_map(|s| s.variables.iter().rev().find(|v| v.name == var_name))
-                            .unwrap();
-                        let mut js_var = JsExpr::Path(PathIdent::Single(Ident::String(var_name)));
-                        if var_info.mut_ {
-                            js_var = JsExpr::Field(Box::new(js_var), Ident::Str("inner"))
-                        }
-                        let stmt = JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true);
-                        // Lookup path to get return type
-                        // JsStmt::Expr(JsExpr::Return(Box::new(js_var)), true)
-                        js_stmts.push(stmt);
-                        return_type = Some(var_info.type_.clone());
-                    }
-                    // Expr::Unary(expr_unary) if returns_non_mut_ref_val && semi.is_none() => {
-                    //     // if equivalent to JS primitive deref of mut/&mut number, string, or boolean, then call inner, else call copy (note we are only handling paths at the mo as we can find the types for them)
-                    //     // TODO this logic and other stuff in this fn is duplicating stuff that should/does already exist in handle_expr
-                    //     // The problem is we need to know `returns_non_mut_ref_val`?
-
-                    //     let (expr, type_) =
-                    //         handle_expr(&*expr_unary.expr, global_data, current_module);
-                    //     // return_type = type_;
-
-                    //     js_stmts.push(JsStmt::Expr(expr, true));
-                    //     return_type = Some(type_);
-                    //     // (JsStmt::Expr(expr, false), type_)
-                    // }
-                    _other => {
-                        // dbg!("parse_fn_body_stmts");
-                        // println!("{}", quote! { #other });
-                        if semi.is_some() {
-                            let stmts = handle_stmt(stmt, global_data, current_module);
-                            return_type = Some(stmts.last().unwrap().1.clone());
-                            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
-                        } else {
-                            // dbg!("print expr");
-                            // println!("{}", quote! { #expr });
-                            let (mut js_expr, type_) =
-                                handle_expr(expr, global_data, current_module);
-                            // Is the thing being returned a JS primative mut var or &mut (ie has a RustInteger wrapper)? in which case we need to get the inner value if `returns_non_mut_ref_val` is true
-
-                            // TODO leave false for now until I clean up/refactor this code since this `is_js_primative_mut_var` should get caught be the Expr::Path branch
-                            let is_js_primative_mut_var = false;
-                            let is_js_primative_mut_ref = type_
-                                .is_mut_ref_of_js_primative(&global_data.impl_block_target_type);
-
-                            if returns_non_mut_ref_val
-                                && (is_js_primative_mut_var || is_js_primative_mut_ref)
-                            {
-                                js_expr = JsExpr::Field(Box::new(js_expr), Ident::Str("inner"));
-                            }
-
-                            let return_expr =
-                                if (is_arrow_fn && is_single_expr_return) || !allow_return {
-                                    JsStmt::Expr(js_expr, true)
-                                } else {
-                                    JsStmt::Expr(JsExpr::Return(Box::new(js_expr)), true)
-                                };
-                            js_stmts.push(return_expr);
-                            return_type = Some(type_);
-                        }
-                    }
-                },
-                _ => {
-                    let stmts = handle_stmt(stmt, global_data, current_module);
-                    return_type = Some(stmts.last().unwrap().1.clone());
-                    js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
-                }
-            }
-        } else {
-            // dbg!("print the stmt");
-            // println!("{}", quote! { #stmt }.to_string());
-            let stmts = handle_stmt(stmt, global_data, current_module);
-            return_type = Some(stmts.last().unwrap().1.clone());
-            js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
-        }
-    }
-
-    if stmts.is_empty() {
-        (Vec::new(), RustType::Unit)
-    } else {
-        (js_stmts, return_type.unwrap())
-    }
-}
 
 fn _hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(JsExpr, RustType)> {
     let segments = expr_path

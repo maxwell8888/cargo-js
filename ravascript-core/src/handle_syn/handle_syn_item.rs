@@ -7,18 +7,17 @@ use syn::{
 };
 use tracing::{debug, debug_span, info};
 
+use super::handle_syn_stmt::handle_stmt;
+use super::{handle_syn_expr::handle_expr, handle_syn_stmt::parse_fn_body_stmts};
+
 use crate::{
     get_item_impl_unique_id,
-    handle_syn_expr::handle_expr,
-    handle_syn_stmt::handle_stmt,
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
-    js_stmts_from_syn_items, parse_fn_body_stmts, parse_fn_input_or_field,
-    update_item_definitions::{EnumVariantInfo, EnumVariantInputsInfo, FnInfoSyn},
-    FnInfo, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric, RustImplItemItemJs,
-    RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType, RustTypeParam,
-    RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
+    js_stmts_from_syn_items, GlobalData, GlobalDataScope, JsImplBlock2, JsImplItem, RustGeneric,
+    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType,
+    RustTypeParam, RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };
 
 pub fn handle_item_fn(
@@ -63,66 +62,6 @@ pub fn handle_item_fn(
         }
     };
 
-    // let type_params = item_fn
-    //     .sig
-    //     .generics
-    //     .params
-    //     .iter()
-    //     .map(|generic_param| match generic_param {
-    //         GenericParam::Lifetime(_) => todo!(),
-    //         GenericParam::Type(type_param) => type_param.ident.to_string(),
-    //         GenericParam::Const(_) => todo!(),
-    //     })
-    //     .collect::<Vec<_>>();
-
-    // let rust_type_params = type_params
-    //     .iter()
-    //     .map(|tp_name| RustTypeParam {
-    //         name: tp_name.clone(),
-    //         type_: RustTypeParamValue::Unresolved,
-    //     })
-    //     .collect::<Vec<_>>();
-
-    // let inputs = &item_fn
-    //     .sig
-    //     .inputs
-    //     .iter()
-    //     .filter_map(|input| match input {
-    //         FnArg::Receiver(_) => None,
-    //         FnArg::Typed(pat_type) => Some(match &*pat_type.pat {
-    //             Pat::Ident(pat_ident) => parse_fn_input_or_field(
-    //                 &*pat_type.ty,
-    //                 pat_ident.mutability.is_some(),
-    //                 &Vec::new(),
-    //                 current_module,
-    //                 global_data,
-    //             ),
-    //             _ => {
-    //                 todo!();
-    //             }
-    //         }),
-    //     })
-    //     .collect::<Vec<_>>();
-
-    // let fn_info = FnInfo {
-    //     ident: name,
-    //     generics: type_params,
-    //     inputs_types: inputs.clone(),
-    //     return_type: match &item_fn.sig.output {
-    //         ReturnType::Default => RustType::Unit,
-    //         ReturnType::Type(_, type_) => {
-    //             // TODO Note we are passing false for has_mut_keyword because it doesn't apply to fn returns
-    //             parse_fn_input_or_field(
-    //                 type_,
-    //                 false,
-    //                 &rust_type_params,
-    //                 current_module,
-    //                 global_data,
-    //             )
-    //         }
-    //     },
-    // };
-
     // // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // // if !global_data.at_module_top_level {
     // if !at_module_top_level {
@@ -141,176 +80,85 @@ pub fn handle_item_fn(
     //     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
     // }
 
+    let fn_info = global_data.lookup_fn_info_known_module(
+        current_module,
+        &global_data.scope_id_as_option(),
+        &name,
+    );
+
     // Create new scope for fn vars
     global_data.push_new_scope(false, Vec::new());
 
-    // record which vars are mut and/or &mut
+    // Adds fn args as `ScopedVar`s
+    // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
     let mut copy_stmts = Vec::new();
-    for input in &item_fn.sig.inputs {
-        #[allow(clippy::all)]
-        match input {
-            FnArg::Receiver(_) => {}
-            FnArg::Typed(pat_type) => match &*pat_type.pat {
-                Pat::Ident(pat_ident) => {
-                    // let mut_ref = match &*pat_type.ty {
-                    //     Type::Reference(type_reference) => type_reference.mutability.is_some(),
-                    //     _ => false,
-                    // };
 
-                    // if pat_ident.mutability.is_some() || mut_ref {
-                    //     global_data.scopes.last_mut().unwrap().0.push(ScopedVar {
-                    //         name: pat_ident.ident.to_string(),
-                    //         mut_: pat_ident.mutability.is_some(),
-                    //         mut_ref,
-                    //         type_: "".to_string(),
-                    //     })
-                    // }
-                    let mut scoped_var = ScopedVar {
-                        name: pat_ident.ident.to_string(),
-                        mut_: pat_ident.mutability.is_some(),
-                        type_: RustType::Todo,
-                    };
-                    let input_type = parse_fn_input_or_field(
-                        &*pat_type.ty,
-                        pat_ident.mutability.is_some(),
-                        &Vec::new(),
-                        current_module,
-                        global_data,
-                    );
-                    match &input_type {
-                        // TypeOrVar::RustType(rust_type) => scoped_var.type_ = rust_type,
-                        // TypeOrVar::Var(found_var) => {
-                        //     scoped_var.mut_ref = scoped_var.mut_ref || found_var.mut_ref;
-                        //     scoped_var.type_ = found_var.type_;
-                        // }
-                        // TypeOrVar::Unknown => {}
+    for (_is_self, is_mut, name, type_) in fn_info.inputs_types {
+        let scoped_var = ScopedVar {
+            name: name.clone(),
+            mut_: is_mut,
+            type_: type_.clone(),
+        };
+        // record add var to scope
+        global_data
+            .scopes
+            .last_mut()
+            .unwrap()
+            .variables
+            .push(scoped_var);
 
-                        // FnReturnType::RustType(mut_ref, rust_type) => {
-                        //     scoped_var.mut_ref = *mut_ref;
-                        //     scoped_var.type_ = rust_type.clone();
-                        // }
-                        // FnReturnType::Unknown => {}
-                        RustType::NotAllowed => todo!(),
-                        RustType::Unknown => {}
-                        RustType::Todo => todo!(),
-                        RustType::Unit => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::Never => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::I32 => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::F32 => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::Bool => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::String => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::StructOrEnum(_, _, _, _) => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        // RustType::Enum(_,_,_) => {
-                        //     scoped_var.type_ = input_type.clone();
-                        // }
-                        RustType::Vec(_) => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::Array(_) => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::Tuple(_) => {
-                            scoped_var.type_ = input_type.clone();
-                        }
-                        RustType::MutRef(rust_type) => {
-                            scoped_var.type_ = RustType::MutRef(rust_type.clone());
-                        }
-                        RustType::Fn(_, _, _, _, _) => todo!(),
-                        RustType::Option(_) => todo!(),
-                        RustType::Result(_) => todo!(),
-                        RustType::TypeParam(_) => todo!(),
-                        RustType::ImplTrait(_) => todo!(),
-                        RustType::ParentItem => todo!(),
-                        RustType::UserType(_, _) => todo!(),
-                        RustType::Ref(_) => todo!(),
-                        RustType::Closure(_, _) => todo!(),
-                        RustType::FnVanish => todo!(),
-                        RustType::Box(_) => todo!(),
+        // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
+        // TODO need to add this to `handle_impl_fn_item()`
+        if is_mut {
+            copy_stmts.push(JsStmt::Local(JsLocal {
+                public: false,
+                export: false,
+                type_: LocalType::None,
+                lhs: LocalName::Single(Ident::String(name.clone())),
+                value: match type_ {
+                    RustType::NotAllowed => todo!(),
+                    RustType::Unknown => todo!(),
+                    RustType::Todo => todo!(),
+                    RustType::ParentItem => todo!(),
+                    RustType::Unit => todo!(),
+                    RustType::Never => todo!(),
+                    RustType::ImplTrait(_) => todo!(),
+                    RustType::TypeParam(_) => todo!(),
+                    RustType::I32 => {
+                        global_data.rust_prelude_types.rust_integer = true;
+                        // JsExpr::New(
+                        //     vec!["RustInteger".to_string()],
+                        //     vec![JsExpr::MethodCall(
+                        //         Box::new(JsExpr::Path(vec![pat_ident
+                        //             .ident
+                        //             .to_string()])),
+                        //         "inner".to_string(),
+                        //         Vec::new(),
+                        //     )],
+                        // )
+                        JsExpr::New(
+                            "RustInteger".into(),
+                            vec![JsExpr::Path(PathIdent::Single(Ident::String(name.clone())))],
+                        )
                     }
-                    // record add var to scope
-                    global_data
-                        .scopes
-                        .last_mut()
-                        .unwrap()
-                        .variables
-                        .push(scoped_var);
-
-                    // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
-                    // TODO need to add this to `handle_impl_fn_item()`
-                    if pat_ident.mutability.is_some() {
-                        copy_stmts.push(JsStmt::Local(JsLocal {
-                            public: false,
-                            export: false,
-                            type_: LocalType::None,
-                            lhs: LocalName::Single(Ident::Syn(pat_ident.ident.clone())),
-                            // value: JsExpr::MethodCall(
-                            //     Box::new(JsExpr::Path(vec![pat_ident.ident.to_string()])),
-                            //     "copy".to_string(),
-                            //     Vec::new(),
-                            // ),
-                            value: match &input_type {
-                                RustType::Todo => todo!(),
-                                RustType::Unit => todo!(),
-                                RustType::I32 => {
-                                    global_data.rust_prelude_types.rust_integer = true;
-                                    // JsExpr::New(
-                                    //     vec!["RustInteger".to_string()],
-                                    //     vec![JsExpr::MethodCall(
-                                    //         Box::new(JsExpr::Path(vec![pat_ident
-                                    //             .ident
-                                    //             .to_string()])),
-                                    //         "inner".to_string(),
-                                    //         Vec::new(),
-                                    //     )],
-                                    // )
-                                    JsExpr::New(
-                                        "RustInteger".into(),
-                                        vec![JsExpr::Path(pat_ident.ident.clone().into())],
-                                    )
-                                }
-                                RustType::F32 => todo!(),
-                                RustType::Bool => todo!(),
-                                RustType::String => todo!(),
-                                RustType::StructOrEnum(_, _, _, _) => todo!(),
-                                // RustType::Enum(_,_,_) => todo!(),
-                                RustType::NotAllowed => todo!(),
-                                RustType::Unknown => todo!(),
-                                RustType::Never => todo!(),
-                                RustType::Vec(_) => todo!(),
-                                RustType::Array(_) => todo!(),
-                                RustType::Tuple(_) => todo!(),
-                                RustType::MutRef(_) => todo!(),
-                                RustType::Fn(_, _, _, _, _) => todo!(),
-                                RustType::Option(_) => todo!(),
-                                RustType::Result(_) => todo!(),
-                                RustType::TypeParam(_) => todo!(),
-                                RustType::ImplTrait(_) => todo!(),
-                                RustType::ParentItem => todo!(),
-                                RustType::UserType(_, _) => todo!(),
-                                RustType::Ref(_) => todo!(),
-                                RustType::Closure(_, _) => todo!(),
-                                RustType::FnVanish => todo!(),
-                                RustType::Box(_) => todo!(),
-                            },
-                        }))
-                    }
-                }
-                _ => {}
-            },
+                    RustType::F32 => todo!(),
+                    RustType::Bool => todo!(),
+                    RustType::String => todo!(),
+                    RustType::Option(_) => todo!(),
+                    RustType::Result(_) => todo!(),
+                    RustType::StructOrEnum(_, _, _, _) => todo!(),
+                    RustType::Vec(_) => todo!(),
+                    RustType::Array(_) => todo!(),
+                    RustType::Tuple(_) => todo!(),
+                    RustType::Box(_) => todo!(),
+                    RustType::UserType(_, _) => todo!(),
+                    RustType::MutRef(_) => todo!(),
+                    RustType::Ref(_) => todo!(),
+                    RustType::Fn(_, _, _, _, _) => todo!(),
+                    RustType::FnVanish => todo!(),
+                    RustType::Closure(_, _) => todo!(),
+                },
+            }))
         }
     }
 
@@ -460,7 +308,7 @@ pub fn handle_item_enum(
     // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called
 
     // TODO we can't just get the type of a variant from the enum definiton if it is generic, as the generic type info will only be available in the actual code where that particular instance of the enum is instantiated, or later on. Well actually we will be looking this up from where the enum is instantiated like `MyEnum::MyVariant` so maybe just return the type if there is no enum, else return something to flag that the generic type should be looked for??
-    let generics = item_enum
+    let _generics = item_enum
         .generics
         .params
         .iter()
@@ -494,78 +342,6 @@ pub fn handle_item_enum(
     // Go through the members and resolve/update any generics used each time we get generic information (ie method input of item instantiation)
     // Not store the members and just look up methods etc on the syn object/value each time we want to eg check if a path is referrring to an associated fn??? (NOTE the main reason we started storing members in the first place is to store info about members defined impl blocks, but again could just store the syn object) I think just storing the syn objects initially is a good idea until I am clear what info is actually needed.
     // But all we are going to be doing with the syn objects is getting the return type and if there are generics, look to see if any of them have been resolved in `.generics` and we could do the same thing for `MemberInfo`?
-
-    let _members_for_scope = item_enum
-        .variants
-        .iter()
-        .map(|v| {
-            let inputs = v
-                .fields
-                .iter()
-                .map(|f| {
-                    let input_type = parse_fn_input_or_field(
-                        &f.ty,
-                        // NOTE it is not possible to make variant args mut in the definition
-                        false,
-                        &generics,
-                        current_module,
-                        global_data,
-                    );
-                    match &f.ident {
-                        Some(input_name) => EnumVariantInputsInfo::Named {
-                            ident: input_name.to_string(),
-                            input_type,
-                        },
-                        None => EnumVariantInputsInfo::Unnamed(input_type),
-                    }
-                })
-                .collect::<Vec<_>>();
-            EnumVariantInfo {
-                ident: v.ident.to_string(),
-                inputs,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    // let item_def = ItemDefinition {
-    //     ident: item_enum.ident.to_string(),
-    //     is_copy: item_enum.attrs.iter().any(|attr| match &attr.meta {
-    //         Meta::Path(_) => todo!(),
-    //         Meta::List(meta_list) => {
-    //             let segs = &meta_list.path.segments;
-    //             if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-    //                 let tokens = format!("({})", meta_list.tokens);
-    //                 let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
-    //                 trait_tuple.elems.iter().any(|elem| match elem {
-    //                     Type::Path(type_path) => {
-    //                         let segs = &type_path.path.segments;
-    //                         // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
-    //                         segs.len() == 1 && segs.first().unwrap().ident == "Copy"
-    //                     }
-    //                     _ => todo!(),
-    //                 })
-    //             } else {
-    //                 false
-    //             }
-    //         }
-    //         Meta::NameValue(_) => todo!(),
-    //     }),
-    //     generics: item_enum
-    //         .generics
-    //         .params
-    //         .iter()
-    //         .map(|p| match p {
-    //             GenericParam::Lifetime(_) => todo!(),
-    //             GenericParam::Type(type_param) => type_param.ident.to_string(),
-    //             GenericParam::Const(_) => todo!(),
-    //         })
-    //         .collect::<Vec<_>>(),
-    //     struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-    //         members: members_for_scope,
-    //         syn_object: item_enum.clone(),
-    //     }),
-    //     impl_blocks: Vec::new(),
-    // };
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // if !at_module_top_level {
@@ -816,7 +592,6 @@ pub fn handle_impl_item_fn(
     };
 
     let _static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
-    // dbg!(item_impl_fn);
     // let private = !export;
     let js_input_names = impl_item_fn
         .clone()
@@ -829,48 +604,6 @@ pub fn handle_impl_item_fn(
                 Pat::Ident(pat_ident) => Some(Ident::Syn(pat_ident.ident.clone())),
                 _ => todo!(),
             },
-        })
-        .collect::<Vec<_>>();
-
-    // Get generics
-    let _fn_generics = impl_item_fn
-        .sig
-        .generics
-        .params
-        .iter()
-        .map(|generic_param| match generic_param {
-            GenericParam::Lifetime(_) => todo!(),
-            GenericParam::Type(type_param) => {
-                let name = type_param.ident.to_string();
-                // let type_ = type_param
-                //     .bounds
-                //     .first()
-                //     .map(|type_param_bound| {
-                //         match get_return_type_of_type_param_bound(
-                //             type_param_bound,
-                //             &Vec::new(),
-                //             current_module_path,
-                //             &global_data,
-                //         ) {
-                //             RustType::ImplTrait => RustType::TypeParam(RustTypeParam {
-                //                 name: name.clone(),
-                //                 type_: RustTypeParamValue::Unresolved,
-                //             }),
-                //             RustType::TypeParam(_) => todo!(),
-                //             RustType::Fn(return_type) => RustType::Fn(return_type),
-                //             _ => todo!(),
-                //         }
-                //     })
-                //     .unwrap_or(RustType::TypeParam(RustTypeParam {
-                //         name: name.clone(),
-                //         type_: RustTypeParamValue::Unresolved,
-                //     }));
-                RustTypeParam {
-                    name,
-                    type_: RustTypeParamValue::Unresolved,
-                }
-            }
-            GenericParam::Const(_) => todo!(),
         })
         .collect::<Vec<_>>();
 
@@ -963,52 +696,6 @@ pub fn handle_impl_item_fn(
         crate::RustImplItemItemNoJs::Const => todo!(),
     }
 
-    // let mut fns = Vec::new();
-    // record var and fn inputs
-    for _input in &impl_item_fn.sig.inputs {
-        // match input {
-        //     FnArg::Receiver(receiver) => {
-        //         let type_ = if receiver.mutability.is_some() {
-        //             RustType::MutRef(Box::new(target_rust_type.clone()))
-        //         } else {
-        //             target_rust_type.clone()
-        //         };
-        //         let scoped_var = ScopedVar {
-        //             // TODO IMPORTANT surely this should be `self`???
-        //             // name: target_item.ident.clone(),
-        //             name: "self".to_string(),
-        //             // TODO how do we know if we have `foo(mut self)`?
-        //             mut_: false,
-        //             type_,
-        //         };
-        //         vars.push(scoped_var);
-        //     }
-        //     FnArg::Typed(pat_type) => {
-        //         let (ident, mut_) = match &*pat_type.pat {
-        //             Pat::Ident(pat_ident) => {
-        //                 (pat_ident.ident.to_string(), pat_ident.mutability.is_some())
-        //             }
-        //             _ => todo!(),
-        //         };
-        //         let rust_type = parse_fn_input_or_field(
-        //             &*pat_type.ty,
-        //             mut_,
-        //             &fn_generics,
-        //             current_module_path,
-        //             global_data,
-        //         );
-        //         let scoped_var = ScopedVar {
-        //             name: ident,
-        //             mut_,
-        //             type_: rust_type,
-        //         };
-        //         vars.push(scoped_var);
-        //     }
-        // }
-    }
-
-    // dbg!("handle_item_impl new scope");
-    // println!("{}", quote! { #impl_item_fn });
     // Create scope for impl method/fn body
     info!("handle_item_impl new scope");
     // dbg!(&global_data.scopes);
@@ -1076,56 +763,8 @@ pub fn handle_impl_item_fn(
     let body_stmts = Some(body_stmts);
 
     // TODO no idea why body_stmts is an `Option`
+    // Push to rust_impl_items
     if let Some((body_stmts, _return_type)) = body_stmts {
-        // push to rust_impl_items
-        let fn_generics = impl_item_fn
-            .sig
-            .generics
-            .params
-            .iter()
-            .filter_map(|gen| match gen {
-                GenericParam::Lifetime(_) => None,
-                GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
-                GenericParam::Const(_) => todo!(),
-            })
-            .collect::<Vec<_>>();
-        let fn_rust_type_params = &fn_generics
-            .iter()
-            .map(|gen| RustTypeParam {
-                name: gen.clone(),
-                type_: RustTypeParamValue::Unresolved,
-            })
-            .collect::<Vec<_>>();
-        let inputs_types = impl_item_fn
-            .sig
-            .inputs
-            .iter()
-            .map(|input| match input {
-                FnArg::Receiver(_) => (true, false, "self".to_string(), RustType::ParentItem),
-                FnArg::Typed(pat_type) => (
-                    false,
-                    match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                        _ => todo!(),
-                    },
-                    match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                        _ => todo!(),
-                    },
-                    parse_fn_input_or_field(
-                        &pat_type.ty,
-                        match &*pat_type.pat {
-                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                            _ => todo!(),
-                        },
-                        fn_rust_type_params,
-                        current_module_path,
-                        global_data,
-                    ),
-                ),
-            })
-            .collect::<Vec<_>>();
-
         let is_pub = match impl_item_fn.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
@@ -1140,22 +779,9 @@ pub fn handle_impl_item_fn(
                 FnArg::Typed(_) => true,
             });
 
-        let fn_info = FnInfo {
-            ident: impl_item_fn.sig.ident.to_string(),
-            is_pub,
-            inputs_types,
-            generics: fn_generics,
-            return_type: match &impl_item_fn.sig.output {
-                ReturnType::Default => RustType::Unit,
-                ReturnType::Type(_, type_) => parse_fn_input_or_field(
-                    type_,
-                    false,
-                    fn_rust_type_params,
-                    current_module_path,
-                    global_data,
-                ),
-            },
-            syn: FnInfoSyn::Impl(impl_item_fn.clone()),
+        let fn_info = match rust_impl_item.item.clone() {
+            RustImplItemItemNoJs::Fn(_static, fn_info) => fn_info,
+            RustImplItemItemNoJs::Const => todo!(),
         };
 
         let js_fn = JsFn {
