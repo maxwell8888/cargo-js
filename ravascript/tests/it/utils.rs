@@ -230,6 +230,9 @@ pub async fn _get_rust_module_and_expected_js(
 }
 
 // #[fixture]
+// TODO need to study test harnesses and async to understand how to share the `Browser` between threads/tests, or use rust-headless-chrome which compiles faster and is not async...
+// https://github.com/la10736/rstest/issues/141
+// "Cannot apply #[once] to async fixture."
 // #[once]
 pub async fn launch_browser() -> Result<(Browser, Handler)> {
     Browser::launch(BrowserConfig::builder().build().map_err(|e| anyhow!(e))?)
