@@ -1,10 +1,15 @@
 use syn::{
-    FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type, TypeParamBound, Visibility
+    FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn,
+    ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type, TypeParamBound,
+    Visibility,
 };
 use tracing::{debug, debug_span};
 
 use crate::{
-    get_item_impl_unique_id, make_item_definitions::{self, ModuleMethods}, RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue
+    get_item_impl_unique_id,
+    make_item_definitions::{self, ModuleMethods},
+    RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment,
+    RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH,
 };
 
 pub fn update_item_definitions(
@@ -119,23 +124,50 @@ pub fn update_item_definitions(
                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
                             &impl_item_target_path,
                         );
-                    // dbg!("here");
-                    (
-                        RustType::StructOrEnum(
-                            target_item
-                                .generics
-                                .iter()
-                                .map(|g| RustTypeParam {
-                                    name: g.clone(),
-                                    type_: RustTypeParamValue::Unresolved,
-                                })
-                                .collect::<Vec<_>>(),
-                            target_item_module.clone(),
-                            resolved_scope_id,
-                            target_item.ident.to_string(),
-                        ),
-                        false,
-                    )
+
+                    // TODO get rid of RustType::I32 etc, and just use StructOrEnum for everything
+                    // if target_item_module == [PRELUDE_MODULE_PATH] {
+                    if false {
+                        match &target_item.ident[..] {
+                            "i32" => (RustType::I32, false),
+                            other => {
+                                // TODO just defaulting to this because we want to get rid of all the special RustType variants anyway
+                                (
+                                    RustType::StructOrEnum(
+                                        target_item
+                                            .generics
+                                            .iter()
+                                            .map(|g| RustTypeParam {
+                                                name: g.clone(),
+                                                type_: RustTypeParamValue::Unresolved,
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        target_item_module.clone(),
+                                        resolved_scope_id,
+                                        target_item.ident.to_string(),
+                                    ),
+                                    false,
+                                )
+                            }
+                        }
+                    } else {
+                        (
+                            RustType::StructOrEnum(
+                                target_item
+                                    .generics
+                                    .iter()
+                                    .map(|g| RustTypeParam {
+                                        name: g.clone(),
+                                        type_: RustTypeParamValue::Unresolved,
+                                    })
+                                    .collect::<Vec<_>>(),
+                                target_item_module.clone(),
+                                resolved_scope_id,
+                                target_item.ident.to_string(),
+                            ),
+                            false,
+                        )
+                    }
                 };
 
             // global_data.impl_block_target_type.pop();
@@ -180,9 +212,19 @@ pub fn update_item_definitions(
                                 .inputs
                                 .iter()
                                 .map(|input| match input {
-                                    FnArg::Receiver(_) => {
+                                    FnArg::Receiver(receiver) => {
                                         // TODO need to actually parse the reciever to determine if it is boxed or a &mut so we can properly handle derefs
                                         // TODO need to ensure we are clear and consistent with the meaning of `RustType::ParentItem`
+                                        // let rust_type = if receiver.reference.is_some()
+                                        //     && receiver.mutability.is_some()
+                                        // {
+                                        //     RustType::MutRef(Box::new(RustType::ParentItem))
+                                        // } else {
+                                        //     RustType::ParentItem
+                                        // };
+                                        // (true, false, "self".to_string(), rust_type)
+
+                                        // (true, false, "self".to_string(), target_rust_type.clone())
                                         (true, false, "self".to_string(), RustType::ParentItem)
                                     }
                                     FnArg::Typed(pat_type) => (

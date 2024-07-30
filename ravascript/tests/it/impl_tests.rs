@@ -102,7 +102,7 @@ fn _notes() {
     // This is a pretty niche and speficic case so we will leave it as a TODO but it is worth bearing in mind when considering the design.
 }
 
-#[ignore = "need to implement js class methods taking self as an arguemnt, probs using bind this"]
+#[ignore = "LOW PRIORITY"]
 #[tokio::test]
 async fn full_qualified_method_call() {
     setup_tracing();
@@ -121,6 +121,8 @@ async fn full_qualified_method_call() {
        }
     );
 
+    // NOTE we simply translate back to a normal method call since a method must take self as the first argument therefore we must have an instance and can therefore just call the method.
+    // AFAICT the only alternative in JS is something like `const baz = foo.baz.bind(foo);` which seems redundant.
     let expected = format_js(
         r#"
             class Foo {
@@ -145,10 +147,9 @@ async fn full_qualified_method_call() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "todo"]
+#[ignore = "LOW PRIORITY"]
 #[tokio::test]
 async fn full_qualified_trait_method_call() {
-    setup_tracing();
     let actual = r2j_file_run_main!(
         trait Foo {
             fn get_foo(&self) -> i32;
@@ -1032,7 +1033,6 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "TODO"]
 #[allow(dead_code, unused_mut)]
 #[tokio::test]
 async fn mut_method_call_struct() {
@@ -1053,28 +1053,35 @@ async fn mut_method_call_struct() {
         assert!(mut_result == 3);
     });
 
-    let expected = format_js(concat!(
+    let expected = format_js(
         r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
             class Foo {
                 constructor(num) {
                     this.num = num;
                 }
+
                 plusOne() {
-                    this.num + 1
+                    return this.num + 1;
                 }
             }
+
             let foo = new Foo(1);
             let result = foo.plusOne();
             let mutResult = new RustInteger(foo.plusOne());
+            mutResult.inner += 1;
             console.assert(result === 2);
-            console.assert(mutResult === 3);
-        "#
-    ));
+            console.assert(mutResult.inner === 3);
+        "#,
+    );
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "TODO"]
 #[allow(unused_mut)]
 #[tokio::test]
 async fn mut_method_call_num() {
@@ -1095,18 +1102,69 @@ async fn mut_method_call_num() {
         assert!(mut_result == 3);
     });
 
-    let expected = format_js(concat!(
+    let expected = format_js(
         r#"
-            Number.prototype.plusOne = function plusOne() {
-                this.num + 1
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
             }
-            let foo = new Foo(1);
-            let result = foo.plusOne();
-            let mutResult = new RustInteger(foo.plusOne());
+
+            class PlusOne__i32 {
+                plusOne() {
+                    return this + 1;
+                }
+            }
+            Number.prototype.plusOne = PlusOne__i32.prototype.plusOne;
+            let num = new RustInteger(1);
+            let result = num.inner.plusOne();
+            let mutResult = new RustInteger(num.inner.plusOne());
+            mutResult.inner += 1;
             console.assert(result === 2);
-            console.assert(mutResult === 3);
-        "#
-    ));
+            console.assert(mutResult.inner === 3);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "reason"]
+#[allow(unused_mut)]
+#[tokio::test]
+async fn method_call_num_mut_self() {
+    let actual = r2j_block_with_prelude!({
+        trait IncOne {
+            fn inc_one(&mut self);
+        }
+        impl IncOne for i32 {
+            fn inc_one(&mut self) {
+                *self += 1;
+            }
+        }
+        let mut num = 1;
+        num.inc_one();
+        assert!(num == 2);
+    });
+
+    let expected = format_js(
+        r#"
+            class RustInteger {
+                constructor(inner) {
+                    this.inner = inner;
+                }
+            }
+
+            class IncOne__i32 {
+                incOne() {
+                    this.inner += 1;
+                }
+            }
+            RustInteger.prototype.incOne = IncOne__i32.prototype.incOne;
+            let num = new RustInteger(1);
+            num.incOne();
+            console.assert(num.inner === 2);
+        "#,
+    );
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }

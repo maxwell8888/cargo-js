@@ -1976,6 +1976,7 @@ fn get_traits_implemented_for_item(
                                     && scope_id == item_scope_id
                                     && name == item_name
                             }
+
                             _ => todo!(),
                         };
 

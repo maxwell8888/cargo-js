@@ -1715,6 +1715,24 @@ fn handle_expr_method_call(
         _ => todo!(),
     };
     let mut method_name = expr_method_call.method.to_string();
+
+    // !!!!!!!!!!!!!
+    // Want to know if method is `&mut self` so we can prevent `handle_expr_path` adding `.inner`, but we don't know the method info until we have parsed the receiver so we can look up the method!
+    // It feels like handle_expr_path automatically adding `.inner` is wrong and should just return and expression for the path and then the parent handler should determine whether to wrap it with a `.inner`?
+    // let (receiver, receiver_type) = match &*expr_method_call.receiver {
+    //     Expr::Path(expr_path) => {
+    //         // TODO we are using a hack here by just using `is_having_mut_ref_taken = true` to force no `.inner` but really we should have a proper input or rename `is_having_mut_ref_taken`
+    //         let (expr, partial_rust_type) =
+    //             handle_expr_path(expr_path, global_data, current_module, true);
+    //         let rust_type = match partial_rust_type {
+    //             PartialRustType::StructIdent(_, _, _, _) => todo!(),
+    //             PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+    //             PartialRustType::RustType(rust_type) => rust_type,
+    //         };
+    //         (expr, rust_type)
+    //     }
+    //     _ => handle_expr(&expr_method_call.receiver, global_data, current_module),
+    // };
     let (receiver, receiver_type) =
         handle_expr(&expr_method_call.receiver, global_data, current_module);
 
@@ -1759,92 +1777,85 @@ fn handle_expr_method_call(
         &sub_path,
     );
 
-    // Now that we have the method impl item, we can get the method input types, and if any of them contain type params, we can attempt to resolve them from receiver_type_params or method_turbofish_rust_types
-    let resolved_input_types = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static_, fn_info) => {
-            //
-            fn_info
-                .inputs_types
-                .iter()
-                .map(|(_is_self, _is_mut, _name, input_type)| {
-                    resolve_input_type(
-                        input_type,
-                        &receiver_type,
-                        &receiver_type_params,
-                        &fn_info.generics,
-                        &method_turbofish_rust_types,
-                    )
-                })
-                .collect::<Vec<_>>()
-        }
+    let (_static, fn_info) = match method_impl_item.item {
+        RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
         RustImplItemItemNoJs::Const => todo!(),
     };
+
+    // Now that we have the method impl item, we can get the method input types, and if any of them contain type params, we can attempt to resolve them from receiver_type_params or method_turbofish_rust_types
+    let resolved_input_types = fn_info
+        .inputs_types
+        .iter()
+        .map(|(_is_self, _is_mut, _name, input_type)| {
+            resolve_input_type(
+                input_type,
+                &receiver_type,
+                &receiver_type_params,
+                &fn_info.generics,
+                &method_turbofish_rust_types,
+            )
+        })
+        .collect::<Vec<_>>();
 
     // Lookup method impl to see if any of it's args are type params
 
     // Parse the args
-    let (args_js_exprs, _args_rust_types): (Vec<_>, Vec<_>) = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static, fn_info) => {
-            // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
-            let first_input_is_self = fn_info
-                .inputs_types
-                .first()
-                .map(|input| input.0)
-                .unwrap_or(false);
+    let (args_js_exprs, _args_rust_types): (Vec<_>, Vec<_>) = {
+        // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
+        let first_input_is_self = fn_info
+            .inputs_types
+            .first()
+            .map(|input| input.0)
+            .unwrap_or(false);
 
-            let resolved_input_types_slice = if first_input_is_self {
-                &resolved_input_types[1..]
-            } else {
-                &resolved_input_types[..]
-            };
-            expr_method_call
-                .args
-                .iter()
-                .zip(resolved_input_types_slice)
-                .enumerate()
-                .map(|(_i, (arg, resolved_input_type))| {
-                    // dbg!(i);
-                    // dbg!(&arg);
-                    // dbg!(&resolved_input_type);
-                    match arg {
-                        Expr::Closure(expr_closure) => {
-                            // This particular method input is a closure
-                            let closure_types = match resolved_input_type {
-                                RustType::TypeParam(_) => todo!(),
-                                RustType::Fn(_, _, _, _, _) => todo!(),
-                                RustType::Closure(input_types, return_type) => {
-                                    (input_types.clone(), *return_type.clone())
-                                }
-                                RustType::Option(_) => {
-                                    // how can a Expr::Closure arg have a RustType::Option resolved_input_type?
-                                    todo!()
-                                }
-                                _ => {
-                                    dbg!(resolved_input_type);
-                                    todo!()
-                                }
-                            };
-                            handle_expr_closure(
-                                expr_closure,
-                                global_data,
-                                current_module,
-                                Some(closure_types),
-                            )
-                        }
-                        _ => handle_expr(arg, global_data, current_module),
+        let resolved_input_types_slice = if first_input_is_self {
+            &resolved_input_types[1..]
+        } else {
+            &resolved_input_types[..]
+        };
+        expr_method_call
+            .args
+            .iter()
+            .zip(resolved_input_types_slice)
+            .enumerate()
+            .map(|(_i, (arg, resolved_input_type))| {
+                // dbg!(i);
+                // dbg!(&arg);
+                // dbg!(&resolved_input_type);
+                match arg {
+                    Expr::Closure(expr_closure) => {
+                        // This particular method input is a closure
+                        let closure_types = match resolved_input_type {
+                            RustType::TypeParam(_) => todo!(),
+                            RustType::Fn(_, _, _, _, _) => todo!(),
+                            RustType::Closure(input_types, return_type) => {
+                                (input_types.clone(), *return_type.clone())
+                            }
+                            RustType::Option(_) => {
+                                // how can a Expr::Closure arg have a RustType::Option resolved_input_type?
+                                todo!()
+                            }
+                            _ => {
+                                dbg!(resolved_input_type);
+                                todo!()
+                            }
+                        };
+                        handle_expr_closure(
+                            expr_closure,
+                            global_data,
+                            current_module,
+                            Some(closure_types),
+                        )
                     }
-                })
-                .unzip()
-        }
-        RustImplItemItemNoJs::Const => todo!(),
+                    _ => handle_expr(arg, global_data, current_module),
+                }
+            })
+            .unzip()
     };
 
     // Now get the method return type from the impl item and similarly if it is, or contains, type params then see if it/they have been resolved by:
     // the receiver type params, method turbofish, arguments, (or within the body of the fn??)
-    let method_return_type = match &method_impl_item.item {
-        RustImplItemItemNoJs::Fn(_, fn_info) => fn_info.return_type.clone(),
-        RustImplItemItemNoJs::Const => todo!(),
-    };
+    let method_return_type = fn_info.return_type.clone();
 
     // Update any resolved type params in the `method_return_type`
     // TODO resolve nested type params eg within a struct or Vec
@@ -1923,6 +1934,21 @@ fn handle_expr_method_call(
         }
         _ => false,
     };
+
+    // let method_is_mut_self =
+    //     fn_info
+    //         .inputs_types
+    //         .first()
+    //         .is_some_and(|(is_self, is_mut, _name, type_)| {
+    //             *is_self && (*is_mut || matches!(type_, RustType::MutRef(_)))
+    //         });
+    // if receiver_is_mut_var && method_is_mut_self {
+    //     return (
+    //         JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
+    //         method_return_type,
+    //     );
+    // }
+
     // TODO IMPORTANT can't assume that `.to_string()` etc called on are string are the std lib impls, since they might have been overwritten/shadowed by local trait impls, so need to first check for local impls.
     if let RustType::String = &receiver_type {
         if method_name == "to_string" || method_name == "clone" {
@@ -2059,30 +2085,27 @@ fn handle_expr_method_call(
         RustType::F32 => {}
         RustType::Bool => {}
         RustType::String => {}
-        RustType::Option(_) => match &method_impl_item.item {
-            RustImplItemItemNoJs::Fn(_, fn_info) => {
-                if fn_info.ident == "is_some_and" {
-                    global_data.rust_prelude_types.option_is_some_and = true;
-                    let mut args = vec![receiver];
-                    args.extend(args_js_exprs);
-                    return (
-                        JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
-                        method_return_type,
-                    );
-                }
-                if fn_info.ident == "unwrap" {
-                    global_data.rust_prelude_types.option_unwrap = true;
-                    return (
-                        JsExpr::FnCall(
-                            Box::new(JsExpr::Var("optionUnwrap".to_string())),
-                            vec![receiver],
-                        ),
-                        method_return_type,
-                    );
-                }
+        RustType::Option(_) => {
+            if fn_info.ident == "is_some_and" {
+                global_data.rust_prelude_types.option_is_some_and = true;
+                let mut args = vec![receiver];
+                args.extend(args_js_exprs);
+                return (
+                    JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
+                    method_return_type,
+                );
             }
-            RustImplItemItemNoJs::Const => todo!(),
-        },
+            if fn_info.ident == "unwrap" {
+                global_data.rust_prelude_types.option_unwrap = true;
+                return (
+                    JsExpr::FnCall(
+                        Box::new(JsExpr::Var("optionUnwrap".to_string())),
+                        vec![receiver],
+                    ),
+                    method_return_type,
+                );
+            }
+        }
         RustType::Result(_) => {}
         RustType::Vec(_) => {}
         RustType::Array(_) => {}
@@ -2107,6 +2130,7 @@ fn handle_expr_method_call(
     )
 }
 
+/// When handling a method call, after we have looked up the method input types, which may contain type params, we call this function to update any type params with resolved type params from the reciever or method turbofish
 fn resolve_input_type(
     input_type: &RustType,
     receiver_type: &RustType,
@@ -2155,7 +2179,26 @@ fn resolve_input_type(
         }
         RustType::Option(_) => todo!(),
         RustType::Result(_) => todo!(),
-        RustType::StructOrEnum(_, _, _, _) => todo!(),
+        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+            // We are trying to stop using RustType::ParentItem, so this could be `self` in which case we can safely use the receiver type params
+            // Or it could be the parent/Self type but maybe with different type params?!?!
+            // Or it can just be any other item enum, which also might be using the parent/Self/target's type params, ie type params defined in the impl block
+
+            // TODO
+            // let updated_type_params = type_params.clone().into_iter().map(|tp| {
+            //     match tp.type_{
+            //         RustTypeParamValue::Unresolved => todo!(),
+            //         RustTypeParamValue::RustType(_) => tp,
+            //     }
+            // }).collect();
+            let updated_type_params = type_params.clone();
+            RustType::StructOrEnum(
+                updated_type_params,
+                module_path.clone(),
+                scope_id.clone(),
+                name.clone(),
+            )
+        }
         RustType::Vec(_) => todo!(),
         RustType::Array(_) => todo!(),
         RustType::Tuple(_) => todo!(),
@@ -3298,12 +3341,6 @@ fn handle_expr_path_inner(
         // Enum::Variant ()
         // Enum::Variant {}
 
-        // Get struct/enum item definition
-        // dbg!("here");
-        // dbg!(&segs_copy_module_path);
-        // dbg!(&segs_copy_item_scope);
-        // dbg!(&item_path_seg.ident);
-        // dbg!(&sub_path.ident);
         let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
             &segs_copy_module_path,
             &segs_copy_item_scope,
@@ -3444,6 +3481,7 @@ fn handle_expr_path_inner(
     if is_having_mut_ref_taken && !is_mut_var {
         panic!("a mutable reference can only be taken of a mutable var");
     }
+    // dbg!(&partial_rust_type);
     let is_mut_ref_js_primative = match &partial_rust_type {
         PartialRustType::RustType(RustType::MutRef(rust_type)) => rust_type.is_js_primative(),
         _ => false,
@@ -3477,30 +3515,86 @@ fn handle_expr_path_inner(
         js_segs_path[0] = Ident::Str("this");
     }
 
+    // dbg!(&js_segs_path);
     // let segs = segs_copy.iter()
     // TODO all this logic could be cleaned up and/or made clearer
+    // let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+    //     JsExpr::Null
+    // } else if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
+    //     // dbg!("no inner");
+    //     // dbg!(is_mut_ref_js_primative);
+    //     // dbg!(is_having_mut_ref_taken);
+    //     // dbg!(!is_mut_var);
+    //     JsExpr::Path(PathIdent::Path(js_segs_path))
+
+    //     // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
+    // } else {
+    //     match &partial_rust_type {
+    //         PartialRustType::StructIdent(_, _, _, _) => todo!(),
+    //         PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+    //         PartialRustType::RustType(rust_type) => {
+    //             if rust_type.is_js_primative() {
+    //                 // dbg!("inner");
+    //                 JsExpr::Field(
+    //                     Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+    //                     Ident::Str("inner"),
+    //                 )
+    //             } else {
+    //                 // dbg!("no inner2");
+    //                 // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+    //                 JsExpr::Path(PathIdent::Path(js_segs_path))
+    //             }
+    //         }
+    //     }
+    // };
+    // dbg!(&js_segs_path);
     let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         JsExpr::Null
-    } else if is_mut_ref_js_primative || is_having_mut_ref_taken || !is_mut_var {
-        JsExpr::Path(PathIdent::Path(js_segs_path))
-
-        // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
     } else {
-        match &partial_rust_type {
-            PartialRustType::StructIdent(_, _, _, _) => todo!(),
-            PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
-            PartialRustType::RustType(rust_type) => {
-                if rust_type.is_js_primative() {
+        match (
+            is_mut_ref_js_primative,
+            is_having_mut_ref_taken,
+            !is_mut_var,
+            &partial_rust_type,
+        ) {
+            (false, false, true, PartialRustType::RustType(rust_type)) => {
+                if false {
+                    // dbg!("inner");
                     JsExpr::Field(
                         Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
                         Ident::Str("inner"),
                     )
                 } else {
+                    // dbg!("no inner2");
+                    // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+                    JsExpr::Path(PathIdent::Path(js_segs_path))
+                }
+            }
+            (true, _, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            (_, true, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            (_, _, true, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            (_, _, _, PartialRustType::StructIdent(_, _, _, _)) => todo!(),
+            (_, _, _, PartialRustType::EnumVariantIdent(_, _, _, _, _)) => todo!(),
+            (_, _, _, PartialRustType::RustType(rust_type)) => {
+                if rust_type.is_js_primative() {
+                    // dbg!("inner");
+                    JsExpr::Field(
+                        Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+                        Ident::Str("inner"),
+                    )
+                } else {
+                    // dbg!("no inner2");
                     // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
                     JsExpr::Path(PathIdent::Path(js_segs_path))
                 }
             }
         }
+        // dbg!("no inner");
+        // dbg!(is_mut_ref_js_primative);
+        // dbg!(is_having_mut_ref_taken);
+        // dbg!(!is_mut_var);
+
+        // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
     };
     (final_expr, partial_rust_type)
 }
