@@ -1,9 +1,3 @@
-// #![allow(dead_code)]
-// #![allow(unused_variables)]
-// #![allow(unreachable_code)]
-// #![allow(unused_mut)]
-// #![allow(unused_imports)]
-
 use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;

@@ -4,6 +4,7 @@ use chromiumoxide::{
         EventPaused, PausedReason, ResumeParams, SetPauseOnExceptionsParams,
         SetPauseOnExceptionsState,
     },
+    Handler,
     // Page,
 };
 // use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -20,6 +21,8 @@ use std::{fs, path::PathBuf};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
+
+use rstest::*;
 
 use ravascript::{from_file, modules_to_string};
 use ravascript_core::{format_js, from_block};
@@ -226,11 +229,17 @@ pub async fn _get_rust_module_and_expected_js(
     Ok((format_js(expected_js), format_js(generated_js)))
 }
 
-pub async fn execute_js_with_assertions(js: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut browser, mut handler) =
-        Browser::launch(BrowserConfig::builder().build().map_err(|e| anyhow!(e))?)
-            .await
-            .context("Failed to launch browser")?;
+// #[fixture]
+// #[once]
+pub async fn launch_browser() -> Result<(Browser, Handler)> {
+    Browser::launch(BrowserConfig::builder().build().map_err(|e| anyhow!(e))?)
+        .await
+        .context("Failed to launch browser")
+}
+
+pub async fn execute_js_with_assertions(js: &str) -> Result<()> {
+    let (mut browser, mut handler) = launch_browser().await?;
+
     let handle = tokio::task::spawn(async move {
         while let Some(h) = handler.next().await {
             match h {
