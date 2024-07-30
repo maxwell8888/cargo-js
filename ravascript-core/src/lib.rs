@@ -2687,18 +2687,15 @@ pub fn process_items(
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let (new_modules, impl_blocks) = update_item_definitions(actual_modules);
+    let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
-    let mut global_data = GlobalData::new(crate_path);
-    global_data.modules = new_modules;
-    global_data.impl_blocks_simpl = impl_blocks;
 
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class. What??? there doesn't seem to be any JS parsing here?
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-    populate_item_def_impl_blocks(&mut global_data.modules, &global_data.impl_blocks_simpl);
+    populate_item_def_impl_blocks(&mut new_modules, &impl_blocks);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -2723,7 +2720,12 @@ pub fn process_items(
     }
 
     // find duplicates
-    global_data.duplicates = namespace_duplicates(&global_data.modules);
+    let duplicates = namespace_duplicates(&new_modules);
+
+    let mut global_data = GlobalData::new(crate_path);
+    global_data.modules = new_modules;
+    global_data.impl_blocks_simpl = impl_blocks;
+    global_data.duplicates = duplicates;
 
     // Parse to JS
     for module_data in global_data
