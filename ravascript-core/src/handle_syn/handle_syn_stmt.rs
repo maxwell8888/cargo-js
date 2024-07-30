@@ -10,11 +10,10 @@ use super::handle_syn_item::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
     handle_item_trait,
 };
-use super::parse_fn_input_or_field;
+use super::{handle_pat, parse_fn_input_or_field};
 
 use crate::{
     extract_modules::{handle_item_use, ItemUseModuleOrScope},
-    handle_pat,
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
     GlobalData, RustType, ScopedVar,
 };

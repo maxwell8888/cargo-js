@@ -4,11 +4,191 @@ mod handle_syn_stmt;
 
 pub use handle_syn_item::*;
 pub use handle_syn_stmt::handle_stmt;
-use tracing::debug;
+use tracing::{debug, info};
 
-use crate::{GlobalData, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue};
+use crate::{
+    js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
+    GlobalData, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue,
+    ScopedVar,
+};
 use quote::quote;
-use syn::{GenericArgument, PathArguments, Type, TypeParamBound};
+use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
+
+/// Converts a syn pat to our own similar type. Also adds vars to the current scope, we do this here because we might need to add multiple vars eg for Pat::Struct. We could potentially just go through the resultant LocalName afterwards to add the vars, but it seems more concise to to it here where we are going through the tree anyway.
+///
+/// Currently used by handle_local and handle_match
+// fn handle_pat(pat: &Pat, scope: &mut GlobalDataScope, current_type: RustType) -> LocalName {
+fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -> LocalName {
+    let scope = global_data.scopes.last_mut().unwrap();
+    match pat {
+        Pat::Const(_) => todo!(),
+        Pat::Ident(pat_ident) => {
+            scope.variables.push(ScopedVar {
+                name: pat_ident.ident.to_string(),
+                mut_: pat_ident.mutability.is_some(),
+                type_: current_type,
+            });
+            LocalName::Single(Ident::Syn(pat_ident.ident.clone()))
+        }
+        Pat::Lit(_) => todo!(),
+        Pat::Macro(_) => todo!(),
+        Pat::Or(_) => todo!(),
+        Pat::Paren(_) => todo!(),
+        Pat::Path(_) => todo!(),
+        Pat::Range(_) => todo!(),
+        Pat::Reference(_) => todo!(),
+        Pat::Rest(_) => todo!(),
+        Pat::Slice(pat_slice) => {
+            //
+            fn get_element_type(rust_type: RustType) -> RustType {
+                match rust_type {
+                    RustType::Vec(element_type) => *element_type,
+                    RustType::Array(element_type) => *element_type,
+                    RustType::MutRef(inner) => get_element_type(*inner),
+                    other => {
+                        dbg!(other);
+                        todo!()
+                    }
+                }
+            }
+            let element_type = get_element_type(current_type);
+            LocalName::DestructureArray(
+                pat_slice
+                    .elems
+                    .iter()
+                    .map(|elem| handle_pat(elem, global_data, element_type.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        }
+        Pat::Struct(pat_struct) => {
+            // TODO How are tuple structs destructured? Would they be a Pat::Tuple?
+
+            let fields = pat_struct
+                .fields
+                .iter()
+                .map(|field| {
+                    let field_type = match &current_type {
+                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
+                            let item_def = global_data
+                                .lookup_item_def_known_module_assert_not_func2(
+                                    module_path,
+                                    scope_id,
+                                    name,
+                                );
+                            item_def.get_type(&field.member)
+                        }
+                        _ => todo!(),
+                    };
+
+                    // dbg!(&field.pat);
+                    // dbg!(&field.member);
+                    // dbg!(&field_type);
+                    handle_destructure_pat(&field.pat, &field.member, global_data, field_type)
+                })
+                .collect::<Vec<_>>();
+            LocalName::DestructureObject(DestructureObject(fields))
+        }
+        Pat::Tuple(_pat_tuple) => {
+            todo!();
+            // LocalName::DestructureArray(
+            //     pat_tuple
+            //         .elems
+            //         .iter()
+            //         .map(|elem| handle_pat(elem, global_data, current_type))
+            //         .collect::<Vec<_>>(),
+            // )
+        }
+        Pat::TupleStruct(_) => todo!(),
+        Pat::Type(pat_type) => {
+            // TODO does it make sense to also return the (parsed) RustType from handle_pat?
+            handle_pat(&pat_type.pat, global_data, current_type)
+        }
+        Pat::Verbatim(_) => todo!(),
+        // for `let _ = foo();` the lhs will be `Pat::Wild`
+        Pat::Wild(_) => {
+            // "in expressions, `_` can only be used on the left-hand side of an assignment" So we don't need to add _ to scope.vars
+            LocalName::Single(Ident::Str("_"))
+        }
+        other => {
+            dbg!(other);
+            todo!();
+        }
+    }
+}
+
+fn handle_destructure_pat(
+    pat: &Pat,
+    member: &Member,
+    global_data: &mut GlobalData,
+    current_type: RustType,
+) -> DestructureValue {
+    let scope = global_data.scopes.last_mut().unwrap();
+    match pat {
+        Pat::Const(_) => todo!(),
+        Pat::Ident(pat_ident) => {
+            info!(name = ?pat_ident.ident.to_string(), type_ = ?current_type, "push var");
+            scope.variables.push(ScopedVar {
+                name: pat_ident.ident.to_string(),
+                mut_: pat_ident.mutability.is_some(),
+                type_: current_type,
+            });
+
+            let pat_ident = pat_ident.ident.clone();
+            let member_ident = match member.clone() {
+                Member::Named(ident) => ident,
+                Member::Unnamed(_) => todo!(),
+            };
+            if member_ident == pat_ident {
+                DestructureValue::KeyName(Ident::Syn(member_ident))
+            } else {
+                DestructureValue::Rename(Ident::Syn(member_ident), Ident::Syn(pat_ident))
+            }
+        }
+        Pat::Lit(_) => todo!(),
+        Pat::Macro(_) => todo!(),
+        Pat::Or(_) => todo!(),
+        Pat::Paren(_) => todo!(),
+        Pat::Path(_) => todo!(),
+        Pat::Range(_) => todo!(),
+        Pat::Reference(_) => todo!(),
+        Pat::Rest(_) => todo!(),
+        Pat::Slice(_) => todo!(),
+        Pat::Struct(pat_struct) => {
+            let member = match member.clone() {
+                Member::Named(ident) => ident,
+                Member::Unnamed(_) => todo!(),
+            };
+            let fields = pat_struct
+                .fields
+                .iter()
+                .map(|field| {
+                    let field_type = match &current_type {
+                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
+                            let item_def = global_data
+                                .lookup_item_def_known_module_assert_not_func2(
+                                    module_path,
+                                    scope_id,
+                                    name,
+                                );
+                            item_def.get_type(&field.member)
+                        }
+                        _ => todo!(),
+                    };
+
+                    handle_destructure_pat(&field.pat, &field.member, global_data, field_type)
+                })
+                .collect::<Vec<_>>();
+
+            DestructureValue::Nesting(Ident::Syn(member), DestructureObject(fields))
+        }
+        Pat::Tuple(_) => todo!(),
+        Pat::TupleStruct(_) => todo!(),
+        Pat::Type(_) => todo!(),
+        Pat::Verbatim(_) => todo!(),
+        Pat::Wild(_) => todo!(),
+        _ => todo!(),
+    }
+}
 
 // TODO ideally test tracing output in get_path test cases to ensure the expect code path is being taken??
 // TODO need to make sure this looks up traits as well as other items

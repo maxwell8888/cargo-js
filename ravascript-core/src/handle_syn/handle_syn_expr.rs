@@ -9,9 +9,9 @@ use super::handle_syn_stmt::handle_stmt;
 use super::handle_syn_stmt::parse_fn_body_stmts;
 use super::parse_fn_input_or_field;
 
-use super::resolve_path;
+use super::{handle_pat, resolve_path};
 use crate::{
-    found_item_to_partial_rust_type, handle_pat,
+    found_item_to_partial_rust_type,
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
