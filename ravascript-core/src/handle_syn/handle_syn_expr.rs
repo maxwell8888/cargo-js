@@ -7,6 +7,7 @@ use tracing::{debug, debug_span, warn};
 
 use super::handle_syn_stmt::handle_stmt;
 use super::handle_syn_stmt::parse_fn_body_stmts;
+use super::parse_fn_input_or_field;
 
 use crate::{
     found_item_to_partial_rust_type, handle_pat,
@@ -14,7 +15,7 @@ use crate::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
-    parse_fn_input_or_field, resolve_path,
+    resolve_path,
     update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
     FnInfo, GlobalData, ItemDefinition, PartialRustType, RustImplItemItemNoJs, RustImplItemNoJs,
     RustPathSegment, RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar,

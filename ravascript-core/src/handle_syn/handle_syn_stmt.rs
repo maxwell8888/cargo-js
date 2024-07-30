@@ -3,17 +3,20 @@ use quote::quote;
 use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
 use tracing::debug_span;
 
-use super::handle_syn_expr::{handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match};
+use super::handle_syn_expr::{
+    handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match,
+};
 use super::handle_syn_item::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
     handle_item_trait,
 };
+use super::parse_fn_input_or_field;
 
 use crate::{
     extract_modules::{handle_item_use, ItemUseModuleOrScope},
     handle_pat,
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
-    parse_fn_input_or_field, GlobalData, RustType, ScopedVar,
+    GlobalData, RustType, ScopedVar,
 };
 
 fn handle_local(
