@@ -126,8 +126,7 @@ pub fn update_item_definitions(
                         );
 
                     // TODO get rid of RustType::I32 etc, and just use StructOrEnum for everything
-                    // if target_item_module == [PRELUDE_MODULE_PATH] {
-                    if false {
+                    if target_item_module == [PRELUDE_MODULE_PATH] {
                         match &target_item.ident[..] {
                             "i32" => (RustType::I32, false),
                             other => {
@@ -224,8 +223,8 @@ pub fn update_item_definitions(
                                         // };
                                         // (true, false, "self".to_string(), rust_type)
 
-                                        // (true, false, "self".to_string(), target_rust_type.clone())
-                                        (true, false, "self".to_string(), RustType::ParentItem)
+                                        // (true, false, "self".to_string(), RustType::ParentItem)
+                                        (true, false, "self".to_string(), target_rust_type.clone())
                                     }
                                     FnArg::Typed(pat_type) => (
                                         false,

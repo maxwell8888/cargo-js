@@ -471,10 +471,6 @@ pub fn handle_expr(
                     RustType::MutRef(_) => todo!(),
                     RustType::Ref(inner) => types_are_primative(inner, &[]),
                     RustType::Fn(_, _, _, _, _) => todo!(),
-                    RustType::ParentItem => {
-                        //
-                        types_are_primative(impl_target_types.last().unwrap(), &[])
-                    }
                     _ => false,
                 }
             }
@@ -537,14 +533,6 @@ pub fn handle_expr(
                             RustType::MutRef(inner_type) => {
                                 get_field_type(*inner_type, global_data, ident)
                             }
-                            RustType::ParentItem => {
-                                //
-                                get_field_type(
-                                    global_data.impl_block_target_type.last().unwrap().clone(),
-                                    global_data,
-                                    ident,
-                                )
-                            }
                             _ => {
                                 dbg!(&base_type);
                                 todo!()
@@ -586,14 +574,6 @@ pub fn handle_expr(
                                     }
                                     StructOrEnumDefitionInfo::Enum(_) => todo!(),
                                 }
-                            }
-                            RustType::ParentItem => {
-                                //
-                                get_unnamed_field_type(
-                                    global_data.impl_block_target_type.last().unwrap().clone(),
-                                    global_data,
-                                    index,
-                                )
                             }
                             _ => {
                                 dbg!(&base_type);
@@ -760,7 +740,6 @@ pub fn handle_expr(
                 RustType::Result(_) => todo!(),
                 RustType::TypeParam(_) => todo!(),
                 RustType::ImplTrait(_) => todo!(),
-                RustType::ParentItem => todo!(),
                 RustType::UserType(_, _) => todo!(),
                 RustType::Ref(_) => todo!(),
                 RustType::Closure(_, _) => todo!(),
@@ -890,7 +869,6 @@ pub fn handle_expr(
                             RustType::NotAllowed => todo!(),
                             RustType::Unknown => todo!(),
                             RustType::Todo => todo!(),
-                            RustType::ParentItem => todo!(),
                             RustType::Unit => todo!(),
                             RustType::Never => todo!(),
                             RustType::ImplTrait(_) => todo!(),
@@ -1113,7 +1091,6 @@ pub fn handle_expr(
                             RustType::NotAllowed => todo!(),
                             RustType::Unknown => todo!(),
                             RustType::Todo => todo!(),
-                            RustType::ParentItem => todo!(),
                             RustType::Unit => todo!(),
                             RustType::Never => todo!(),
                             RustType::ImplTrait(_) => todo!(),
@@ -1367,7 +1344,6 @@ fn handle_expr_closure(
                     RustType::Result(_) => todo!(),
                     RustType::TypeParam(_) => todo!(),
                     RustType::ImplTrait(_) => todo!(),
-                    RustType::ParentItem => todo!(),
                     RustType::UserType(_, _) => todo!(),
                     RustType::Ref(_) => todo!(),
                     RustType::Closure(_, _) => todo!(),
@@ -1577,7 +1553,6 @@ pub fn handle_expr_and_stmt_macro(
                                         RustType::Result(_) => false,
                                         RustType::TypeParam(_) => false,
                                         RustType::ImplTrait(_) => false,
-                                        RustType::ParentItem => todo!(),
                                         RustType::UserType(_, _) => todo!(),
                                         RustType::Ref(inner) => match &**inner {
                                             RustType::String => true,
@@ -1860,12 +1835,10 @@ fn handle_expr_method_call(
     // Update any resolved type params in the `method_return_type`
     // TODO resolve nested type params eg within a struct or Vec
     let method_return_type = match &method_return_type {
-        RustType::ParentItem => todo!(),
         RustType::Option(_) => todo!(),
         RustType::TypeParam(rust_type_param) => {
             // Check to see if type param has been resolved by parent/receiver type
             let parent_type_params = match &receiver_type {
-                RustType::ParentItem => todo!(),
                 RustType::TypeParam(_) => todo!(),
                 RustType::Option(inner) => Some(vec![inner]),
                 RustType::Result(_) => todo!(),
@@ -2139,7 +2112,6 @@ fn resolve_input_type(
     method_turbofish_rust_types: &Option<Vec<RustType>>,
 ) -> RustType {
     match input_type {
-        RustType::ParentItem => receiver_type.clone(),
         RustType::ImplTrait(_) => todo!(),
         RustType::TypeParam(rust_type_param) => {
             match rust_type_param.type_ {
@@ -2256,15 +2228,6 @@ fn get_receiver_params_and_method_impl_item(
         RustType::NotAllowed => todo!(),
         RustType::Unknown => todo!(),
         RustType::Todo => todo!(),
-        RustType::ParentItem => {
-            //
-            get_receiver_params_and_method_impl_item(
-                global_data.impl_block_target_type.last().unwrap().clone(),
-                method_name,
-                global_data,
-                sub_path,
-            )
-        }
         RustType::Unit => todo!(),
         RustType::Never => todo!(),
         RustType::ImplTrait(_) => todo!(),
@@ -2492,7 +2455,6 @@ fn _resolve_generics_for_return_type(
         RustType::NotAllowed => todo!(),
         RustType::Unknown => todo!(),
         RustType::Todo => todo!(),
-        RustType::ParentItem => todo!(),
         RustType::Unit => RustType::Unit,
         RustType::Never => todo!(),
         RustType::ImplTrait(_) => todo!(),
@@ -2925,7 +2887,6 @@ fn handle_expr_call(
                                 match &return_type {
                                     RustType::Unknown => todo!(),
                                     RustType::Todo => todo!(),
-                                    RustType::ParentItem => todo!(),
                                     RustType::TypeParam(rust_type_param) => {
                                         // Assert that a type param return type on a FnInfo should always be unresolved
                                         match rust_type_param.type_ {
@@ -3161,6 +3122,8 @@ fn handle_expr_path_inner(
             assert_eq!(segs_copy_item_path.len(), 1);
             let path = segs_copy_item_path.first().unwrap();
             // dbg!(&segs_copy_item_path);
+
+            // NOTE prelude type definitions cannot be scoped so we only need to look for vars
             // TODO look through all transparent scopes
             let var = global_data
                 .scopes
@@ -3660,21 +3623,6 @@ fn handle_match_pat(
                         StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
                     }
                 }
-                RustType::ParentItem => match global_data.impl_block_target_type.last().unwrap() {
-                    // TODO this is a duplicate of above
-                    RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                        let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                            module_path,
-                            scope_id,
-                            name,
-                        );
-                        match item_def.struct_or_enum_info {
-                            StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                            StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
-                        }
-                    }
-                    _ => todo!(),
-                },
                 _ => {
                     dbg!(match_condition_type);
                     dbg!(pat_struct);
@@ -3787,10 +3735,6 @@ fn handle_match_pat(
                             true,
                         )
                     }
-                    RustType::ParentItem => {
-                        let parent_type = global_data.impl_block_target_type.last().unwrap();
-                        get_item_def_from_rust_type(parent_type, global_data)
-                    }
                     _ => {
                         dbg!(match_condition_type);
                         todo!()
@@ -3857,20 +3801,6 @@ fn handle_match_pat(
                                         dbg!(name);
                                         // dbg!(pat_tuple_struct);
                                         todo!()
-                                    }
-                                    RustType::ParentItem => {
-                                        // NOTE the parent item of which this method is being called on might have had type params resolved so we need to get the var type rather than the static def type NO if we have come across a RustType::ParentItem we must be inside a static def eg an impl item fn
-                                        // let self_var = global_data
-                                        //     .scopes
-                                        //     .iter()
-                                        //     .rev()
-                                        //     .find_map(|s| {
-                                        //         s.variables.iter().find(|v| v.name == "self")
-                                        //     })
-                                        //     .unwrap();
-                                        // dbg!(self_var);
-                                        // todo!()
-                                        RustType::ParentItem
                                     }
                                     _ => {
                                         dbg!(match_condition_type);
@@ -4236,7 +4166,6 @@ pub fn handle_expr_match(
                         RustType::NotAllowed => todo!(),
                         RustType::Unknown => todo!(),
                         RustType::Todo => todo!(),
-                        RustType::ParentItem => todo!(),
                         RustType::Unit => todo!(),
                         RustType::Never => body_return_type,
                         RustType::ImplTrait(_) => todo!(),

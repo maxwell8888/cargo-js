@@ -270,6 +270,8 @@ struct CrateData {
 //
 // It makes sense to just use one of ItemType/InstanceType because they are practically the same and type instances will need to look up impls that match their type
 // Also, for matching, Foo<i32> will need to match Foo<T>, etc so it is not as easy as doing `x == y`
+// NOTE we include specialised types like RustType::I32 for performance reasons to avoid needing to do a comparison like `module_path == [...]` everytime we want to check for an integer or string which is often given they are the most common types
+// NOTE we need ParentItem because we can use `Self` in expressions like `let foo = Self { foo: 5 };` etc, but we should avoid using it in definitions, only for syn parsing/expression code
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustType {
@@ -286,7 +288,7 @@ enum RustType {
     /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
     /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
     /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
-    ParentItem,
+    // ParentItem,
     /// ()
     Unit,
     /// !
@@ -377,7 +379,6 @@ impl RustType {
             RustType::NotAllowed => todo!(),
             RustType::Unknown => todo!(),
             RustType::Todo => todo!(),
-            RustType::ParentItem => todo!(),
             RustType::Unit => todo!(),
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),
@@ -409,10 +410,6 @@ impl RustType {
             RustType::NotAllowed => todo!(),
             RustType::Unknown => todo!(),
             RustType::Todo => todo!(),
-            RustType::ParentItem => {
-                // TODO do we need to consider some kind of recursive
-                impl_targets.last().unwrap().is_mut_ref_of_js_primative(&[])
-            }
             RustType::Unit => false,
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),
@@ -1968,7 +1965,7 @@ fn get_traits_implemented_for_item(
                         found_traits.push(rust_trait);
                     }
                 }
-                RustType::StructOrEnum(_, _, _, _) => {
+                RustType::StructOrEnum(_, _, _, _) | RustType::I32 => {
                     if let Some(impl_trait) = &item_impl.trait_ {
                         let types_match = match &item_impl.target {
                             RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
@@ -1976,8 +1973,23 @@ fn get_traits_implemented_for_item(
                                     && scope_id == item_scope_id
                                     && name == item_name
                             }
+                            RustType::I32 => {
+                                item_module_path == [PRELUDE_MODULE_PATH]
+                                    && item_scope_id.is_none()
+                                    && item_name == "i32"
+                            }
+                            RustType::Option(_) => {
+                                item_module_path == [PRELUDE_MODULE_PATH]
+                                    && item_scope_id.is_none()
+                                    && item_name == "Option"
+                            }
 
-                            _ => todo!(),
+                            _ => {
+                                dbg!(&item_module_path);
+                                dbg!(&item_scope_id);
+                                dbg!(&item_name);
+                                todo!()
+                            }
                         };
 
                         if types_match {
@@ -2184,8 +2196,8 @@ fn populate_item_def_impl_blocks(modules: &mut [ModuleData], impl_blocks: &[Rust
             .map(|item_def| (item_def, None));
 
         // module level items/classes
+        // dbg!(impl_blocks);
         for (item_def, item_def_scope_id) in scoped_item_defs.chain(module_item_defs) {
-            // dbg!(&item_def);
             update_item_def_block_ids(
                 item_def,
                 &item_def_scope_id,
@@ -2238,6 +2250,14 @@ fn update_item_def_block_ids(
                     // item_def
                     //     .impl_blocks
                     //     .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
+                    item_def.impl_block_ids.push(impl_block.unique_id.clone());
+                }
+            }
+            RustType::I32 => {
+                if item_def.ident == "i32"
+                    && module_path == [PRELUDE_MODULE_PATH]
+                    && item_def_scope_id.is_none()
+                {
                     item_def.impl_block_ids.push(impl_block.unique_id.clone());
                 }
             }
@@ -3674,7 +3694,6 @@ fn _struct_or_enum_types_match(
                                 (RustType::NotAllowed, RustType::NotAllowed) => true,
                                 (RustType::Unknown, RustType::Unknown) => true,
                                 (RustType::Todo, RustType::Todo) => true,
-                                (RustType::ParentItem, RustType::ParentItem) => true,
                                 (RustType::Unit, RustType::Unit) => true,
                                 (RustType::Never, RustType::Never) => true,
                                 (RustType::ImplTrait(_), RustType::ImplTrait(_)) => true,

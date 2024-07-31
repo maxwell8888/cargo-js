@@ -308,7 +308,6 @@ fn handle_local(
             RustType::NotAllowed => todo!(),
             RustType::Unknown => todo!(),
             RustType::Todo => todo!(),
-            RustType::ParentItem => todo!(),
             RustType::Unit => todo!(),
             RustType::Never => todo!(),
             RustType::ImplTrait(_) => todo!(),

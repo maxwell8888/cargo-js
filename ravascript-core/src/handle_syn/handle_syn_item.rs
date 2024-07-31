@@ -119,7 +119,6 @@ pub fn handle_item_fn(
                     RustType::NotAllowed => todo!(),
                     RustType::Unknown => todo!(),
                     RustType::Todo => todo!(),
-                    RustType::ParentItem => todo!(),
                     RustType::Unit => todo!(),
                     RustType::Never => todo!(),
                     RustType::ImplTrait(_) => todo!(),
@@ -655,15 +654,16 @@ pub fn handle_impl_item_fn(
     // dbg!(&where_generics);
     // generics.extend(where_generics);
 
-    // MORNING TODO lookup the impl item definition and use the parsed input types from that (which correctly pass FnOnce closure types) rather than parsing agains here.
     let mut vars = Vec::new();
     match &rust_impl_item.item {
         RustImplItemItemNoJs::Fn(_static, fn_info) => {
+
             for (is_self, is_mut, name, input_type) in fn_info.inputs_types.clone() {
                 if is_self {
                     // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
 
                     // NOTE THIS IS WRONG, we parsing the definition so the type params won't have changed from the first pass. It is once the method is *called* that we can attempt to further resolve type params eg the `T` in an `Option<T>`
+                    // Also, shouldn't need this, the type should already be wrapped in `RustType::MutRef` if it is `&mut self`
                     let _type_ = if is_mut {
                         // TODO does this mean self in `fn foo(mut self) {}` goes to RustType::MutRef??
                         RustType::MutRef(Box::new(target_rust_type.clone()))
@@ -671,6 +671,7 @@ pub fn handle_impl_item_fn(
                         target_rust_type.clone()
                     };
 
+                    // TODO why can't self have `mut self`??? write tests.
                     assert!(!is_mut);
                     let scoped_var = ScopedVar {
                         // TODO IMPORTANT surely this should be `self`???
