@@ -1128,7 +1128,7 @@ async fn mut_method_call_num() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "reason"]
+// #[ignore = "reason"]
 #[allow(unused_mut)]
 #[tokio::test]
 async fn method_call_num_mut_self() {

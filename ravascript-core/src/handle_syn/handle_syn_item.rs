@@ -166,8 +166,11 @@ pub fn handle_item_fn(
     } else {
         // If we are returning a type which is *not* &mut, then we need to `.copy()` or `.inner()` if the value being returned is mut (if the value is &mut, the compiler will have ensured there is a deref, so we will have already added a `.copy()` or `.inner()`).
         let returns_non_mut_ref_val = match &item_fn.sig.output {
-            ReturnType::Default => false,
-            ReturnType::Type(_, type_) => matches!(&**type_, Type::Reference(_)),
+            ReturnType::Default => true,
+            ReturnType::Type(_, type_) => {
+                let is_mut_ref = matches!(&**type_, Type::Reference(type_reference) if type_reference.mutability.is_some());
+                !is_mut_ref
+            }
         };
         // dbg!(&item_fn.block.stmts);
 
@@ -657,7 +660,6 @@ pub fn handle_impl_item_fn(
     let mut vars = Vec::new();
     match &rust_impl_item.item {
         RustImplItemItemNoJs::Fn(_static, fn_info) => {
-
             for (is_self, is_mut, name, input_type) in fn_info.inputs_types.clone() {
                 if is_self {
                     // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
@@ -678,7 +680,7 @@ pub fn handle_impl_item_fn(
                         // name: target_item.ident.clone(),
                         name: "self".to_string(),
                         // TODO how do we know if we have `foo(mut self)`?
-                        mut_: false,
+                        mut_: is_mut,
                         type_: input_type,
                     };
                     vars.push(scoped_var);
@@ -1222,6 +1224,23 @@ pub fn handle_item_impl(
                 // TODO only add if `is_used == true`
                 let item_name = Ident::String(item.ident.clone());
                 let block_name = &rust_impl_block.js_name();
+
+                // methods on primative values like i32 need to be added to eg `RustInteger` rather than `Number` if they take `&mut self`
+                let method_self_mut_ref = match &item.item {
+                    RustImplItemItemJs::Fn(_, fn_info, _) => fn_info
+                        .inputs_types
+                        .first()
+                        .is_some_and(|(is_self, _is_mut, _name, type_)| {
+                            *is_self && matches!(type_, RustType::MutRef(_))
+                        }),
+                    RustImplItemItemJs::Const(_) => todo!(),
+                };
+                let js_name = if *js_name == "Number" && method_self_mut_ref {
+                    "RustInteger"
+                } else {
+                    js_name
+                };
+
                 stmts.push(JsStmt::Raw(format!(
                     "{js_name}.prototype.{item_name} = {block_name}.prototype.{item_name}"
                 )))

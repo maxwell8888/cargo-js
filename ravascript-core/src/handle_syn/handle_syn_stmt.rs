@@ -4,7 +4,7 @@ use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
 use tracing::debug_span;
 
 use super::handle_syn_expr::{
-    handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match,
+    handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match, handle_expr_path,
 };
 use super::handle_syn_item::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
@@ -96,7 +96,25 @@ fn handle_local(
 
     // dbg!("handle_local");
     // println!("{}", quote! { #local });
-    let (mut rhs_expr, rhs_type) = handle_expr(&local_init.expr, global_data, current_module_path);
+    let (mut rhs_expr, rhs_type, rhs_is_mut_var) = match &*local_init.expr {
+        Expr::Path(expr_path) => {
+            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module_path);
+            match partial {
+                crate::PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                crate::PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                crate::PartialRustType::RustType(rust_type, is_mut_var) => {
+                    (expr, rust_type, is_mut_var)
+                }
+            }
+        }
+        _ => {
+            let (expr, rust_type) = handle_expr(&local_init.expr, global_data, current_module_path);
+            (expr, rust_type, false)
+        }
+    };
+
+    // NOTE This doesn't distinguish between say a var that has type MutRef, and a literal like `&mut 5`.
+    let rhs_is_mut_ref = matches!(rhs_type, RustType::MutRef(_));
 
     // NOTE we must calculate lhs_is_shadowing before calling `handle_pat(&local.pat...` because handle pat adds the current var to the scope
     let lhs_is_shadowing = global_data
@@ -303,6 +321,10 @@ fn handle_local(
         rhs_expr = JsExpr::MethodCall(Box::new(rhs_expr), Ident::Str("copy"), Vec::new());
     }
 
+    if !lhs_is_mut && rhs_is_mut_var && rhs_type.is_js_primative() {
+        rhs_expr = JsExpr::Field(Box::new(rhs_expr), Ident::Str("inner"));
+    }
+
     if lhs_is_mut && rhs_type.is_js_primative() {
         rhs_expr = match rhs_type {
             RustType::NotAllowed => todo!(),
@@ -314,7 +336,14 @@ fn handle_local(
             RustType::TypeParam(_) => todo!(),
             RustType::I32 => {
                 global_data.rust_prelude_types.rust_integer = true;
-                JsExpr::New("RustInteger".into(), vec![rhs_expr])
+                if rhs_is_mut_var {
+                    JsExpr::New(
+                        "RustInteger".into(),
+                        vec![JsExpr::Field(Box::new(rhs_expr), Ident::Str("inner"))],
+                    )
+                } else {
+                    JsExpr::New("RustInteger".into(), vec![rhs_expr])
+                }
             }
             RustType::F32 => todo!(),
             RustType::Bool => todo!(),
@@ -870,6 +899,7 @@ pub fn handle_stmt(
 
 pub fn parse_fn_body_stmts(
     is_arrow_fn: bool,
+    // TODO rename this to be clearer it means not &mut rather than simply &
     returns_non_mut_ref_val: bool,
     // `return` can only be used in fns and closures so need this to prevent them being added to blocks
     allow_return: bool,
@@ -948,11 +978,13 @@ pub fn parse_fn_body_stmts(
                                 match &**expr {
                                     Expr::Block(expr_block) => {
                                         // Box::new(handle_expr(&*expr, global_data, current_module).0)
+                                        // println!("{}", quote! { #expr_block });
                                         Box::new(
                                             handle_expr_block(
                                                 expr_block,
                                                 global_data,
                                                 current_module,
+                                                false,
                                                 false,
                                             )
                                             .0,
@@ -1053,15 +1085,37 @@ pub fn parse_fn_body_stmts(
                         } else {
                             // dbg!("print expr");
                             // println!("{}", quote! { #expr });
-                            let (mut js_expr, type_) =
-                                handle_expr(expr, global_data, current_module);
+                            let (mut js_expr, type_, is_mut) = match expr {
+                                Expr::Path(expr_path) => {
+                                    let (expr, partial) =
+                                        handle_expr_path(expr_path, global_data, current_module);
+                                    match partial {
+                                        crate::PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                                        crate::PartialRustType::EnumVariantIdent(_, _, _, _, _) => {
+                                            todo!()
+                                        }
+                                        crate::PartialRustType::RustType(type_, is_mut) => {
+                                            (expr, type_, is_mut)
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    let (expr, type_) =
+                                        handle_expr(expr, global_data, current_module);
+                                    (expr, type_, false)
+                                }
+                            };
+
                             // Is the thing being returned a JS primative mut var or &mut (ie has a RustInteger wrapper)? in which case we need to get the inner value if `returns_non_mut_ref_val` is true
 
                             // TODO leave false for now until I clean up/refactor this code since this `is_js_primative_mut_var` should get caught be the Expr::Path branch
-                            let is_js_primative_mut_var = false;
+                            let is_js_primative_mut_var = is_mut && type_.is_js_primative();
                             let is_js_primative_mut_ref = type_
                                 .is_mut_ref_of_js_primative(&global_data.impl_block_target_type);
 
+                            // dbg!(returns_non_mut_ref_val);
+                            // dbg!(is_js_primative_mut_var);
+                            // dbg!(is_js_primative_mut_ref);
                             if returns_non_mut_ref_val
                                 && (is_js_primative_mut_var || is_js_primative_mut_ref)
                             {
@@ -1087,7 +1141,7 @@ pub fn parse_fn_body_stmts(
             }
         } else {
             // dbg!("print the stmt");
-            // println!("{}", quote! { #stmt }.to_string());
+            // println!("{}", quote! { #stmt });
             let stmts = handle_stmt(stmt, global_data, current_module);
             return_type = Some(stmts.last().unwrap().1.clone());
             js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));

@@ -3653,7 +3653,7 @@ enum PartialRustType {
         String,
         String,
     ),
-    RustType(RustType),
+    RustType(RustType, bool),
 }
 
 /// For checking whether a struct item definition (possibly with resolved type params) matches the target type of a non-trait impl. Note this is not a simple equals since a Foo<i32> item matches a Foo<T> impl.

@@ -223,8 +223,15 @@ pub fn update_item_definitions(
                                         // };
                                         // (true, false, "self".to_string(), rust_type)
 
+                                        let rust_type = if receiver.reference.is_some()
+                                            && receiver.mutability.is_some()
+                                        {
+                                            RustType::MutRef(Box::new(target_rust_type.clone()))
+                                        } else {
+                                            target_rust_type.clone()
+                                        };
                                         // (true, false, "self".to_string(), RustType::ParentItem)
-                                        (true, false, "self".to_string(), target_rust_type.clone())
+                                        (true, false, "self".to_string(), rust_type)
                                     }
                                     FnArg::Typed(pat_type) => (
                                         false,

@@ -27,11 +27,48 @@ fn handle_expr_assign(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsExpr {
-    let (lhs_expr, lhs_rust_type) = handle_expr(&expr_assign.left, global_data, current_module);
-    let (mut rhs_expr, rhs_rust_type) =
-        handle_expr(&expr_assign.right, global_data, current_module);
+    let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_assign.left {
+        Expr::Path(expr_path) => {
+            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            match partial {
+                PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
+            }
+        }
+        _ => {
+            let (expr, rust_type) = handle_expr(&expr_assign.left, global_data, current_module);
+            (expr, rust_type, false)
+        }
+    };
+
+    // If we are assigning, lhs must be mut var (or a derefferenced &mut)
+    // assert!(lhs_is_mut_var);
+
+    let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_assign.right {
+        Expr::Path(expr_path) => {
+            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            match partial {
+                PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
+            }
+        }
+        _ => {
+            let (expr, rust_type) = handle_expr(&expr_assign.right, global_data, current_module);
+            (expr, rust_type, false)
+        }
+    };
+
     let lhs_is_mut_ref = matches!(lhs_rust_type, RustType::MutRef(_));
     let rhs_is_mut_ref = matches!(rhs_rust_type, RustType::MutRef(_));
+
+    if lhs_is_mut_var && ((!rhs_is_mut_var && !rhs_is_mut_ref) || rhs_is_mut_var) {
+        lhs_expr = JsExpr::Field(Box::new(lhs_expr), Ident::Str("inner"));
+    }
+    if lhs_is_mut_var && rhs_is_mut_var {
+        rhs_expr = JsExpr::Field(Box::new(rhs_expr), Ident::Str("inner"));
+    }
 
     // If `var mut num = 1;` or `var num = &mut 1` or `var mut num = &mut 1` then wrap num literal in RustInteger or RustFLoat
     // what if we have a fn returning an immutable integer which is then getting made mut or &mut here? or a field or if expression or parens or block or if let or match or method call or ... . We just check for each of those constructs, and analyse them to determine the return type? Yes but this is way easier said than done so leave it for now but start record var type info as a first step towards being able to do this analysis.
@@ -352,12 +389,88 @@ pub fn handle_expr(
             // }
 
             // TODO IMPORTANT for some reason which I have failed to debug, for the destructure_struct test, the following line seems cause a second "handle_expr_binary" tracing span to be entered, despite expr_binary.left definitely being a path.
-            let (lhs_expr, lhs_type) = handle_expr(&expr_binary.left, global_data, current_module);
+            // let (lhs_expr, lhs_type) = match &*expr_binary.left {
+            //     Expr::Path(expr_path) => {
+            //         let (expr, partial_rust_type) =
+            //             handle_expr_path(expr_path, global_data, current_module);
+            //         match partial_rust_type {
+            //             PartialRustType::StructIdent(_, _, _, _) => todo!(),
+            //             PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+            //             PartialRustType::RustType(rust_type, is_mut_var) => {
+            //                 if is_mut_var && rust_type.is_js_primative() {
+            //                     (
+            //                         JsExpr::Field(Box::new(expr), Ident::Str("inner")),
+            //                         rust_type,
+            //                     )
+            //                 } else {
+            //                     (expr, rust_type)
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     _ => handle_expr(&expr_binary.left, global_data, current_module),
+            // };
+
+            // If we are updating the lhs must be mut var (or a derefferenced &mut)
+            // assert!(lhs_is_mut_var);
+
+            // let (rhs_expr, _rhs_type) =
+            //     handle_expr(&expr_binary.right, global_data, current_module);
+
+            let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_binary.left {
+                Expr::Path(expr_path) => {
+                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    match partial {
+                        PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                        PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                            (expr, rust_type, is_mut_var)
+                        }
+                    }
+                }
+                _ => {
+                    let (expr, rust_type) =
+                        handle_expr(&expr_binary.left, global_data, current_module);
+                    (expr, rust_type, false)
+                }
+            };
+            // println!("{}", quote! { #expr_binary });
+            // dbg!(&lhs_expr);
+            // dbg!(&lhs_rust_type);
+            // dbg!(&lhs_is_mut_var);
+
+            let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_binary.right {
+                Expr::Path(expr_path) => {
+                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    match partial {
+                        PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                        PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                            (expr, rust_type, is_mut_var)
+                        }
+                    }
+                }
+                _ => {
+                    let (expr, rust_type) =
+                        handle_expr(&expr_binary.right, global_data, current_module);
+                    (expr, rust_type, false)
+                }
+            };
+
+            let lhs_is_mut_ref = matches!(lhs_rust_type, RustType::MutRef(_));
+            let rhs_is_mut_ref = matches!(rhs_rust_type, RustType::MutRef(_));
+
+            if lhs_is_mut_var && lhs_rust_type.is_js_primative() {
+                lhs_expr = JsExpr::Field(Box::new(lhs_expr), Ident::Str("inner"));
+            }
+            if rhs_is_mut_var && rhs_rust_type.is_js_primative() {
+                rhs_expr = JsExpr::Field(Box::new(rhs_expr), Ident::Str("inner"));
+            }
 
             // TODO need to check for `impl Add for Foo`
             let type_ = match expr_binary.op {
                 BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_) | BinOp::Div(_) | BinOp::Rem(_) => {
-                    lhs_type.clone()
+                    lhs_rust_type.clone()
                 }
                 BinOp::And(_) | BinOp::Or(_) => RustType::Bool,
                 BinOp::BitXor(_) => todo!(),
@@ -448,9 +561,6 @@ pub fn handle_expr(
                 _ => todo!(),
             };
 
-            let (rhs_expr, _rhs_type) =
-                handle_expr(&expr_binary.right, global_data, current_module);
-
             fn types_are_primative(rust_type: &RustType, impl_target_types: &[RustType]) -> bool {
                 match rust_type {
                     RustType::TypeParam(rust_type_param) => {
@@ -475,7 +585,7 @@ pub fn handle_expr(
                 }
             }
             let lhs_is_primative =
-                types_are_primative(&lhs_type, &global_data.impl_block_target_type);
+                types_are_primative(&lhs_rust_type, &global_data.impl_block_target_type);
 
             let expr = if lhs_is_primative {
                 JsExpr::Binary(Box::new(lhs_expr), js_op, Box::new(rhs_expr))
@@ -485,7 +595,9 @@ pub fn handle_expr(
             };
             (expr, type_)
         }
-        Expr::Block(expr_block) => handle_expr_block(expr_block, global_data, current_module, true),
+        Expr::Block(expr_block) => {
+            handle_expr_block(expr_block, global_data, current_module, true, true)
+        }
         Expr::Break(_) => (JsExpr::Break, RustType::NotAllowed),
         Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
         Expr::Cast(_) => todo!(),
@@ -689,7 +801,14 @@ pub fn handle_expr(
                     Expr::Block(expr_block) => {
                         // Box::new(handle_expr(&*expr, global_data, current_module).0)
                         Box::new(
-                            handle_expr_block(expr_block, global_data, current_module, false).0,
+                            handle_expr_block(
+                                expr_block,
+                                global_data,
+                                current_module,
+                                false,
+                                false,
+                            )
+                            .0,
                         )
                     }
                     Expr::If(_) => Box::new(handle_expr(expr, global_data, current_module).0),
@@ -833,13 +952,13 @@ pub fn handle_expr(
             // dbg!("handle_expr expr_path:");
             // dbg!(&expr_path);
             let (js_expr, partial_rust_type) =
-                handle_expr_path(expr_path, global_data, current_module, false);
+                handle_expr_path(expr_path, global_data, current_module);
             // dbg!(&partial_rust_type);
             match partial_rust_type {
                 // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                 PartialRustType::StructIdent(_, _, _, _) => panic!(),
                 PartialRustType::EnumVariantIdent(_, _, _, _, _) => panic!(),
-                PartialRustType::RustType(rust_type) => (js_expr, rust_type),
+                PartialRustType::RustType(rust_type, is_mut_var) => (js_expr, rust_type),
             }
         }
         Expr::Range(_) => todo!(),
@@ -850,7 +969,7 @@ pub fn handle_expr(
                 let (expr, rust_type) = match &*expr_reference.expr {
                     Expr::Path(expr_path) => {
                         let (js_expr, partial_rust_type) =
-                            handle_expr_path(expr_path, global_data, current_module, true);
+                            handle_expr_path(expr_path, global_data, current_module);
                         // dbg!(&expr_path);
                         // dbg!(&js_expr);
                         // dbg!(&partial_rust_type);
@@ -858,7 +977,9 @@ pub fn handle_expr(
                             // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                             PartialRustType::StructIdent(_, _, _, _) => panic!(),
                             PartialRustType::EnumVariantIdent(_, _, _, _, _) => panic!(),
-                            PartialRustType::RustType(rust_type) => (js_expr, rust_type),
+                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                                (js_expr, rust_type)
+                            }
                         }
                     }
                     expr => {
@@ -913,8 +1034,27 @@ pub fn handle_expr(
                 };
                 (expr, RustType::MutRef(Box::new(rust_type)))
             } else {
-                let (expr, rust_type) =
-                    handle_expr(&expr_reference.expr, global_data, current_module);
+                let (expr, rust_type) = match &*expr_reference.expr {
+                    Expr::Path(expr_path) => {
+                        let (expr, partial) =
+                            handle_expr_path(expr_path, global_data, current_module);
+                        match partial {
+                            PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                            PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                                if is_mut_var {
+                                    (
+                                        JsExpr::Field(Box::new(expr), Ident::Str("inner")),
+                                        rust_type,
+                                    )
+                                } else {
+                                    (expr, rust_type)
+                                }
+                            }
+                        }
+                    }
+                    _ => handle_expr(&expr_reference.expr, global_data, current_module),
+                };
                 (expr, rust_type)
             }
         }
@@ -948,7 +1088,7 @@ pub fn handle_expr(
             // dbg!("handle expr_struct");
             // println!("{}", quote! { #expr_struct });
             let (js_path_expr, rust_partial_type) =
-                handle_expr_path_inner(&expr_struct.path, global_data, current_module, false);
+                handle_expr_path_inner(&expr_struct.path, global_data, current_module);
 
             // dbg!(&js_path_expr);
             // dbg!(&rust_partial_type);
@@ -1042,7 +1182,7 @@ pub fn handle_expr(
                     );
                     (JsExpr::FnCall(Box::new(js_path_expr), vec![obj]), rust_type)
                 }
-                PartialRustType::RustType(_) => todo!(),
+                PartialRustType::RustType(_, _) => todo!(),
             }
 
             // if segs.len() == 2 {
@@ -1073,7 +1213,31 @@ pub fn handle_expr(
         Expr::Tuple(_) => todo!(),
         Expr::Unary(expr_unary) => match expr_unary.op {
             UnOp::Deref(_) => {
-                let (expr, rust_type) = handle_expr(&expr_unary.expr, global_data, current_module);
+                let (mut expr, rust_type, is_mut_var) = match &*expr_unary.expr {
+                    Expr::Path(expr_path) => {
+                        let (expr, partial) =
+                            handle_expr_path(expr_path, global_data, current_module);
+                        match partial {
+                            PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                            PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                                (expr, rust_type, is_mut_var)
+                            }
+                        }
+                    }
+                    _ => {
+                        let (expr, rust_type) =
+                            handle_expr(&expr_unary.expr, global_data, current_module);
+                        (expr, rust_type, false)
+                    }
+                };
+
+                let is_mut_ref = matches!(rust_type, RustType::MutRef(_));
+                
+                if (is_mut_var || is_mut_ref) && rust_type.is_js_primative() {
+                    expr = JsExpr::Field(Box::new(expr), Ident::Str("inner"));
+                }
+
                 // let thing = &*expr_unary.expr;
                 // dbg!("let (expr, rust_type) = handle_expr(&*expr_unary.expr, global_data, current_module);");
                 // println!("{}", quote! { #thing });
@@ -1708,8 +1872,22 @@ fn handle_expr_method_call(
     //     }
     //     _ => handle_expr(&expr_method_call.receiver, global_data, current_module),
     // };
-    let (receiver, receiver_type) =
-        handle_expr(&expr_method_call.receiver, global_data, current_module);
+
+    let (mut receiver, receiver_type, receiver_is_mut_var) = match &*expr_method_call.receiver {
+        Expr::Path(expr_path) => {
+            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            match partial {
+                PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                PartialRustType::RustType(type_, is_mut_var) => (expr, type_, is_mut_var),
+            }
+        }
+        _ => {
+            let (expr, type_) =
+                handle_expr(&expr_method_call.receiver, global_data, current_module);
+            (expr, type_, false)
+        }
+    };
 
     // TASK we want to get the type of the method arguments so we can pass it to `handle_expr_closure` (and possibly other handlers) when we create args_js_exprs and args_rust_types. The problem is that we want to use args_rust_types to get the type of the method arguments (specifically for resolving type params)
 
@@ -1878,6 +2056,14 @@ fn handle_expr_method_call(
         _ => method_return_type,
     };
 
+    let method_takes_mut_ref_self =
+        fn_info
+            .inputs_types
+            .first()
+            .is_some_and(|(is_self, _is_mut, _name, type_)| {
+                *is_self && matches!(type_, RustType::MutRef(_))
+            });
+
     // Finally we see if the final types we get from parsing the arguments (after having already attempted to resolve generics using receiver type params, method turbofish, (anything else?)) we check that if the argument the same type param as the return type and is now resolved, we can update the return type???
     // let resolved_types = match method_impl_item.item {
     //     RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
@@ -1896,17 +2082,17 @@ fn handle_expr_method_call(
     //     RustImplItemItemNoJs::Const => todo!(),
     // };
 
-    let receiver_is_mut_var = match &*expr_method_call.receiver {
-        Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-            // IMPORTANT TODO limit to transparent scopes
-            global_data.scopes.iter().rev().any(|s| {
-                s.variables
-                    .iter()
-                    .any(|v| expr_path.path.segments[0].ident == v.name && v.mut_)
-            })
-        }
-        _ => false,
-    };
+    // let receiver_is_mut_var = match &*expr_method_call.receiver {
+    //     Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
+    //         // IMPORTANT TODO limit to transparent scopes
+    //         global_data.scopes.iter().rev().any(|s| {
+    //             s.variables
+    //                 .iter()
+    //                 .any(|v| expr_path.path.segments[0].ident == v.name && v.mut_)
+    //         })
+    //     }
+    //     _ => false,
+    // };
 
     // let method_is_mut_self =
     //     fn_info
@@ -1940,7 +2126,10 @@ fn handle_expr_method_call(
             if receiver_is_mut_var {
                 return (
                     JsExpr::Binary(
-                        Box::new(receiver.clone()),
+                        Box::new(JsExpr::Field(
+                            Box::new(receiver.clone()),
+                            Ident::Str("inner"),
+                        )),
                         JsOp::AddAssign,
                         Box::new(args_js_exprs[0].clone()),
                     ),
@@ -2088,11 +2277,14 @@ fn handle_expr_method_call(
         _ => {}
     }
 
-    let receiver = if receiver_needs_parens {
-        JsExpr::Paren(Box::new(receiver))
-    } else {
-        receiver
-    };
+    // println!("{}", quote! { #expr_method_call });
+    if receiver_is_mut_var && receiver_type.is_js_primative() && !method_takes_mut_ref_self {
+        receiver = JsExpr::Field(Box::new(receiver), Ident::Str("inner"));
+    }
+
+    if receiver_needs_parens {
+        receiver = JsExpr::Paren(Box::new(receiver));
+    }
     (
         JsExpr::MethodCall(
             Box::new(receiver),
@@ -2176,7 +2368,16 @@ fn resolve_input_type(
         RustType::Tuple(_) => todo!(),
         RustType::Box(_) => todo!(),
         RustType::UserType(_, _) => todo!(),
-        RustType::MutRef(_) => todo!(),
+        RustType::MutRef(inner) => {
+            let resolved_inner = resolve_input_type(
+                inner,
+                receiver_type,
+                receiver_type_params,
+                method_def_generics,
+                method_turbofish_rust_types,
+            );
+            RustType::MutRef(Box::new(resolved_inner))
+        }
         RustType::Ref(_) => todo!(),
         RustType::Fn(_, _, _, _, _) => todo!(),
         RustType::FnVanish => todo!(),
@@ -2586,6 +2787,9 @@ pub fn handle_expr_block(
     global_data: &mut GlobalData,
     current_module: &[String],
     allow_convert_to_iffe: bool,
+    // This is simply to allow the else block of an if statement to prevent return being added, since we use assignment to temp var instead
+    // TODO remove this
+    allow_return: bool,
 ) -> (JsExpr, RustType) {
     // let span = debug_span!("handle_expr_block", expr_block = ?quote! { #expr_block }.to_string());
     let span = debug_span!("handle_expr_block");
@@ -2593,19 +2797,31 @@ pub fn handle_expr_block(
 
     global_data.push_new_scope(true, Vec::new());
     // TODO block needs to use something like parse_fn_body to be able to return the type
-    let (stmts, types): (Vec<_>, Vec<_>) = expr_block
-        .block
-        .stmts
-        .iter()
-        .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
-        .unzip();
+    // let (stmts, types): (Vec<_>, Vec<_>) = expr_block
+    //     .block
+    //     .stmts
+    //     .iter()
+    //     .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
+    //     .unzip();
+    let (stmts, return_type) = parse_fn_body_stmts(
+        false,
+        true,
+        allow_return,
+        &expr_block.block.stmts,
+        global_data,
+        current_module,
+    );
 
     // pop block scope
     global_data.pop_scope();
     // update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
 
     let block_returns_value = match stmts.last().unwrap() {
-        JsStmt::Expr(_, closing_semi) => !closing_semi,
+        JsStmt::Expr(JsExpr::Return(_), closing_semi) => {
+            assert!(closing_semi);
+            true
+        }
+        JsStmt::Expr(expr, closing_semi) => !closing_semi,
         _ => false,
     };
 
@@ -2619,9 +2835,9 @@ pub fn handle_expr_block(
             )))),
             Vec::new(),
         );
-        (iffe, types.last().unwrap().clone())
+        (iffe, return_type)
     } else {
-        (JsExpr::Block(stmts), types.last().unwrap().clone())
+        (JsExpr::Block(stmts), return_type)
     }
 }
 
@@ -2647,48 +2863,77 @@ fn handle_expr_call(
         return handle_expr(expr_call.args.first().unwrap(), global_data, current_module);
     }
 
-    let args = expr_call
-        .args
-        .iter()
-        .map(|arg| handle_expr(arg, global_data, current_module))
-        .collect::<Vec<_>>();
-    let mut args_js_expr = args.iter().map(|a| a.0.clone()).collect::<Vec<_>>();
-    let mut args_rust_types = args.iter().map(|a| a.1.clone()).collect::<Vec<_>>();
+    fn parse_args(
+        expr_call: &ExprCall,
+        fn_inputs: Option<&[RustType]>,
+        global_data: &mut GlobalData,
+        current_module: &[String],
+    ) -> (Vec<JsExpr>, Vec<RustType>) {
+        fn do_thing(
+            arg_expr: &Expr,
+            input_is_mut_ref: bool,
+            // Arg is &mut
+            arg_is_mut_ref: bool,
+            global_data: &mut GlobalData,
+            current_module: &[String],
+        ) -> (JsExpr, RustType) {
+            match arg_expr {
+                Expr::Path(expr_path) => {
+                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    match partial {
+                        PartialRustType::StructIdent(_, _, _, _) => todo!(),
+                        PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
+                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                            if arg_is_mut_ref && input_is_mut_ref {
+                                (expr, rust_type)
+                            } else if is_mut_var {
+                                (
+                                    JsExpr::Field(Box::new(expr), Ident::Str("inner")),
+                                    rust_type,
+                                )
+                            } else {
+                                (expr, rust_type)
+                            }
+                        }
+                    }
+                }
+                Expr::Reference(expr_reference) => do_thing(
+                    &expr_reference.expr,
+                    input_is_mut_ref,
+                    expr_reference.mutability.is_some(),
+                    global_data,
+                    current_module,
+                ),
+                _ => handle_expr(arg_expr, global_data, current_module),
+            }
+        }
 
-    // // handle tuple structs Some, Ok, Err
-    // match &*expr_call.func {
-    //     Expr::Path(expr_path) => {
-    //         let path = expr_path
-    //             .path
-    //             .segments
-    //             .iter()
-    //             .map(|seg| seg.ident.to_string())
-    //             .collect::<Vec<_>>();
-    //         let name = path.last().unwrap();
-    //         // TODO need to properly identify what is an enum variant and what is a tuple struct. For now assume paths with length 1 are tuple structs
-    //         if path.len() == 1
-    //             && name.chars().next().unwrap().is_ascii_uppercase()
-    //             && name != "Some"
-    //             && name != "Ok"
-    //             && name != "Err"
-    //         {
-    //             return (JsExpr::New(path, args_js_expr.clone()), RustType::Todo);
-    //         }
-    //     }
-    //     _ => {}
-    // }
+        if let Some(fn_inputs) = fn_inputs {
+            expr_call
+                .args
+                .iter()
+                .zip(fn_inputs)
+                .map(|(arg_expr, input_type)| {
+                    do_thing(
+                        arg_expr,
+                        matches!(input_type, RustType::MutRef(_)),
+                        false,
+                        global_data,
+                        current_module,
+                    )
+                })
+                .unzip()
+        } else {
+            expr_call
+                .args
+                .iter()
+                .map(|arg_expr| do_thing(arg_expr, false, false, global_data, current_module))
+                .unzip()
+        }
+    }
 
-    // record if using Some/Option
-    // match &*expr_call.func {
-    //     Expr::Path(expr_path) => {
-    //         let last = expr_path.path.segments.last().unwrap().ident.to_string();
-    //         if last == "Some" {
-    //             global_data.rust_prelude_types.option = true;
-    //             global_data.rust_prelude_types.some = true;
-    //         }
-    //     }
-    //     _ => {}
-    // }
+    let (mut args_js_expr, mut args_rust_types) =
+        parse_args(expr_call, None, global_data, current_module);
 
     // Determine return type, looking up structs/enums in scope and checking for generics and whether they can be inferred
     // TODO also need to handle looking up fns
@@ -2702,7 +2947,7 @@ fn handle_expr_call(
             // }
 
             let (expr, partial_rust_type) =
-                handle_expr_path(expr_path, global_data, current_module, false);
+                handle_expr_path(expr_path, global_data, current_module);
 
             let rust_type = match partial_rust_type.clone() {
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
@@ -2824,7 +3069,7 @@ fn handle_expr_call(
                         )
                     }
                 }
-                PartialRustType::RustType(rust_type) => {
+                PartialRustType::RustType(rust_type, is_mut_var) => {
                     // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
                     // We also resolved the type to whatever the call returns eg fn path -> fn return type, enum variant path -> enum instance, tuple struct path -> struct instance, etc
                     match rust_type {
@@ -2872,6 +3117,21 @@ fn handle_expr_call(
                                     }
                                 }
                             };
+
+                            let fn_inputs = fn_info
+                                .inputs_types
+                                .iter()
+                                .map(|(_, _, _, rust_type)| rust_type.clone())
+                                .collect::<Vec<_>>();
+
+                            // TODO need to break up this whole fn and avoid calling parse_args a second time here
+                            let (new_args_js_expr, args_rust_types) = parse_args(
+                                expr_call,
+                                Some(&fn_inputs),
+                                global_data,
+                                current_module,
+                            );
+                            args_js_expr = new_args_js_expr;
 
                             // Look to see if any of the input types are type params replace with concrete type from argument
                             // TODO IMPORTANT for an associated fn, attempt_to_resolve_type_params_using_arg_types will not take into account generics defined on the *item* which might be concretised by the args and used in the return type
@@ -2958,7 +3218,7 @@ fn handle_expr_call(
                     };
                     (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
                 }
-                PartialRustType::RustType(RustType::FnVanish) => {
+                PartialRustType::RustType(RustType::FnVanish, _) => {
                     // TODO for now we are assuming we are dealing with Box::new() so the args must be len=1
                     assert_eq!(args_js_expr.len(), 1);
                     (args_js_expr.remove(0), args_rust_types.remove(0))
@@ -2983,35 +3243,13 @@ fn handle_expr_call(
                         )
                     }
                 }
-                PartialRustType::RustType(_) => (
+                PartialRustType::RustType(_, _) => (
                     JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
                     rust_type,
                 ),
             }
         }
-        // Expr::Path(expr_path)
-        //     if expr_path.path.segments.last().unwrap().ident.to_string() == "new" =>
-        // {
-        //     // TODO improve this code
-        //     JsExpr::New(
-        //         expr_path
-        //             .path
-        //             .segments
-        //             .iter()
-        //             .take(expr_path.path.segments.len() - 1)
-        //             .map(|seg| seg.ident.to_string())
-        //             .collect::<Vec<_>>(),
-        //         args,
-        //     )
-        // }
 
-        // TODO Can we remove Some and just treat Some as any value vs None which is null?
-        // Expr::Path(expr_path)
-        //     if expr_path.path.segments.len() == 1
-        //         && expr_path.path.segments[0].ident.to_string() == "Some" =>
-        // {
-        //     args.into_iter().next().unwrap()
-        // }
         _ => (
             JsExpr::FnCall(
                 Box::new(handle_expr(&expr_call.func, global_data, current_module).0),
@@ -3022,19 +3260,13 @@ fn handle_expr_call(
     }
 }
 
-fn handle_expr_path(
+pub fn handle_expr_path(
     expr_path: &ExprPath,
     global_data: &mut GlobalData,
     current_module: &[String],
-    is_having_mut_ref_taken: bool,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
-    handle_expr_path_inner(
-        &expr_path.path,
-        global_data,
-        current_module,
-        is_having_mut_ref_taken,
-    )
+    handle_expr_path_inner(&expr_path.path, global_data, current_module)
 }
 
 /// is_call: is this path being called eg foo() or Foo()
@@ -3047,7 +3279,6 @@ fn handle_expr_path_inner(
     expr_path: &syn::Path,
     global_data: &mut GlobalData,
     current_module: &[String],
-    is_having_mut_ref_taken: bool,
     // is_call: bool,
 ) -> (JsExpr, PartialRustType) {
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
@@ -3114,7 +3345,7 @@ fn handle_expr_path_inner(
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
 
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
-    let (partial_rust_type, is_mut_var) = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+    let partial_rust_type = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
         if let Some(_segs_copy_item_scope) = &segs_copy_item_scope {
             // Look for var
@@ -3131,7 +3362,8 @@ fn handle_expr_path_inner(
                 .rev()
                 .find_map(|s| s.variables.iter().find(|v| v.name == path.ident))
                 .unwrap();
-            (PartialRustType::RustType(var.type_.clone()), var.mut_)
+
+            PartialRustType::RustType(var.type_.clone(), var.mut_)
         } else {
             assert_eq!(segs_copy_item_scope, None);
             let path_idents = segs_copy_item_path
@@ -3140,19 +3372,17 @@ fn handle_expr_path_inner(
                 .collect::<Vec<_>>();
             // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
             match path_idents[..] {
-                ["Box", "new"] => (PartialRustType::RustType(RustType::FnVanish), false),
+                ["Box", "new"] => PartialRustType::RustType(RustType::FnVanish, false),
                 ["Some"] => {
                     // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
-                    (
-                        PartialRustType::EnumVariantIdent(
-                            // TODO handle turbofish
-                            Vec::new(),
-                            segs_copy_module_path.clone(),
-                            None,
-                            "Option".to_string(),
-                            "Some".to_string(),
-                        ),
-                        false,
+
+                    PartialRustType::EnumVariantIdent(
+                        // TODO handle turbofish
+                        Vec::new(),
+                        segs_copy_module_path.clone(),
+                        None,
+                        "Option".to_string(),
+                        "Some".to_string(),
                     )
                 }
                 ["None"] => {
@@ -3190,7 +3420,7 @@ fn handle_expr_path_inner(
                         _ => panic!(),
                     };
                     let option = RustType::Option(rust_type_param);
-                    (PartialRustType::RustType(option), false)
+                    PartialRustType::RustType(option, false)
                 }
                 _ => todo!(),
             }
@@ -3345,7 +3575,7 @@ fn handle_expr_path_inner(
             &item_def,
         );
         // dbg!(&impl_method);
-        let impl_method = impl_method.map(PartialRustType::RustType);
+        let impl_method = impl_method.map(|rust_type| PartialRustType::RustType(rust_type, false));
 
         let enum_variant = match item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
@@ -3395,12 +3625,15 @@ fn handle_expr_path_inner(
 
                 enum_variant.map(|enum_variant| {
                     if enum_variant.inputs.is_empty() {
-                        PartialRustType::RustType(RustType::StructOrEnum(
-                            enum_generics,
-                            segs_copy_module_path.clone(),
-                            segs_copy_item_scope.clone(),
-                            item_def.ident,
-                        ))
+                        PartialRustType::RustType(
+                            RustType::StructOrEnum(
+                                enum_generics,
+                                segs_copy_module_path.clone(),
+                                segs_copy_item_scope.clone(),
+                                item_def.ident,
+                            ),
+                            false,
+                        )
                     } else {
                         PartialRustType::EnumVariantIdent(
                             enum_generics,
@@ -3415,9 +3648,9 @@ fn handle_expr_path_inner(
         };
         // If you have an enum variant and associated fn with the same name, the code will compile, but if you try to access the fn you will just get the variant instead
         if let Some(enum_variant) = enum_variant {
-            (enum_variant, false)
+            enum_variant
         } else if let Some(impl_method) = impl_method {
-            (impl_method, false)
+            impl_method
         } else {
             panic!()
         }
@@ -3441,14 +3674,15 @@ fn handle_expr_path_inner(
     // For non mut vars JS will do this anyway since JS primatives are copied
 
     // If we are taking &mut, we must have a var and it must be `mut`
-    if is_having_mut_ref_taken && !is_mut_var {
-        panic!("a mutable reference can only be taken of a mutable var");
-    }
+    // if is_having_mut_ref_taken && !is_mut_var {
+    //     panic!("a mutable reference can only be taken of a mutable var");
+    // }
+
     // dbg!(&partial_rust_type);
-    let is_mut_ref_js_primative = match &partial_rust_type {
-        PartialRustType::RustType(RustType::MutRef(rust_type)) => rust_type.is_js_primative(),
-        _ => false,
-    };
+    // let is_mut_ref_js_primative = match &partial_rust_type {
+    //     PartialRustType::RustType(RustType::MutRef(rust_type)) => rust_type.is_js_primative(),
+    //     _ => false,
+    // };
 
     // Make JS path
     // segs_copy_module_path, segs_copy_item_path, is_scoped
@@ -3514,44 +3748,47 @@ fn handle_expr_path_inner(
     let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         JsExpr::Null
     } else {
-        match (
-            is_mut_ref_js_primative,
-            is_having_mut_ref_taken,
-            !is_mut_var,
-            &partial_rust_type,
-        ) {
-            (false, false, true, PartialRustType::RustType(rust_type)) => {
-                if false {
-                    // dbg!("inner");
-                    JsExpr::Field(
-                        Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
-                        Ident::Str("inner"),
-                    )
-                } else {
-                    // dbg!("no inner2");
-                    // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-                    JsExpr::Path(PathIdent::Path(js_segs_path))
-                }
-            }
-            (true, _, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-            (_, true, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-            (_, _, true, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-            (_, _, _, PartialRustType::StructIdent(_, _, _, _)) => todo!(),
-            (_, _, _, PartialRustType::EnumVariantIdent(_, _, _, _, _)) => todo!(),
-            (_, _, _, PartialRustType::RustType(rust_type)) => {
-                if rust_type.is_js_primative() {
-                    // dbg!("inner");
-                    JsExpr::Field(
-                        Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
-                        Ident::Str("inner"),
-                    )
-                } else {
-                    // dbg!("no inner2");
-                    // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-                    JsExpr::Path(PathIdent::Path(js_segs_path))
-                }
-            }
-        }
+        // match (
+        //     is_mut_ref_js_primative,
+        //     is_having_mut_ref_taken,
+        //     !is_mut_var,
+        //     &partial_rust_type,
+        // ) {
+        //     (false, false, true, PartialRustType::RustType(rust_type)) => {
+        //         if false {
+        //             // dbg!("inner");
+        //             JsExpr::Field(
+        //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+        //                 Ident::Str("inner"),
+        //             )
+        //         } else {
+        //             // dbg!("no inner2");
+        //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+        //             JsExpr::Path(PathIdent::Path(js_segs_path))
+        //         }
+        //     }
+        //     (true, _, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+        //     (_, true, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+        //     (_, _, true, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+        //     (_, _, _, PartialRustType::StructIdent(_, _, _, _)) => todo!(),
+        //     (_, _, _, PartialRustType::EnumVariantIdent(_, _, _, _, _)) => todo!(),
+        //     (_, _, _, PartialRustType::RustType(rust_type)) => {
+        //         if rust_type.is_js_primative() {
+        //             // dbg!("inner");
+        //             JsExpr::Field(
+        //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+        //                 Ident::Str("inner"),
+        //             )
+        //         } else {
+        //             // dbg!("no inner2");
+        //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+        //             JsExpr::Path(PathIdent::Path(js_segs_path))
+        //         }
+        //     }
+        // }
+
+        JsExpr::Path(PathIdent::Path(js_segs_path))
+
         // dbg!("no inner");
         // dbg!(is_mut_ref_js_primative);
         // dbg!(is_having_mut_ref_taken);
@@ -4211,11 +4448,11 @@ fn found_item_to_partial_rust_type(
     const_def: Option<&ConstDef>,
     module_path: Vec<String>,
     scope_id: Option<Vec<usize>>,
-) -> (PartialRustType, bool) {
+) -> PartialRustType {
     debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
     if let Some(var) = var {
         // This branch is obviously only possible for scoped paths since we can't have module level vars
-        (PartialRustType::RustType(var.type_.clone()), var.mut_)
+        PartialRustType::RustType(var.type_.clone(), var.mut_)
     } else if let Some(fn_info) = func {
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
         let fn_generics = if !item_path.turbofish.is_empty() {
@@ -4238,14 +4475,15 @@ fn found_item_to_partial_rust_type(
                 })
                 .collect::<Vec<_>>()
         };
-        (
-            PartialRustType::RustType(RustType::Fn(
+
+        PartialRustType::RustType(
+            RustType::Fn(
                 None,
                 fn_generics,
                 module_path,
                 scope_id,
                 RustTypeFnType::Standalone(item_path.ident.clone()),
-            )),
+            ),
             false,
         )
     } else if let Some(item_def) = item_def {
@@ -4273,14 +4511,11 @@ fn found_item_to_partial_rust_type(
         match &item_def.struct_or_enum_info {
             StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
                 // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
-                (
-                    PartialRustType::StructIdent(
-                        item_generics,
-                        module_path,
-                        scope_id,
-                        item_path.ident.clone(),
-                    ),
-                    false,
+                PartialRustType::StructIdent(
+                    item_generics,
+                    module_path,
+                    scope_id,
+                    item_path.ident.clone(),
                 )
             }
             StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
@@ -4289,7 +4524,7 @@ fn found_item_to_partial_rust_type(
             }
         }
     } else if let Some(const_def) = const_def {
-        (PartialRustType::RustType(const_def.type_.clone()), false)
+        PartialRustType::RustType(const_def.type_.clone(), false)
     } else {
         // dbg!(segs_copy);
         todo!()
