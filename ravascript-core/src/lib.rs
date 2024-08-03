@@ -2592,6 +2592,8 @@ pub fn process_items(
     crate_module.items.clone_from(&items);
     modules.push(crate_module);
 
+    // TODO need borrowed items for inline `mod {}` and owned items for `mod foo` where we read from a file
+
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
     extract_modules(
         true,
