@@ -1,3 +1,5 @@
+use std::mem;
+
 use syn::{
     FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn,
     ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type, TypeParamBound,
@@ -7,430 +9,539 @@ use tracing::{debug, debug_span};
 
 use crate::{
     get_item_impl_unique_id,
-    make_item_definitions::{self, ModuleMethods},
+    make_item_definitions::{self, ItemActual, ItemRef, ModuleMethods, StmtsV1},
     RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment,
     RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH,
 };
 
-pub fn update_item_definitions(
-    modules: Vec<make_item_definitions::ModuleData>,
-) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
-    // let global_data_copy = global_data.clone();
+// pub fn update_item_definitions(
+//     modules: Vec<make_item_definitions::ModuleData>,
+// ) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
+//     // let global_data_copy = global_data.clone();
 
-    let mut global_impl_blocks_simpl = Vec::new();
-    for module in &modules {
-        let module_path = module.path.clone();
+//     let mut global_impl_blocks_simpl = Vec::new();
+//     for module in &modules {
+//         let module_path = module.path.clone();
 
-        for (scope_id, item_impl) in &module.scoped_syn_impl_items {
-            // Temporarily store impl block's type params on global data
+//         for (scope_id, item_impl) in &module.scoped_syn_impl_items {
+//             // Temporarily store impl block's type params on global data
 
-            let impl_item_target_path = match &*item_impl.self_ty {
-                Type::Path(type_path) => type_path
-                    .path
-                    .segments
-                    .iter()
-                    .map(|s| s.ident.to_string())
-                    .collect::<Vec<_>>(),
-                _ => todo!(),
-            };
+//             let impl_item_target_path = match &*item_impl.self_ty {
+//                 Type::Path(type_path) => type_path
+//                     .path
+//                     .segments
+//                     .iter()
+//                     .map(|s| s.ident.to_string())
+//                     .collect::<Vec<_>>(),
+//                 _ => todo!(),
+//             };
 
-            let rust_impl_block_generics = item_impl
-                .generics
-                .params
-                .iter()
-                .filter_map(|gen| match gen {
-                    GenericParam::Lifetime(_) => None,
-                    GenericParam::Type(type_param) => Some(RustGeneric {
-                        ident: type_param.ident.to_string(),
-                        trait_bounds: type_param
-                            .bounds
-                            .iter()
-                            .filter_map(|bound| {
-                                // First lookup trait
-                                match bound {
-                                    TypeParamBound::Trait(trait_bound) => {
-                                        let trait_path = trait_bound
-                                            .path
-                                            .segments
-                                            .iter()
-                                            .map(|seg| seg.ident.to_string());
+//             let rust_impl_block_generics = item_impl
+//                 .generics
+//                 .params
+//                 .iter()
+//                 .filter_map(|gen| match gen {
+//                     GenericParam::Lifetime(_) => None,
+//                     GenericParam::Type(type_param) => Some(RustGeneric {
+//                         ident: type_param.ident.to_string(),
+//                         trait_bounds: type_param
+//                             .bounds
+//                             .iter()
+//                             .filter_map(|bound| {
+//                                 // First lookup trait
+//                                 match bound {
+//                                     TypeParamBound::Trait(trait_bound) => {
+//                                         let trait_path = trait_bound
+//                                             .path
+//                                             .segments
+//                                             .iter()
+//                                             .map(|seg| seg.ident.to_string());
 
-                                        let (module_path, scope_id, trait_def) = modules
-                                            .lookup_trait_definition_any_module(
-                                                &module_path,
-                                                &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                                trait_path,
-                                            );
-                                        Some((module_path, scope_id, trait_def.name))
-                                    }
-                                    TypeParamBound::Lifetime(_) => None,
-                                    TypeParamBound::Verbatim(_) => todo!(),
-                                    _ => todo!(),
-                                }
-                            })
-                            .collect::<Vec<_>>(),
-                    }),
-                    GenericParam::Const(_) => todo!(),
-                })
-                .collect::<Vec<_>>();
+//                                         let (module_path, scope_id, trait_def) = modules
+//                                             .lookup_trait_definition_any_module(
+//                                                 &module_path,
+//                                                 &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                                                 trait_path,
+//                                             );
+//                                         Some((module_path, scope_id, trait_def.name))
+//                                     }
+//                                     TypeParamBound::Lifetime(_) => None,
+//                                     TypeParamBound::Verbatim(_) => todo!(),
+//                                     _ => todo!(),
+//                                 }
+//                             })
+//                             .collect::<Vec<_>>(),
+//                     }),
+//                     GenericParam::Const(_) => todo!(),
+//                 })
+//                 .collect::<Vec<_>>();
 
-            let target_type_param = match &*item_impl.self_ty {
-                Type::Path(type_path) => {
-                    if type_path.path.segments.len() == 1 {
-                        rust_impl_block_generics
-                            .iter()
-                            .find(|generic| {
-                                let first_seg =
-                                    type_path.path.segments.first().unwrap().ident.to_string();
-                                generic.ident == first_seg
-                            })
-                            .cloned()
-                    } else {
-                        None
-                    }
-                }
-                // TODO handle other `Type`s properly
-                _ => None,
-            };
+//             let target_type_param = match &*item_impl.self_ty {
+//                 Type::Path(type_path) => {
+//                     if type_path.path.segments.len() == 1 {
+//                         rust_impl_block_generics
+//                             .iter()
+//                             .find(|generic| {
+//                                 let first_seg =
+//                                     type_path.path.segments.first().unwrap().ident.to_string();
+//                                 generic.ident == first_seg
+//                             })
+//                             .cloned()
+//                     } else {
+//                         None
+//                     }
+//                 }
+//                 // TODO handle other `Type`s properly
+//                 _ => None,
+//             };
 
-            let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-                let (module_path, trait_scope_id, trait_def) = modules
-                    .lookup_trait_definition_any_module(
-                        &module_path,
-                        &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                        trait_.segments.iter().map(|seg| seg.ident.to_string()),
-                    );
-                (module_path, trait_scope_id, trait_def.name)
-            });
+//             let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
+//                 let (module_path, trait_scope_id, trait_def) = modules
+//                     .lookup_trait_definition_any_module(
+//                         &module_path,
+//                         &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                         trait_.segments.iter().map(|seg| seg.ident.to_string()),
+//                     );
+//                 (module_path, trait_scope_id, trait_def.name)
+//             });
 
-            let (target_rust_type, _is_target_type_param) =
-                if let Some(target_type_param) = target_type_param {
-                    (
-                        RustType::TypeParam(RustTypeParam {
-                            name: target_type_param.ident.clone(),
-                            type_: RustTypeParamValue::Unresolved,
-                        }),
-                        true,
-                    )
-                } else {
-                    // Get type of impl target
+//             let (target_rust_type, _is_target_type_param) =
+//                 if let Some(target_type_param) = target_type_param {
+//                     (
+//                         RustType::TypeParam(RustTypeParam {
+//                             name: target_type_param.ident.clone(),
+//                             type_: RustTypeParamValue::Unresolved,
+//                         }),
+//                         true,
+//                     )
+//                 } else {
+//                     // Get type of impl target
 
-                    // dbg!(&module_path);
-                    // dbg!(&temp_scope_id);
-                    // dbg!(&impl_item_target_path);
-                    let (target_item_module, resolved_scope_id, target_item) = modules
-                        .lookup_item_definition_any_module_or_scope(
-                            &module_path,
-                            &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                            &impl_item_target_path,
-                        );
+//                     // dbg!(&module_path);
+//                     // dbg!(&temp_scope_id);
+//                     // dbg!(&impl_item_target_path);
+//                     let (target_item_module, resolved_scope_id, target_item) = modules
+//                         .lookup_item_definition_any_module_or_scope(
+//                             &module_path,
+//                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                             &impl_item_target_path,
+//                         );
 
-                    // TODO get rid of RustType::I32 etc, and just use StructOrEnum for everything
-                    if target_item_module == [PRELUDE_MODULE_PATH] {
-                        match &target_item.ident[..] {
-                            "i32" => (RustType::I32, false),
-                            other => {
-                                // TODO just defaulting to this because we want to get rid of all the special RustType variants anyway
-                                (
-                                    RustType::StructOrEnum(
-                                        target_item
-                                            .generics
-                                            .iter()
-                                            .map(|g| RustTypeParam {
-                                                name: g.clone(),
-                                                type_: RustTypeParamValue::Unresolved,
-                                            })
-                                            .collect::<Vec<_>>(),
-                                        target_item_module.clone(),
-                                        resolved_scope_id,
-                                        target_item.ident.to_string(),
-                                    ),
-                                    false,
-                                )
-                            }
-                        }
-                    } else {
-                        (
-                            RustType::StructOrEnum(
-                                target_item
-                                    .generics
-                                    .iter()
-                                    .map(|g| RustTypeParam {
-                                        name: g.clone(),
-                                        type_: RustTypeParamValue::Unresolved,
-                                    })
-                                    .collect::<Vec<_>>(),
-                                target_item_module.clone(),
-                                resolved_scope_id,
-                                target_item.ident.to_string(),
-                            ),
-                            false,
-                        )
-                    }
-                };
+//                     // TODO get rid of RustType::I32 etc, and just use StructOrEnum for everything
+//                     if target_item_module == [PRELUDE_MODULE_PATH] {
+//                         match &target_item.ident[..] {
+//                             "i32" => (RustType::I32, false),
+//                             other => {
+//                                 // TODO just defaulting to this because we want to get rid of all the special RustType variants anyway
+//                                 (
+//                                     RustType::StructOrEnum(
+//                                         target_item
+//                                             .generics
+//                                             .iter()
+//                                             .map(|g| RustTypeParam {
+//                                                 name: g.clone(),
+//                                                 type_: RustTypeParamValue::Unresolved,
+//                                             })
+//                                             .collect::<Vec<_>>(),
+//                                         target_item_module.clone(),
+//                                         resolved_scope_id,
+//                                         target_item.ident.to_string(),
+//                                     ),
+//                                     false,
+//                                 )
+//                             }
+//                         }
+//                     } else {
+//                         (
+//                             RustType::StructOrEnum(
+//                                 target_item
+//                                     .generics
+//                                     .iter()
+//                                     .map(|g| RustTypeParam {
+//                                         name: g.clone(),
+//                                         type_: RustTypeParamValue::Unresolved,
+//                                     })
+//                                     .collect::<Vec<_>>(),
+//                                 target_item_module.clone(),
+//                                 resolved_scope_id,
+//                                 target_item.ident.to_string(),
+//                             ),
+//                             false,
+//                         )
+//                     }
+//                 };
 
-            // global_data.impl_block_target_type.pop();
+//             // global_data.impl_block_target_type.pop();
 
-            let rust_items = item_impl
-                .items
-                .iter()
-                .map(|syn_item| {
-                    let item_name = match syn_item {
-                        ImplItem::Const(_) => todo!(),
-                        ImplItem::Fn(impl_item_fn) => impl_item_fn.sig.ident.to_string(),
-                        ImplItem::Type(_) => todo!(),
-                        ImplItem::Macro(_) => todo!(),
-                        ImplItem::Verbatim(_) => todo!(),
-                        _ => todo!(),
-                    };
+//             let rust_items = item_impl
+//                 .items
+//                 .iter()
+//                 .map(|syn_item| {
+//                     let item_name = match syn_item {
+//                         ImplItem::Const(_) => todo!(),
+//                         ImplItem::Fn(impl_item_fn) => impl_item_fn.sig.ident.to_string(),
+//                         ImplItem::Type(_) => todo!(),
+//                         ImplItem::Macro(_) => todo!(),
+//                         ImplItem::Verbatim(_) => todo!(),
+//                         _ => todo!(),
+//                     };
 
-                    let rust_impl_item_item = match syn_item {
-                        ImplItem::Const(_) => todo!(),
-                        ImplItem::Fn(impl_item_fn) => {
-                            let impl_block_generics =
-                                rust_impl_block_generics.iter().map(|g| g.ident.clone());
-                            let fn_generics = impl_item_fn
-                                .sig
-                                .generics
-                                .params
-                                .iter()
-                                .filter_map(|g| match g {
-                                    GenericParam::Lifetime(_) => None,
-                                    GenericParam::Type(type_param) => {
-                                        Some(type_param.ident.to_string())
-                                    }
-                                    GenericParam::Const(_) => todo!(),
-                                })
-                                .collect::<Vec<_>>();
-                            let combined_generics = impl_block_generics
-                                .chain(fn_generics.iter().cloned())
-                                .collect::<Vec<_>>();
+//                     let rust_impl_item_item = match syn_item {
+//                         ImplItem::Const(_) => todo!(),
+//                         ImplItem::Fn(impl_item_fn) => {
+//                             let impl_block_generics =
+//                                 rust_impl_block_generics.iter().map(|g| g.ident.clone());
+//                             let fn_generics = impl_item_fn
+//                                 .sig
+//                                 .generics
+//                                 .params
+//                                 .iter()
+//                                 .filter_map(|g| match g {
+//                                     GenericParam::Lifetime(_) => None,
+//                                     GenericParam::Type(type_param) => {
+//                                         Some(type_param.ident.to_string())
+//                                     }
+//                                     GenericParam::Const(_) => todo!(),
+//                                 })
+//                                 .collect::<Vec<_>>();
+//                             let combined_generics = impl_block_generics
+//                                 .chain(fn_generics.iter().cloned())
+//                                 .collect::<Vec<_>>();
 
-                            let inputs_types = impl_item_fn
-                                .sig
-                                .inputs
-                                .iter()
-                                .map(|input| match input {
-                                    FnArg::Receiver(receiver) => {
-                                        // TODO need to actually parse the reciever to determine if it is boxed or a &mut so we can properly handle derefs
-                                        // TODO need to ensure we are clear and consistent with the meaning of `RustType::ParentItem`
-                                        // let rust_type = if receiver.reference.is_some()
-                                        //     && receiver.mutability.is_some()
-                                        // {
-                                        //     RustType::MutRef(Box::new(RustType::ParentItem))
-                                        // } else {
-                                        //     RustType::ParentItem
-                                        // };
-                                        // (true, false, "self".to_string(), rust_type)
+//                             let inputs_types = impl_item_fn
+//                                 .sig
+//                                 .inputs
+//                                 .iter()
+//                                 .map(|input| match input {
+//                                     FnArg::Receiver(receiver) => {
+//                                         // TODO need to actually parse the reciever to determine if it is boxed or a &mut so we can properly handle derefs
+//                                         // TODO need to ensure we are clear and consistent with the meaning of `RustType::ParentItem`
+//                                         // let rust_type = if receiver.reference.is_some()
+//                                         //     && receiver.mutability.is_some()
+//                                         // {
+//                                         //     RustType::MutRef(Box::new(RustType::ParentItem))
+//                                         // } else {
+//                                         //     RustType::ParentItem
+//                                         // };
+//                                         // (true, false, "self".to_string(), rust_type)
 
-                                        let rust_type = if receiver.reference.is_some()
-                                            && receiver.mutability.is_some()
-                                        {
-                                            RustType::MutRef(Box::new(target_rust_type.clone()))
-                                        } else {
-                                            target_rust_type.clone()
-                                        };
-                                        // (true, false, "self".to_string(), RustType::ParentItem)
-                                        (true, false, "self".to_string(), rust_type)
-                                    }
-                                    FnArg::Typed(pat_type) => (
-                                        false,
-                                        match &*pat_type.pat {
-                                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                                            _ => todo!(),
-                                        },
-                                        match &*pat_type.pat {
-                                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                                            _ => todo!(),
-                                        },
-                                        parse_types_for_populate_item_definitions(
-                                            &pat_type.ty,
-                                            &combined_generics,
-                                            &module_path,
-                                            &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                            &modules,
-                                        ),
-                                    ),
-                                })
-                                .collect::<Vec<_>>();
+//                                         let rust_type = if receiver.reference.is_some()
+//                                             && receiver.mutability.is_some()
+//                                         {
+//                                             RustType::MutRef(Box::new(target_rust_type.clone()))
+//                                         } else {
+//                                             target_rust_type.clone()
+//                                         };
+//                                         // (true, false, "self".to_string(), RustType::ParentItem)
+//                                         (true, false, "self".to_string(), rust_type)
+//                                     }
+//                                     FnArg::Typed(pat_type) => (
+//                                         false,
+//                                         match &*pat_type.pat {
+//                                             Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+//                                             _ => todo!(),
+//                                         },
+//                                         match &*pat_type.pat {
+//                                             Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+//                                             _ => todo!(),
+//                                         },
+//                                         parse_types_for_populate_item_definitions(
+//                                             &pat_type.ty,
+//                                             &combined_generics,
+//                                             &module_path,
+//                                             &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                                             &modules,
+//                                         ),
+//                                     ),
+//                                 })
+//                                 .collect::<Vec<_>>();
 
-                            let return_type = match &impl_item_fn.sig.output {
-                                ReturnType::Default => RustType::Unit,
-                                ReturnType::Type(_, type_) => {
-                                    parse_types_for_populate_item_definitions(
-                                        type_,
-                                        &combined_generics,
-                                        &module_path,
-                                        &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                                        &modules,
-                                    )
-                                }
-                            };
+//                             let return_type = match &impl_item_fn.sig.output {
+//                                 ReturnType::Default => RustType::Unit,
+//                                 ReturnType::Type(_, type_) => {
+//                                     parse_types_for_populate_item_definitions(
+//                                         type_,
+//                                         &combined_generics,
+//                                         &module_path,
+//                                         &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                                         &modules,
+//                                     )
+//                                 }
+//                             };
 
-                            // *scope_count += 1;
-                            // scope_id.push(*scope_count);
-                            // populate_impl_blocks_items_and_item_def_fields_stmts(
-                            //     &impl_item_fn.block.stmts,
-                            //     module,
-                            //     global_data_copy,
-                            //     module_path,
-                            //     global_impl_blocks_simpl,
-                            //     scope_id,
-                            // );
-                            // scope_id.pop();
+//                             // *scope_count += 1;
+//                             // scope_id.push(*scope_count);
+//                             // populate_impl_blocks_items_and_item_def_fields_stmts(
+//                             //     &impl_item_fn.block.stmts,
+//                             //     module,
+//                             //     global_data_copy,
+//                             //     module_path,
+//                             //     global_impl_blocks_simpl,
+//                             //     scope_id,
+//                             // );
+//                             // scope_id.pop();
 
-                            let is_pub = match impl_item_fn.vis {
-                                Visibility::Public(_) => true,
-                                Visibility::Restricted(_) => todo!(),
-                                Visibility::Inherited => false,
-                            };
-                            RustImplItemItemNoJs::Fn(
-                                {
-                                    if let Some(input) = impl_item_fn.sig.inputs.first() {
-                                        match input {
-                                            FnArg::Receiver(_) => true,
-                                            FnArg::Typed(_) => false,
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                },
-                                FnInfo {
-                                    ident: item_name.clone(),
-                                    is_pub,
-                                    inputs_types,
-                                    generics: fn_generics,
-                                    return_type,
-                                    syn: FnInfoSyn::Impl(impl_item_fn.clone()),
-                                },
-                            )
-                        }
-                        ImplItem::Type(_) => todo!(),
-                        ImplItem::Macro(_) => todo!(),
-                        ImplItem::Verbatim(_) => todo!(),
-                        _ => todo!(),
-                    };
-                    RustImplItemNoJs {
-                        ident: item_name.clone(),
-                        item: rust_impl_item_item,
-                        // syn_object: syn_item.clone(),
-                    }
-                })
-                .collect();
+//                             let is_pub = match impl_item_fn.vis {
+//                                 Visibility::Public(_) => true,
+//                                 Visibility::Restricted(_) => todo!(),
+//                                 Visibility::Inherited => false,
+//                             };
+//                             RustImplItemItemNoJs::Fn(
+//                                 {
+//                                     if let Some(input) = impl_item_fn.sig.inputs.first() {
+//                                         match input {
+//                                             FnArg::Receiver(_) => true,
+//                                             FnArg::Typed(_) => false,
+//                                         }
+//                                     } else {
+//                                         false
+//                                     }
+//                                 },
+//                                 FnInfo {
+//                                     ident: item_name.clone(),
+//                                     is_pub,
+//                                     inputs_types,
+//                                     generics: fn_generics,
+//                                     return_type,
+//                                     syn: FnInfoSyn::Impl(impl_item_fn.clone()),
+//                                 },
+//                             )
+//                         }
+//                         ImplItem::Type(_) => todo!(),
+//                         ImplItem::Macro(_) => todo!(),
+//                         ImplItem::Verbatim(_) => todo!(),
+//                         _ => todo!(),
+//                     };
+//                     RustImplItemNoJs {
+//                         ident: item_name.clone(),
+//                         item: rust_impl_item_item,
+//                         // syn_object: syn_item.clone(),
+//                     }
+//                 })
+//                 .collect();
 
-            global_impl_blocks_simpl.push(RustImplBlockSimple {
-                unique_id: get_item_impl_unique_id(
-                    &module_path,
-                    &(!scope_id.is_empty()).then_some(scope_id.clone()),
-                    item_impl,
-                ),
-                generics: rust_impl_block_generics,
-                trait_: trait_path_and_name,
-                target: target_rust_type.clone(),
-                rust_items,
-            });
-        }
+//             global_impl_blocks_simpl.push(RustImplBlockSimple {
+//                 unique_id: get_item_impl_unique_id(
+//                     &module_path,
+//                     &(!scope_id.is_empty()).then_some(scope_id.clone()),
+//                     item_impl,
+//                 ),
+//                 generics: rust_impl_block_generics,
+//                 trait_: trait_path_and_name,
+//                 target: target_rust_type.clone(),
+//                 rust_items,
+//             });
+//         }
 
-        // for item in items {
-        //     // dbg!("populate_impl_blocks_items");
-        //     // println!("{}", quote! { #item });
-        //     populate_impl_blocks_items_and_item_def_fields_individual(
-        //         &item,
-        //         module,
-        //         &global_data_copy,
-        //         &module_path,
-        //         &mut global_data.impl_blocks_simpl,
-        //         &mut scope_id,
-        //         &mut scope_count,
-        //     );
-        // }
+//         // for item in items {
+//         //     // dbg!("populate_impl_blocks_items");
+//         //     // println!("{}", quote! { #item });
+//         //     populate_impl_blocks_items_and_item_def_fields_individual(
+//         //         &item,
+//         //         module,
+//         //         &global_data_copy,
+//         //         &module_path,
+//         //         &mut global_data.impl_blocks_simpl,
+//         //         &mut scope_id,
+//         //         &mut scope_count,
+//         //     );
+//         // }
 
-        // Add unique impl block ids to item_def.impl_block_ids
-        // NOTE it is ok to do this in the same pass as populate_impl_blocks_items_and_item_def_fields because we are only relying on the traits defined in the impl block signature... NO it won't work because we are literally creating the `RustImplBlockSimple`s in populate_impl_blocks_items_and_item_def_fields so they won't all exist until the end of the loop over modules
-        // populate_item_def_impl_blocks(&mut global_data);
-        // update_item_def_block_ids(...
-    }
+//         // Add unique impl block ids to item_def.impl_block_ids
+//         // NOTE it is ok to do this in the same pass as populate_impl_blocks_items_and_item_def_fields because we are only relying on the traits defined in the impl block signature... NO it won't work because we are literally creating the `RustImplBlockSimple`s in populate_impl_blocks_items_and_item_def_fields so they won't all exist until the end of the loop over modules
+//         // populate_item_def_impl_blocks(&mut global_data);
+//         // update_item_def_block_ids(...
+//     }
 
-    // TODO avoid clone
-    let modules_copy = modules.clone();
-    let new_modules = modules
+//     // TODO avoid clone
+//     let modules_copy = modules.clone();
+//     let new_modules = modules
+//         .into_iter()
+//         .map(|module| {
+//             debug_span!(
+//                 "extract_data_populate_item_definitions module: {:?}",
+//                 module_path = ?module.path
+//             );
+//             let module_path = module.path.clone();
+
+//             let updated_various_defs = update_various_def(
+//                 module.various_definitions,
+//                 &module_path,
+//                 &None,
+//                 &modules_copy,
+//             );
+
+//             let updated_scoped_various_defs = module
+//                 .scoped_various_definitions
+//                 .into_iter()
+//                 .map(|(scope, various_def)| {
+//                     let scope_id = Some(scope.clone());
+//                     (
+//                         scope,
+//                         update_various_def(various_def, &module_path, &scope_id, &modules_copy),
+//                     )
+//                 })
+//                 .collect();
+
+//             ModuleData {
+//                 name: module.name,
+//                 path: module.path,
+//                 pub_submodules: module.pub_submodules,
+//                 private_submodules: module.private_submodules,
+//                 pub_use_mappings: module.pub_use_mappings,
+//                 private_use_mappings: module.private_use_mappings,
+//                 resolved_mappings: module.resolved_mappings,
+//                 various_definitions: updated_various_defs,
+//                 items: module.items,
+//                 scoped_various_definitions: updated_scoped_various_defs,
+//                 scoped_syn_impl_items: module.scoped_syn_impl_items,
+//             }
+//         })
+//         .collect();
+
+//     (new_modules, global_impl_blocks_simpl)
+// }
+
+// This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
+// However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
+// IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
+pub fn update_item_definitions2(
+    module_items_tree: &[ItemRef],
+    mut item_defs_no_types: Vec<ItemActual>,
+    current_module: &[String],
+) -> Vec<ItemV2> {
+    // (Vec<ModuleData>, Vec<RustImplBlockSimple>)
+
+    let mut scoped_items = Vec::new();
+    let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
+    updated_item_defs.resize_with(item_defs_no_types.len(), || ItemV2::None);
+
+    do_things(
+        module_items_tree,
+        &mut item_defs_no_types,
+        current_module,
+        &mut updated_item_defs,
+        &mut scoped_items,
+    );
+
+    let items_copy = item_defs_no_types.clone();
+    item_defs_no_types
         .into_iter()
-        .map(|module| {
-            debug_span!(
-                "extract_data_populate_item_definitions module: {:?}",
-                module_path = ?module.path
-            );
-            let module_path = module.path.clone();
-
-            let updated_various_defs = update_various_def(
-                module.various_definitions,
-                &module_path,
-                &None,
-                &modules_copy,
-            );
-
-            let updated_scoped_various_defs = module
-                .scoped_various_definitions
-                .into_iter()
-                .map(|(scope, various_def)| {
-                    let scope_id = Some(scope.clone());
-                    (
-                        scope,
-                        update_various_def(various_def, &module_path, &scope_id, &modules_copy),
-                    )
-                })
-                .collect();
-
-            ModuleData {
-                name: module.name,
-                path: module.path,
-                pub_submodules: module.pub_submodules,
-                private_submodules: module.private_submodules,
-                pub_use_mappings: module.pub_use_mappings,
-                private_use_mappings: module.private_use_mappings,
-                resolved_mappings: module.resolved_mappings,
-                various_definitions: updated_various_defs,
-                items: module.items,
-                scoped_various_definitions: updated_scoped_various_defs,
-                scoped_syn_impl_items: module.scoped_syn_impl_items,
-            }
-        })
-        .collect();
-
-    (new_modules, global_impl_blocks_simpl)
+        .map(|item_def_no_type| update_item_def(item_def_no_type, current_module, &items_copy))
+        .collect()
 }
 
-fn update_various_def(
-    various_definition: make_item_definitions::VariousDefintions,
-    // global_data_copy: &make_item_definitions::GlobalData,
-    module_path: &[String],
-    current_scope: &Option<Vec<usize>>,
-    modules: &[make_item_definitions::ModuleData],
-) -> VariousDefintions {
-    let new_const_defs = various_definition
-        .consts
-        .into_iter()
-        .map(|const_def| {
-            let rust_type = parse_types_for_populate_item_definitions(
-                &const_def.syn_object.ty,
-                &Vec::new(),
-                module_path,
-                current_scope,
-                modules,
-            );
-            ConstDef {
-                name: const_def.name,
-                is_pub: const_def.is_pub,
-                type_: rust_type,
-                syn_object: const_def.syn_object,
+fn do_things(
+    module_items_tree: &[ItemRef],
+    item_defs_no_types: &mut [ItemActual],
+    current_module: &[String],
+    updated_item_defs: &mut [ItemV2],
+    scoped_items: &mut Vec<Vec<ItemActual>>,
+    in_scope: bool,
+) {
+    for item_ref in module_items_tree {
+        match item_ref {
+            ItemRef::StructOrEnum(index) => {
+                let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                updated_item_defs[*index] =
+                    update_item_def(item, current_module, &item_defs_no_types);
             }
-        })
-        .collect();
+            ItemRef::Fn(index) => {
+                let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                updated_item_defs[*index] =
+                    update_item_def(item, current_module, &item_defs_no_types);
 
-    let new_item_defs = various_definition
-        .item_definitons
-        .into_iter()
-        .map(|item_def| {
+                let fn_info = match &updated_item_defs[*index] {
+                    ItemV2::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                let fn_body_items = fn_info
+                    .stmts
+                    .iter()
+                    .filter_map(|stmt| {
+                        match stmt {
+                            StmtsV1::Item(item_ref) => Some(item_ref.clone()),
+                            // TODO handle item defs in Exprs
+                            // StmtsV1::Local(_) => todo!(),
+                            // StmtsV1::Expr(_, _) => todo!(),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // Item in fn body are scoped so create a new scope
+                do_things(
+                    &fn_body_items,
+                    item_defs_no_types,
+                    current_module,
+                    updated_item_defs,
+                    scoped_items,
+                    true,
+                );
+            }
+            ItemRef::Const(index) => {
+                let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                updated_item_defs[*index] =
+                    update_item_def(item, current_module, &item_defs_no_types);
+            }
+            ItemRef::Trait(index) => {
+                let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                updated_item_defs[*index] =
+                    update_item_def(item, current_module, &item_defs_no_types);
+            }
+            ItemRef::Mod(rust_mod) => {
+                do_things(
+                    module_items_tree,
+                    item_defs_no_types,
+                    &rust_mod.module_path,
+                    updated_item_defs,
+                    scoped_items,
+                    false,
+                );
+            }
+            // TODO
+            ItemRef::Impl(_) => {}
+            ItemRef::Use(_) => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ItemV2 {
+    StructOrEnum(ItemDefinition),
+    Fn(FnInfo),
+    Const(ConstDef),
+    Trait(RustTraitDefinition),
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustUse {
+    pub pub_use_mappings: Vec<(String, Vec<String>)>,
+    pub private_use_mappings: Vec<(String, Vec<String>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustMod {
+    pub pub_: bool,
+    // pub pub_use_mappings: Vec<(String, Vec<String>)>,
+    // pub private_use_mappings: Vec<(String, Vec<String>)>,
+    pub items: Vec<ItemActual>,
+}
+
+#[derive(Debug, Clone)]
+struct RustImplV1 {
+    pub syn: ItemImpl,
+    pub items: Vec<ImplItemV1>,
+}
+#[derive(Debug, Clone)]
+enum ImplItemV1 {
+    Fn(FnInfo),
+    Const(ConstDef),
+}
+
+fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemActual]) -> ItemV2 {
+    match item {
+        ItemActual::StructOrEnum(item_def) => {
             let new_struct_or_enum_info = match item_def.struct_or_enum_info {
                 make_item_definitions::StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                     let fields = if struct_def_info.syn_object.fields.is_empty() {
@@ -456,8 +567,8 @@ fn update_various_def(
                                             &f.ty,
                                             &item_def.generics,
                                             module_path,
-                                            current_scope,
-                                            modules,
+                                            items_copy,
+                                            scoped_items,
                                         ),
                                     )
                                 })
@@ -474,8 +585,7 @@ fn update_various_def(
                                         &f.ty,
                                         &item_def.generics,
                                         module_path,
-                                        current_scope,
-                                        modules,
+                                        items_copy,
                                     )
                                 })
                                 .collect::<Vec<_>>(),
@@ -501,8 +611,7 @@ fn update_various_def(
                                         &f.ty,
                                         &item_def.generics,
                                         module_path,
-                                        current_scope,
-                                        modules,
+                                        items_copy,
                                     );
                                     match &f.ident {
                                         Some(input_name) => EnumVariantInputsInfo::Named {
@@ -521,27 +630,23 @@ fn update_various_def(
                     })
                 }
             };
-            ItemDefinition {
+            ItemV2::StructOrEnum(ItemDefinition {
                 ident: item_def.ident,
                 is_copy: item_def.is_copy,
                 is_pub: item_def.is_pub,
                 generics: item_def.generics,
                 struct_or_enum_info: new_struct_or_enum_info,
                 impl_block_ids: item_def.impl_block_ids,
-            }
-        })
-        .collect();
+            })
+        }
+        ItemActual::Fn(fn_info) => {
+            // let item_fn = match &fn_info.syn {
+            //     make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
+            //     make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
+            // };
 
-    let new_fn_info = various_definition
-        .fn_info
-        .into_iter()
-        .map(|fn_info| {
-            let item_fn = match &fn_info.syn {
-                make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
-                make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
-            };
-            let inputs_types = item_fn
-                .sig
+            let inputs_types = fn_info
+                .signature
                 .inputs
                 .iter()
                 .map(|input| match input {
@@ -563,65 +668,57 @@ fn update_various_def(
                             &pat_type.ty,
                             &fn_info.generics,
                             module_path,
-                            current_scope,
-                            modules,
+                            items_copy,
                         ),
                     ),
                 })
                 .collect::<Vec<_>>();
 
-            let return_type = match &fn_info.syn {
-                make_item_definitions::FnInfoSyn::Standalone(item_fn) => {
-                    match &item_fn.sig.output {
-                        ReturnType::Default => RustType::Unit,
-                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                            type_,
-                            &fn_info.generics,
-                            module_path,
-                            current_scope,
-                            modules,
-                        ),
-                    }
-                }
-                make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
+            let return_type = match &fn_info.signature.output {
+                ReturnType::Default => RustType::Unit,
+                ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                    type_,
+                    &fn_info.generics,
+                    module_path,
+                    items_copy,
+                ),
             };
 
-            FnInfo {
+            ItemV2::Fn(FnInfo {
                 ident: fn_info.ident,
                 is_pub: fn_info.is_pub,
                 inputs_types,
                 generics: fn_info.generics,
                 return_type,
-                syn: match fn_info.syn {
-                    make_item_definitions::FnInfoSyn::Standalone(item_fn) => {
-                        FnInfoSyn::Standalone(item_fn)
-                    }
-                    make_item_definitions::FnInfoSyn::Impl(impl_item_fn) => {
-                        FnInfoSyn::Impl(impl_item_fn)
-                    }
-                },
-            }
-        })
-        .collect();
-
-    let new_trait_defs = various_definition
-        .trait_definitons
-        .into_iter()
-        .map(|trait_def| {
+                stmts: fn_info.stmts,
+                syn: fn_info.syn,
+            })
+        }
+        ItemActual::Const(const_def) => {
+            let rust_type = parse_types_for_populate_item_definitions(
+                &const_def.syn_object.ty,
+                &Vec::new(),
+                module_path,
+                items_copy,
+            );
+            ItemV2::Const(ConstDef {
+                name: const_def.name,
+                is_pub: const_def.is_pub,
+                type_: rust_type,
+                syn_object: const_def.syn_object,
+            })
+        }
+        ItemActual::Trait(trait_def) => {
             // Currently trait defs don't store any info other than the name, so we don't need to do anything
-            RustTraitDefinition {
+            ItemV2::Trait(RustTraitDefinition {
                 name: trait_def.name,
                 is_pub: trait_def.is_pub,
                 syn: trait_def.syn,
-            }
-        })
-        .collect();
-
-    VariousDefintions {
-        fn_info: new_fn_info,
-        item_definitons: new_item_defs,
-        consts: new_const_defs,
-        trait_definitons: new_trait_defs,
+            })
+        }
+        ItemActual::Mod(_) => todo!(),
+        ItemActual::Impl(_) => todo!(),
+        ItemActual::Use(_) => todo!(),
     }
 }
 
@@ -959,6 +1056,7 @@ pub struct FnInfo {
     pub generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
     pub return_type: RustType,
+    pub stmts: Vec<StmtsV1>,
     // /// type of fn eg Fn(i32) -> ()
     // rust_type: RustType,
     // TODO optionally add enum for Field, AssociatedFn, Method, etc
@@ -1020,9 +1118,9 @@ fn parse_types_for_populate_item_definitions(
     root_parent_item_definition_generics: &[String],
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
-    current_scope_id: &Option<Vec<usize>>,
     // global_data: &make_item_definitions::GlobalData,
-    modules: &[make_item_definitions::ModuleData],
+    item_defs: &[ItemActual],
+    scoped_items: &Vec<Vec<ItemActual>>,
 ) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
@@ -1051,8 +1149,7 @@ fn parse_types_for_populate_item_definitions(
                                                     input_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
-                                                    current_scope_id,
-                                                    modules,
+                                                    item_defs,
                                                 )
                                             })
                                             .collect();
@@ -1063,8 +1160,7 @@ fn parse_types_for_populate_item_definitions(
                                                     return_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
-                                                    current_scope_id,
-                                                    modules,
+                                                    item_defs,
                                                 )
                                             }
                                         };
@@ -1105,8 +1201,7 @@ fn parse_types_for_populate_item_definitions(
                                                         arg_type_,
                                                         root_parent_item_definition_generics,
                                                         current_module,
-                                                        current_scope_id,
-                                                        modules,
+                                                        item_defs,
                                                     )
                                                 }
                                                 GenericArgument::Const(_) => todo!(),
@@ -1130,10 +1225,9 @@ fn parse_types_for_populate_item_definitions(
                                     true,
                                     true,
                                     trait_bound_path,
-                                    modules,
+                                    item_defs,
                                     current_module,
                                     current_module,
-                                    current_scope_id,
                                 );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
@@ -1222,7 +1316,7 @@ fn parse_types_for_populate_item_definitions(
                                         root_parent_item_definition_generics,
                                         current_module,
                                         current_scope_id,
-                                        modules,
+                                        item_defs,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1252,7 +1346,7 @@ fn parse_types_for_populate_item_definitions(
                                         root_parent_item_definition_generics,
                                         current_module,
                                         current_scope_id,
-                                        modules,
+                                        item_defs,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1297,7 +1391,7 @@ fn parse_types_for_populate_item_definitions(
                                                 root_parent_item_definition_generics,
                                                 current_module,
                                                 current_scope_id,
-                                                modules,
+                                                item_defs,
                                             ))
                                         }
                                         GenericArgument::Const(_) => todo!(),
@@ -1324,7 +1418,7 @@ fn parse_types_for_populate_item_definitions(
                             true,
                             true,
                             rust_path,
-                            modules,
+                            item_defs,
                             current_module,
                             current_module,
                             current_scope_id,
@@ -1398,7 +1492,7 @@ fn parse_types_for_populate_item_definitions(
                 root_parent_item_definition_generics,
                 current_module,
                 current_scope_id,
-                modules,
+                item_defs,
             );
             if type_reference.mutability.is_some() {
                 RustType::MutRef(Box::new(type_))

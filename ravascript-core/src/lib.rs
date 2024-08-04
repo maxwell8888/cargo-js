@@ -10,6 +10,7 @@ use handle_syn::{
 use js_ast::{
     FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
+use make_item_definitions::{extract_modules2, ItemActual, ItemRef, RustMod};
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{
     ExprPath, GenericParam, ImplItem, Item, ItemFn, ItemImpl, ItemMod, ItemTrait, PathArguments,
@@ -26,14 +27,14 @@ mod duplicate_namespacing;
 use duplicate_namespacing::{namespace_duplicates, Duplicate};
 
 mod extract_modules;
-use extract_modules::{extract_modules, ModuleDataFirstPass};
+use extract_modules::ModuleDataFirstPass;
 
 mod make_item_definitions;
-use make_item_definitions::make_item_definitions;
+// use make_item_definitions::make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    update_item_definitions, FnInfo, ItemDefinition, ModuleData, RustTraitDefinition,
+    update_item_definitions2, FnInfo, ItemDefinition, ModuleData, RustTraitDefinition,
     StructOrEnumDefitionInfo,
 };
 
@@ -2586,6 +2587,8 @@ pub fn process_items(
     // We use this to know whether we should insert eg
     is_block: bool,
 ) -> Vec<JsModule> {
+    let mut item_defs = Vec::new();
+
     let mut modules = Vec::new();
     // let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
     let mut crate_module = ModuleDataFirstPass::new("crate".to_string(), vec!["crate".to_string()]);
@@ -2595,12 +2598,12 @@ pub fn process_items(
     // TODO need borrowed items for inline `mod {}` and owned items for `mod foo` where we read from a file
 
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
-    extract_modules(
+    let crate_items = extract_modules2(
         true,
         &items,
         &crate_path,
         &mut vec!["crate".to_string()],
-        &mut modules,
+        &mut item_defs,
     );
 
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
@@ -2636,12 +2639,21 @@ pub fn process_items(
         module_data.items.clone_from(&prelude_items);
         modules.push(module_data);
 
-        extract_modules(
+        let web_prelude_items = extract_modules2(
             true,
             &prelude_items,
             &Some(web_prelude_crate_path.into()),
             &mut vec!["web_prelude".to_string()],
-            &mut modules,
+            &mut item_defs,
+        );
+
+        crate_items.insert(
+            0,
+            ItemRef::Mod(RustMod {
+                pub_: true,
+                items: web_prelude_items,
+                module_path: vec!["web_prelude".to_string()],
+            }),
         );
     };
 
@@ -2657,13 +2669,21 @@ pub fn process_items(
     module_data.items.clone_from(&prelude_items);
     modules.push(module_data);
 
-    extract_modules(
+    let rust_prelude_items = extract_modules2(
         true,
         &prelude_items,
         // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
         &None,
         &mut vec![PRELUDE_MODULE_PATH.to_string()],
-        &mut modules,
+        &mut item_defs,
+    );
+    crate_items.insert(
+        0,
+        ItemRef::Mod(RustMod {
+            pub_: true,
+            items: rust_prelude_items,
+            module_path: vec![PRELUDE_MODULE_PATH.to_string()],
+        }),
     );
 
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
@@ -2684,33 +2704,34 @@ pub fn process_items(
     // We need to only populate the idents of the `ItemDefinition`s etc here, and then in a subsequent pass populate all the fields which use types and therefore might require other `ItemDefinition`s to already exist even though they may appear later in the code.
 
     // Updates module.item_defs etc and module.scoped_various_definitions. Doesn't use any data from global_data, only pushes data to ModuleData
-    let mut actual_modules = make_item_definitions(modules);
+    // let mut actual_modules = make_item_definitions(modules);
 
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
-    let prelude_module_data = actual_modules
-        .iter_mut()
-        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-        .unwrap();
-    prelude_module_data
-        .various_definitions
-        .trait_definitons
-        .push(make_item_definitions::RustTraitDefinition {
-            name: "FnOnce".to_string(),
-            is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
-        });
-    prelude_module_data
-        .various_definitions
-        .trait_definitons
-        .push(make_item_definitions::RustTraitDefinition {
-            name: "Copy".to_string(),
-            is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
-        });
+    // let prelude_module_data = actual_modules
+    //     .iter_mut()
+    //     .find(|m| m.path == [PRELUDE_MODULE_PATH])
+    //     .unwrap();
+    // prelude_module_data
+    //     .various_definitions
+    //     .trait_definitons
+    //     .push(make_item_definitions::RustTraitDefinition {
+    //         name: "FnOnce".to_string(),
+    //         is_pub: true,
+    //         syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
+    //     });
+    // prelude_module_data
+    //     .various_definitions
+    //     .trait_definitons
+    //     .push(make_item_definitions::RustTraitDefinition {
+    //         name: "Copy".to_string(),
+    //         is_pub: true,
+    //         syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
+    //     });
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules);
+    let (mut new_modules, impl_blocks) =
+        update_item_definitions2(&crate_items, item_defs, &["crate".to_string()]);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
 
