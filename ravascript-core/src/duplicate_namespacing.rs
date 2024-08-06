@@ -30,7 +30,7 @@ pub fn namespace_duplicates(item_refs: &Vec<ItemRef>, item_defs: &Vec<ItemV2>) -
         _ => None,
     });
     for m in rust_mods {
-        for item in m.items {
+        for item in &m.items {
             if let Some(index) = item.index() {
                 let actual = &item_defs[index];
                 names_to_dedup.push((&m.module_path, actual.ident()));

@@ -51,7 +51,7 @@ const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 ///
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
 fn js_stmts_from_syn_items(
-    items: Vec<Item>,
+    // items: Vec<Item>,
     // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &[String],
     global_data: &mut GlobalData,
@@ -75,10 +75,15 @@ fn js_stmts_from_syn_items(
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
     // dbg!("js_stmts_from_syn_items");
     // dbg!(&global_data.scope_id);
-    for item in items {
+    for item in &global_data.item_refs {
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
-            Item::Const(item_const) => {
+            ItemRef::Const(index) => {
+                let item = global_data.item_defs[*index];
+                let item_const = match item {
+                    ItemV2::Const(actual) => actual.syn_object,
+                    _ => todo!(),
+                };
                 js_stmts.push(handle_item_const(
                     &item_const,
                     true,
@@ -86,20 +91,44 @@ fn js_stmts_from_syn_items(
                     current_module,
                 ));
             }
-            Item::Enum(item_enum) => {
-                js_stmts.push(handle_item_enum(
-                    item_enum,
-                    true,
-                    global_data,
-                    current_module,
-                ));
+            ItemRef::StructOrEnum(index) => {
+                let item = global_data.item_defs[*index];
+                let item_enum = match item {
+                    ItemV2::StructOrEnum(actual) => match actual.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(struct_def) => {
+                            js_stmts.push(handle_item_struct(
+                                &struct_def.syn_object,
+                                true,
+                                global_data,
+                                current_module,
+                            ));
+                        }
+                        StructOrEnumDefitionInfo::Enum(enum_def) => {
+                            js_stmts.push(handle_item_enum(
+                                enum_def.syn_object,
+                                true,
+                                global_data,
+                                current_module,
+                            ));
+                        }
+                    },
+                    _ => todo!(),
+                };
             }
-            Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => {
+            // Item::ExternCrate(_) => todo!(),
+            ItemRef::Fn(index) => {
+                let item = global_data.item_defs[*index];
+                let item_fn = match item {
+                    ItemV2::Fn(actual) => match actual.syn {
+                        update_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
+                        update_item_definitions::FnInfoSyn::Impl(_) => todo!(),
+                    },
+                    _ => todo!(),
+                };
                 js_stmts.push(handle_item_fn(&item_fn, true, global_data, current_module));
             }
-            Item::ForeignMod(_) => todo!(),
-            Item::Impl(item_impl) => {
+            // Item::ForeignMod(_) => todo!(),
+            ItemRef::Impl(item_impl) => {
                 // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
                 js_stmts.extend(handle_item_impl(
                     &item_impl,
@@ -108,24 +137,20 @@ fn js_stmts_from_syn_items(
                     current_module,
                 ));
             }
-            Item::Macro(_) => todo!(),
-            Item::Mod(_item_mod) => {
+            // ItemRef::Macro(_) => todo!(),
+            ItemRef::Mod(_item_mod) => {
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
                 // handle_item_mod(item_mod, global_data, current_module)
             }
-            Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {
-                let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module);
-                js_stmts.push(js_stmt);
-            }
-            Item::Trait(item_trait) => {
+            // ItemRef::Static(_) => todo!(),
+            ItemRef::Trait(item_trait) => {
                 handle_item_trait(&item_trait, true, global_data, current_module);
                 js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
             }
-            Item::TraitAlias(_) => todo!(),
-            Item::Type(_) => todo!(),
-            Item::Union(_) => todo!(),
-            Item::Use(_item_use) => {
+            // Item::TraitAlias(_) => todo!(),
+            // Item::Type(_) => todo!(),
+            // Item::Union(_) => todo!(),
+            ItemRef::Use(_item_use) => {
                 //
                 // handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
@@ -1158,7 +1183,7 @@ impl GlobalData {
         current_module: &[String],
         // generics: &Vec<RustTypeParam>,
         syn_type: &Type,
-    ) -> (Vec<RustTypeParam>, Vec<String>, Option<Vec<usize>>, String) {
+    ) -> (Vec<RustTypeParam>, usize) {
         let type_path = match syn_type {
             Type::Path(type_path) => {
                 type_path
@@ -1184,7 +1209,7 @@ impl GlobalData {
             _ => todo!(),
         };
 
-        let (module_path, item_path, item_scope_id) = resolve_path(
+        let (module_path, item_path, is_scoped, index) = resolve_path(
             false,
             false,
             true,
@@ -1196,10 +1221,8 @@ impl GlobalData {
             &self.scopes,
         );
         assert!(item_path.len() == 1);
-        // dbg!("yes");
-        let item_def =
-            self.lookup_item_def_known_module_assert_not_func2(&module_path, &item_path[0].ident);
-        // dbg!("ytes222");
+
+        let item_def = self.item_defs[index.unwrap()];
         (
             item_def
                 .generics
@@ -1209,9 +1232,7 @@ impl GlobalData {
                     type_: RustTypeParamValue::Unresolved,
                 })
                 .collect::<Vec<_>>(),
-            module_path,
-            item_scope_id,
-            item_path[0].ident.clone(),
+            index,
         )
     }
 
@@ -2848,28 +2869,29 @@ pub fn process_items(
     }
 
     // find duplicates
-    let duplicates = namespace_duplicates(&new_modules);
+    let duplicates = namespace_duplicates(&crate_items, &item_defs);
 
     let mut global_data = GlobalData::new(crate_path, crate_items, item_defs);
-    global_data.modules = new_modules;
-    global_data.impl_blocks_simpl = impl_blocks;
+    // global_data.modules = new_modules;
+    // global_data.impl_blocks_simpl = impl_blocks;
     global_data.duplicates = duplicates;
 
     // Parse to JS
-    for module_data in global_data
-        .modules
-        .clone()
-        .into_iter()
-        .filter(|m| m.path != ["web_prelude"] && m.path != [PRELUDE_MODULE_PATH])
-    {
-        global_data.scope_count.clear();
-        global_data.scope_count.push(0);
-        global_data.scope_id.clear();
+    let modules = crate_items.iter().filter_map(|item_ref| match item_ref {
+        ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
+            && rust_mod.module_path != [PRELUDE_MODULE_PATH])
+        .then_some(rust_mod),
+        _ => None,
+    });
+    for module_data in modules {
         global_data.scopes.clear();
-        let mut stmts =
-            js_stmts_from_syn_items(module_data.items, &module_data.path, &mut global_data);
+        let mut stmts = js_stmts_from_syn_items(
+            module_data.items,
+            &module_data.module_path,
+            &mut global_data,
+        );
 
-        if with_rust_types && module_data.path == ["crate"] {
+        if with_rust_types && module_data.module_path == ["crate"] {
             let stmts = if is_block {
                 assert_eq!(stmts.len(), 1);
                 match stmts.first_mut().unwrap() {
@@ -3354,26 +3376,26 @@ pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<
 // }
 
 // TODO combine this with from_file
-pub fn from_module(code: &str, _with_vec: bool) -> Vec<JsStmt> {
-    let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
-    let items = item_mod.content.unwrap().1;
-    let current_module = Vec::new();
-    let mut global_data = GlobalData::new(None);
-    js_stmts_from_syn_items(items, &current_module, &mut global_data)
-}
+// pub fn from_module(code: &str, _with_vec: bool) -> Vec<JsStmt> {
+//     let item_mod = syn::parse_str::<ItemMod>(code).unwrap();
+//     let items = item_mod.content.unwrap().1;
+//     let current_module = Vec::new();
+//     let mut global_data = GlobalData::new(None);
+//     js_stmts_from_syn_items(items, &current_module, &mut global_data)
+// }
 
-pub fn from_fn(code: &str) -> Vec<JsStmt> {
-    let item_fn = syn::parse_str::<ItemFn>(code).unwrap();
+// pub fn from_fn(code: &str) -> Vec<JsStmt> {
+//     let item_fn = syn::parse_str::<ItemFn>(code).unwrap();
 
-    let mut js_stmts = Vec::new();
-    for stmt in &item_fn.block.stmts {
-        let new_js_stmts = handle_stmt(stmt, &mut GlobalData::new(None), &Vec::new())
-            .into_iter()
-            .map(|(stmt, _type_)| stmt);
-        js_stmts.extend(new_js_stmts);
-    }
-    js_stmts
-}
+//     let mut js_stmts = Vec::new();
+//     for stmt in &item_fn.block.stmts {
+//         let new_js_stmts = handle_stmt(stmt, &mut GlobalData::new(None), &Vec::new())
+//             .into_iter()
+//             .map(|(stmt, _type_)| stmt);
+//         js_stmts.extend(new_js_stmts);
+//     }
+//     js_stmts
+// }
 
 // pub fn from_block(code: &str) -> Vec<JsStmt> {
 //     let expr_block = syn::parse_str::<ExprBlock>(code).unwrap();

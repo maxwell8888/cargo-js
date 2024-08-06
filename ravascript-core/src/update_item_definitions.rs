@@ -551,6 +551,7 @@ pub enum ItemV2 {
     Fn(FnInfo),
     Const(ConstDef),
     Trait(RustTraitDefinition),
+    Impl(RustImplBlockSimple),
     None,
 }
 impl ItemV2 {
@@ -560,6 +561,7 @@ impl ItemV2 {
             ItemV2::Fn(def) => &def.ident,
             ItemV2::Const(def) => &def.name,
             ItemV2::Trait(def) => &def.name,
+            ItemV2::Impl(_) => panic!(),
             ItemV2::None => panic!(),
         }
     }
