@@ -617,11 +617,10 @@ pub fn handle_expr(
                         ident: &syn::Ident,
                     ) -> RustType {
                         match base_type {
-                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
+                            RustType::StructOrEnum(_type_params, module_path, name, index) => {
                                 let item_definition = global_data
                                     .lookup_item_def_known_module_assert_not_func2(
                                         &module_path,
-                                        &scope_id,
                                         &name,
                                     );
                                 match item_definition.struct_or_enum_info {
@@ -1233,7 +1232,7 @@ pub fn handle_expr(
                 };
 
                 let is_mut_ref = matches!(rust_type, RustType::MutRef(_));
-                
+
                 if (is_mut_var || is_mut_ref) && rust_type.is_js_primative() {
                     expr = JsExpr::Field(Box::new(expr), Ident::Str("inner"));
                 }

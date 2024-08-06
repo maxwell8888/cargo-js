@@ -9,7 +9,7 @@ use tracing::{debug, debug_span};
 
 use crate::{
     get_item_impl_unique_id,
-    make_item_definitions::{self, ItemActual, ItemRef, ModuleMethods, StmtsV1},
+    make_item_definitions::{self, ItemActual, ItemRef, ModuleMethods, StmtsRef},
     RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment,
     RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH,
 };
@@ -409,6 +409,7 @@ pub fn update_item_definitions2(
     module_items_tree: &[ItemRef],
     mut item_defs_no_types: Vec<ItemActual>,
     current_module: &[String],
+    in_scope: bool,
 ) -> Vec<ItemV2> {
     // (Vec<ModuleData>, Vec<RustImplBlockSimple>)
 
@@ -422,13 +423,10 @@ pub fn update_item_definitions2(
         current_module,
         &mut updated_item_defs,
         &mut scoped_items,
+        in_scope,
     );
 
-    let items_copy = item_defs_no_types.clone();
-    item_defs_no_types
-        .into_iter()
-        .map(|item_def_no_type| update_item_def(item_def_no_type, current_module, &items_copy))
-        .collect()
+    updated_item_defs
 }
 
 fn do_things(
@@ -436,20 +434,39 @@ fn do_things(
     item_defs_no_types: &mut [ItemActual],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
-    scoped_items: &mut Vec<Vec<ItemActual>>,
+    // TODO use &ItemRef
+    scoped_items: &mut Vec<Vec<ItemRef>>,
     in_scope: bool,
 ) {
     for item_ref in module_items_tree {
         match item_ref {
             ItemRef::StructOrEnum(index) => {
                 let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                updated_item_defs[*index] =
-                    update_item_def(item, current_module, &item_defs_no_types);
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    module_items_tree,
+                    &item_defs_no_types,
+                    scoped_items,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
             }
             ItemRef::Fn(index) => {
                 let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                updated_item_defs[*index] =
-                    update_item_def(item, current_module, &item_defs_no_types);
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    module_items_tree,
+                    &item_defs_no_types,
+                    scoped_items,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
 
                 let fn_info = match &updated_item_defs[*index] {
                     ItemV2::Fn(fn_info) => fn_info,
@@ -460,7 +477,7 @@ fn do_things(
                     .iter()
                     .filter_map(|stmt| {
                         match stmt {
-                            StmtsV1::Item(item_ref) => Some(item_ref.clone()),
+                            StmtsRef::Item(item_ref) => Some(item_ref.clone()),
                             // TODO handle item defs in Exprs
                             // StmtsV1::Local(_) => todo!(),
                             // StmtsV1::Expr(_, _) => todo!(),
@@ -468,7 +485,10 @@ fn do_things(
                         }
                     })
                     .collect::<Vec<_>>();
+
                 // Item in fn body are scoped so create a new scope
+                scoped_items.push(Vec::new());
+
                 do_things(
                     &fn_body_items,
                     item_defs_no_types,
@@ -477,16 +497,36 @@ fn do_things(
                     scoped_items,
                     true,
                 );
+
+                scoped_items.pop();
             }
             ItemRef::Const(index) => {
                 let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                updated_item_defs[*index] =
-                    update_item_def(item, current_module, &item_defs_no_types);
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    module_items_tree,
+                    &item_defs_no_types,
+                    scoped_items,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
             }
             ItemRef::Trait(index) => {
                 let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                updated_item_defs[*index] =
-                    update_item_def(item, current_module, &item_defs_no_types);
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    module_items_tree,
+                    &item_defs_no_types,
+                    scoped_items,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
             }
             ItemRef::Mod(rust_mod) => {
                 do_things(
@@ -513,6 +553,17 @@ pub enum ItemV2 {
     Trait(RustTraitDefinition),
     None,
 }
+impl ItemV2 {
+    pub fn ident(&self) -> &str {
+        match self {
+            ItemV2::StructOrEnum(def) => &def.ident,
+            ItemV2::Fn(def) => &def.ident,
+            ItemV2::Const(def) => &def.name,
+            ItemV2::Trait(def) => &def.name,
+            ItemV2::None => panic!(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RustUse {
@@ -520,13 +571,13 @@ pub struct RustUse {
     pub private_use_mappings: Vec<(String, Vec<String>)>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RustMod {
-    pub pub_: bool,
-    // pub pub_use_mappings: Vec<(String, Vec<String>)>,
-    // pub private_use_mappings: Vec<(String, Vec<String>)>,
-    pub items: Vec<ItemActual>,
-}
+// #[derive(Debug, Clone)]
+// pub struct RustMod {
+//     pub pub_: bool,
+//     // pub pub_use_mappings: Vec<(String, Vec<String>)>,
+//     // pub private_use_mappings: Vec<(String, Vec<String>)>,
+//     pub items: Vec<ItemActual>,
+// }
 
 #[derive(Debug, Clone)]
 struct RustImplV1 {
@@ -539,7 +590,13 @@ enum ImplItemV1 {
     Const(ConstDef),
 }
 
-fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemActual]) -> ItemV2 {
+fn update_item_def(
+    item: ItemActual,
+    module_path: &[String],
+    item_refs: &[ItemRef],
+    items_copy: &[ItemActual],
+    scoped_items: &Vec<Vec<ItemRef>>,
+) -> ItemV2 {
     match item {
         ItemActual::StructOrEnum(item_def) => {
             let new_struct_or_enum_info = match item_def.struct_or_enum_info {
@@ -567,6 +624,7 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                                             &f.ty,
                                             &item_def.generics,
                                             module_path,
+                                            item_refs,
                                             items_copy,
                                             scoped_items,
                                         ),
@@ -585,7 +643,9 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                                         &f.ty,
                                         &item_def.generics,
                                         module_path,
+                                        item_refs,
                                         items_copy,
+                                        scoped_items,
                                     )
                                 })
                                 .collect::<Vec<_>>(),
@@ -611,7 +671,9 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                                         &f.ty,
                                         &item_def.generics,
                                         module_path,
+                                        item_refs,
                                         items_copy,
+                                        scoped_items,
                                     );
                                     match &f.ident {
                                         Some(input_name) => EnumVariantInputsInfo::Named {
@@ -668,7 +730,9 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                             &pat_type.ty,
                             &fn_info.generics,
                             module_path,
+                            item_refs,
                             items_copy,
+                            scoped_items,
                         ),
                     ),
                 })
@@ -680,7 +744,9 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                     type_,
                     &fn_info.generics,
                     module_path,
+                    item_refs,
                     items_copy,
+                    scoped_items,
                 ),
             };
 
@@ -699,7 +765,9 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                 &const_def.syn_object.ty,
                 &Vec::new(),
                 module_path,
+                item_refs,
                 items_copy,
+                scoped_items,
             );
             ItemV2::Const(ConstDef {
                 name: const_def.name,
@@ -716,9 +784,7 @@ fn update_item_def(item: ItemActual, module_path: &[String], items_copy: &[ItemA
                 syn: trait_def.syn,
             })
         }
-        ItemActual::Mod(_) => todo!(),
-        ItemActual::Impl(_) => todo!(),
-        ItemActual::Use(_) => todo!(),
+        ItemActual::None => panic!(),
     }
 }
 
@@ -1056,7 +1122,7 @@ pub struct FnInfo {
     pub generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
     pub return_type: RustType,
-    pub stmts: Vec<StmtsV1>,
+    pub stmts: Vec<StmtsRef>,
     // /// type of fn eg Fn(i32) -> ()
     // rust_type: RustType,
     // TODO optionally add enum for Field, AssociatedFn, Method, etc
@@ -1119,8 +1185,9 @@ fn parse_types_for_populate_item_definitions(
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     // global_data: &make_item_definitions::GlobalData,
+    item_refs: &[ItemRef],
     item_defs: &[ItemActual],
-    scoped_items: &Vec<Vec<ItemActual>>,
+    scoped_items: &Vec<Vec<ItemRef>>,
 ) -> RustType {
     match type_ {
         Type::Array(_) => todo!(),
@@ -1149,7 +1216,9 @@ fn parse_types_for_populate_item_definitions(
                                                     input_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
+                                                    item_refs,
                                                     item_defs,
+                                                    scoped_items,
                                                 )
                                             })
                                             .collect();
@@ -1160,7 +1229,9 @@ fn parse_types_for_populate_item_definitions(
                                                     return_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
+                                                    item_refs,
                                                     item_defs,
+                                                    scoped_items,
                                                 )
                                             }
                                         };
@@ -1201,7 +1272,9 @@ fn parse_types_for_populate_item_definitions(
                                                         arg_type_,
                                                         root_parent_item_definition_generics,
                                                         current_module,
+                                                        item_refs,
                                                         item_defs,
+                                                        scoped_items,
                                                     )
                                                 }
                                                 GenericArgument::Const(_) => todo!(),
@@ -1220,14 +1293,16 @@ fn parse_types_for_populate_item_definitions(
                                 .collect::<Vec<_>>();
 
                             // TODO lookup trait in global data to get module path
-                            let (trait_module_path, trait_item_path, trait_item_scope) =
+                            let (trait_module_path, trait_item_path, trait_item_scope, item_index) =
                                 make_item_definitions::resolve_path(
                                     true,
                                     true,
                                     trait_bound_path,
+                                    item_refs,
                                     item_defs,
                                     current_module,
                                     current_module,
+                                    scoped_items,
                                 );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
@@ -1235,10 +1310,8 @@ fn parse_types_for_populate_item_definitions(
                             // let (module_path, trait_definition) = global_data
                             //     .lookup_trait_definition_any_module(&trait_name, current_module)
                             //     .unwrap();
-                            Some((
-                                trait_module_path,
-                                trait_item_scope,
-                                RustTypeImplTrait::SimpleTrait(trait_item_path[0].ident.clone()),
+                            Some(RustTypeImplTrait::SimpleTrait(
+                                trait_item_path[0].ident.clone(),
                             ))
                         }
                         TypeParamBound::Lifetime(_) => None,
@@ -1315,8 +1388,9 @@ fn parse_types_for_populate_item_definitions(
                                         type_,
                                         root_parent_item_definition_generics,
                                         current_module,
-                                        current_scope_id,
+                                        item_refs,
                                         item_defs,
+                                        scoped_items,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1345,8 +1419,9 @@ fn parse_types_for_populate_item_definitions(
                                         type_,
                                         root_parent_item_definition_generics,
                                         current_module,
-                                        current_scope_id,
+                                        item_refs,
                                         item_defs,
+                                        scoped_items,
                                     )
                                 }
                                 GenericArgument::Const(_) => todo!(),
@@ -1390,8 +1465,9 @@ fn parse_types_for_populate_item_definitions(
                                                 arg_type_,
                                                 root_parent_item_definition_generics,
                                                 current_module,
-                                                current_scope_id,
+                                                item_refs,
                                                 item_defs,
+                                                scoped_items,
                                             ))
                                         }
                                         GenericArgument::Const(_) => todo!(),
@@ -1413,15 +1489,16 @@ fn parse_types_for_populate_item_definitions(
                     //         &global_data.scope_id_as_option(),
                     //         &vec![struct_or_enum_name.to_string()],
                     //     );
-                    let (item_module_path, item_path_seg, item_scope) =
+                    let (item_module_path, item_path_seg, item_scope, item_index) =
                         make_item_definitions::resolve_path(
                             true,
                             true,
                             rust_path,
+                            item_refs,
                             item_defs,
                             current_module,
                             current_module,
-                            current_scope_id,
+                            scoped_items,
                         );
                     let item_seg = &item_path_seg[0];
 
@@ -1467,8 +1544,8 @@ fn parse_types_for_populate_item_definitions(
                         RustType::StructOrEnum(
                             type_params,
                             item_module_path,
-                            item_scope,
                             item_seg.ident.clone(),
+                            item_index.unwrap(),
                         )
                     }
                 }
@@ -1491,8 +1568,9 @@ fn parse_types_for_populate_item_definitions(
                 &type_reference.elem,
                 root_parent_item_definition_generics,
                 current_module,
-                current_scope_id,
+                item_refs,
                 item_defs,
+                scoped_items,
             );
             if type_reference.mutability.is_some() {
                 RustType::MutRef(Box::new(type_))

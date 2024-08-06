@@ -34,7 +34,7 @@ mod make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    update_item_definitions2, FnInfo, ItemDefinition, ModuleData, RustTraitDefinition,
+    update_item_definitions2, FnInfo, ItemDefinition, ItemV2, ModuleData, RustTraitDefinition,
     StructOrEnumDefitionInfo,
 };
 
@@ -186,6 +186,106 @@ struct CrateData {
     _modules: Vec<ModuleData>,
 }
 
+// #[allow(dead_code)]
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// enum StaticRustType {
+//     /// For cases/expressions we know cannot return a type, eg `break`
+//     NotAllowed,
+//     /// Can't be known at this point in analysis, eg the type is inferred somewhere else in the code
+//     Unknown,
+//     // /// Unitialized/null
+//     // Uninit,
+//     /// Needs implementing
+//     Todo,
+//     // Self_,
+//     /// I think ParentItem means it is actually `self` not just `Self`???
+//     /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
+//     /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
+//     /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
+//     // ParentItem,
+//     /// ()
+//     Unit,
+//     /// !
+//     Never,
+//     /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
+//     ///
+//     /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
+//     ImplTrait(Vec<StaticRustTypeImplTrait>),
+//     /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
+//     TypeParam(RustTypeParam),
+//     // TODO does TypeParam need to store information about the bounds?
+//     // TODO surely a struct and impl block can have multiple type params with the same name? So we need to keep track of where the param was defined to know which param eg a method arg's type should update
+//     // TypeParam(String),
+//     /// name
+//     // TypeParamSimple(String),
+//     I32,
+//     F32,
+//     Bool,
+//     String,
+//     /// (generic)
+//     /// The RustType for option *must* be a type param. (I believe) It is important to always have a type param to ensure we can always lookup the name of the generic to match against generics in methods etc NO, we can always lookup the name of the generic on the item_def
+//     Option(RustTypeParam),
+//     // Option(Box<RustType>),
+//     /// (generic)
+//     Result(RustTypeParam),
+//     /// Need to remember that because StructOrEnum can have generics that have been resolved to concrete types, it means we are using RustType to record the type of both the single defined item that gets recorded in scopes modules/structs and enums, but also instances of the item, stored the in variables vec of the scope
+//     // Struct(StructOrEnumItemDefinition),
+//     // Enum(StructOrEnumInstance),
+//     // Don't need to store all info about the type, because it should already be stored in the global scope as module data or scoped items. Just need to store a path to that item? Remember we are going to have to resovle paths to items any, ie if we find a `Foo` path we will need to follow the use stmts to find the module it is defined in. For ItemTypes yes, for InstanceTypes I think also yes but we need to all store the resolved state of the generics for each nested type
+//     // I think we do need to copy the data into the InstanceType because for scoped items we might have a Foo which then gets defined again in a lower scope so if we just look it up to get member info we will find the wrong one and have nothing to pin it to differentiate with like module paths. Yes but we could also give the item definitions indexes or unique ids and then we only have to store those with the InstanceType... NOTE in an item definition, while that items type params won't be resolved, the other types it uses in it's definition might be eg `stuct Foo { bar: Bar<i32> }`
+//     ///
+//     /// TODO storing a module path doesn't make much sense if the struct/enum/fn is scoped? Could use an Option which is None if the item is scoped? For now just store the Vec as whatever the current module is (even though this could be confusing for a scoped item), because it doesn't really matter since we always look for scoped items first, and determining whether eg handle_item_fn is for a module level fn or scoped fn would require passing extra args... NO actually we need to know whether we are top level or in a scope because currently we are putting all fns handled with handle_item_fn into the current scope, even if they are top level... which of course should just be scope=0, but this is not a nice approach
+//     /// TODO IMPORTANT we can't use the paths to definitions approach anyway because instances can exist in parent scopes of the item definition's scope. The best approach seems to be to simply store the item definition (or a reference to it) on the RustType as this seems to be how Rust itself models where/how item are allowed to be used/instantiated. eg:
+//     /// ```rust
+//     /// struct AmIHoisted {
+//     ///     ohno: String,
+//     /// }
+//     /// let cool = {
+//     ///     struct AmIHoisted {
+//     ///         ohno: i32,
+//     ///     }
+//     ///     let am_i_hoisted = AmIHoisted { ohno: 5 };
+//     ///     am_i_hoisted
+//     /// };
+//     /// assert!(cool.ohno == 5);
+//     /// ```
+//     /// Alternatively, this wouldn't be a problem if we hoisted *all* scoped definitions to the module level.
+//     ///
+//     /// (type params, module path, scope id, name)
+//     StructOrEnum(Vec<RustTypeParam>, usize),
+//     // Struct(Vec<RustTypeParam>, Vec<String>, String),
+//     /// (type params, module path, name)
+//     // Enum(Vec<RustTypeParam>, Vec<String>, String),
+//     // TODO Should we use the same type for both Arrays and Vecs, because they get transpiled to the same thing anyway? NO because we need to handle the types differently, ie arrays need `.copy()` adding when they are moved (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy).
+//     Vec(Box<RustType>),
+//     Array(Box<RustType>),
+//     Tuple(Vec<RustType>),
+//     /// Even though Box::new() vanishes when transpiled, we need to keep track of which vars are Boxed because the dereferencing behaves differently
+//     Box(Box<RustType>),
+//     /// ie `type FooInt = Foo<i32>;`
+//     /// (name, type)
+//     UserType(String, Box<RustType>),
+//     /// (&mut T)
+//     MutRef(Box<RustType>),
+//     /// (& T) useful to track & as well as &mut so we know what * is operating on?? NO I think it doesn't matter in practice, we can just check if we have a `&mut` expr and if not just ignore the *
+//     Ref(Box<RustType>),
+//     /// (type params, return type)
+//     // Fn(Vec<RustTypeParam>, Box<RustType>),
+//     /// fn might be an associated fn in which case first arg will be Some() containing the (possibly resolved) generics of the impl target/self type. Possibly want to also record which type params are defined on the impl block, but see if we can get away without it initially given any impl block type params pretty much have to appear in the target/self type.
+//     /// (item type params, type params, module path, scope id, name)
+//     Fn(
+//         Option<Vec<RustTypeParam>>,
+//         Vec<RustTypeParam>,
+//         // TODO arguably it would be better to just store the path and item name all in one, and when looking up the item/fn we are able to determine at that point whether the final one or two elements of the path are a item or associated fn or whatever
+//         StaticRustTypeFnType,
+//     ),
+//     /// For things like Box::new where we want `Box::new(1)` -> `1`
+//     FnVanish,
+//     /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
+//     /// (input types, return type)
+//     Closure(Vec<RustType>, Box<RustType>),
+// }
+
 /// Types are ultimately needed for:
 /// * We can properly cast eg Json::stringify() to JSON.stringify(). I think it most cases we can correctly handle these cases and differentiate from user types by looking up the import, but if the user does something like `let other = Json; other::stringify_with_args()` (not actually valid, can't assign a struct to a var, but can't think of any proper examples right now) or something, we need to know the type of other to know if it's methods need renaming???
 /// * calling associated functions on a generic. generics are just types so can't have . methods, but they can have :: asociated fns. We need to know the concrete/runtime type of the generic to know which type to use the `Foo` in `Foo::bar()`.
@@ -297,7 +397,7 @@ enum RustType {
     /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
     ///
     /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
-    ImplTrait(Vec<(Vec<String>, Option<Vec<usize>>, RustTypeImplTrait)>),
+    ImplTrait(Vec<RustTypeImplTrait>),
     /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
     TypeParam(RustTypeParam),
     // TODO does TypeParam need to store information about the bounds?
@@ -339,7 +439,8 @@ enum RustType {
     /// Alternatively, this wouldn't be a problem if we hoisted *all* scoped definitions to the module level.
     ///
     /// (type params, module path, scope id, name)
-    StructOrEnum(Vec<RustTypeParam>, Vec<String>, Option<Vec<usize>>, String),
+    /// (type params, module path, name, index)
+    StructOrEnum(Vec<RustTypeParam>, Vec<String>, String, usize),
     // Struct(Vec<RustTypeParam>, Vec<String>, String),
     /// (type params, module path, name)  
     // Enum(Vec<RustTypeParam>, Vec<String>, String),
@@ -364,9 +465,9 @@ enum RustType {
         Option<Vec<RustTypeParam>>,
         Vec<RustTypeParam>,
         Vec<String>,
-        Option<Vec<usize>>,
         // TODO arguably it would be better to just store the path and item name all in one, and when looking up the item/fn we are able to determine at that point whether the final one or two elements of the path are a item or associated fn or whatever
         RustTypeFnType,
+        usize,
     ),
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
@@ -437,12 +538,28 @@ impl RustType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum StaticRustTypeFnType {
+    /// (fn name)
+    Standalone(usize),
+    /// (item name, fn name)
+    AssociatedFn(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeFnType {
     /// (fn name)
     Standalone(String),
     /// (item name, fn name)
     AssociatedFn(String, String),
 }
+
+// #[allow(dead_code)]
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// enum StaticRustTypeImplTrait {
+//     SimpleTrait(String),
+//     /// (return type)
+//     Fn(StaticRustType),
+// }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -613,7 +730,7 @@ impl JsImplBlock2 {
         };
         fn rust_type_js_name(rust_type: &RustType) -> String {
             match rust_type {
-                RustType::StructOrEnum(_, _, _, name) => {
+                RustType::StructOrEnum(_, _, name, index) => {
                     // TODO get proper deduplicated js name
                     name.clone()
                 }
@@ -695,8 +812,8 @@ enum RustImplItemItemJs {
 #[derive(Debug, Clone)]
 struct GlobalDataScope {
     // NOTE techincally we don't need this but it is useful to be able to reconcile with the static/preprocessed scopes to ensure we are talking about the same thing
-    scope_id: Vec<usize>,
     variables: Vec<ScopedVar>,
+    items: Vec<ItemV2>,
     // fns: Vec<FnInfo>,
     /// Why does a scope have generics?? for fns/methods?
     // generics: Vec<MyGeneric>,
@@ -732,12 +849,14 @@ struct GlobalDataScope {
 #[derive(Debug, Clone)]
 struct GlobalData {
     _crate_path: Option<PathBuf>,
-    modules: Vec<ModuleData>,
+    // modules: Vec<ModuleData>,
     _crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
+    item_refs: Vec<ItemRef>,
+    item_defs: Vec<ItemV2>,
     scopes: Vec<GlobalDataScope>,
     // TODO combine this with impl_items
     // struct_or_enum_methods: Vec<StructOrEnumMethods>,
@@ -790,7 +909,11 @@ struct GlobalData {
     scope_count: Vec<usize>,
 }
 impl GlobalData {
-    fn new(crate_path: Option<PathBuf>) -> GlobalData {
+    fn new(
+        crate_path: Option<PathBuf>,
+        item_refs: Vec<ItemRef>,
+        item_defs: Vec<ItemV2>,
+    ) -> GlobalData {
         // let option_def = ItemDefinition {
         //     ident: "Option".to_string(),
         //     is_copy: false,
@@ -891,13 +1014,15 @@ impl GlobalData {
 
         GlobalData {
             _crate_path: crate_path,
-            modules: Vec::new(),
+            // modules: Vec::new(),
             // crates: vec![ravascript_prelude_crate],
             _crates: vec![],
+            item_refs,
+            item_defs,
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
-                scope_id: Vec::new(),
                 variables: Vec::new(),
+                items: Vec::new(),
                 _look_in_outer_scope: false,
                 use_mappings: Vec::new(),
             }],
@@ -918,36 +1043,6 @@ impl GlobalData {
             scope_count: vec![0],
             // at_module_top_level: false,
         }
-    }
-
-    fn scope_id_as_option(&self) -> Option<Vec<usize>> {
-        if self.scope_id.is_empty() {
-            None
-        } else {
-            Some(self.scope_id.clone())
-        }
-    }
-
-    fn push_new_scope(&mut self, look_in_outer_scope: bool, variables: Vec<ScopedVar>) {
-        let scope_count = {
-            let scope_count = self.scope_count.last_mut().unwrap();
-            *scope_count += 1;
-            *scope_count
-        };
-        self.scope_id.push(scope_count);
-        let var_scope = GlobalDataScope {
-            scope_id: self.scope_id.clone(),
-            variables,
-            _look_in_outer_scope: look_in_outer_scope,
-            use_mappings: Vec::new(),
-        };
-        self.scopes.push(var_scope);
-        self.scope_count.push(0);
-    }
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-        self.scope_count.pop();
-        self.scope_id.pop();
     }
 
     // handling paths:
@@ -1094,18 +1189,16 @@ impl GlobalData {
             false,
             true,
             type_path,
-            self,
+            &self.item_refs,
+            &self.item_defs,
             current_module,
             current_module,
-            &self.scope_id_as_option(),
+            &self.scopes,
         );
         assert!(item_path.len() == 1);
         // dbg!("yes");
-        let item_def = self.lookup_item_def_known_module_assert_not_func2(
-            &module_path,
-            &item_scope_id,
-            &item_path[0].ident,
-        );
+        let item_def =
+            self.lookup_item_def_known_module_assert_not_func2(&module_path, &item_path[0].ident);
         // dbg!("ytes222");
         (
             item_def
@@ -1186,54 +1279,53 @@ impl GlobalData {
         scoped_fn_info.or(module_fn_info).unwrap().clone()
     }
 
-    fn lookup_item_def_known_module_assert_not_func2(
-        &self,
-        module_path: &[String],
-        scope_id: &Option<Vec<usize>>,
-        name: &str,
-    ) -> ItemDefinition {
-        let module = self.modules.iter().find(|m| m.path == module_path).unwrap();
-        let scoped_item_def = scope_id
-            .as_ref()
-            .and_then(|scope_id| {
-                module
-                    .scoped_various_definitions
-                    .iter()
-                    .find(|svd| &svd.0 == scope_id)
-            })
-            .and_then(|svd| {
-                svd.1
-                    .item_definitons
-                    .iter()
-                    .find(|item_def| item_def.ident == name)
-            });
-        let module_item_def = module
-            .various_definitions
-            .item_definitons
-            .iter()
-            .find(|item_def| item_def.ident == name);
+    // fn lookup_item_def_known_module_assert_not_func2(
+    //     &self,
+    //     module_path: &[String],
+    //     name: &str,
+    // ) -> ItemDefinition {
+    //     let module = self.modules.iter().find(|m| m.path == module_path).unwrap();
+    //     let scoped_item_def = scope_id
+    //         .as_ref()
+    //         .and_then(|scope_id| {
+    //             module
+    //                 .scoped_various_definitions
+    //                 .iter()
+    //                 .find(|svd| &svd.0 == scope_id)
+    //         })
+    //         .and_then(|svd| {
+    //             svd.1
+    //                 .item_definitons
+    //                 .iter()
+    //                 .find(|item_def| item_def.ident == name)
+    //         });
+    //     let module_item_def = module
+    //         .various_definitions
+    //         .item_definitons
+    //         .iter()
+    //         .find(|item_def| item_def.ident == name);
 
-        // Dont't need to look for prelude items here since resolve_path already returns a ["prelude_special_case"] module for prelude types. This seems like a better place though, since then we wouldn't need a special module name - well resolve_path still needs to return something? maybe [""] instead?
-        // let prelude_item_def = self
-        //     .rust_prelude_definitions
-        //     .iter()
-        //     .find_map(|(_name, _js_name, item_def)| (&item_def.ident == name).then_some(item_def));
+    //     // Dont't need to look for prelude items here since resolve_path already returns a ["prelude_special_case"] module for prelude types. This seems like a better place though, since then we wouldn't need a special module name - well resolve_path still needs to return something? maybe [""] instead?
+    //     // let prelude_item_def = self
+    //     //     .rust_prelude_definitions
+    //     //     .iter()
+    //     //     .find_map(|(_name, _js_name, item_def)| (&item_def.ident == name).then_some(item_def));
 
-        // Might want to check/assert these or useful for debugging
-        let _is_box_prelude =
-            module_path == [PRELUDE_MODULE_PATH] && scope_id.is_none() && name == "Box";
+    //     // Might want to check/assert these or useful for debugging
+    //     let _is_box_prelude =
+    //         module_path == [PRELUDE_MODULE_PATH] && scope_id.is_none() && name == "Box";
 
-        // if let Some(item_def) = scoped_item_def.or(module_item_def).or(prelude_item_def) {
-        if let Some(item_def) = scoped_item_def.or(module_item_def) {
-            item_def.clone()
-        } else {
-            dbg!("could find item def for lookup_item_def_known_module_assert_not_func2");
-            dbg!(&module_path);
-            dbg!(&scope_id);
-            dbg!(&name);
-            panic!();
-        }
-    }
+    //     // if let Some(item_def) = scoped_item_def.or(module_item_def).or(prelude_item_def) {
+    //     if let Some(item_def) = scoped_item_def.or(module_item_def) {
+    //         item_def.clone()
+    //     } else {
+    //         dbg!("could find item def for lookup_item_def_known_module_assert_not_func2");
+    //         dbg!(&module_path);
+    //         dbg!(&scope_id);
+    //         dbg!(&name);
+    //         panic!();
+    //     }
+    // }
 
     // NOTE don't need this because we are already resolving paths with get_path()??
     // This looks up *any ident/Path in a module*, so the item might not actually be defined in the current module and has been use'd. We also need to return the module path of the item, which of course might not be the current module, because this item definition will go into a rust type which will need to look up the item definition
@@ -1342,10 +1434,11 @@ impl GlobalData {
                     turbofish: Vec::new(),
                 })
                 .collect::<Vec<_>>(),
-            self,
+            &self.item_refs,
+            &self.item_defs,
             current_module_path,
             current_module_path,
-            scope_id,
+            &self.scopes,
         );
         // dbg!(&item_module_path);
         // dbg!(&item_path);
@@ -1410,10 +1503,11 @@ impl GlobalData {
                     turbofish: Vec::new(),
                 })
                 .collect::<Vec<_>>(),
-            self,
+            &self.item_refs,
+            &self.item_defs,
             current_module_path,
             current_module_path,
-            current_scope_id,
+            &self.scopes,
         );
         let item_module = self
             .modules
@@ -1564,11 +1658,12 @@ impl GlobalData {
                         Some(item_generics.to_vec()),
                         fn_generics,
                         item_module_path.to_vec(),
-                        item_scope_id.clone(),
                         RustTypeFnType::AssociatedFn(
                             item_def.ident.clone(),
                             sub_path.ident.clone(),
                         ),
+                        // IMPORTANT TODO
+                        9999999,
                     ))
                 }
                 RustImplItemItemNoJs::Const => todo!(),
@@ -1930,7 +2025,6 @@ enum VarItemFn {
 fn get_traits_implemented_for_item(
     item_impls: &[RustImplBlockSimple],
     item_module_path: &[String],
-    item_scope_id: &Option<Vec<usize>>,
     item_name: &str,
 ) -> Vec<(Vec<String>, Option<Vec<usize>>, String)> {
     // Does class implement the trait bounds of the impl block
@@ -1969,25 +2063,17 @@ fn get_traits_implemented_for_item(
                 RustType::StructOrEnum(_, _, _, _) | RustType::I32 => {
                     if let Some(impl_trait) = &item_impl.trait_ {
                         let types_match = match &item_impl.target {
-                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                                module_path == item_module_path
-                                    && scope_id == item_scope_id
-                                    && name == item_name
+                            RustType::StructOrEnum(_type_params, module_path, name, index) => {
+                                module_path == item_module_path && name == item_name
                             }
                             RustType::I32 => {
-                                item_module_path == [PRELUDE_MODULE_PATH]
-                                    && item_scope_id.is_none()
-                                    && item_name == "i32"
+                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "i32"
                             }
                             RustType::Option(_) => {
-                                item_module_path == [PRELUDE_MODULE_PATH]
-                                    && item_scope_id.is_none()
-                                    && item_name == "Option"
+                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "Option"
                             }
-
                             _ => {
                                 dbg!(&item_module_path);
-                                dbg!(&item_scope_id);
                                 dbg!(&item_name);
                                 todo!()
                             }
@@ -2231,7 +2317,7 @@ fn update_item_def_block_ids(
     impl_blocks: &[RustImplBlockSimple],
 ) {
     let traits_impld_for_class =
-        get_traits_implemented_for_item(impl_blocks, module_path, &None, &item_def.ident);
+        get_traits_implemented_for_item(impl_blocks, module_path, &item_def.ident);
     // for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
     for impl_block in impl_blocks {
         // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds
@@ -2240,13 +2326,10 @@ fn update_item_def_block_ids(
             RustType::StructOrEnum(
                 _,
                 impl_target_module_path,
-                impl_target_scope_id,
                 impl_target_name,
+                impl_tartget_index,
             ) => {
-                if &item_def.ident == impl_target_name
-                    && module_path == impl_target_module_path
-                    && item_def_scope_id == impl_target_scope_id
-                {
+                if &item_def.ident == impl_target_name && module_path == impl_target_module_path {
                     // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
                     // item_def
                     //     .impl_blocks
@@ -2730,8 +2813,9 @@ pub fn process_items(
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let (mut new_modules, impl_blocks) =
-        update_item_definitions2(&crate_items, item_defs, &["crate".to_string()]);
+    // let (mut new_modules, impl_blocks) =
+    let item_defs =
+        update_item_definitions2(&crate_items, item_defs, &["crate".to_string()], false);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
 
@@ -2766,7 +2850,7 @@ pub fn process_items(
     // find duplicates
     let duplicates = namespace_duplicates(&new_modules);
 
-    let mut global_data = GlobalData::new(crate_path);
+    let mut global_data = GlobalData::new(crate_path, crate_items, item_defs);
     global_data.modules = new_modules;
     global_data.impl_blocks_simpl = impl_blocks;
     global_data.duplicates = duplicates;

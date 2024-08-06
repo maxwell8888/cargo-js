@@ -8,8 +8,10 @@ use tracing::{debug, info};
 
 use crate::{
     js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
-    GlobalData, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue,
-    ScopedVar,
+    make_item_definitions::{ItemRef, RustMod, StmtsRef},
+    update_item_definitions::ItemV2,
+    GlobalData, GlobalDataScope, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam,
+    RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };
 use quote::quote;
 use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
@@ -68,13 +70,9 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
+                        RustType::StructOrEnum(_type_params, module_path, name, index) => {
                             let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                );
+                                .lookup_item_def_known_module_assert_not_func2(module_path, name);
                             item_def.get_type(&field.member)
                         }
                         _ => todo!(),
@@ -163,13 +161,9 @@ fn handle_destructure_pat(
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
+                        RustType::StructOrEnum(_type_params, module_path, name, index) => {
                             let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                );
+                                .lookup_item_def_known_module_assert_not_func2(module_path, name);
                             item_def.get_type(&field.member)
                         }
                         _ => todo!(),
@@ -190,6 +184,59 @@ fn handle_destructure_pat(
     }
 }
 
+fn look_for_module_in_items(
+    items: &[ItemRef],
+    item_defs: &[ItemV2],
+    module_path: &[String],
+) -> Option<RustMod> {
+    for item in items {
+        match item {
+            ItemRef::Fn(index) => {
+                let item = &item_defs[*index];
+                let fn_info = match item {
+                    ItemV2::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+
+                let fn_body_items = fn_info
+                    .stmts
+                    .clone()
+                    .into_iter()
+                    .filter_map(|stmt| {
+                        match stmt {
+                            StmtsRef::Item(item) => Some(item),
+                            // TODO
+                            // StmtsV1::Expr(_, _) => todo!(),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let found_rust_mod =
+                    look_for_module_in_items(&fn_body_items, item_defs, module_path);
+                if found_rust_mod.is_some() {
+                    return found_rust_mod;
+                }
+            }
+            ItemRef::Mod(rust_mod) => {
+                if rust_mod.module_path == module_path {
+                    return Some(rust_mod.clone());
+                }
+                let found_rust_mod =
+                    look_for_module_in_items(&rust_mod.items, item_defs, module_path);
+                if found_rust_mod.is_some() {
+                    return found_rust_mod;
+                }
+            }
+            // TODO
+            // ItemV1::Impl(_) => {}
+            // ItemV1::Use(_) => {}
+            _ => {}
+        }
+    }
+    None
+}
+
 // TODO ideally test tracing output in get_path test cases to ensure the expect code path is being taken??
 // TODO need to make sure this looks up traits as well as other items
 /// -> (current module (during recursion)/item module path (upon final return), found item path, found item scope id)
@@ -197,6 +244,8 @@ fn handle_destructure_pat(
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
 ///
 /// TODO given eg `use MyEnum::{Variant1, Variant2};` we need to not only look for match `ItemDefintion`s but also matching enum variants
+///
+/// -> (module path, item path, is scoped, item index (NOTE a var will be None here))
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_path(
     look_for_scoped_vars: bool,
@@ -205,28 +254,23 @@ pub fn resolve_path(
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
-    global_data: &GlobalData,
+    module_items: &[ItemRef],
+    // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
+    // global_data: &GlobalData,
+    items_defs: &[ItemV2],
     current_mod: &[String],
     // Only used to determine if current module is the original module
     orig_mod: &[String],
-    current_scope_id: &Option<Vec<usize>>,
-) -> (Vec<String>, Vec<RustPathSegment>, Option<Vec<usize>>) {
+    // TODO scopes would ideally be set to None when resovle_path is called recursively since that means the path length is > 1 which is not possible for scoped vars and items, however it is possible for a scoped use_mapping to have path length > 1.
+    // scopes: &Option<Vec<GlobalDataScope>>,
+    scopes: &Vec<GlobalDataScope>,
+) -> (Vec<String>, Vec<RustPathSegment>, bool, Option<usize>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    let module = global_data
-        .modules
-        .iter()
-        .find(|m| m.path == current_mod)
-        .unwrap();
-
-    // dbg!(&segs);
-    // dbg!(&current_mod);
-    // dbg!(&orig_mod);
-    // dbg!(&current_scope_id);
-    // dbg!(&module.scoped_various_definitions);
+    let module = look_for_module_in_items(module_items, items_defs, current_mod).unwrap();
 
     let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
         current_mod
@@ -237,10 +281,9 @@ pub fn resolve_path(
         false
     };
 
-    let item_defined_in_module = module.item_defined_in_module(
-        use_private_items || is_parent_or_same_module,
-        &segs[0].ident,
-    );
+    let use_private = use_private_items || is_parent_or_same_module;
+    let item_defined_in_module =
+        module.item_defined_in_module2(items_defs, use_private, &segs[0].ident);
 
     let path_starts_with_sub_module = module.path_starts_with_sub_module(
         use_private_items || is_parent_or_same_module,
@@ -248,22 +291,36 @@ pub fn resolve_path(
     );
 
     // TODO only look through transparent scopes
-    let scoped_use_mapping = global_data
-        .scopes
-        .iter()
-        .rev()
-        .find_map(|s| s.use_mappings.iter().find(|u| u.0 == segs[0].ident));
-    let mut use_mappings = module.pub_use_mappings.iter();
-    let matched_use_mapping = if scoped_use_mapping.is_some() {
-        scoped_use_mapping
-    } else if use_private_items || is_parent_or_same_module {
-        use_mappings
-            .chain(module.private_use_mappings.iter())
-            .find(|use_mapping| use_mapping.0 == segs[0].ident)
-    } else {
-        use_mappings.find(|use_mapping| use_mapping.0 == segs[0].ident)
-    };
-    // dbg!(matched_use_mapping);
+    // We look through scopes, simultaneously looking for a matching var, use_mapping, or item
+    enum ScopedThing {
+        UseMapping((String, Vec<String>)),
+        Var(ScopedVar),
+        Item(ItemV2),
+    }
+    let scoped_thing = scopes.iter().rev().find_map(|s| {
+        if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
+            Some(ScopedThing::UseMapping(use_mapping.clone()))
+        } else if let Some(scoped_var) = s.variables.iter().find(|v| v.name == segs[0].ident) {
+            Some(ScopedThing::Var(scoped_var.clone()))
+        } else if let Some(scoped_item) = s.items.iter().find(|i| i.ident() == segs[0].ident) {
+            Some(ScopedThing::Item(scoped_item.clone()))
+        } else {
+            None
+        }
+    });
+
+    let matched_use_mapping =
+        if let Some(ScopedThing::UseMapping(scoped_use_mapping)) = &scoped_thing {
+            Some(scoped_use_mapping.clone())
+        } else {
+            module.items.iter().find_map(|item| match item {
+                ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
+                    (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
+                        .then_some(use_mapping.clone())
+                }),
+                _ => None,
+            })
+        };
 
     // TODO can module shadow external crate names? In which case we need to look for modules first? I think we do this implicitly based on the order of the if statements below?
     // TODO actually look up external crates in Cargo.toml
@@ -271,151 +328,46 @@ pub fn resolve_path(
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     // TODO IMPORTANT we have two `is_scoped` vars here because we are using `get_path` in different contexts. `is_scoped_static` is for getting the path from static data, before syn -> JS parsing, and `is_scoped` is for use during the syn -> JS parsing. This needs thinking about, reconciling and simplifying. Should just stop using get_path for vars.
-    let is_scoped_static_scope = if let Some(scope_id) = current_scope_id {
-        // dbg!(scope_id);
-        let mut temp_scope_id = scope_id.clone();
-        // TODO initially wanted to not handle vars in this fn (`get_path`) but it doesn't seem possible without duplicating work given that an items and vars can shadow each other, we need to look through both the static and var scopes simultaneously to check if we have a var
-        let mut is_var = false;
-        let mut is_func = false;
-        let mut is_item_def = false;
-        let mut is_trait_def = false;
-        while !temp_scope_id.is_empty() {
-            let svd = module
-                .scoped_various_definitions
-                .iter()
-                // TODO should this be `&svd.0 == temp_scope_id` ???
-                .find(|svd| svd.0 == temp_scope_id);
 
-            let svd = if let Some(svd) = svd {
-                svd
-            } else {
-                println!("oh no, in get_path we couldn't find a scoped VariousDefinitions for one of the parent scopes of:");
-                dbg!(scope_id);
-                dbg!(&segs);
-                dbg!(&module.scoped_various_definitions);
-                panic!("");
-            };
-            // dbg!(&look_for_scoped_items);
+    // TODO IMPORTANT
+    // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped *var* with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
+    // eg this is aloud:
+    // use tracing;
+    // let tracing = "ohno";
+    // As far as I am aware the only common context in which a path might have length=1 is a use statement, which doesn't use this fn to resolve the path (though it probably should given we have to follow the same crate/self/super logic?) so for now just assume that if we match a scoped var name and the length is 1, then return the scoped var, even though technically it could be a module/item/fn eg this is valid: *NO* what about a simple `Foo {}` which is a path with length 1 where we could also have `let Foo = 5;`, which would make it impossible to decide which to return, eg module level struct (Some("crate"), ["Foo"]) vs scoped var (None, ["Foo"]).**
+    // struct foo {}
+    // fn main() {
+    //     let foo = 5;
+    // }
+    // For scoped modules/items/fns there is currently no difference anyway since we currently just return Vec<RustPathSegment> regardless.
+    // The main problem is the above example. However, the below is not valid which I believe demonstrates that it the ident must be unambigious if it can be used as eg a fn argument, and so it is indeed the context of where the path is being used eg `bar(foo);`, `let bar = foo;`, `foo {}`, etc which determines which thing to use. I think it will be non trivial to pass handle handle the different contexts to this fn.
+    // struct foo;
+    // fn main() {
+    //     let foo = 5;
+    // }
+    // ** The distinction is between where the site of the path expects a definition (eg fn input type) and instances (eg assign to a variable). A slight complication is that both of the below are valid, just not simultaneously, but it still means that a path passed the the rhs of an assignment could be and instance *or* a definition, so we need to look for other if one doesn't exist, **but *only* if we have `struct foo;` and not `struct foo {}` because for the latter we *are* allowed both idents in scope, so need to ensure we choose the scoped var, in this case. This is as apposed to say the type of a fn input where we can always be sure to not look for scoped vars, only any items/fns.
+    // let foo = 5;
+    // let which = foo;
+    // ...
+    // struct foo;
+    // let which = foo;
+    // So I think maybe the trick is to pass an argument to this fn to say wether we should be considering vars and follow these rules:
+    // 1. If including vars (eg simple 1-len path assignment) then look for a var first, else look for a struct, this way we will catch assigning `struct foo;` because a `foo` var can't exist in this case, and for `struct Foo {}` we will correctly pick the var first.
+    // 2. If not inlcluding vars we simply don't have to look for vars.
+    // Don't need both can just always do step 1?
 
-            let static_scope = &svd.1;
+    // self could be and instance or module path ie `fn foo(&self) { self }` or `self::MyStruct`. I can't think of any situations where a module path can
 
-            // NOTE the `segs.len() == 1` is important to differentiate between the receiver var `self` and the path to the current module `self::Foo` since the former will always be len == 1 and the latter len > 2
-            is_var = look_for_scoped_vars && segs.len() == 1 && {
-                // dbg!(&global_data.scopes);
-                // dbg!(&scope_id);
-                // dbg!(&segs[0].ident);
-                // dbg!(&look_for_scoped_vars);
-
-                let var_scope = global_data
-                    .scopes
-                    .iter()
-                    .find(|s| s.scope_id == temp_scope_id)
-                    .unwrap();
-                var_scope
-                    .variables
-                    .iter()
-                    .any(|var| var.name == segs[0].ident)
-            };
-            // dbg!(is_var);
-            is_func = look_for_scoped_items
-                && static_scope
-                    .fn_info
-                    .iter()
-                    .any(|func| func.ident == segs[0].ident);
-
-            // dbg!(&static_scope.item_definitons);
-            // dbg!(&module.scoped_various_definitions);
-            // dbg!(&segs[0].ident);
-            // dbg!(&look_for_scoped_items);
-            is_item_def = look_for_scoped_items
-                && static_scope
-                    .item_definitons
-                    .iter()
-                    .any(|item_def| item_def.ident == segs[0].ident);
-            is_trait_def = look_for_scoped_items
-                && static_scope
-                    .trait_definitons
-                    .iter()
-                    .any(|trait_def| trait_def.name == segs[0].ident);
-
-            if is_var || is_func || is_item_def || is_trait_def {
-                break;
-            }
-            temp_scope_id.pop();
-        }
-
-        // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
-        // TODO I don't think `&& current_mod == orig_mod` is necessary given look_for_scoped_vars and look_for_scoped_items
-        if (is_var || is_func || is_item_def || is_trait_def) && current_mod == orig_mod {
-            Some(temp_scope_id)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // let is_scoped = global_data.scopes.iter().rev().any(|scope| {
-    //     let is_func =
-    //         look_for_scoped_items && scope.fns.iter().any(|func| func.ident == segs[0].ident);
-    //     let is_item_def = look_for_scoped_items
-    //         && scope
-    //             .item_definitons
-    //             .iter()
-    //             .any(|item_def| item_def.ident == segs[0].ident);
-    //     // TODO IMPORTANT
-    //     // We cannot have a scoped item/fn definition with the same ident as a module, but we can have a scoped *var* with the same ident as a module/item/fn. I think Rust just chooses which one to use based on the context eg foo::bar must be an item/module, foo.bar() must be an instance/var, etc. To follow this approach would mean we need more context for this fn.
-    //     // eg this is aloud:
-    //     // use tracing;
-    //     // let tracing = "ohno";
-    //     // As far as I am aware the only common context in which a path might have length=1 is a use statement, which doesn't use this fn to resolve the path (though it probably should given we have to follow the same crate/self/super logic?) so for now just assume that if we match a scoped var name and the length is 1, then return the scoped var, even though technically it could be a module/item/fn eg this is valid: *NO* what about a simple `Foo {}` which is a path with length 1 where we could also have `let Foo = 5;`, which would make it impossible to decide which to return, eg module level struct (Some("crate"), ["Foo"]) vs scoped var (None, ["Foo"]).**
-    //     // struct foo {}
-    //     // fn main() {
-    //     //     let foo = 5;
-    //     // }
-    //     // For scoped modules/items/fns there is currently no difference anyway since we currently just return Vec<RustPathSegment> regardless.
-    //     // The main problem is the above example. However, the below is not valid which I believe demonstrates that it the ident must be unambigious if it can be used as eg a fn argument, and so it is indeed the context of where the path is being used eg `bar(foo);`, `let bar = foo;`, `foo {}`, etc which determines which thing to use. I think it will be non trivial to pass handle handle the different contexts to this fn.
-    //     // struct foo;
-    //     // fn main() {
-    //     //     let foo = 5;
-    //     // }
-    //     // ** The distinction is between where the site of the path expects a definition (eg fn input type) and instances (eg assign to a variable). A slight complication is that both of the below are valid, just not simultaneously, but it still means that a path passed the the rhs of an assignment could be and instance *or* a definition, so we need to look for other if one doesn't exist, **but *only* if we have `struct foo;` and not `struct foo {}` because for the latter we *are* allowed both idents in scope, so need to ensure we choose the scoped var, in this case. This is as apposed to say the type of a fn input where we can always be sure to not look for scoped vars, only any items/fns.
-    //     // let foo = 5;
-    //     // let which = foo;
-    //     // ...
-    //     // struct foo;
-    //     // let which = foo;
-    //     // So I think maybe the trick is to pass an argument to this fn to say wether we should be considering vars and follow these rules:
-    //     // 1. If including vars (eg simple 1-len path assignment) then look for a var first, else look for a struct, this way we will catch assigning `struct foo;` because a `foo` var can't exist in this case, and for `struct Foo {}` we will correctly pick the var first.
-    //     // 2. If not inlcluding vars we simply don't have to look for vars.
-    //     // Don't need both can just always do step 1?
-
-    //     // self could be and instance or module path ie `fn foo(&self) { self }` or `self::MyStruct`. I can't think of any situations where a module path can
-    //     let is_var = scope.variables.iter().any(|var| var.name == segs[0].ident)
-    //         && segs.len() == 1
-    //         && look_for_scoped_vars;
-
-    //     // A scoped item must be the first element in the segs, ie in the original module so we need `current_module == original_module`
-    //     // TODO I don't think `&& current_mod == orig_mod` is necessary given look_for_scoped_vars and look_for_scoped_items
-    //     (is_func || is_item_def || is_var) && current_mod == orig_mod
-    // });
-
-    // dbg!(&global_data.scopes);
-
-    // TODO not sure why we need use_private_items here
-    // if use_private_items && is_scoped {
-    // if is_scoped || is_scoped_static {
-    // dbg!(&is_scoped_static_scope);
-    if is_scoped_static_scope.is_some() {
+    if let Some(ScopedThing::Var(_scoped_var)) = scoped_thing {
         // Variables and scoped items
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
 
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
-        (current_mod.to_vec(), segs, is_scoped_static_scope)
-    } else if item_defined_in_module {
-        (current_mod.to_vec(), segs, None)
+        (current_mod.to_vec(), segs, true, None)
+    } else if item_defined_in_module.is_some() {
+        (current_mod.to_vec(), segs, false, item_defined_in_module)
     } else if segs[0].ident == "super" {
         // TODO if a module level item name is shadowed by an item in a fn scope, then module level item needs to be namespaced
         segs.remove(0);
@@ -428,10 +380,11 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            global_data,
+            module_items,
+            items_defs,
             &current_module,
             orig_mod,
-            &None,
+            scopes,
         )
     } else if segs[0].ident == "self" {
         // NOTE private items are still accessible from the module via self
@@ -442,10 +395,11 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            global_data,
+            module_items,
+            items_defs,
             current_mod,
             orig_mod,
-            &None,
+            scopes,
         )
     } else if segs[0].ident == "crate" {
         let current_module = vec!["crate".to_string()];
@@ -457,10 +411,11 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            global_data,
+            module_items,
+            items_defs,
             &current_module,
             orig_mod,
-            &None,
+            scopes,
         )
     } else if path_starts_with_sub_module {
         // Path starts with a submodule of the current module
@@ -474,10 +429,11 @@ pub fn resolve_path(
             false,
             false,
             segs,
-            global_data,
+            module_items,
+            items_defs,
             &submod_path,
             orig_mod,
-            &None,
+            scopes,
         )
     } else if let Some(use_mapping) = matched_use_mapping {
         // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
@@ -521,12 +477,13 @@ pub fn resolve_path(
             false,
             true,
             use_segs,
-            global_data,
+            module_items,
+            items_defs,
             // &new_mod,
             current_mod,
             // &use_mapping.1.clone(),
             orig_mod,
-            &None,
+            scopes,
         )
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
@@ -543,10 +500,11 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            global_data,
+            module_items,
+            items_defs,
             &current_module,
             orig_mod,
-            &None,
+            scopes,
         )
     } else {
         // Handle third party crates
@@ -578,12 +536,50 @@ pub fn resolve_path(
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
-            (vec!["prelude_special_case".to_string()], segs, None)
+            // (vec!["prelude_special_case".to_string()], segs, None)
+            let item_index = module_items
+                .iter()
+                .find_map(|item_ref| match item_ref {
+                    ItemRef::Mod(rust_mod) => (rust_mod.module_path == [PRELUDE_MODULE_PATH])
+                        .then_some(
+                            rust_mod
+                                .items
+                                .iter()
+                                .find_map(|item_ref| match item_ref {
+                                    ItemRef::StructOrEnum(index) => {
+                                        let item = &items_defs[*index];
+                                        (item.ident() == seg.ident).then_some(*index)
+                                    }
+                                    ItemRef::Fn(index) => {
+                                        let item = &items_defs[*index];
+                                        (item.ident() == seg.ident).then_some(*index)
+                                    }
+                                    ItemRef::Const(index) => {
+                                        let item = &items_defs[*index];
+                                        (item.ident() == seg.ident).then_some(*index)
+                                    }
+                                    ItemRef::Trait(index) => {
+                                        let item = &items_defs[*index];
+                                        (item.ident() == seg.ident).then_some(*index)
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap(),
+                        ),
+                    _ => None,
+                })
+                .unwrap();
+            (
+                vec![PRELUDE_MODULE_PATH.to_string()],
+                segs,
+                false,
+                Some(item_index),
+            )
         } else {
             dbg!("resolve_path couldn't find path");
             // dbg!(module);
             dbg!(current_mod);
-            dbg!(current_scope_id);
+            // dbg!(current_scope_id);
             dbg!(segs);
             panic!()
         }
@@ -644,11 +640,7 @@ fn parse_fn_input_or_field(
                             // let poo = trait_name.into_iter().map(|fart| fart);
                             // TODO lookup trait in global data to get module path
                             let (module_path, found_scope_id, trait_definition) = global_data
-                                .lookup_trait_definition_any_module(
-                                    current_module,
-                                    &global_data.scope_id_as_option(),
-                                    trait_name,
-                                );
+                                .lookup_trait_definition_any_module(current_module, trait_name);
                             Some((
                                 module_path,
                                 found_scope_id,

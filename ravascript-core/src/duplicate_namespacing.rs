@@ -1,4 +1,4 @@
-use crate::ModuleData;
+use crate::{make_item_definitions::ItemRef, update_item_definitions::ItemV2, ModuleData};
 
 #[derive(Debug, Clone)]
 pub struct Duplicate {
@@ -8,7 +8,7 @@ pub struct Duplicate {
     pub original_module_path: Vec<String>,
 }
 
-pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
+pub fn namespace_duplicates(item_refs: &Vec<ItemRef>, item_defs: &Vec<ItemV2>) -> Vec<Duplicate> {
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
 
@@ -24,35 +24,20 @@ pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
     // (module path, item name)
     let mut names_to_dedup = Vec::new();
     let mut scoped_names_to_dedup = Vec::new();
-    for m in modules {
-        for item_def in &m.various_definitions.item_definitons {
-            names_to_dedup.push((&m.path, &item_def.ident));
-        }
-        for fn_info in &m.various_definitions.fn_info {
-            names_to_dedup.push((&m.path, &fn_info.ident));
-        }
-        // TODO adding traits names means their names will be taken into account when finding duplicates and namespacing, which we don't always want because traits don't always actually appear in the transpiled JS
-        for trait_def in &m.various_definitions.trait_definitons {
-            names_to_dedup.push((&m.path, &trait_def.name));
-        }
-        for const_ in &m.various_definitions.consts {
-            names_to_dedup.push((&m.path, &const_.name));
-        }
-        for svd in &m.scoped_various_definitions {
-            for item_def in &svd.1.item_definitons {
-                scoped_names_to_dedup.push((&m.path, &item_def.ident));
-            }
-            for fn_info in &svd.1.fn_info {
-                scoped_names_to_dedup.push((&m.path, &fn_info.ident));
-            }
-            for trait_def in &svd.1.trait_definitons {
-                scoped_names_to_dedup.push((&m.path, &trait_def.name));
-            }
-            for const_ in &svd.1.consts {
-                scoped_names_to_dedup.push((&m.path, &const_.name));
+
+    let rust_mods = item_refs.iter().filter_map(|item_ref| match item_ref {
+        ItemRef::Mod(rust_mod) => Some(rust_mod),
+        _ => None,
+    });
+    for m in rust_mods {
+        for item in m.items {
+            if let Some(index) = item.index() {
+                let actual = &item_defs[index];
+                names_to_dedup.push((&m.module_path, actual.ident()));
             }
         }
     }
+    
     let mut duplicates = Vec::new();
     for name in &names_to_dedup {
         if names_to_dedup
@@ -66,7 +51,7 @@ pub fn namespace_duplicates(modules: &Vec<ModuleData>) -> Vec<Duplicate> {
             let mut dup = Duplicate {
                 namespace: Vec::new(),
                 module_path: name.0.clone(),
-                name: name.1.clone(),
+                name: name.1.to_string(),
                 original_module_path: name.0.clone(),
             };
 

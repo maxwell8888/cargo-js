@@ -10,8 +10,8 @@ use crate::{
     extract_modules::{
         handle_item_use, handle_item_use2, ItemUseModuleOrScope, ModuleDataFirstPass,
     },
-    update_item_definitions::FnInfoSyn,
-    RustPathSegment,
+    update_item_definitions::{FnInfoSyn, ItemV2},
+    RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
 // Actual definitions (only use at top level)
@@ -21,6 +21,8 @@ pub enum ItemActual {
     Fn(FnInfo),
     Const(ConstDef),
     Trait(RustTraitDefinition),
+    // Should never be handled, only used for empty initialisation
+    // TODO replace use with Option?
     None,
     // Mod(RustMod),
     // Impl(RustMod),
@@ -37,6 +39,17 @@ pub enum ItemRef {
     Mod(RustMod),
     Impl(RustMod),
     Use(RustUse),
+}
+impl ItemRef {
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            ItemRef::StructOrEnum(index) => Some(*index),
+            ItemRef::Fn(index) => Some(*index),
+            ItemRef::Const(index) => Some(*index),
+            ItemRef::Trait(index) => Some(*index),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -61,15 +74,15 @@ impl RustMod {
         items: &[ItemActual],
         use_private: bool,
         name: &str,
-    ) -> bool {
-        self.items.iter().any(|item| match item {
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
                 let def = match item {
                     ItemActual::StructOrEnum(def) => def,
                     _ => todo!(),
                 };
-                &def.ident == name && (use_private || def.is_pub)
+                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Fn(index) => {
                 let item = &items[*index];
@@ -77,7 +90,7 @@ impl RustMod {
                     ItemActual::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                &def.ident == name && (use_private || def.is_pub)
+                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
@@ -85,7 +98,7 @@ impl RustMod {
                     ItemActual::Const(def) => def,
                     _ => todo!(),
                 };
-                &def.name == name && (use_private || def.is_pub)
+                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
@@ -93,7 +106,7 @@ impl RustMod {
                     ItemActual::Trait(def) => def,
                     _ => todo!(),
                 };
-                &def.name == name && (use_private || def.is_pub)
+                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Mod(_) => todo!(),
             ItemRef::Impl(_) => todo!(),
@@ -106,6 +119,51 @@ impl RustMod {
                 &rust_mod.module_path[0] == ident && (use_private || rust_mod.pub_)
             }
             _ => false,
+        })
+    }
+
+    pub fn item_defined_in_module2(
+        &self,
+        items: &[ItemV2],
+        use_private: bool,
+        name: &str,
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Const(def) => def,
+                    _ => todo!(),
+                };
+                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Mod(_) => todo!(),
+            ItemRef::Impl(_) => todo!(),
+            ItemRef::Use(_) => todo!(),
         })
     }
 }
@@ -257,10 +315,10 @@ pub fn extract_modules2(
                     .clone()
                     .into_iter()
                     .map(|stmt| match stmt {
-                        Stmt::Local(local) => StmtsV1::Local(local),
-                        Stmt::Item(item) => StmtsV1::Item(item_to_rust_item(item)),
-                        Stmt::Expr(expr, semi) => StmtsV1::Expr(expr, semi.is_some()),
-                        Stmt::Macro(stmt_macro) => StmtsV1::Macro(stmt_macro),
+                        Stmt::Local(local) => StmtsRef::Local(local),
+                        Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
+                        Stmt::Expr(expr, semi) => StmtsRef::Expr(expr, semi.is_some()),
+                        Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
                     })
                     .collect();
 
@@ -311,10 +369,10 @@ pub fn extract_modules2(
                                 .clone()
                                 .into_iter()
                                 .map(|stmt| match stmt {
-                                    Stmt::Local(local) => StmtsV1::Local(local),
-                                    Stmt::Item(item) => StmtsV1::Item(item_to_rust_item(item)),
-                                    Stmt::Expr(expr, semi) => StmtsV1::Expr(expr, semi.is_some()),
-                                    Stmt::Macro(stmt_macro) => StmtsV1::Macro(stmt_macro),
+                                    Stmt::Local(local) => StmtsRef::Local(local),
+                                    Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
+                                    Stmt::Expr(expr, semi) => StmtsRef::Expr(expr, semi.is_some()),
+                                    Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
                                 })
                                 .collect();
 
@@ -1190,13 +1248,13 @@ pub struct FnInfo {
     pub generics: Vec<String>,
     pub signature: Signature,
     // pub syn: FnInfoSyn,
-    pub stmts: Vec<StmtsV1>,
+    pub stmts: Vec<StmtsRef>,
     // TODO remove this, just legacy thing we need for now because it gets used in the JS parsing (I think)
     pub syn: FnInfoSyn,
 }
 
 #[derive(Debug, Clone)]
-pub enum StmtsV1 {
+pub enum StmtsRef {
     Local(Local),
     Item(ItemRef),
     Expr(Expr, bool),
@@ -1348,7 +1406,7 @@ fn look_for_module_in_items(
                     .into_iter()
                     .filter_map(|stmt| {
                         match stmt {
-                            StmtsV1::Item(item) => Some(item),
+                            StmtsRef::Item(item) => Some(item),
                             // TODO
                             // StmtsV1::Expr(_, _) => todo!(),
                             _ => None,
@@ -1382,6 +1440,7 @@ fn look_for_module_in_items(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// -> (module path, item path, is scoped item, item index)
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
@@ -1396,8 +1455,8 @@ pub fn resolve_path(
     current_mod: &[String],
     // Only used to determine if current module is the original module
     orig_mod: &[String],
-    scopes: &Vec<Vec<ItemActual>>,
-) -> (Vec<String>, Vec<RustPathSegment>, bool) {
+    scoped_items: &Vec<Vec<ItemRef>>,
+) -> (Vec<String>, Vec<RustPathSegment>, bool, Option<usize>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
@@ -1444,7 +1503,7 @@ pub fn resolve_path(
     //     use_mappings.find(|use_mapping| use_mapping.0 == segs[0].ident)
     // };
     // dbg!(matched_use_mapping);
-    let mut matched_use_mapping = module.items.iter().find_map(|item| match item {
+    let matched_use_mapping = module.items.iter().find_map(|item| match item {
         ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
                 .then_some(use_mapping.clone())
@@ -1458,18 +1517,45 @@ pub fn resolve_path(
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     // Look for scoped item
-    let scoped_item = scopes
-        .iter()
-        .rev()
-        .find_map(|s| {
-            s.iter().find(|item| match item {
-                ItemActual::StructOrEnum(def) => def.ident == segs[0].ident,
-                ItemActual::Fn(def) => def.ident == segs[0].ident,
-                ItemActual::Const(def) => def.name == segs[0].ident,
-                ItemActual::Trait(def) => def.name == segs[0].ident,
-            })
+    let scoped_item = scoped_items.iter().rev().find_map(|s| {
+        s.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items_defs[*index];
+                let def = match item {
+                    ItemActual::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (def.ident == segs[0].ident).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items_defs[*index];
+                let def = match item {
+                    ItemActual::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (def.ident == segs[0].ident).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items_defs[*index];
+                let def = match item {
+                    ItemActual::Const(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == segs[0].ident).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items_defs[*index];
+                let def = match item {
+                    ItemActual::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == segs[0].ident).then_some(*index)
+            }
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
         })
-        .cloned();
+    });
 
     // TODO not sure why we need use_private_items here
     // if use_private_items && is_scoped {
@@ -1482,9 +1568,14 @@ pub fn resolve_path(
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
-        (current_mod.to_vec(), segs, scoped_item.is_some())
-    } else if item_defined_in_module {
-        (current_mod.to_vec(), segs, false)
+        (
+            current_mod.to_vec(),
+            segs,
+            scoped_item.is_some(),
+            scoped_item,
+        )
+    } else if item_defined_in_module.is_some() {
+        (current_mod.to_vec(), segs, false, item_defined_in_module)
     } else if segs[0].ident == "super" {
         // TODO if a module level item name is shadowed by an item in a fn scope, then module level item needs to be namespaced
         segs.remove(0);
@@ -1500,7 +1591,7 @@ pub fn resolve_path(
             items_defs,
             &current_module,
             orig_mod,
-            scopes,
+            scoped_items,
         )
     } else if segs[0].ident == "self" {
         // NOTE private items are still accessible from the module via self
@@ -1514,7 +1605,7 @@ pub fn resolve_path(
             items_defs,
             current_mod,
             orig_mod,
-            scopes,
+            scoped_items,
         )
     } else if segs[0].ident == "crate" {
         let current_module = vec!["crate".to_string()];
@@ -1529,7 +1620,7 @@ pub fn resolve_path(
             items_defs,
             &current_module,
             orig_mod,
-            scopes,
+            scoped_items,
         )
     } else if path_starts_with_sub_module {
         // Path starts with a submodule of the current module
@@ -1546,7 +1637,7 @@ pub fn resolve_path(
             items_defs,
             &submod_path,
             orig_mod,
-            scopes,
+            scoped_items,
         )
     } else if let Some(use_mapping) = matched_use_mapping {
         // Use mappings the resolved path for each item/module "imported" into the module with a use statement. eg a module containing
@@ -1595,7 +1686,7 @@ pub fn resolve_path(
             current_mod,
             // &use_mapping.1.clone(),
             orig_mod,
-            scopes,
+            scoped_items,
         )
     // } else if segs.len() == 1 && segs[0] == "this" {
     //     segs
@@ -1615,7 +1706,7 @@ pub fn resolve_path(
             items_defs,
             &current_module,
             orig_mod,
-            scopes,
+            scoped_items,
         )
     } else {
         // Handle third party crates
@@ -1647,7 +1738,63 @@ pub fn resolve_path(
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
-            (vec!["prelude_special_case".to_string()], segs, false)
+            let item_index = module_items
+                .iter()
+                .find_map(|item_ref| match item_ref {
+                    ItemRef::Mod(rust_mod) => {
+                        if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
+                            rust_mod.items.iter().find_map(|item_ref| match item_ref {
+                                ItemRef::StructOrEnum(index) => {
+                                    let item = &items_defs[*index];
+                                    match item {
+                                        ItemActual::StructOrEnum(def) => {
+                                            (def.ident == seg.ident).then_some(*index)
+                                        }
+                                        _ => todo!(),
+                                    }
+                                }
+                                ItemRef::Fn(index) => {
+                                    let item = &items_defs[*index];
+                                    match item {
+                                        ItemActual::Fn(def) => {
+                                            (def.ident == seg.ident).then_some(*index)
+                                        }
+                                        _ => todo!(),
+                                    }
+                                }
+                                ItemRef::Const(index) => {
+                                    let item = &items_defs[*index];
+                                    match item {
+                                        ItemActual::Const(def) => {
+                                            (def.name == seg.ident).then_some(*index)
+                                        }
+                                        _ => todo!(),
+                                    }
+                                }
+                                ItemRef::Trait(index) => {
+                                    let item = &items_defs[*index];
+                                    match item {
+                                        ItemActual::Trait(def) => {
+                                            (def.name == seg.ident).then_some(*index)
+                                        }
+                                        _ => todo!(),
+                                    }
+                                }
+                                _ => None,
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            (
+                vec![PRELUDE_MODULE_PATH.to_string()],
+                segs,
+                false,
+                Some(item_index),
+            )
         } else {
             dbg!("resolve_path couldn't find path");
             // dbg!(module);
