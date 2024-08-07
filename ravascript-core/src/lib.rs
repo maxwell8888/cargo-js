@@ -1088,7 +1088,7 @@ impl GlobalData {
                     let item = &self.item_defs[*index];
                     match item {
                         ItemV2::StructOrEnum(item_def) => {
-                            (item_def.ident == name).then_some(item_def)
+                            (item_def.ident == name).then_some(item_def.clone())
                         }
                         _ => todo!(),
                     }
@@ -1274,7 +1274,7 @@ impl GlobalData {
                 })
                 .collect::<Vec<_>>(),
             module_path.clone(),
-            item_path.first().unwrap().clone(),
+            item_path.first().unwrap().ident.clone(),
             index.unwrap(),
         )
     }
@@ -1481,9 +1481,8 @@ impl GlobalData {
     fn lookup_item_definition_any_module_or_scope(
         &self,
         current_module_path: &[String],
-        scope_id: &Option<Vec<usize>>,
         path: &[String],
-    ) -> (Vec<String>, ItemDefinition) {
+    ) -> (Vec<String>, ItemDefinition, usize) {
         let (item_module_path, item_path, is_scoped, index) = resolve_path(
             false,
             true,
@@ -1506,7 +1505,7 @@ impl GlobalData {
             ItemV2::StructOrEnum(item_def) => item_def.clone(),
             _ => todo!(),
         };
-        (item_module_path, item_def)
+        (item_module_path, item_def, index.unwrap())
     }
 
     // TODO should also look up fns?
@@ -1521,7 +1520,7 @@ impl GlobalData {
     fn lookup_trait_definition_any_module<I>(
         &self,
         current_module_path: &[String],
-        current_scope_id: &Option<Vec<usize>>,
+        // current_scope_id: &Option<Vec<usize>>,
         // path: &Vec<String>,
         path: I,
         // current_module: &Vec<String>,

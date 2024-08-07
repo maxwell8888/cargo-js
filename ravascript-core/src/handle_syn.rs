@@ -71,8 +71,12 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType::StructOrEnum(_type_params, module_path, name, index) => {
-                            let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(module_path, name);
+                            let item = &global_data.item_defs[*index];
+                            let item_def = match item {
+                                ItemV2::StructOrEnum(def) => def.clone(),
+                                _ => todo!(),
+                            };
+
                             item_def.get_type(&field.member)
                         }
                         _ => todo!(),
@@ -162,8 +166,11 @@ fn handle_destructure_pat(
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType::StructOrEnum(_type_params, module_path, name, index) => {
-                            let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(module_path, name);
+                            let item = &global_data.item_defs[*index];
+                            let item_def = match item {
+                                ItemV2::StructOrEnum(def) => def.clone(),
+                                _ => todo!(),
+                            };
                             item_def.get_type(&field.member)
                         }
                         _ => todo!(),
@@ -639,12 +646,11 @@ fn parse_fn_input_or_field(
                                 .collect::<Vec<_>>();
                             // let poo = trait_name.into_iter().map(|fart| fart);
                             // TODO lookup trait in global data to get module path
-                            let (module_path, found_scope_id, trait_definition) = global_data
+                            let (module_path, trait_definition) = global_data
                                 .lookup_trait_definition_any_module(current_module, trait_name);
-                            Some((
-                                module_path,
-                                found_scope_id,
-                                RustTypeImplTrait::SimpleTrait(trait_definition.name.clone()),
+
+                            Some(RustTypeImplTrait::SimpleTrait(
+                                trait_definition.name.clone(),
                             ))
                         }
                         TypeParamBound::Lifetime(_) => None,
@@ -743,10 +749,9 @@ fn parse_fn_input_or_field(
                         // dbg!(current_module);
                         // dbg!(&global_data.scope_id_as_option());
                         // dbg!(&vec![struct_or_enum_name.to_string()]);
-                        let (item_definition_module_path, resolved_scope_id, item_definition) =
-                            global_data.lookup_item_definition_any_module_or_scope(
+                        let (item_definition_module_path, item_definition, index) = global_data
+                            .lookup_item_definition_any_module_or_scope(
                                 current_module,
-                                &global_data.scope_id_as_option(),
                                 &[struct_or_enum_name.to_string()],
                             );
 
@@ -834,8 +839,8 @@ fn parse_fn_input_or_field(
                             RustType::StructOrEnum(
                                 item_type_params,
                                 item_definition_module_path,
-                                resolved_scope_id,
                                 item_definition.ident.to_string(),
+                                index,
                             )
                         }
                     }
