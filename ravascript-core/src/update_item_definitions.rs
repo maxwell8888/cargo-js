@@ -712,7 +712,7 @@ impl ItemDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustTraitDefinition {
     pub name: String,
     pub is_pub: bool,

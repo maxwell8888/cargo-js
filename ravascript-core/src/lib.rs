@@ -435,12 +435,96 @@ impl RustType {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+enum RustType2 {
+    /// For cases/expressions we know cannot return a type, eg `break`
+    NotAllowed,
+    /// Can't be known at this point in analysis, eg the type is inferred somewhere else in the code
+    Unknown,
+    // /// Unitialized/null
+    // Uninit,
+    /// Needs implementing
+    Todo,
+    // Self_,
+    /// I think ParentItem means it is actually `self` not just `Self`???
+    /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
+    /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
+    /// NOTE if ParentItem is returned by an impl item fn it must be immediately converted to the receiver type so that we can be sure that we are in a static fn/def when parsing and we come across a ParentItem
+    // ParentItem,
+    /// ()
+    Unit,
+    /// !
+    Never,
+    /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
+    ///
+    /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
+    ImplTrait(Vec<RustTypeImplTrait>),
+    /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
+    TypeParam(RustTypeParam),
+    // TODO does TypeParam need to store information about the bounds?
+    // TODO surely a struct and impl block can have multiple type params with the same name? So we need to keep track of where the param was defined to know which param eg a method arg's type should update
+    // TypeParam(String),
+    /// name
+    // TypeParamSimple(String),
+    I32,
+    F32,
+    Bool,
+    String,
+    /// (generic)
+    /// The RustType for option *must* be a type param. (I believe) It is important to always have a type param to ensure we can always lookup the name of the generic to match against generics in methods etc NO, we can always lookup the name of the generic on the item_def
+    Option(RustTypeParam),
+    // Option(Box<RustType>),
+    /// (generic)
+    Result(RustTypeParam),
+    StructOrEnum(ItemDefinition),
+    // Struct(Vec<RustTypeParam>, Vec<String>, String),
+    /// (type params, module path, name)  
+    // Enum(Vec<RustTypeParam>, Vec<String>, String),
+    // TODO Should we use the same type for both Arrays and Vecs, because they get transpiled to the same thing anyway? NO because we need to handle the types differently, ie arrays need `.copy()` adding when they are moved (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy).
+    Vec(Box<RustType>),
+    Array(Box<RustType>),
+    Tuple(Vec<RustType>),
+    /// Even though Box::new() vanishes when transpiled, we need to keep track of which vars are Boxed because the dereferencing behaves differently
+    Box(Box<RustType>),
+    /// ie `type FooInt = Foo<i32>;`
+    /// (name, type)
+    UserType(String, Box<RustType>),
+    /// (&mut T)
+    MutRef(Box<RustType>),
+    /// (& T) useful to track & as well as &mut so we know what * is operating on?? NO I think it doesn't matter in practice, we can just check if we have a `&mut` expr and if not just ignore the *
+    Ref(Box<RustType>),
+    /// (type params, return type)
+    // Fn(Vec<RustTypeParam>, Box<RustType>),
+    /// fn might be an associated fn in which case first arg will be Some() containing the (possibly resolved) generics of the impl target/self type. Possibly want to also record which type params are defined on the impl block, but see if we can get away without it initially given any impl block type params pretty much have to appear in the target/self type.
+    /// (item type params, type params, module path, scope id, name)
+    Fn(
+        Option<Vec<RustTypeParam>>,
+        Vec<RustTypeParam>,
+        // RustTypeFnType,
+        FnInfo,
+    ),
+    /// For things like Box::new where we want `Box::new(1)` -> `1`
+    FnVanish,
+    /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
+    /// (input types, return type)
+    Closure(Vec<RustType>, Box<RustType>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeFnType {
     /// (fn name)
     Standalone(String),
     /// (item name, fn name)
     AssociatedFn(String, String),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RustTypeImplTrait2 {
+    SimpleTrait(RustTraitDefinition),
+    /// (return type)
+    Fn(RustType),
 }
 
 #[allow(dead_code)]
