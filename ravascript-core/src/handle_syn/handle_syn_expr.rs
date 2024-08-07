@@ -10,7 +10,10 @@ use super::handle_syn_stmt::parse_fn_body_stmts;
 use super::parse_fn_input_or_field;
 
 use super::{handle_pat, resolve_path};
+use crate::make_item_definitions::ItemRef;
 use crate::update_item_definitions::ConstDef;
+use crate::update_item_definitions::ItemV2;
+use crate::GlobalDataScope;
 use crate::{
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
@@ -618,11 +621,11 @@ pub fn handle_expr(
                     ) -> RustType {
                         match base_type {
                             RustType::StructOrEnum(_type_params, module_path, name, index) => {
-                                let item_definition = global_data
-                                    .lookup_item_def_known_module_assert_not_func2(
-                                        &module_path,
-                                        &name,
-                                    );
+                                let item = &global_data.item_defs[index];
+                                let item_definition = match item {
+                                    ItemV2::StructOrEnum(item_def) => item_def.clone(),
+                                    _ => todo!(),
+                                };
                                 match item_definition.struct_or_enum_info {
                                     StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                                         match struct_def_info.fields {
@@ -666,13 +669,12 @@ pub fn handle_expr(
                             RustType::Tuple(tuple_types) => {
                                 tuple_types[index.index as usize].clone()
                             }
-                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                                let item_definition = global_data
-                                    .lookup_item_def_known_module_assert_not_func2(
-                                        &module_path,
-                                        &scope_id,
-                                        &name,
-                                    );
+                            RustType::StructOrEnum(_type_params, module_path, name, item_index) => {
+                                let item = &global_data.item_defs[item_index];
+                                let item_definition = match item {
+                                    ItemV2::StructOrEnum(item_def) => item_def.clone(),
+                                    _ => todo!(),
+                                };
                                 match item_definition.struct_or_enum_info {
                                     StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                                         match struct_def_info.fields {
@@ -740,18 +742,16 @@ pub fn handle_expr(
             //     .collect();
 
             // Create new scope for fn vars
-            global_data.push_new_scope(true, Vec::new());
-
-            global_data
-                .scopes
-                .last_mut()
-                .unwrap()
-                .variables
-                .push(ScopedVar {
+            global_data.scopes.push(GlobalDataScope {
+                variables: vec![ScopedVar {
                     name,
                     mut_,
                     type_: element_type,
-                });
+                }],
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+            });
 
             let (stmts, _return_type) = parse_fn_body_stmts(
                 false,
@@ -763,7 +763,7 @@ pub fn handle_expr(
             );
 
             // pop fn scope
-            global_data.pop_scope();
+            global_data.scopes.pop();
 
             (
                 JsExpr::ForLoop(pat, Box::new(iter_expr), stmts),
@@ -778,7 +778,12 @@ pub fn handle_expr(
                 _ => {}
             }
 
-            global_data.push_new_scope(true, Vec::new());
+            global_data.scopes.push(GlobalDataScope {
+                variables: Vec::new(),
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+            });
             // TODO block needs to use something like parse_fn_body to be able to return the type
 
             // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
@@ -790,7 +795,7 @@ pub fn handle_expr(
                 .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .unzip();
 
-            global_data.pop_scope();
+            global_data.scopes.pop();
             // update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
 
             // NOTE we need to directly handle fail blocks to ensure the block doesn't get converted to an IFFE which would happen if it we handled by handle_expr_block
@@ -1092,12 +1097,12 @@ pub fn handle_expr(
             // dbg!(&js_path_expr);
             // dbg!(&rust_partial_type);
             match rust_partial_type {
-                PartialRustType::StructIdent(type_params, module_path, scope_id, name) => {
-                    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                        &module_path,
-                        &scope_id,
-                        &name,
-                    );
+                PartialRustType::StructIdent(type_params, module_path, name, index) => {
+                    let item = &global_data.item_defs[index];
+                    let item_def = match item {
+                        ItemV2::StructOrEnum(item_def) => item_def.clone(),
+                        _ => todo!(),
+                    };
                     let struct_def_info = match item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def_info) => struct_def_info,
                         StructOrEnumDefitionInfo::Enum(_) => panic!(),
@@ -1110,7 +1115,7 @@ pub fn handle_expr(
                         _ => todo!(),
                     };
                     let rust_type =
-                        RustType::StructOrEnum(type_params, module_path, scope_id, name.clone());
+                        RustType::StructOrEnum(type_params, module_path, name.clone(), index);
                     #[allow(clippy::all)]
                     let args = expr_struct
                         .fields
@@ -1150,16 +1155,12 @@ pub fn handle_expr(
                 PartialRustType::EnumVariantIdent(
                     type_params,
                     module_path,
-                    scope_id,
                     enum_name,
                     _variant_name,
+                    index,
                 ) => {
-                    let rust_type = RustType::StructOrEnum(
-                        type_params,
-                        module_path,
-                        scope_id,
-                        enum_name.clone(),
-                    );
+                    let rust_type =
+                        RustType::StructOrEnum(type_params, module_path, enum_name.clone(), index);
                     // TODO IMPORTANT need to be using deduplicated name here
                     // (JsExpr::New(vec![name], args), rust_type);
                     let obj = JsExpr::Object(
@@ -1383,7 +1384,12 @@ fn handle_expr_closure(
     // Create scope for closure body
     // NOTE the closure arguments are added to `GlobalDataScope.variables` in the for loop below. TODO can probably clean this up.
     // TODO IMPORTANT surely a closure body scope should look outside the scope so we should pass true??
-    global_data.push_new_scope(false, Vec::new());
+    global_data.scopes.push(GlobalDataScope {
+        variables: vec![],
+        items: Vec::new(),
+        _look_in_outer_scope: true,
+        use_mappings: Vec::new(),
+    });
 
     // Below is copied/adapted from `handle_item_fn()`. Ideally we would use the same code for both but closure inputs are just pats because they have no self/reciever and might not even have a type eg `|x| x + 1`
     // record which vars are mut and/or &mut
@@ -1545,7 +1551,7 @@ fn handle_expr_closure(
         }
     };
 
-    global_data.pop_scope();
+    global_data.scopes.pop();
 
     (
         JsExpr::ArrowFn(async_, body_is_js_block, inputs, body_stmts),
@@ -1899,9 +1905,9 @@ fn handle_expr_method_call(
             .map(|generic_arg| match generic_arg {
                 GenericArgument::Lifetime(_) => todo!(),
                 GenericArgument::Type(type_) => {
-                    let (type_params, module_path, scope_id, name) =
+                    let (type_params, module_path, name, index) =
                         global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
-                    RustType::StructOrEnum(type_params, module_path, scope_id, name)
+                    RustType::StructOrEnum(type_params, module_path, name, index)
                 }
                 GenericArgument::Const(_) => todo!(),
                 GenericArgument::AssocType(_) => todo!(),
@@ -2434,22 +2440,12 @@ fn get_receiver_params_and_method_impl_item(
         RustType::TypeParam(_) => todo!(),
         RustType::I32 => {
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let i32_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "i32")
-                .unwrap();
+            let i32_def = global_data.get_prelude_item_def("i32");
 
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(i32_def, sub_path)
+                    .lookup_impl_item_item2(&i32_def, sub_path)
                     .unwrap(),
             )
             // match impl_method.item {
@@ -2477,40 +2473,18 @@ fn get_receiver_params_and_method_impl_item(
             // } else {
             //     todo!()
             // }
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let string_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "String")
-                .unwrap();
-            // dbg!(&string_def);
-            // dbg!(&sub_path);
-            // dbg!(&global_data.impl_blocks_simpl);
+            let string_def = global_data.get_prelude_item_def("String");
 
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(string_def, sub_path)
+                    .lookup_impl_item_item2(&string_def, sub_path)
                     .unwrap(),
             )
         }
         RustType::Option(type_param) => {
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let item_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "Option")
-                .unwrap();
+            let item_def = global_data.get_prelude_item_def("Option");
+
             // let type_param = match &*type_param {
             //     RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
             //     other_rust_type => RustTypeParam {
@@ -2521,22 +2495,22 @@ fn get_receiver_params_and_method_impl_item(
             (
                 vec![type_param],
                 global_data
-                    .lookup_impl_item_item2(item_def, sub_path)
+                    .lookup_impl_item_item2(&item_def, sub_path)
                     .unwrap(),
             )
         }
         RustType::Result(_) => todo!(),
-        RustType::StructOrEnum(item_type_params, item_module_path, item_scope_id, item_name) => {
-            let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                &item_module_path,
-                &item_scope_id,
-                &item_name,
-            );
+        RustType::StructOrEnum(item_type_params, item_module_path, item_name, index) => {
+            let item = &global_data.item_defs[index];
+            let item_def = match item {
+                ItemV2::StructOrEnum(def) => def,
+                _ => todo!(),
+            };
 
             (
                 item_type_params,
                 global_data
-                    .lookup_impl_item_item2(&item_def, sub_path)
+                    .lookup_impl_item_item2(item_def, sub_path)
                     .unwrap(),
             )
 
@@ -2577,25 +2551,12 @@ fn get_receiver_params_and_method_impl_item(
             // } else {
             //     todo!()
             // }
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let vec_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "Vec")
-                .unwrap();
-            // dbg!(&string_def);
-            // dbg!(&sub_path);
-            // dbg!(&global_data.impl_blocks_simpl);
+            let vec_def = global_data.get_prelude_item_def("Vec");
 
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(vec_def, sub_path)
+                    .lookup_impl_item_item2(&vec_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2794,7 +2755,12 @@ pub fn handle_expr_block(
     let span = debug_span!("handle_expr_block");
     let _guard = span.enter();
 
-    global_data.push_new_scope(true, Vec::new());
+    global_data.scopes.push(GlobalDataScope {
+        variables: Vec::new(),
+        items: Vec::new(),
+        _look_in_outer_scope: true,
+        use_mappings: Vec::new(),
+    });
     // TODO block needs to use something like parse_fn_body to be able to return the type
     // let (stmts, types): (Vec<_>, Vec<_>) = expr_block
     //     .block
@@ -2812,7 +2778,7 @@ pub fn handle_expr_block(
     );
 
     // pop block scope
-    global_data.pop_scope();
+    global_data.scopes.pop();
     // update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
 
     let block_returns_value = match stmts.last().unwrap() {
@@ -2950,12 +2916,12 @@ fn handle_expr_call(
 
             let rust_type = match partial_rust_type.clone() {
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
-                PartialRustType::StructIdent(type_params, module_path, scope_id, struct_name) => {
-                    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                        &module_path,
-                        &scope_id,
-                        &struct_name,
-                    );
+                PartialRustType::StructIdent(type_params, module_path, struct_name, index) => {
+                    let item = &global_data.item_defs[index];
+                    let item_def = match item {
+                        ItemV2::StructOrEnum(def) => def.clone(),
+                        _ => todo!(),
+                    };
 
                     let struct_def = match item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def) => struct_def,
@@ -2994,20 +2960,20 @@ fn handle_expr_call(
                         })
                         .collect::<Vec<_>>();
 
-                    RustType::StructOrEnum(updated_type_params, module_path, scope_id, struct_name)
+                    RustType::StructOrEnum(updated_type_params, module_path, struct_name, index)
                 }
                 PartialRustType::EnumVariantIdent(
                     type_params,
                     module_path,
-                    scope_id,
                     enum_name,
                     variant_name,
+                    index,
                 ) => {
-                    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-                        &module_path,
-                        &scope_id,
-                        &enum_name,
-                    );
+                    let item = &global_data.item_defs[index];
+                    let item_def = match item {
+                        ItemV2::StructOrEnum(def) => def.clone(),
+                        _ => todo!(),
+                    };
 
                     let enum_def = match item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(_) => panic!(),
@@ -3046,7 +3012,6 @@ fn handle_expr_call(
                         .collect::<Vec<_>>();
 
                     if module_path == [PRELUDE_MODULE_PATH]
-                        && scope_id.is_none()
                         && enum_name == "Option"
                         && variant_name == "Some"
                     {
@@ -3060,12 +3025,7 @@ fn handle_expr_call(
                             )),
                         })
                     } else {
-                        RustType::StructOrEnum(
-                            updated_type_params,
-                            module_path,
-                            scope_id,
-                            enum_name,
-                        )
+                        RustType::StructOrEnum(updated_type_params, module_path, enum_name, index)
                     }
                 }
                 PartialRustType::RustType(rust_type, is_mut_var) => {
@@ -3085,21 +3045,26 @@ fn handle_expr_call(
                             item_type_params,
                             _type_params,
                             module_path,
-                            scope_id,
                             rust_type_fn_type,
+                            index,
                         ) => {
                             // let name = match name {
                             let fn_info = match rust_type_fn_type {
-                                RustTypeFnType::Standalone(name) => global_data
-                                    .lookup_fn_info_known_module(&module_path, &scope_id, &name),
+                                RustTypeFnType::Standalone(name) => {
+                                    let item = &global_data.item_defs[index];
+                                    match item {
+                                        ItemV2::Fn(fn_info) => fn_info.clone(),
+                                        _ => todo!(),
+                                    }
+                                }
                                 RustTypeFnType::AssociatedFn(item_name, fn_name) => {
                                     let _item_type_params = item_type_params.unwrap();
-                                    let item_definition = global_data
-                                        .lookup_item_def_known_module_assert_not_func2(
-                                            &module_path,
-                                            &scope_id,
-                                            &item_name.clone(),
-                                        );
+                                    let item = &global_data.item_defs[index];
+                                    let item_definition = match item {
+                                        ItemV2::StructOrEnum(def) => def.clone(),
+                                        _ => todo!(),
+                                    };
+
                                     let impl_method = global_data
                                         .lookup_impl_item_item2(
                                             &item_definition,
@@ -3225,12 +3190,11 @@ fn handle_expr_call(
                 PartialRustType::EnumVariantIdent(
                     _,
                     module_path,
-                    scope_id,
                     enum_name,
                     variant_name,
+                    index,
                 ) => {
                     if module_path == ["prelude_special_case"]
-                        && scope_id.is_none()
                         && enum_name == "Option"
                         && variant_name == "Some"
                     {
@@ -3283,11 +3247,7 @@ fn handle_expr_path_inner(
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
-    let module = global_data
-        .modules
-        .iter()
-        .find(|module| module.path == current_module)
-        .unwrap();
+    let module = global_data.get_module(current_module);
 
     // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
 
@@ -3312,16 +3272,17 @@ fn handle_expr_path_inner(
     // dbg!(&current_module);
     // dbg!(&global_data.scope_id_as_option());
     // dbg!(&segs_copy);
-    let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = resolve_path(
+    let (segs_copy_module_path, segs_copy_item_path, is_scoped, index) = resolve_path(
         // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
         true,
         true,
         true,
         segs_copy,
-        global_data,
+        &global_data.item_refs,
+        &global_data.item_defs,
         current_module,
         current_module,
-        &global_data.scope_id_as_option(),
+        &global_data.scopes,
     );
     // dbg!(&segs_copy_module_path);
     // dbg!(&segs_copy_item_scope);
@@ -3346,7 +3307,7 @@ fn handle_expr_path_inner(
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
     let partial_rust_type = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
-        if let Some(_segs_copy_item_scope) = &segs_copy_item_scope {
+        if is_scoped {
             // Look for var
             // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
             assert_eq!(segs_copy_item_path.len(), 1);
@@ -3364,7 +3325,6 @@ fn handle_expr_path_inner(
 
             PartialRustType::RustType(var.type_.clone(), var.mut_)
         } else {
-            assert_eq!(segs_copy_item_scope, None);
             let path_idents = segs_copy_item_path
                 .iter()
                 .map(|seg| seg.ident.as_str())
@@ -3375,27 +3335,36 @@ fn handle_expr_path_inner(
                 ["Some"] => {
                     // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
 
+                    let prelude_module = global_data.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
+                    let index = prelude_module
+                        .items
+                        .iter()
+                        .find_map(|item_ref| match item_ref {
+                            ItemRef::StructOrEnum(index) => {
+                                let item = &global_data.item_defs[*index];
+                                match item {
+                                    ItemV2::StructOrEnum(item_def) => {
+                                        (item_def.ident == "Some").then_some(*index)
+                                    }
+                                    _ => todo!(),
+                                }
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+
                     PartialRustType::EnumVariantIdent(
                         // TODO handle turbofish
                         Vec::new(),
                         segs_copy_module_path.clone(),
-                        None,
                         "Option".to_string(),
                         "Some".to_string(),
+                        9999,
                     )
                 }
                 ["None"] => {
-                    let prelude_module = global_data
-                        .modules
-                        .iter()
-                        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                        .unwrap();
-                    let item_def = prelude_module
-                        .various_definitions
-                        .item_definitons
-                        .iter()
-                        .find(|item_def| item_def.ident == "Option")
-                        .unwrap();
+                    let item_def = global_data.get_prelude_item_def("Option");
+
                     assert_eq!(item_def.generics.len(), 1);
                     let rust_type_type_param = match &item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(_) => todo!(),

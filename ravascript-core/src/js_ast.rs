@@ -724,7 +724,7 @@ pub struct JsClass {
     /// We need this because after syn -> JS parsing a block (scoped impls) or crate (module level impls) we need to go through and update all the `JsClass`s with their `impl`d methods, either directly add the method for direct impls, or a link the the trait impl object for generic impls, and for the later case we need to check if the classes type matches the trait impl (actually I think we need the type params from the ItemDefinition for simple direct impls too if the item is generic and has bounds, we are probably just glossing over this at the moment).
     pub rust_name: String,
     pub module_path: Vec<String>,
-    pub scope_id: Option<Vec<usize>>,
+    pub index: Option<usize>,
     /// TODO Should be an enum containing rust_name and module_path
     pub is_impl_block: bool,
 }

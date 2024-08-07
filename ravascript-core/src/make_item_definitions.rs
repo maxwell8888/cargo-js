@@ -36,8 +36,8 @@ pub enum ItemRef {
     Fn(usize),
     Const(usize),
     Trait(usize),
+    Impl(usize),
     Mod(RustMod),
-    Impl(RustMod),
     Use(RustUse),
 }
 impl ItemRef {
