@@ -16,9 +16,10 @@ use crate::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
     js_stmts_from_syn_items, GlobalData, GlobalDataScope, JsImplBlock2, RustGeneric,
-    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType,
+    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType2,
     RustTypeParam, RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
 };
+use crate::{RustTypeParam2, RustTypeParamValue2};
 
 pub fn handle_item_fn(
     item_fn: &ItemFn,
@@ -94,6 +95,8 @@ pub fn handle_item_fn(
     let mut copy_stmts = Vec::new();
 
     for (_is_self, is_mut, name, type_) in fn_info.inputs_types {
+        let type_ = type_.clone().to_rust_type2(global_data);
+
         let scoped_var = ScopedVar {
             name: name.clone(),
             mut_: is_mut,
@@ -116,14 +119,14 @@ pub fn handle_item_fn(
                 type_: LocalType::None,
                 lhs: LocalName::Single(Ident::String(name.clone())),
                 value: match type_ {
-                    RustType::NotAllowed => todo!(),
-                    RustType::Unknown => todo!(),
-                    RustType::Todo => todo!(),
-                    RustType::Unit => todo!(),
-                    RustType::Never => todo!(),
-                    RustType::ImplTrait(_) => todo!(),
-                    RustType::TypeParam(_) => todo!(),
-                    RustType::I32 => {
+                    RustType2::NotAllowed => todo!(),
+                    RustType2::Unknown => todo!(),
+                    RustType2::Todo => todo!(),
+                    RustType2::Unit => todo!(),
+                    RustType2::Never => todo!(),
+                    RustType2::ImplTrait(_) => todo!(),
+                    RustType2::TypeParam(_) => todo!(),
+                    RustType2::I32 => {
                         global_data.rust_prelude_types.rust_integer = true;
                         // JsExpr::New(
                         //     vec!["RustInteger".to_string()],
@@ -140,22 +143,22 @@ pub fn handle_item_fn(
                             vec![JsExpr::Path(PathIdent::Single(Ident::String(name.clone())))],
                         )
                     }
-                    RustType::F32 => todo!(),
-                    RustType::Bool => todo!(),
-                    RustType::String => todo!(),
-                    RustType::Option(_) => todo!(),
-                    RustType::Result(_) => todo!(),
-                    RustType::StructOrEnum(_, _, _, _) => todo!(),
-                    RustType::Vec(_) => todo!(),
-                    RustType::Array(_) => todo!(),
-                    RustType::Tuple(_) => todo!(),
-                    RustType::Box(_) => todo!(),
-                    RustType::UserType(_, _) => todo!(),
-                    RustType::MutRef(_) => todo!(),
-                    RustType::Ref(_) => todo!(),
-                    RustType::Fn(_, _, _, _, _) => todo!(),
-                    RustType::FnVanish => todo!(),
-                    RustType::Closure(_, _) => todo!(),
+                    RustType2::F32 => todo!(),
+                    RustType2::Bool => todo!(),
+                    RustType2::String => todo!(),
+                    RustType2::Option(_) => todo!(),
+                    RustType2::Result(_) => todo!(),
+                    RustType2::StructOrEnum(_, _) => todo!(),
+                    RustType2::Vec(_) => todo!(),
+                    RustType2::Array(_) => todo!(),
+                    RustType2::Tuple(_) => todo!(),
+                    RustType2::Box(_) => todo!(),
+                    RustType2::UserType(_, _) => todo!(),
+                    RustType2::MutRef(_) => todo!(),
+                    RustType2::Ref(_) => todo!(),
+                    RustType2::Fn(_, _, _) => todo!(),
+                    RustType2::FnVanish => todo!(),
+                    RustType2::Closure(_, _) => todo!(),
                 },
             }))
         }
@@ -584,7 +587,7 @@ pub fn handle_impl_item_fn(
     impl_item_fn: &ImplItemFn,
     global_data: &mut GlobalData,
     current_module_path: &[String],
-    target_rust_type: &RustType,
+    target_rust_type: &RustType2,
     rust_impl_item: &RustImplItemNoJs,
 ) {
     let scope_count = {
@@ -668,7 +671,7 @@ pub fn handle_impl_item_fn(
                     // Also, shouldn't need this, the type should already be wrapped in `RustType::MutRef` if it is `&mut self`
                     let _type_ = if is_mut {
                         // TODO does this mean self in `fn foo(mut self) {}` goes to RustType::MutRef??
-                        RustType::MutRef(Box::new(target_rust_type.clone()))
+                        RustType2::MutRef(Box::new(target_rust_type.clone()))
                     } else {
                         target_rust_type.clone()
                     };
@@ -681,7 +684,7 @@ pub fn handle_impl_item_fn(
                         name: "self".to_string(),
                         // TODO how do we know if we have `foo(mut self)`?
                         mut_: is_mut,
-                        type_: input_type,
+                        type_: input_type.clone().to_rust_type2(global_data),
                     };
                     vars.push(scoped_var);
                 } else {
@@ -689,7 +692,7 @@ pub fn handle_impl_item_fn(
                     let scoped_var = ScopedVar {
                         name,
                         mut_: is_mut,
-                        type_: input_type,
+                        type_: input_type.to_rust_type2(global_data),
                     };
                     // dbg!(&scoped_var);
                     vars.push(scoped_var);
@@ -938,9 +941,9 @@ pub fn handle_item_impl(
     let (target_rust_type, is_target_type_param) =
         if let Some(target_type_param) = target_type_param {
             (
-                RustType::TypeParam(RustTypeParam {
+                RustType2::TypeParam(RustTypeParam2 {
                     name: target_type_param.ident.clone(),
-                    type_: RustTypeParamValue::Unresolved,
+                    type_: RustTypeParamValue2::Unresolved,
                 }),
                 true,
             )
@@ -958,9 +961,9 @@ pub fn handle_item_impl(
             let target_item_type_params = target_item
                 .generics
                 .iter()
-                .map(|g| RustTypeParam {
+                .map(|g| RustTypeParam2 {
                     name: g.clone(),
-                    type_: RustTypeParamValue::Unresolved,
+                    type_: RustTypeParamValue2::Unresolved,
                 })
                 .collect::<Vec<_>>();
 
@@ -970,13 +973,13 @@ pub fn handle_item_impl(
                     "Option" => {
                         assert_eq!(target_item_type_params.len(), 1);
                         (
-                            RustType::Option(target_item_type_params.into_iter().next().unwrap()),
+                            RustType2::Option(target_item_type_params.into_iter().next().unwrap()),
                             false,
                         )
                     }
                     "i32" => {
                         assert_eq!(target_item_type_params.len(), 0);
-                        (RustType::I32, false)
+                        (RustType2::I32, false)
                     }
                     _ => {
                         dbg!(target_item);
@@ -985,12 +988,7 @@ pub fn handle_item_impl(
                 }
             } else {
                 (
-                    RustType::StructOrEnum(
-                        target_item_type_params,
-                        target_item_module,
-                        resolved_scope_id,
-                        target_item.ident.to_string(),
-                    ),
+                    RustType2::StructOrEnum(target_item_type_params, target_item),
                     false,
                 )
             }
@@ -1139,7 +1137,7 @@ pub fn handle_item_impl(
 
     global_data.impl_block_target_type.pop();
 
-    let class_stmt = if is_target_type_param || matches!(target_rust_type, RustType::I32) {
+    let class_stmt = if is_target_type_param || matches!(target_rust_type, RustType2::I32) {
         let static_fields = rust_impl_block
             .items
             .iter()
@@ -1231,7 +1229,12 @@ pub fn handle_item_impl(
                         .inputs_types
                         .first()
                         .is_some_and(|(is_self, _is_mut, _name, type_)| {
-                            *is_self && matches!(type_, RustType::MutRef(_))
+                            *is_self
+                                && matches!(
+                                    // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
+                                    type_.clone().to_rust_type2(global_data),
+                                    RustType2::MutRef(_)
+                                )
                         }),
                     RustImplItemItemJs::Const(_) => todo!(),
                 };

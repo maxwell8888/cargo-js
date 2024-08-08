@@ -8,8 +8,9 @@ use tracing::{debug, debug_span};
 use crate::{
     get_item_impl_unique_id,
     make_item_definitions::{self, ModuleMethods},
-    RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustPathSegment,
-    RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH,
+    GlobalData, RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs,
+    RustPathSegment, RustType, RustType2, RustTypeImplTrait, RustTypeParam, RustTypeParam2,
+    RustTypeParamValue, RustTypeParamValue2, PRELUDE_MODULE_PATH,
 };
 
 pub fn update_item_definitions(
@@ -690,7 +691,7 @@ pub struct ItemDefinition {
     pub impl_block_ids: Vec<String>,
 }
 impl ItemDefinition {
-    pub fn get_type(&self, field_member: &Member) -> RustType {
+    pub fn get_type(&self, field_member: &Member, global_data: &GlobalData) -> RustType2 {
         match &self.struct_or_enum_info {
             StructOrEnumDefitionInfo::Struct(struct_def_info) => match &struct_def_info.fields {
                 StructFieldInfo::UnitStruct => todo!(),
@@ -702,7 +703,8 @@ impl ItemDefinition {
                             Member::Named(ident) => ident.to_string(),
                             Member::Unnamed(_) => todo!(),
                         };
-                        (field_name == &field_member_name).then_some(field_type)
+                        (field_name == &field_member_name)
+                            .then_some(field_type.clone().to_rust_type2(global_data))
                     })
                     .unwrap()
                     .clone(),
@@ -974,8 +976,8 @@ pub enum FnInfoSyn {
 impl FnInfo {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
-        args: &[RustType],
-    ) -> Vec<RustTypeParam> {
+        args: &[RustType2],
+    ) -> Vec<RustTypeParam2> {
         self.generics
             .iter()
             .map(|g| {
@@ -993,12 +995,12 @@ impl FnInfo {
 
                 let rust_type_param_value =
                     if let Some(matched_arg_rust_type) = matched_arg_rust_type {
-                        RustTypeParamValue::RustType(Box::new(matched_arg_rust_type))
+                        RustTypeParamValue2::RustType(Box::new(matched_arg_rust_type))
                     } else {
-                        RustTypeParamValue::Unresolved
+                        RustTypeParamValue2::Unresolved
                     };
 
-                RustTypeParam {
+                RustTypeParam2 {
                     name: g.clone(),
                     type_: rust_type_param_value,
                 }
@@ -1141,10 +1143,10 @@ fn parse_types_for_populate_item_definitions(
                             // let (module_path, trait_definition) = global_data
                             //     .lookup_trait_definition_any_module(&trait_name, current_module)
                             //     .unwrap();
-                            Some((
+                            Some(RustTypeImplTrait::SimpleTrait(
                                 trait_module_path,
                                 trait_item_scope,
-                                RustTypeImplTrait::SimpleTrait(trait_item_path[0].ident.clone()),
+                                trait_item_path[0].ident.clone(),
                             ))
                         }
                         TypeParamBound::Lifetime(_) => None,

@@ -17,6 +17,7 @@ use crate::{
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
     GlobalData, RustType, ScopedVar,
 };
+use crate::{PartialRustType, RustType2};
 
 fn handle_local(
     local: &Local,
@@ -100,11 +101,9 @@ fn handle_local(
         Expr::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module_path);
             match partial {
-                crate::PartialRustType::StructIdent(_, _, _, _) => todo!(),
-                crate::PartialRustType::EnumVariantIdent(_, _, _, _, _) => todo!(),
-                crate::PartialRustType::RustType(rust_type, is_mut_var) => {
-                    (expr, rust_type, is_mut_var)
-                }
+                PartialRustType::StructIdent(_, _) => todo!(),
+                PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
+                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
             }
         }
         _ => {
@@ -114,7 +113,7 @@ fn handle_local(
     };
 
     // NOTE This doesn't distinguish between say a var that has type MutRef, and a literal like `&mut 5`.
-    let rhs_is_mut_ref = matches!(rhs_type, RustType::MutRef(_));
+    let rhs_is_mut_ref = matches!(rhs_type, RustType2::MutRef(_));
 
     // NOTE we must calculate lhs_is_shadowing before calling `handle_pat(&local.pat...` because handle pat adds the current var to the scope
     let lhs_is_shadowing = global_data
@@ -185,39 +184,34 @@ fn handle_local(
                     .find(|v| expr_path.path.segments.first().unwrap().ident == v.name)
             });
             if let Some(var) = var {
-                assert!(var.type_ == rhs_type);
+                // TODO impl PartialEq for RustType2
+                // assert!(var.type_ == rhs_type);
 
                 // Get var item def so we can check if var is a copy struct or an array
                 fn handle_type(
                     // NOTE We need to specify the RustType separately to the ScopedVar to allow passing in the inner type of a RustType::MutRef
-                    rust_type: &RustType,
+                    rust_type: &RustType2,
                     global_data: &mut GlobalData,
                     var: &ScopedVar,
                     lhs: &LocalName,
                     mut_ref_taken: bool,
                 ) -> bool {
                     match rust_type {
-                        RustType::Unit => todo!(),
-                        RustType::Never => todo!(),
-                        RustType::ImplTrait(_) => todo!(),
-                        RustType::TypeParam(_) => todo!(),
-                        RustType::I32 => false,
-                        RustType::F32 => todo!(),
-                        RustType::Bool => todo!(),
-                        RustType::String => todo!(),
-                        RustType::Option(_) => todo!(),
-                        RustType::Result(_) => todo!(),
-                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                            let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                );
+                        RustType2::Unit => todo!(),
+                        RustType2::Never => todo!(),
+                        RustType2::ImplTrait(_) => todo!(),
+                        RustType2::TypeParam(_) => todo!(),
+                        RustType2::I32 => false,
+                        RustType2::F32 => todo!(),
+                        RustType2::Bool => todo!(),
+                        RustType2::String => todo!(),
+                        RustType2::Option(_) => todo!(),
+                        RustType2::Result(_) => todo!(),
+                        RustType2::StructOrEnum(_type_params, item_def) => {
                             item_def.is_copy && var.mut_ && !mut_ref_taken
                         }
-                        RustType::Vec(_) => todo!(),
-                        RustType::Array(element_type) => {
+                        RustType2::Vec(_) => todo!(),
+                        RustType2::Array(element_type) => {
                             // (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy)
                             match lhs {
                                 LocalName::Single(_) => true,
@@ -225,18 +219,7 @@ fn handle_local(
                                 LocalName::DestructureArray(_) => {
                                     // If element_type is `Copy` struct/enum then should add `.copy()` to rhs array
                                     match &**element_type {
-                                        RustType::StructOrEnum(
-                                            _type_params,
-                                            module_path,
-                                            _scope_id,
-                                            name,
-                                        ) => {
-                                            let item_def = global_data
-                                                .lookup_item_def_known_module_assert_not_func2(
-                                                    module_path,
-                                                    &global_data.scope_id_as_option(),
-                                                    name,
-                                                );
+                                        RustType2::StructOrEnum(_type_params, item_def) => {
                                             if item_def.is_copy {
                                                 global_data.rust_prelude_types.rust_array_copy =
                                                     true;
@@ -250,15 +233,15 @@ fn handle_local(
                                 }
                             }
                         }
-                        RustType::Tuple(_) => todo!(),
-                        RustType::UserType(_, _) => todo!(),
-                        RustType::MutRef(inner) => {
+                        RustType2::Tuple(_) => todo!(),
+                        RustType2::UserType(_, _) => todo!(),
+                        RustType2::MutRef(inner) => {
                             // A &mut T is always `Copy` copied (not the T, the reference) so don't need to `.copy()` it, unless it is dereferenced - *or destructured*
                             handle_type(inner, global_data, var, lhs, true)
                         }
-                        RustType::Ref(_) => todo!(),
-                        RustType::Fn(_, _, _, _, _) => todo!(),
-                        RustType::Closure(_, _) => todo!(),
+                        RustType2::Ref(_) => todo!(),
+                        RustType2::Fn(_, _, _) => todo!(),
+                        RustType2::Closure(_, _) => todo!(),
                         _ => todo!(),
                     }
                 }
@@ -327,14 +310,14 @@ fn handle_local(
 
     if lhs_is_mut && rhs_type.is_js_primative() {
         rhs_expr = match rhs_type {
-            RustType::NotAllowed => todo!(),
-            RustType::Unknown => todo!(),
-            RustType::Todo => todo!(),
-            RustType::Unit => todo!(),
-            RustType::Never => todo!(),
-            RustType::ImplTrait(_) => todo!(),
-            RustType::TypeParam(_) => todo!(),
-            RustType::I32 => {
+            RustType2::NotAllowed => todo!(),
+            RustType2::Unknown => todo!(),
+            RustType2::Todo => todo!(),
+            RustType2::Unit => todo!(),
+            RustType2::Never => todo!(),
+            RustType2::ImplTrait(_) => todo!(),
+            RustType2::TypeParam(_) => todo!(),
+            RustType2::I32 => {
                 global_data.rust_prelude_types.rust_integer = true;
                 if rhs_is_mut_var {
                     JsExpr::New(
@@ -345,25 +328,25 @@ fn handle_local(
                     JsExpr::New("RustInteger".into(), vec![rhs_expr])
                 }
             }
-            RustType::F32 => todo!(),
-            RustType::Bool => todo!(),
-            RustType::String => {
+            RustType2::F32 => todo!(),
+            RustType2::Bool => todo!(),
+            RustType2::String => {
                 global_data.rust_prelude_types.rust_string = true;
                 JsExpr::New("RustString".into(), vec![rhs_expr])
             }
-            RustType::Option(_) => todo!(),
-            RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _, _) => todo!(),
-            RustType::Vec(_) => todo!(),
-            RustType::Array(_) => todo!(),
-            RustType::Tuple(_) => todo!(),
-            RustType::UserType(_, _) => todo!(),
-            RustType::MutRef(_) => rhs_expr,
-            RustType::Ref(_) => todo!(),
-            RustType::Fn(_, _, _, _, _) => todo!(),
-            RustType::Closure(_, _) => rhs_expr,
-            RustType::FnVanish => todo!(),
-            RustType::Box(_) => todo!(),
+            RustType2::Option(_) => todo!(),
+            RustType2::Result(_) => todo!(),
+            RustType2::StructOrEnum(_, _) => todo!(),
+            RustType2::Vec(_) => todo!(),
+            RustType2::Array(_) => todo!(),
+            RustType2::Tuple(_) => todo!(),
+            RustType2::UserType(_, _) => todo!(),
+            RustType2::MutRef(_) => rhs_expr,
+            RustType2::Ref(_) => todo!(),
+            RustType2::Fn(_, _, _) => todo!(),
+            RustType2::Closure(_, _) => rhs_expr,
+            RustType2::FnVanish => todo!(),
+            RustType2::Box(_) => todo!(),
         }
     }
 
@@ -811,7 +794,7 @@ pub fn handle_stmt(
     stmt: &Stmt,
     global_data: &mut GlobalData,
     current_module_path: &[String],
-) -> Vec<(JsStmt, RustType)> {
+) -> Vec<(JsStmt, RustType2)> {
     match stmt {
         Stmt::Expr(expr, closing_semi) => {
             let (js_expr, type_) = handle_expr(expr, global_data, current_module_path);
@@ -824,7 +807,7 @@ pub fn handle_stmt(
             vec![(
                 JsStmt::Expr(js_expr, closing_semi.is_some()),
                 if closing_semi.is_some() {
-                    RustType::Unit
+                    RustType2::Unit
                 } else {
                     type_
                 },
@@ -832,22 +815,22 @@ pub fn handle_stmt(
         }
         Stmt::Local(local) => vec![(
             handle_local(local, global_data, current_module_path),
-            RustType::Unit,
+            RustType2::Unit,
         )],
         Stmt::Item(item) => match item {
             // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
             Item::Const(item_const) => vec![(
                 handle_item_const(item_const, false, global_data, current_module_path),
-                RustType::Unit,
+                RustType2::Unit,
             )],
             Item::Enum(item_enum) => vec![(
                 handle_item_enum(item_enum.clone(), false, global_data, current_module_path),
-                RustType::Unit,
+                RustType2::Unit,
             )],
             Item::ExternCrate(_) => todo!(),
             Item::Fn(item_fn) => vec![(
                 handle_item_fn(item_fn, false, global_data, current_module_path),
-                RustType::Unit,
+                RustType2::Unit,
             )],
             Item::ForeignMod(_) => todo!(),
             Item::Impl(item_impl) => {
@@ -859,7 +842,7 @@ pub fn handle_stmt(
                 // )
                 handle_item_impl(item_impl, false, global_data, current_module_path)
                     .into_iter()
-                    .map(|stmt| (stmt, RustType::Unit))
+                    .map(|stmt| (stmt, RustType2::Unit))
                     .collect()
             }
             Item::Macro(_) => todo!(),
@@ -868,11 +851,11 @@ pub fn handle_stmt(
             // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
             Item::Struct(item_struct) => vec![(
                 handle_item_struct(item_struct, false, global_data, current_module_path),
-                RustType::Unit,
+                RustType2::Unit,
             )],
             Item::Trait(item_trait) => {
                 handle_item_trait(item_trait, false, global_data, current_module_path);
-                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)]
+                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
             }
             Item::TraitAlias(_) => todo!(),
             Item::Type(_) => todo!(),
@@ -882,7 +865,7 @@ pub fn handle_stmt(
             Item::Use(item_use) => {
                 let scope = global_data.scopes.last_mut().unwrap();
                 handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
-                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)]
+                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
             }
             Item::Verbatim(_) => todo!(),
             _ => todo!(),
@@ -892,7 +875,7 @@ pub fn handle_stmt(
                 handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
                 stmt_macro.semi_token.is_some(),
             ),
-            RustType::Unit,
+            RustType2::Unit,
         )],
     }
 }
@@ -906,7 +889,7 @@ pub fn parse_fn_body_stmts(
     stmts: &[Stmt],
     global_data: &mut GlobalData,
     current_module: &[String],
-) -> (Vec<JsStmt>, RustType) {
+) -> (Vec<JsStmt>, RustType2) {
     // let mut return_type = RustType::Todo;
     let mut js_stmts = Vec::new();
 
@@ -1090,8 +1073,8 @@ pub fn parse_fn_body_stmts(
                                     let (expr, partial) =
                                         handle_expr_path(expr_path, global_data, current_module);
                                     match partial {
-                                        crate::PartialRustType::StructIdent(_, _, _, _) => todo!(),
-                                        crate::PartialRustType::EnumVariantIdent(_, _, _, _, _) => {
+                                        crate::PartialRustType::StructIdent(_, _) => todo!(),
+                                        crate::PartialRustType::EnumVariantIdent(_, _, _) => {
                                             todo!()
                                         }
                                         crate::PartialRustType::RustType(type_, is_mut) => {
@@ -1149,7 +1132,7 @@ pub fn parse_fn_body_stmts(
     }
 
     if stmts.is_empty() {
-        (Vec::new(), RustType::Unit)
+        (Vec::new(), RustType2::Unit)
     } else {
         (js_stmts, return_type.unwrap())
     }

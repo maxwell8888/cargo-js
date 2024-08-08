@@ -296,7 +296,7 @@ enum RustType {
     /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
     ///
     /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
-    ImplTrait(Vec<(Vec<String>, Option<Vec<usize>>, RustTypeImplTrait)>),
+    ImplTrait(Vec<RustTypeImplTrait>),
     /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
     TypeParam(RustTypeParam),
     // TODO does TypeParam need to store information about the bounds?
@@ -433,6 +433,104 @@ impl RustType {
             RustType::Box(_) => todo!(),
         }
     }
+    fn to_rust_type2(self, global_data: &GlobalData) -> RustType2 {
+        match self {
+            RustType::NotAllowed => RustType2::NotAllowed,
+            RustType::Unknown => RustType2::Unknown,
+            RustType::Todo => RustType2::Todo,
+            RustType::Unit => RustType2::Unit,
+            RustType::Never => RustType2::Never,
+            RustType::ImplTrait(traits) => RustType2::ImplTrait(
+                traits
+                    .into_iter()
+                    .map(|trait_| match trait_ {
+                        RustTypeImplTrait::SimpleTrait(module_path, scope_id, name) => {
+                            let trait_def = global_data.lookup_trait_def_known_module(
+                                &module_path,
+                                &scope_id,
+                                &name,
+                            );
+                            RustTypeImplTrait2::SimpleTrait(trait_def)
+                        }
+                        RustTypeImplTrait::Fn(_) => todo!(),
+                    })
+                    .collect(),
+            ),
+            RustType::TypeParam(rust_type_param) => {
+                RustType2::TypeParam(rust_type_param.to_rust_type_param2(global_data))
+            }
+            RustType::I32 => RustType2::I32,
+            RustType::F32 => RustType2::F32,
+            RustType::Bool => RustType2::Bool,
+            RustType::String => RustType2::String,
+            RustType::Option(rust_type_param) => {
+                RustType2::Option(rust_type_param.to_rust_type_param2(global_data))
+            }
+            RustType::Result(rust_type_param) => {
+                RustType2::Result(rust_type_param.to_rust_type_param2(global_data))
+            }
+            RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+                let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
+                    &module_path,
+                    &scope_id,
+                    &name,
+                );
+                RustType2::StructOrEnum(
+                    type_params
+                        .into_iter()
+                        .map(|tp| tp.to_rust_type_param2(global_data))
+                        .collect(),
+                    item_def,
+                )
+            }
+            RustType::Vec(inner) => RustType2::Vec(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Array(inner) => RustType2::Array(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Tuple(inner) => RustType2::Tuple(
+                inner
+                    .into_iter()
+                    .map(|type_| type_.to_rust_type2(global_data))
+                    .collect(),
+            ),
+            RustType::Box(inner) => RustType2::Box(Box::new(inner.to_rust_type2(global_data))),
+            RustType::UserType(name, inner) => {
+                RustType2::UserType(name, Box::new(inner.to_rust_type2(global_data)))
+            }
+            RustType::MutRef(inner) => {
+                RustType2::MutRef(Box::new(inner.to_rust_type2(global_data)))
+            }
+            RustType::Ref(inner) => RustType2::Ref(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Fn(item_type_params, type_params, module_path, scope_id, name) => {
+                let fn_info = global_data.lookup_fn_info_known_module(
+                    &module_path,
+                    &scope_id,
+                    match &name {
+                        RustTypeFnType::Standalone(name) => name,
+                        RustTypeFnType::AssociatedFn(_, _) => todo!(),
+                    },
+                );
+                RustType2::Fn(
+                    item_type_params.map(|tps| {
+                        tps.into_iter()
+                            .map(|tp| tp.to_rust_type_param2(global_data))
+                            .collect()
+                    }),
+                    type_params
+                        .into_iter()
+                        .map(|tp| tp.to_rust_type_param2(global_data))
+                        .collect(),
+                    Box::new(fn_info),
+                )
+            }
+            RustType::FnVanish => RustType2::FnVanish,
+            RustType::Closure(inputs, return_) => RustType2::Closure(
+                inputs
+                    .into_iter()
+                    .map(|type_| type_.to_rust_type2(global_data))
+                    .collect(),
+                Box::new(return_.to_rust_type2(global_data)),
+            ),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -459,9 +557,9 @@ enum RustType2 {
     /// Fns might return impl FooTrait, and that will also be the type of eg any var that the result is assigned to. It's fine not knowing the exact type because you can only call the trait's methods on it, but need to be able to look up the trait's methods to know what type they return.
     ///
     /// Vec<(module path, scope id, RustTypeImplTrait (ie simple FooTrait or a fn trait: Fn(i32) -> i32))>
-    ImplTrait(Vec<RustTypeImplTrait>),
+    ImplTrait(Vec<RustTypeImplTrait2>),
     /// Why does RustTypeParam need to hold resolved values, surely when the param is resolved we just use that type directly? In some cases, eg a fn that returns T, if T is resolved we can just return the resolved type when the fn is called. Other times it might be that the type is resolved, but we need to know later down the line which param was resolved so we can resolve the param where it is used in other places??? Possible but need examples to justify it.
-    TypeParam(RustTypeParam),
+    TypeParam(RustTypeParam2),
     // TODO does TypeParam need to store information about the bounds?
     // TODO surely a struct and impl block can have multiple type params with the same name? So we need to keep track of where the param was defined to know which param eg a method arg's type should update
     // TypeParam(String),
@@ -473,43 +571,112 @@ enum RustType2 {
     String,
     /// (generic)
     /// The RustType for option *must* be a type param. (I believe) It is important to always have a type param to ensure we can always lookup the name of the generic to match against generics in methods etc NO, we can always lookup the name of the generic on the item_def
-    Option(RustTypeParam),
+    Option(RustTypeParam2),
     // Option(Box<RustType>),
     /// (generic)
-    Result(RustTypeParam),
-    StructOrEnum(ItemDefinition),
+    Result(RustTypeParam2),
+    StructOrEnum(Vec<RustTypeParam2>, ItemDefinition),
     // Struct(Vec<RustTypeParam>, Vec<String>, String),
     /// (type params, module path, name)  
     // Enum(Vec<RustTypeParam>, Vec<String>, String),
     // TODO Should we use the same type for both Arrays and Vecs, because they get transpiled to the same thing anyway? NO because we need to handle the types differently, ie arrays need `.copy()` adding when they are moved (although this won't be necessary if the previous value is not used after the move/copy, but this would be hard to determine so need to just always add copy).
-    Vec(Box<RustType>),
-    Array(Box<RustType>),
-    Tuple(Vec<RustType>),
+    Vec(Box<RustType2>),
+    Array(Box<RustType2>),
+    Tuple(Vec<RustType2>),
     /// Even though Box::new() vanishes when transpiled, we need to keep track of which vars are Boxed because the dereferencing behaves differently
-    Box(Box<RustType>),
+    Box(Box<RustType2>),
     /// ie `type FooInt = Foo<i32>;`
     /// (name, type)
-    UserType(String, Box<RustType>),
+    UserType(String, Box<RustType2>),
     /// (&mut T)
-    MutRef(Box<RustType>),
+    MutRef(Box<RustType2>),
     /// (& T) useful to track & as well as &mut so we know what * is operating on?? NO I think it doesn't matter in practice, we can just check if we have a `&mut` expr and if not just ignore the *
-    Ref(Box<RustType>),
+    Ref(Box<RustType2>),
     /// (type params, return type)
     // Fn(Vec<RustTypeParam>, Box<RustType>),
     /// fn might be an associated fn in which case first arg will be Some() containing the (possibly resolved) generics of the impl target/self type. Possibly want to also record which type params are defined on the impl block, but see if we can get away without it initially given any impl block type params pretty much have to appear in the target/self type.
     /// (item type params, type params, module path, scope id, name)
     Fn(
-        Option<Vec<RustTypeParam>>,
-        Vec<RustTypeParam>,
+        Option<Vec<RustTypeParam2>>,
+        Vec<RustTypeParam2>,
         // RustTypeFnType,
-        FnInfo,
+        Box<FnInfo>,
     ),
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
     /// We need a separate type for closures because there is no definition with a path/ident to look up like RustType::Fn. Maybe another reason to store the type info directly and avoid using lookups so we don't need two separate variants.
     /// (input types, return type)
-    Closure(Vec<RustType>, Box<RustType>),
+    Closure(Vec<RustType2>, Box<RustType2>),
 }
+impl RustType2 {
+    fn is_js_primative(&self) -> bool {
+        match self {
+            RustType2::NotAllowed => todo!(),
+            RustType2::Unknown => todo!(),
+            RustType2::Todo => todo!(),
+            RustType2::Unit => todo!(),
+            RustType2::Never => todo!(),
+            RustType2::ImplTrait(_) => todo!(),
+            RustType2::TypeParam(_) => todo!(),
+            RustType2::I32 | RustType2::F32 | RustType2::Bool | RustType2::String => true,
+            RustType2::Option(inner) => {
+                //
+                match &inner.type_ {
+                    RustTypeParamValue2::Unresolved => todo!(),
+                    RustTypeParamValue2::RustType(resolved_type) => resolved_type.is_js_primative(),
+                }
+            }
+            RustType2::Result(_) => todo!(),
+            RustType2::StructOrEnum(_, _) => false,
+            RustType2::Vec(_) => todo!(),
+            RustType2::Array(_) => false,
+            RustType2::Tuple(_) => todo!(),
+            RustType2::UserType(_, _) => todo!(),
+            RustType2::MutRef(_) => false,
+            RustType2::Ref(_) => todo!(),
+            RustType2::Fn(_, _, _) => false,
+            RustType2::Closure(_, _) => todo!(),
+            RustType2::FnVanish => todo!(),
+            RustType2::Box(_) => todo!(),
+        }
+    }
+    fn is_mut_ref_of_js_primative(&self, impl_targets: &[RustType2]) -> bool {
+        match self {
+            RustType2::NotAllowed => todo!(),
+            RustType2::Unknown => todo!(),
+            RustType2::Todo => todo!(),
+            RustType2::Unit => false,
+            RustType2::Never => todo!(),
+            RustType2::ImplTrait(_) => todo!(),
+            RustType2::TypeParam(_) => todo!(),
+            RustType2::I32 => false,
+            RustType2::F32 => false,
+            RustType2::Bool => false,
+            RustType2::String => false,
+            RustType2::Option(_) => todo!(),
+            RustType2::Result(_) => todo!(),
+            RustType2::StructOrEnum(_, _) => false,
+            RustType2::Vec(_) => todo!(),
+            RustType2::Array(_) => todo!(),
+            RustType2::Tuple(_) => todo!(),
+            RustType2::UserType(_, _) => todo!(),
+            RustType2::MutRef(inner) => inner.is_js_primative(),
+            RustType2::Ref(_) => todo!(),
+            RustType2::Fn(_, _, _) => todo!(),
+            RustType2::Closure(_, _) => todo!(),
+            RustType2::FnVanish => todo!(),
+            RustType2::Box(_) => todo!(),
+        }
+    }
+}
+
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// enum RustTypeFnType2 {
+//     /// (fn name)
+//     Standalone(FnInfo),
+//     /// (item name, fn name)
+//     AssociatedFn(ItemDefinition, FnInfo),
+// }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeFnType {
@@ -530,9 +697,15 @@ enum RustTypeImplTrait2 {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeImplTrait {
-    SimpleTrait(String),
+    SimpleTrait(Vec<String>, Option<Vec<usize>>, String),
     /// (return type)
     Fn(RustType),
+}
+
+#[derive(Debug, Clone)]
+struct RustTypeParam2 {
+    name: String,
+    type_: RustTypeParamValue2,
 }
 
 // Do we want to also store the trait bounds of each type param? This way if we have an unresolved type param that calls some function, we will know what trait to look up to find it. In some cases this might also remove the need for looking forward to resolve type params, if all we need to do with the type param/value/intance/type is call a method on it.
@@ -541,7 +714,28 @@ struct RustTypeParam {
     name: String,
     type_: RustTypeParamValue,
 }
+impl RustTypeParam {
+    fn to_rust_type_param2(self, global_data: &GlobalData) -> RustTypeParam2 {
+        RustTypeParam2 {
+            name: self.name,
+            type_: match self.type_ {
+                RustTypeParamValue::Unresolved => RustTypeParamValue2::Unresolved,
+                RustTypeParamValue::RustType(type_) => {
+                    RustTypeParamValue2::RustType(Box::new(type_.to_rust_type2(global_data)))
+                }
+            },
+        }
+    }
+}
+
 // impl RustTypeGeneric
+
+#[derive(Debug, Clone)]
+enum RustTypeParamValue2 {
+    /// Can't be known at this point in analysis, eg the type is inferred somewhere else in the code
+    Unresolved,
+    RustType(Box<RustType2>),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RustTypeParamValue {
@@ -557,12 +751,12 @@ struct ScopedVar {
     // TODO don't need this because it is part of the type and is record by the `type_` field
     // mut_ref: bool,
     // TODO
-    type_: RustType,
+    type_: RustType2,
 }
 impl ScopedVar {
     #[allow(dead_code)]
     fn is_mut_ref(&self) -> bool {
-        matches!(self.type_, RustType::MutRef(_))
+        matches!(self.type_, RustType2::MutRef(_))
     }
 }
 
@@ -684,7 +878,7 @@ struct JsImplBlock2 {
     _generics: Vec<RustGeneric>,
     trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
     // Note this can a generic param
-    target: RustType,
+    target: RustType2,
     /// Vec<(TODO whether the method actually gets used (for some eg `impl<T> Foo for T {}` blocks that apply to everything, it is hard to work out for which items the methods are actually used, since the criteria is whether the impl'd trait ie Foo is in scope/accessible at the point that the method is called, so the easiest approach is to just add everything and then track which methods actually get called), JS method/field)>
     items: Vec<(bool, RustImplItemJs)>,
 }
@@ -694,24 +888,24 @@ impl JsImplBlock2 {
             Some((_module_path, _scope_id, name)) => name,
             None => "no_trait",
         };
-        fn rust_type_js_name(rust_type: &RustType) -> String {
+        fn rust_type_js_name(rust_type: &RustType2) -> String {
             match rust_type {
-                RustType::StructOrEnum(_, _, _, name) => {
+                RustType2::StructOrEnum(_, item_def) => {
                     // TODO get proper deduplicated js name
-                    name.clone()
+                    item_def.ident.clone()
                 }
-                RustType::TypeParam(rust_type_param) => {
+                RustType2::TypeParam(rust_type_param) => {
                     format!("for__{}", rust_type_param.name)
                 }
-                RustType::Option(inner) => {
+                RustType2::Option(inner) => {
                     // The idea here is to differeniate between eg Option<T> and Option<i32>
                     let generic_name = match &inner.type_ {
-                        RustTypeParamValue::Unresolved => inner.name.clone(),
-                        RustTypeParamValue::RustType(resolved) => rust_type_js_name(resolved),
+                        RustTypeParamValue2::Unresolved => inner.name.clone(),
+                        RustTypeParamValue2::RustType(resolved) => rust_type_js_name(resolved),
                     };
                     format!("Option_{}_", generic_name)
                 }
-                RustType::I32 => {
+                RustType2::I32 => {
                     // The idea here is to differeniate between eg Option<T> and Option<i32>
                     "i32".to_string()
                 }
@@ -828,7 +1022,7 @@ struct GlobalData {
     /// (the purpose originally was for self not Self... which is not needed, but Self is neccessary) the purpose of this is for storing the type of `Self` *not* `self`, eg if a impl fn body contains `let foo: Self = Self {};`, we will want to know what Self is so we know the types of `foo.some_field` etc
     ///
     /// We have a Vec in case there is an impl block nested inside an impl block?
-    impl_block_target_type: Vec<RustType>,
+    impl_block_target_type: Vec<RustType2>,
     /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
     /// TODO Should be Vec of Vecs for same reason impl_block_target_type is a Vec
     _impl_block_type_params: Vec<RustTypeParam>,
@@ -1146,7 +1340,7 @@ impl GlobalData {
         current_module: &[String],
         // generics: &Vec<RustTypeParam>,
         syn_type: &Type,
-    ) -> (Vec<RustTypeParam>, Vec<String>, Option<Vec<usize>>, String) {
+    ) -> ItemDefinition {
         let type_path = match syn_type {
             Type::Path(type_path) => {
                 type_path
@@ -1154,7 +1348,7 @@ impl GlobalData {
                     .segments
                     .iter()
                     .map(|seg| {
-                        RustPathSegment {
+                        RustPathSegment2 {
                             ident: seg.ident.to_string(),
                             turbofish: match seg.arguments {
                                 PathArguments::None => Vec::new(),
@@ -1190,19 +1384,7 @@ impl GlobalData {
             &item_path[0].ident,
         );
         // dbg!("ytes222");
-        (
-            item_def
-                .generics
-                .iter()
-                .map(|gen| RustTypeParam {
-                    name: gen.clone(),
-                    type_: RustTypeParamValue::Unresolved,
-                })
-                .collect::<Vec<_>>(),
-            module_path,
-            item_scope_id,
-            item_path[0].ident.clone(),
-        )
+        item_def
     }
 
     // fn lookup_item_def_known_module_assert_not_func(
@@ -1243,6 +1425,36 @@ impl GlobalData {
     //             .clone()
     //     }
     // }
+
+    fn lookup_trait_def_known_module(
+        &self,
+        module_path: &[String],
+        scope_id: &Option<Vec<usize>>,
+        name: &str,
+    ) -> RustTraitDefinition {
+        let module = self.modules.iter().find(|m| m.path == module_path).unwrap();
+        let scoped_fn_info = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                module
+                    .scoped_various_definitions
+                    .iter()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| {
+                svd.1
+                    .trait_definitons
+                    .iter()
+                    .find(|fn_info| fn_info.name == name)
+            });
+        let module_fn_info = module
+            .various_definitions
+            .trait_definitons
+            .iter()
+            .find(|fn_info| fn_info.name == name);
+
+        scoped_fn_info.or(module_fn_info).unwrap().clone()
+    }
 
     fn lookup_fn_info_known_module(
         &self,
@@ -1420,7 +1632,7 @@ impl GlobalData {
             true,
             true,
             path.iter()
-                .map(|seg| RustPathSegment {
+                .map(|seg| RustPathSegment2 {
                     ident: seg.clone(),
                     turbofish: Vec::new(),
                 })
@@ -1488,7 +1700,7 @@ impl GlobalData {
             true,
             true,
             path.into_iter()
-                .map(|seg| RustPathSegment {
+                .map(|seg| RustPathSegment2 {
                     ident: seg.as_ref().to_string(),
                     turbofish: Vec::new(),
                 })
@@ -1540,14 +1752,14 @@ impl GlobalData {
     // fn lookup_method_or_associated_fn(
     fn lookup_associated_fn(
         &self,
-        item_generics: &[RustTypeParam],
+        item_generics: &[RustTypeParam2],
         item_module_path: &[String],
         item_scope_id: &Option<Vec<usize>>,
-        sub_path: &RustPathSegment,
+        sub_path: &RustPathSegment2,
         _item_path_seg: &str,
         item_def: &ItemDefinition,
         // ) -> Option<PartialRustType> {
-    ) -> Option<RustType> {
+    ) -> Option<RustType2> {
         // let impl_method = self.lookup_impl_item_item(
         //     item_generics,
         //     item_module_path,
@@ -1619,9 +1831,9 @@ impl GlobalData {
                             .turbofish
                             .iter()
                             .enumerate()
-                            .map(|(i, g)| RustTypeParam {
+                            .map(|(i, g)| RustTypeParam2 {
                                 name: fn_info.generics[i].clone(),
-                                type_: RustTypeParamValue::RustType(Box::new(g.clone())),
+                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
                             })
                             .collect::<Vec<_>>()
                     } else {
@@ -1630,9 +1842,9 @@ impl GlobalData {
                         fn_info
                             .generics
                             .iter()
-                            .map(|g| RustTypeParam {
+                            .map(|g| RustTypeParam2 {
                                 name: g.clone(),
-                                type_: RustTypeParamValue::Unresolved,
+                                type_: RustTypeParamValue2::Unresolved,
                             })
                             .collect::<Vec<_>>()
                     };
@@ -1643,15 +1855,14 @@ impl GlobalData {
                     //     item_module_path.clone(),
                     //     RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
                     // )))
-                    Some(RustType::Fn(
+                    Some(RustType2::Fn(
                         Some(item_generics.to_vec()),
                         fn_generics,
-                        item_module_path.to_vec(),
-                        item_scope_id.clone(),
-                        RustTypeFnType::AssociatedFn(
-                            item_def.ident.clone(),
-                            sub_path.ident.clone(),
-                        ),
+                        // RustTypeFnType::AssociatedFn(
+                        //     item_def.ident.clone(),
+                        //     sub_path.ident.clone(),
+                        // ),
+                        Box::new(fn_info),
                     ))
                 }
                 RustImplItemItemNoJs::Const => todo!(),
@@ -1668,7 +1879,7 @@ impl GlobalData {
         // item_module_path: &Vec<String>,
         // item_scope_id: &Option<Vec<usize>>,
         item_def: &ItemDefinition,
-        sub_path: &RustPathSegment,
+        sub_path: &RustPathSegment2,
     ) -> Option<RustImplItemNoJs> {
         // let module = self
         //     .modules
@@ -2996,7 +3207,7 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                         .filter(|jib| &jib.unique_id == impl_block_id)
                     {
                         let is_generic_impl =
-                            matches!(js_impl_block.target, RustType::TypeParam(_));
+                            matches!(js_impl_block.target, RustType2::TypeParam(_));
 
                         for (_used, impl_item) in &js_impl_block.items {
                             // TODO implement used
@@ -3717,6 +3928,12 @@ pub struct RustPathSegment {
     turbofish: Vec<RustType>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RustPathSegment2 {
+    ident: String,
+    turbofish: Vec<RustType2>,
+}
+
 // return type for `handle_expr_path` because the path might not comprise a full expression/type, ie a tuple struct or enum variant that has args so requires being called
 #[derive(Debug, Clone)]
 enum PartialRustType {
@@ -3725,21 +3942,15 @@ enum PartialRustType {
     /// So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
     ///
     /// (type params, module path, name) module path is None for scoped structs
-    StructIdent(Vec<RustTypeParam>, Vec<String>, Option<Vec<usize>>, String),
+    StructIdent(Vec<RustTypeParam2>, ItemDefinition),
     /// This is only used for instantiation of enum variants with args which are parsed as an ExprCall, since normal enum variant instantiation are simply evaluated directly to an enum instance.
     /// Note we need to record type params because we might be parsing something like the `MyGenericEnum::<i32>::MyVariant` portion of `MyGenericEnum::<i32>::MyVariant("hi")` where the *enum definition* has had generics resolved
     ///
     /// (type params, module path, scope id, enum name, variant name) module path is None for scoped structs
     ///
     /// IMPORTANT NOTE this variant should only be used for tuple and struct variants, normal path variants should be a PartialRustType::RustType
-    EnumVariantIdent(
-        Vec<RustTypeParam>,
-        Vec<String>,
-        Option<Vec<usize>>,
-        String,
-        String,
-    ),
-    RustType(RustType, bool),
+    EnumVariantIdent(Vec<RustTypeParam2>, ItemDefinition, String),
+    RustType(RustType2, bool),
 }
 
 /// For checking whether a struct item definition (possibly with resolved type params) matches the target type of a non-trait impl. Note this is not a simple equals since a Foo<i32> item matches a Foo<T> impl.

@@ -8,7 +8,8 @@ use tracing::{debug, info};
 
 use crate::{
     js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
-    GlobalData, RustPathSegment, RustType, RustTypeImplTrait, RustTypeParam, RustTypeParamValue,
+    GlobalData, RustPathSegment, RustPathSegment2, RustType, RustType2, RustTypeImplTrait,
+    RustTypeImplTrait2, RustTypeParam, RustTypeParam2, RustTypeParamValue, RustTypeParamValue2,
     ScopedVar,
 };
 use quote::quote;
@@ -18,7 +19,7 @@ use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
 ///
 /// Currently used by handle_local and handle_match
 // fn handle_pat(pat: &Pat, scope: &mut GlobalDataScope, current_type: RustType) -> LocalName {
-fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -> LocalName {
+fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType2) -> LocalName {
     let scope = global_data.scopes.last_mut().unwrap();
     match pat {
         Pat::Const(_) => todo!(),
@@ -40,11 +41,11 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
         Pat::Rest(_) => todo!(),
         Pat::Slice(pat_slice) => {
             //
-            fn get_element_type(rust_type: RustType) -> RustType {
+            fn get_element_type(rust_type: RustType2) -> RustType2 {
                 match rust_type {
-                    RustType::Vec(element_type) => *element_type,
-                    RustType::Array(element_type) => *element_type,
-                    RustType::MutRef(inner) => get_element_type(*inner),
+                    RustType2::Vec(element_type) => *element_type,
+                    RustType2::Array(element_type) => *element_type,
+                    RustType2::MutRef(inner) => get_element_type(*inner),
                     other => {
                         dbg!(other);
                         todo!()
@@ -68,14 +69,8 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType) -
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                            let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                );
-                            item_def.get_type(&field.member)
+                        RustType2::StructOrEnum(_type_params, item_def) => {
+                            item_def.get_type(&field.member, &global_data)
                         }
                         _ => todo!(),
                     };
@@ -120,7 +115,7 @@ fn handle_destructure_pat(
     pat: &Pat,
     member: &Member,
     global_data: &mut GlobalData,
-    current_type: RustType,
+    current_type: RustType2,
 ) -> DestructureValue {
     let scope = global_data.scopes.last_mut().unwrap();
     match pat {
@@ -163,14 +158,8 @@ fn handle_destructure_pat(
                 .iter()
                 .map(|field| {
                     let field_type = match &current_type {
-                        RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                            let item_def = global_data
-                                .lookup_item_def_known_module_assert_not_func2(
-                                    module_path,
-                                    scope_id,
-                                    name,
-                                );
-                            item_def.get_type(&field.member)
+                        RustType2::StructOrEnum(_type_params, item_def) => {
+                            item_def.get_type(&field.member, &global_data)
                         }
                         _ => todo!(),
                     };
@@ -203,14 +192,14 @@ pub fn resolve_path(
     // TODO can we combine this with `look_for_scoped_vars`?
     look_for_scoped_items: bool,
     use_private_items: bool,
-    mut segs: Vec<RustPathSegment>,
+    mut segs: Vec<RustPathSegment2>,
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     global_data: &GlobalData,
     current_mod: &[String],
     // Only used to determine if current module is the original module
     orig_mod: &[String],
     current_scope_id: &Option<Vec<usize>>,
-) -> (Vec<String>, Vec<RustPathSegment>, Option<Vec<usize>>) {
+) -> (Vec<String>, Vec<RustPathSegment2>, Option<Vec<usize>>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
@@ -492,7 +481,7 @@ pub fn resolve_path(
         // TODO IMPORTANT seems like we are not correctly populating turbofish here
         let mut use_segs = use_segs
             .into_iter()
-            .map(|s| RustPathSegment {
+            .map(|s| RustPathSegment2 {
                 ident: s,
                 turbofish: Vec::new(),
             })
@@ -609,7 +598,7 @@ fn parse_fn_input_or_field(
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     global_data: &mut GlobalData,
-) -> RustType {
+) -> RustType2 {
     debug!(type_ = ?quote! { #type_ }.to_string(), "parse_fn_input_or_field");
     match type_ {
         Type::Array(_) => todo!(),
@@ -649,11 +638,7 @@ fn parse_fn_input_or_field(
                                     &global_data.scope_id_as_option(),
                                     trait_name,
                                 );
-                            Some((
-                                module_path,
-                                found_scope_id,
-                                RustTypeImplTrait::SimpleTrait(trait_definition.name.clone()),
-                            ))
+                            Some(RustTypeImplTrait2::SimpleTrait(trait_definition))
                         }
                         TypeParamBound::Lifetime(_) => None,
                         TypeParamBound::Verbatim(_) => todo!(),
@@ -662,7 +647,7 @@ fn parse_fn_input_or_field(
                 })
                 .collect::<Vec<_>>();
 
-            RustType::ImplTrait(bounds)
+            RustType2::ImplTrait(bounds)
         }
         Type::Infer(_) => todo!(),
         Type::Macro(_) => todo!(),
@@ -699,7 +684,7 @@ fn parse_fn_input_or_field(
                     //     }
                     //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                     // };
-                    return RustType::TypeParam(generic.clone());
+                    return RustType2::TypeParam(generic.clone().to_rust_type_param2(global_data));
                 }
 
                 // For fns:
@@ -714,7 +699,7 @@ fn parse_fn_input_or_field(
                 // For impl blocks
                 match seg_name_str {
                     // "i32" => RustType::I32,
-                    "bool" => RustType::Bool,
+                    "bool" => RustType2::Bool,
                     // "str" => RustType::String,
                     "Option" => {
                         let generic_type = match &seg.arguments {
@@ -737,10 +722,10 @@ fn parse_fn_input_or_field(
                             }
                             _ => todo!(),
                         };
-                        RustType::Option(RustTypeParam {
+                        RustType2::Option(RustTypeParam2 {
                             // TODO "T" shouldn't be hardcoded here
                             name: "T".to_string(),
-                            type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                            type_: RustTypeParamValue2::RustType(Box::new(generic_type)),
                         })
                     }
                     // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
@@ -780,9 +765,9 @@ fn parse_fn_input_or_field(
                                             {
                                                 match parent_generic.type_ {
                                                     RustTypeParamValue::Unresolved => {
-                                                        RustTypeParam {
+                                                        RustTypeParam2 {
                                                             name: gen_arg_name,
-                                                            type_: RustTypeParamValue::Unresolved,
+                                                            type_: RustTypeParamValue2::Unresolved,
                                                         }
                                                     }
                                                     // "an item definition should not have any resovled type params"
@@ -797,9 +782,9 @@ fn parse_fn_input_or_field(
                                                     current_module,
                                                     global_data,
                                                 );
-                                                RustTypeParam {
+                                                RustTypeParam2 {
                                                     name: gen_arg_name,
-                                                    type_: RustTypeParamValue::RustType(Box::new(
+                                                    type_: RustTypeParamValue2::RustType(Box::new(
                                                         param_rust_type,
                                                     )),
                                                 }
@@ -827,24 +812,19 @@ fn parse_fn_input_or_field(
                                 if has_mut_keyword {
                                     global_data.rust_prelude_types.rust_integer = true;
                                 }
-                                RustType::I32
+                                RustType2::I32
                             } else if item_definition.ident == "String"
                                 || item_definition.ident == "str"
                             {
                                 if has_mut_keyword {
                                     global_data.rust_prelude_types.rust_string = true;
                                 }
-                                RustType::String
+                                RustType2::String
                             } else {
                                 todo!()
                             }
                         } else {
-                            RustType::StructOrEnum(
-                                item_type_params,
-                                item_definition_module_path,
-                                resolved_scope_id,
-                                item_definition.ident.to_string(),
-                            )
+                            RustType2::StructOrEnum(item_type_params, item_definition)
                         }
                     }
                 }
@@ -874,17 +854,17 @@ fn parse_fn_input_or_field(
             );
             if type_reference.mutability.is_some() {
                 match type_ {
-                    RustType::I32 => {
+                    RustType2::I32 => {
                         global_data.rust_prelude_types.rust_integer = true;
                     }
-                    RustType::F32 => todo!(),
-                    RustType::Bool => todo!(),
-                    RustType::String => {
+                    RustType2::F32 => todo!(),
+                    RustType2::Bool => todo!(),
+                    RustType2::String => {
                         global_data.rust_prelude_types.rust_string = true;
                     }
                     _ => {}
                 }
-                RustType::MutRef(Box::new(type_))
+                RustType2::MutRef(Box::new(type_))
             } else {
                 // RustType::Ref(Box::new(type_))
                 type_
