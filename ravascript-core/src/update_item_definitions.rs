@@ -128,7 +128,7 @@ pub fn update_item_definitions(
                     if target_item_module == [PRELUDE_MODULE_PATH] {
                         match &target_item.ident[..] {
                             "i32" => (RustType::I32, false),
-                            other => {
+                            _other => {
                                 // TODO just defaulting to this because we want to get rid of all the special RustType variants anyway
                                 (
                                     RustType::StructOrEnum(
@@ -702,7 +702,7 @@ impl ItemDefinition {
                             Member::Unnamed(_) => todo!(),
                         };
                         (field_name == &field_member_name)
-                            .then_some(field_type.clone().to_rust_type2(global_data))
+                            .then_some(field_type.clone().into_rust_type2(global_data))
                     })
                     .unwrap()
                     .clone(),
@@ -830,13 +830,13 @@ pub struct RustTypeParam {
     pub type_: RustTypeParamValue,
 }
 impl RustTypeParam {
-    pub fn to_rust_type_param2(self, global_data: &GlobalData) -> RustTypeParam2 {
+    pub fn into_rust_type_param2(self, global_data: &GlobalData) -> RustTypeParam2 {
         RustTypeParam2 {
             name: self.name,
             type_: match self.type_ {
                 RustTypeParamValue::Unresolved => RustTypeParamValue2::Unresolved,
                 RustTypeParamValue::RustType(type_) => {
-                    RustTypeParamValue2::RustType(Box::new(type_.to_rust_type2(global_data)))
+                    RustTypeParamValue2::RustType(Box::new(type_.into_rust_type2(global_data)))
                 }
             },
         }
@@ -1063,66 +1063,7 @@ pub enum RustType {
     Closure(Vec<RustType>, Box<RustType>),
 }
 impl RustType {
-    fn is_js_primative(&self) -> bool {
-        match self {
-            RustType::NotAllowed => todo!(),
-            RustType::Unknown => todo!(),
-            RustType::Todo => todo!(),
-            RustType::Unit => todo!(),
-            RustType::Never => todo!(),
-            RustType::ImplTrait(_) => todo!(),
-            RustType::TypeParam(_) => todo!(),
-            RustType::I32 | RustType::F32 | RustType::Bool | RustType::String => true,
-            RustType::Option(inner) => {
-                //
-                match &inner.type_ {
-                    RustTypeParamValue::Unresolved => todo!(),
-                    RustTypeParamValue::RustType(resolved_type) => resolved_type.is_js_primative(),
-                }
-            }
-            RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _, _) => false,
-            RustType::Vec(_) => todo!(),
-            RustType::Array(_) => false,
-            RustType::Tuple(_) => todo!(),
-            RustType::UserType(_, _) => todo!(),
-            RustType::MutRef(_) => false,
-            RustType::Ref(_) => todo!(),
-            RustType::Fn(_, _, _, _, _) => false,
-            RustType::Closure(_, _) => todo!(),
-            RustType::FnVanish => todo!(),
-            RustType::Box(_) => todo!(),
-        }
-    }
-    fn is_mut_ref_of_js_primative(&self, impl_targets: &[RustType]) -> bool {
-        match self {
-            RustType::NotAllowed => todo!(),
-            RustType::Unknown => todo!(),
-            RustType::Todo => todo!(),
-            RustType::Unit => false,
-            RustType::Never => todo!(),
-            RustType::ImplTrait(_) => todo!(),
-            RustType::TypeParam(_) => todo!(),
-            RustType::I32 => false,
-            RustType::F32 => false,
-            RustType::Bool => false,
-            RustType::String => false,
-            RustType::Option(_) => todo!(),
-            RustType::Result(_) => todo!(),
-            RustType::StructOrEnum(_, _, _, _) => false,
-            RustType::Vec(_) => todo!(),
-            RustType::Array(_) => todo!(),
-            RustType::Tuple(_) => todo!(),
-            RustType::UserType(_, _) => todo!(),
-            RustType::MutRef(inner) => inner.is_js_primative(),
-            RustType::Ref(_) => todo!(),
-            RustType::Fn(_, _, _, _, _) => todo!(),
-            RustType::Closure(_, _) => todo!(),
-            RustType::FnVanish => todo!(),
-            RustType::Box(_) => todo!(),
-        }
-    }
-    pub fn to_rust_type2(self, global_data: &GlobalData) -> RustType2 {
+    pub fn into_rust_type2(self, global_data: &GlobalData) -> RustType2 {
         match self {
             RustType::NotAllowed => RustType2::NotAllowed,
             RustType::Unknown => RustType2::Unknown,
@@ -1146,17 +1087,17 @@ impl RustType {
                     .collect(),
             ),
             RustType::TypeParam(rust_type_param) => {
-                RustType2::TypeParam(rust_type_param.to_rust_type_param2(global_data))
+                RustType2::TypeParam(rust_type_param.into_rust_type_param2(global_data))
             }
             RustType::I32 => RustType2::I32,
             RustType::F32 => RustType2::F32,
             RustType::Bool => RustType2::Bool,
             RustType::String => RustType2::String,
             RustType::Option(rust_type_param) => {
-                RustType2::Option(rust_type_param.to_rust_type_param2(global_data))
+                RustType2::Option(rust_type_param.into_rust_type_param2(global_data))
             }
             RustType::Result(rust_type_param) => {
-                RustType2::Result(rust_type_param.to_rust_type_param2(global_data))
+                RustType2::Result(rust_type_param.into_rust_type_param2(global_data))
             }
             RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
                 let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
@@ -1167,27 +1108,29 @@ impl RustType {
                 RustType2::StructOrEnum(
                     type_params
                         .into_iter()
-                        .map(|tp| tp.to_rust_type_param2(global_data))
+                        .map(|tp| tp.into_rust_type_param2(global_data))
                         .collect(),
                     item_def,
                 )
             }
-            RustType::Vec(inner) => RustType2::Vec(Box::new(inner.to_rust_type2(global_data))),
-            RustType::Array(inner) => RustType2::Array(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Vec(inner) => RustType2::Vec(Box::new(inner.into_rust_type2(global_data))),
+            RustType::Array(inner) => {
+                RustType2::Array(Box::new(inner.into_rust_type2(global_data)))
+            }
             RustType::Tuple(inner) => RustType2::Tuple(
                 inner
                     .into_iter()
-                    .map(|type_| type_.to_rust_type2(global_data))
+                    .map(|type_| type_.into_rust_type2(global_data))
                     .collect(),
             ),
-            RustType::Box(inner) => RustType2::Box(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Box(inner) => RustType2::Box(Box::new(inner.into_rust_type2(global_data))),
             RustType::UserType(name, inner) => {
-                RustType2::UserType(name, Box::new(inner.to_rust_type2(global_data)))
+                RustType2::UserType(name, Box::new(inner.into_rust_type2(global_data)))
             }
             RustType::MutRef(inner) => {
-                RustType2::MutRef(Box::new(inner.to_rust_type2(global_data)))
+                RustType2::MutRef(Box::new(inner.into_rust_type2(global_data)))
             }
-            RustType::Ref(inner) => RustType2::Ref(Box::new(inner.to_rust_type2(global_data))),
+            RustType::Ref(inner) => RustType2::Ref(Box::new(inner.into_rust_type2(global_data))),
             RustType::Fn(item_type_params, type_params, module_path, scope_id, name) => {
                 let fn_info = global_data.lookup_fn_info_known_module(
                     &module_path,
@@ -1200,12 +1143,12 @@ impl RustType {
                 RustType2::Fn(
                     item_type_params.map(|tps| {
                         tps.into_iter()
-                            .map(|tp| tp.to_rust_type_param2(global_data))
+                            .map(|tp| tp.into_rust_type_param2(global_data))
                             .collect()
                     }),
                     type_params
                         .into_iter()
-                        .map(|tp| tp.to_rust_type_param2(global_data))
+                        .map(|tp| tp.into_rust_type_param2(global_data))
                         .collect(),
                     Box::new(fn_info),
                 )
@@ -1214,9 +1157,9 @@ impl RustType {
             RustType::Closure(inputs, return_) => RustType2::Closure(
                 inputs
                     .into_iter()
-                    .map(|type_| type_.to_rust_type2(global_data))
+                    .map(|type_| type_.into_rust_type2(global_data))
                     .collect(),
-                Box::new(return_.to_rust_type2(global_data)),
+                Box::new(return_.into_rust_type2(global_data)),
             ),
         }
     }
@@ -1230,6 +1173,7 @@ impl RustType {
 //     AssociatedFn(ItemDefinition, FnInfo),
 // }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RustTypeFnType {
     /// (fn name)

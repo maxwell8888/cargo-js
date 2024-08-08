@@ -5,16 +5,13 @@ use biome_js_syntax::JsFileSource;
 
 use handle_syn::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
-    handle_item_trait, handle_stmt, GlobalData, JsImplItem, RustImplItemItemJs, RustType2,
+    handle_item_trait, handle_stmt, GlobalData, RustImplItemItemJs, RustType2,
 };
 use js_ast::{
     FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
 use std::{fmt::Debug, fs, path::PathBuf};
-use syn::{
-    ExprPath, GenericParam, ImplItem, Item, ItemFn, ItemImpl, ItemMod, ItemTrait, PathArguments,
-    Type, UseTree,
-};
+use syn::{ExprPath, ImplItem, Item, ItemFn, ItemMod, ItemTrait, UseTree};
 use tracing::debug_span;
 
 mod handle_syn;
@@ -23,7 +20,7 @@ pub mod prelude;
 pub mod rust_prelude;
 
 mod duplicate_namespacing;
-use duplicate_namespacing::{namespace_duplicates, Duplicate};
+use duplicate_namespacing::namespace_duplicates;
 
 mod extract_modules;
 use extract_modules::{extract_modules, ModuleDataFirstPass};
@@ -33,7 +30,8 @@ use make_item_definitions::make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    update_item_definitions, FnInfo, ItemDefinition, ModuleData, RustImplBlockSimple, RustTraitDefinition, RustType, RustTypeParam, RustTypeParamValue, StructOrEnumDefitionInfo
+    update_item_definitions, ItemDefinition, ModuleData, RustImplBlockSimple, RustType,
+    RustTypeParam, RustTypeParamValue,
 };
 
 pub use js_ast::JsStmt;

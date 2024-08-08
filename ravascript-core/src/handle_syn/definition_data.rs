@@ -152,7 +152,7 @@ impl RustType2 {
             RustType2::Box(_) => todo!(),
         }
     }
-    pub fn is_mut_ref_of_js_primative(&self, impl_targets: &[RustType2]) -> bool {
+    pub fn is_mut_ref_of_js_primative(&self, _impl_targets: &[RustType2]) -> bool {
         match self {
             RustType2::NotAllowed => todo!(),
             RustType2::Unknown => todo!(),
@@ -676,13 +676,11 @@ impl GlobalData {
         );
         assert!(item_path.len() == 1);
         // dbg!("yes");
-        let item_def = self.lookup_item_def_known_module_assert_not_func2(
+        self.lookup_item_def_known_module_assert_not_func2(
             &module_path,
             &item_scope_id,
             &item_path[0].ident,
-        );
-        // dbg!("ytes222");
-        item_def
+        )
     }
 
     // fn lookup_item_def_known_module_assert_not_func(
@@ -1051,8 +1049,8 @@ impl GlobalData {
     pub fn lookup_associated_fn(
         &self,
         item_generics: &[RustTypeParam2],
-        item_module_path: &[String],
-        item_scope_id: &Option<Vec<usize>>,
+        _item_module_path: &[String],
+        _item_scope_id: &Option<Vec<usize>>,
         sub_path: &RustPathSegment2,
         _item_path_seg: &str,
         item_def: &ItemDefinition,

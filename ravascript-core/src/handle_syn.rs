@@ -74,7 +74,7 @@ fn handle_pat(pat: &Pat, global_data: &mut GlobalData, current_type: RustType2) 
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType2::StructOrEnum(_type_params, item_def) => {
-                            item_def.get_type(&field.member, &global_data)
+                            item_def.get_type(&field.member, global_data)
                         }
                         _ => todo!(),
                     };
@@ -163,7 +163,7 @@ fn handle_destructure_pat(
                 .map(|field| {
                     let field_type = match &current_type {
                         RustType2::StructOrEnum(_type_params, item_def) => {
-                            item_def.get_type(&field.member, &global_data)
+                            item_def.get_type(&field.member, global_data)
                         }
                         _ => todo!(),
                     };
@@ -236,7 +236,7 @@ fn parse_fn_input_or_field(
                                 .collect::<Vec<_>>();
                             // let poo = trait_name.into_iter().map(|fart| fart);
                             // TODO lookup trait in global data to get module path
-                            let (module_path, found_scope_id, trait_definition) = global_data
+                            let (_module_path, _found_scope_id, trait_definition) = global_data
                                 .lookup_trait_definition_any_module(
                                     current_module,
                                     &global_data.scope_id_as_option(),
@@ -288,7 +288,7 @@ fn parse_fn_input_or_field(
                     //     }
                     //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                     // };
-                    return RustType2::TypeParam(generic.clone().to_rust_type_param2(global_data));
+                    return RustType2::TypeParam(generic.clone().into_rust_type_param2(global_data));
                 }
 
                 // For fns:
@@ -340,7 +340,7 @@ fn parse_fn_input_or_field(
                         // dbg!(current_module);
                         // dbg!(&global_data.scope_id_as_option());
                         // dbg!(&vec![struct_or_enum_name.to_string()]);
-                        let (item_definition_module_path, resolved_scope_id, item_definition) =
+                        let (item_definition_module_path, _resolved_scope_id, item_definition) =
                             global_data.lookup_item_definition_any_module_or_scope(
                                 current_module,
                                 &global_data.scope_id_as_option(),

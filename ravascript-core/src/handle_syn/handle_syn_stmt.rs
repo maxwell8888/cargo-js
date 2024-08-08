@@ -113,7 +113,7 @@ fn handle_local(
     };
 
     // NOTE This doesn't distinguish between say a var that has type MutRef, and a literal like `&mut 5`.
-    let rhs_is_mut_ref = matches!(rhs_type, RustType2::MutRef(_));
+    let _rhs_is_mut_ref = matches!(rhs_type, RustType2::MutRef(_));
 
     // NOTE we must calculate lhs_is_shadowing before calling `handle_pat(&local.pat...` because handle pat adds the current var to the scope
     let lhs_is_shadowing = global_data

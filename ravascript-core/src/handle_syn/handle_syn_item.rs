@@ -98,7 +98,7 @@ pub fn handle_item_fn(
     let mut copy_stmts = Vec::new();
 
     for (_is_self, is_mut, name, type_) in fn_info.inputs_types {
-        let type_ = type_.clone().to_rust_type2(global_data);
+        let type_ = type_.clone().into_rust_type2(global_data);
 
         let scoped_var = ScopedVar {
             name: name.clone(),
@@ -687,7 +687,7 @@ pub fn handle_impl_item_fn(
                         name: "self".to_string(),
                         // TODO how do we know if we have `foo(mut self)`?
                         mut_: is_mut,
-                        type_: input_type.clone().to_rust_type2(global_data),
+                        type_: input_type.clone().into_rust_type2(global_data),
                     };
                     vars.push(scoped_var);
                 } else {
@@ -695,7 +695,7 @@ pub fn handle_impl_item_fn(
                     let scoped_var = ScopedVar {
                         name,
                         mut_: is_mut,
-                        type_: input_type.to_rust_type2(global_data),
+                        type_: input_type.into_rust_type2(global_data),
                     };
                     // dbg!(&scoped_var);
                     vars.push(scoped_var);
@@ -953,7 +953,7 @@ pub fn handle_item_impl(
         } else {
             // Get type of impl target
             let opt_scope_id = global_data.scope_id_as_option();
-            let (target_item_module, resolved_scope_id, target_item) = global_data
+            let (target_item_module, _resolved_scope_id, target_item) = global_data
                 .lookup_item_definition_any_module_or_scope(
                     current_module_path,
                     &opt_scope_id,
@@ -1235,7 +1235,7 @@ pub fn handle_item_impl(
                             *is_self
                                 && matches!(
                                     // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
-                                    type_.clone().to_rust_type2(global_data),
+                                    type_.clone().into_rust_type2(global_data),
                                     RustType2::MutRef(_)
                                 )
                         }),

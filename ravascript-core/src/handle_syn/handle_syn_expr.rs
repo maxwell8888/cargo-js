@@ -20,17 +20,19 @@ use super::RustPathSegment2;
 
 use crate::handle_syn::definition_data::resolve_path;
 use crate::update_item_definitions::ConstDef;
+use crate::update_item_definitions::FnInfo;
 use crate::update_item_definitions::RustImplItemItemNoJs;
 use crate::update_item_definitions::RustImplItemNoJs;
 use crate::update_item_definitions::RustTypeParam;
 use crate::update_item_definitions::RustTypeParamValue;
+use crate::update_item_definitions::StructOrEnumDefitionInfo;
 use crate::{
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
     update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
-    FnInfo, ItemDefinition, RustType, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
+    ItemDefinition, RustType, PRELUDE_MODULE_PATH,
 };
 
 fn handle_expr_assign(
@@ -74,6 +76,7 @@ fn handle_expr_assign(
     let lhs_is_mut_ref = matches!(lhs_rust_type, RustType2::MutRef(_));
     let rhs_is_mut_ref = matches!(rhs_rust_type, RustType2::MutRef(_));
 
+    #[allow(clippy::nonminimal_bool)]
     if lhs_is_mut_var && ((!rhs_is_mut_var && !rhs_is_mut_ref) || rhs_is_mut_var) {
         lhs_expr = JsExpr::Field(Box::new(lhs_expr), Ident::Str("inner"));
     }
@@ -468,8 +471,8 @@ pub fn handle_expr(
                 }
             };
 
-            let lhs_is_mut_ref = matches!(lhs_rust_type, RustType2::MutRef(_));
-            let rhs_is_mut_ref = matches!(rhs_rust_type, RustType2::MutRef(_));
+            let _lhs_is_mut_ref = matches!(lhs_rust_type, RustType2::MutRef(_));
+            let _rhs_is_mut_ref = matches!(rhs_rust_type, RustType2::MutRef(_));
 
             if lhs_is_mut_var && lhs_rust_type.is_js_primative() {
                 lhs_expr = JsExpr::Field(Box::new(lhs_expr), Ident::Str("inner"));
@@ -572,7 +575,10 @@ pub fn handle_expr(
                 _ => todo!(),
             };
 
-            fn types_are_primative(rust_type: &RustType2, impl_target_types: &[RustType2]) -> bool {
+            fn types_are_primative(
+                rust_type: &RustType2,
+                _impl_target_types: &[RustType2],
+            ) -> bool {
                 match rust_type {
                     RustType2::TypeParam(rust_type_param) => {
                         match &rust_type_param.type_ {
@@ -640,7 +646,7 @@ pub fn handle_expr(
                                                     (field_name == &ident.to_string()).then_some(
                                                         field_type
                                                             .clone()
-                                                            .to_rust_type2(global_data),
+                                                            .into_rust_type2(global_data),
                                                     )
                                                 })
                                                 .unwrap()
@@ -675,7 +681,7 @@ pub fn handle_expr(
                             RustType2::Tuple(tuple_types) => {
                                 tuple_types[index.index as usize].clone()
                             }
-                            RustType2::StructOrEnum(type_params, item_definition) => {
+                            RustType2::StructOrEnum(_type_params, item_definition) => {
                                 match item_definition.struct_or_enum_info {
                                     StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                                         match struct_def_info.fields {
@@ -683,7 +689,7 @@ pub fn handle_expr(
                                             StructFieldInfo::TupleStruct(fields) => fields
                                                 [index.index as usize]
                                                 .clone()
-                                                .to_rust_type2(global_data),
+                                                .into_rust_type2(global_data),
                                             StructFieldInfo::RegularStruct(_) => todo!(),
                                         }
                                     }
@@ -960,7 +966,7 @@ pub fn handle_expr(
                 // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                 PartialRustType::StructIdent(_, _) => panic!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => panic!(),
-                PartialRustType::RustType(rust_type, is_mut_var) => (js_expr, rust_type),
+                PartialRustType::RustType(rust_type, _is_mut_var) => (js_expr, rust_type),
             }
         }
         Expr::Range(_) => todo!(),
@@ -979,7 +985,7 @@ pub fn handle_expr(
                             // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                             PartialRustType::StructIdent(_, _) => panic!(),
                             PartialRustType::EnumVariantIdent(_, _, _) => panic!(),
-                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                            PartialRustType::RustType(rust_type, _is_mut_var) => {
                                 (js_expr, rust_type)
                             }
                         }
@@ -2001,7 +2007,7 @@ fn handle_expr_method_call(
 
     // Now get the method return type from the impl item and similarly if it is, or contains, type params then see if it/they have been resolved by:
     // the receiver type params, method turbofish, arguments, (or within the body of the fn??)
-    let method_return_type = fn_info.return_type.clone().to_rust_type2(global_data);
+    let method_return_type = fn_info.return_type.clone().into_rust_type2(global_data);
 
     // Update any resolved type params in the `method_return_type`
     // TODO resolve nested type params eg within a struct or Vec
@@ -2291,7 +2297,7 @@ fn handle_expr_method_call(
 /// When handling a method call, after we have looked up the method input types, which may contain type params, we call this function to update any type params with resolved type params from the reciever or method turbofish
 fn resolve_input_type(
     input_type: &RustType,
-    receiver_type: &RustType2,
+    _receiver_type: &RustType2,
     receiver_type_params: &Vec<RustTypeParam2>,
     method_def_generics: &[String],
     method_turbofish_rust_types: &Option<Vec<RustType2>>,
@@ -2333,11 +2339,11 @@ fn resolve_input_type(
             }
 
             // No matches against receiver_type_params or method_turbofish_rust_types so just return original type
-            input_type.clone().to_rust_type2(global_data)
+            input_type.clone().into_rust_type2(global_data)
         }
         RustType::Option(_) => todo!(),
         RustType::Result(_) => todo!(),
-        RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
+        RustType::StructOrEnum(_type_params, _module_path, _scope_id, _name) => {
             // We are trying to stop using RustType::ParentItem, so this could be `self` in which case we can safely use the receiver type params
             // Or it could be the parent/Self type but maybe with different type params?!?!
             // Or it can just be any other item enum, which also might be using the parent/Self/target's type params, ie type params defined in the impl block
@@ -2358,7 +2364,7 @@ fn resolve_input_type(
             //     scope_id.clone(),
             //     name.clone(),
             // )
-            input_type.clone().to_rust_type2(global_data)
+            input_type.clone().into_rust_type2(global_data)
         }
         RustType::Vec(_) => todo!(),
         RustType::Array(_) => todo!(),
@@ -2368,7 +2374,7 @@ fn resolve_input_type(
         RustType::MutRef(inner) => {
             let resolved_inner = resolve_input_type(
                 inner,
-                receiver_type,
+                _receiver_type,
                 receiver_type_params,
                 method_def_generics,
                 method_turbofish_rust_types,
@@ -2385,7 +2391,7 @@ fn resolve_input_type(
                 .map(|input_type| {
                     resolve_input_type(
                         input_type,
-                        receiver_type,
+                        _receiver_type,
                         receiver_type_params,
                         method_def_generics,
                         method_turbofish_rust_types,
@@ -2395,7 +2401,7 @@ fn resolve_input_type(
                 .collect();
             let resolved_return_type = resolve_input_type(
                 return_type,
-                receiver_type,
+                _receiver_type,
                 receiver_type_params,
                 method_def_generics,
                 method_turbofish_rust_types,
@@ -2403,7 +2409,7 @@ fn resolve_input_type(
             );
             RustType2::Closure(resolved_input_types, Box::new(resolved_return_type))
         }
-        _ => input_type.clone().to_rust_type2(global_data),
+        _ => input_type.clone().into_rust_type2(global_data),
     }
 }
 
@@ -2815,7 +2821,7 @@ pub fn handle_expr_block(
             assert!(closing_semi);
             true
         }
-        JsStmt::Expr(expr, closing_semi) => !closing_semi,
+        JsStmt::Expr(_expr, closing_semi) => !closing_semi,
         _ => false,
     };
 
@@ -3039,7 +3045,7 @@ fn handle_expr_call(
                         RustType2::StructOrEnum(updated_type_params, item_def)
                     }
                 }
-                PartialRustType::RustType(rust_type, is_mut_var) => {
+                PartialRustType::RustType(rust_type, _is_mut_var) => {
                     // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
                     // We also resolved the type to whatever the call returns eg fn path -> fn return type, enum variant path -> enum instance, tuple struct path -> struct instance, etc
                     match rust_type {
@@ -3052,7 +3058,7 @@ fn handle_expr_call(
                             // otherwise need return the unresolved type but also note that it has been called(!) so could be the return type of some fn yet to be known, a tuple struct instance, and enum instance, etc. Though this seems like a rarer case and I'm not sure it is even possbile/aloud to wait until after calling a type param to resolved
                             todo!()
                         }
-                        RustType2::Fn(item_type_params, _type_params, fn_info) => {
+                        RustType2::Fn(_item_type_params, _type_params, fn_info) => {
                             // let name = match name {
                             // let fn_info = match rust_type_fn_type {
                             //     RustTypeFnType::Standalone(fn_info) => global_data
@@ -3127,7 +3133,7 @@ fn handle_expr_call(
                                             .clone();
                                         match maybe_resolved_type.type_ {
                                             RustTypeParamValue2::Unresolved => {
-                                                return_type.to_rust_type2(global_data)
+                                                return_type.into_rust_type2(global_data)
                                             }
                                             RustTypeParamValue2::RustType(resolved_type) => {
                                                 *resolved_type
@@ -3144,7 +3150,7 @@ fn handle_expr_call(
                                     // RustType::MutRef(_) => todo!(),
                                     RustType::Ref(_) => todo!(),
                                     RustType::Fn(_, _, _, _, _) => todo!(),
-                                    _ => return_type.to_rust_type2(global_data),
+                                    _ => return_type.into_rust_type2(global_data),
                                 }
                             }
                             get_fn_type_returns(fn_info.return_type, &new_type_params, global_data)
@@ -3372,7 +3378,7 @@ fn handle_expr_path_inner(
                             match some_member.inputs.first().unwrap() {
                                 EnumVariantInputsInfo::Named { .. } => todo!(),
                                 EnumVariantInputsInfo::Unnamed(rust_type) => {
-                                    rust_type.clone().to_rust_type2(global_data)
+                                    rust_type.clone().into_rust_type2(global_data)
                                 }
                             }
                         }
@@ -3847,7 +3853,7 @@ fn handle_match_pat(
                             // TODO can't find the data for mutability on `field`
                             mut_: false,
                             // mut_ref: false,
-                            type_: field_type.to_rust_type2(global_data),
+                            type_: field_type.into_rust_type2(global_data),
                         }
                     }
                     Member::Unnamed(_) => todo!(),
@@ -3986,7 +3992,7 @@ fn handle_match_pat(
                             }
                             type_to_type(match_condition_type, rust_type_param, global_data)
                         }
-                        _ => field_type.to_rust_type2(global_data),
+                        _ => field_type.into_rust_type2(global_data),
                     };
 
                     ScopedVar {
@@ -4378,6 +4384,7 @@ pub fn handle_expr_match(
 /// TODO This seems to be specifically for handling the case that `if segs_copy_item_path.len() == 1`. This fn and that branch that calls it needs cleaning up.
 /// Assumes that exactly 1 of var, func, or item_def is Some() and the rest are None
 /// -> (partial, is_mut)
+#[allow(clippy::too_many_arguments)]
 fn found_item_to_partial_rust_type(
     item_path: &RustPathSegment2,
     var: Option<&ScopedVar>,
@@ -4385,7 +4392,7 @@ fn found_item_to_partial_rust_type(
     item_def: Option<&ItemDefinition>,
     const_def: Option<&ConstDef>,
     module_path: Vec<String>,
-    scope_id: Option<Vec<usize>>,
+    _scope_id: Option<Vec<usize>>,
     global_data: &GlobalData,
 ) -> PartialRustType {
     debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
@@ -4452,7 +4459,7 @@ fn found_item_to_partial_rust_type(
             }
         }
     } else if let Some(const_def) = const_def {
-        PartialRustType::RustType(const_def.type_.clone().to_rust_type2(global_data), false)
+        PartialRustType::RustType(const_def.type_.clone().into_rust_type2(global_data), false)
     } else {
         // dbg!(segs_copy);
         todo!()
