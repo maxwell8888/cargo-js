@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf};
 use syn::{ImplItem, Item, ItemUse, Stmt, UseTree, Visibility};
 
 use crate::{
+    handle_syn::GlobalDataScope,
     js_ast::{DestructureObject, DestructureValue, Ident},
-    GlobalDataScope,
 };
 
 // Similarly to `update_classes`, we need to do a pass to replace all use of top level items like `myFunc()`, `new SomeClass()`, `SomeClass.associatedFunc()` with `this.myFunc()`, `new this.SomeClass()`, `this.SomeClass.associatedFunc()`. This means first getting the names of the top level items, and then not just iterating through the module's statements but though every expression at a top level item could be called absolutely anywhere, eg in an `if` condition.

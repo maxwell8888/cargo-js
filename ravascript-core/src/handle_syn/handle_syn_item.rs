@@ -7,19 +7,22 @@ use syn::{
 };
 use tracing::{debug, debug_span, info};
 
+use super::definition_data::JsImplBlock2;
+use super::definition_data::{GlobalDataScope, RustImplItemJs, ScopedVar};
 use super::handle_syn_stmt::handle_stmt;
 use super::{handle_syn_expr::handle_expr, handle_syn_stmt::parse_fn_body_stmts};
+use super::{RustTypeParam2, RustTypeParamValue2};
 
+use crate::update_item_definitions::{
+    get_item_impl_unique_id, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+};
 use crate::{
-    get_item_impl_unique_id,
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
-    js_stmts_from_syn_items, GlobalData, GlobalDataScope, JsImplBlock2, RustGeneric,
-    RustImplItemItemJs, RustImplItemItemNoJs, RustImplItemJs, RustImplItemNoJs, RustType2,
-    RustTypeParam, RustTypeParamValue, ScopedVar, PRELUDE_MODULE_PATH,
+    js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2, RustTypeParam,
+    RustTypeParamValue, PRELUDE_MODULE_PATH,
 };
-use crate::{RustTypeParam2, RustTypeParamValue2};
 
 pub fn handle_item_fn(
     item_fn: &ItemFn,
@@ -699,7 +702,7 @@ pub fn handle_impl_item_fn(
                 }
             }
         }
-        crate::RustImplItemItemNoJs::Const => todo!(),
+        RustImplItemItemNoJs::Const => todo!(),
     }
 
     // Create scope for impl method/fn body
@@ -1691,7 +1694,7 @@ pub fn _handle_item_mod(
     let items = if let Some(content) = &item_mod.content {
         // TODO how does `mod bar { mod foo; }` work?
         content.1.clone()
-    } else if let Some(crate_path) = &global_data._crate_path {
+    } else if let Some(crate_path) = &global_data.crate_path {
         let mut file_path = crate_path.clone();
         file_path.push("src");
         if module_path_copy.is_empty() {

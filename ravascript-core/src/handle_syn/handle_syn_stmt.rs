@@ -10,14 +10,14 @@ use super::handle_syn_item::{
     handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
     handle_item_trait,
 };
-use super::{handle_pat, parse_fn_input_or_field};
+use super::{handle_pat, parse_fn_input_or_field, PartialRustType};
 
+use super::definition_data::{RustType2, ScopedVar};
 use crate::{
     extract_modules::{handle_item_use, ItemUseModuleOrScope},
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
-    GlobalData, RustType, ScopedVar,
+    GlobalData,
 };
-use crate::{PartialRustType, RustType2};
 
 fn handle_local(
     local: &Local,
@@ -1073,11 +1073,11 @@ pub fn parse_fn_body_stmts(
                                     let (expr, partial) =
                                         handle_expr_path(expr_path, global_data, current_module);
                                     match partial {
-                                        crate::PartialRustType::StructIdent(_, _) => todo!(),
-                                        crate::PartialRustType::EnumVariantIdent(_, _, _) => {
+                                        PartialRustType::StructIdent(_, _) => todo!(),
+                                        PartialRustType::EnumVariantIdent(_, _, _) => {
                                             todo!()
                                         }
-                                        crate::PartialRustType::RustType(type_, is_mut) => {
+                                        PartialRustType::RustType(type_, is_mut) => {
                                             (expr, type_, is_mut)
                                         }
                                     }

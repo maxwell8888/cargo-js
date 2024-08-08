@@ -5,25 +5,32 @@ use syn::{
 };
 use tracing::{debug, debug_span, warn};
 
+use super::definition_data::GlobalData;
+use super::definition_data::RustTypeParam2;
 use super::handle_syn_stmt::handle_stmt;
 use super::handle_syn_stmt::parse_fn_body_stmts;
 use super::parse_fn_input_or_field;
 
-use super::{handle_pat, resolve_path};
+use super::definition_data::RustType2;
+use super::definition_data::RustTypeParamValue2;
+use super::definition_data::ScopedVar;
+use super::handle_pat;
+use super::PartialRustType;
+use super::RustPathSegment2;
+
+use crate::handle_syn::definition_data::resolve_path;
 use crate::update_item_definitions::ConstDef;
-use crate::RustPathSegment2;
-use crate::RustType2;
-use crate::RustTypeParam2;
-use crate::RustTypeParamValue2;
+use crate::update_item_definitions::RustImplItemItemNoJs;
+use crate::update_item_definitions::RustImplItemNoJs;
+use crate::update_item_definitions::RustTypeParam;
+use crate::update_item_definitions::RustTypeParamValue;
 use crate::{
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
     update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
-    FnInfo, GlobalData, ItemDefinition, PartialRustType, RustImplItemItemNoJs, RustImplItemNoJs,
-    RustPathSegment, RustType, RustTypeFnType, RustTypeParam, RustTypeParamValue, ScopedVar,
-    StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
+    FnInfo, ItemDefinition, RustType, StructOrEnumDefitionInfo, PRELUDE_MODULE_PATH,
 };
 
 fn handle_expr_assign(
@@ -780,7 +787,7 @@ pub fn handle_expr(
 
             // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
             // TODO For now assume first block return types
-            let (succeed_stmts, types): (Vec<_>, Vec<_>) = expr_if
+            let (succeed_stmts, types): (Vec<_>, Vec<RustType2>) = expr_if
                 .then_branch
                 .stmts
                 .iter()
