@@ -8,8 +8,8 @@ use crate::{
     handle_syn::RustPathSegment2,
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     update_item_definitions::{
-        FnInfo, ItemDefinition, ModuleData, RustGeneric, RustImplBlockSimple, RustImplItemItemNoJs,
-        RustImplItemNoJs, RustTraitDefinition,
+        ConstDef, FnInfo, ItemDefinition, ModuleData, RustGeneric, RustImplBlockSimple,
+        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition,
     },
     CrateData, PRELUDE_MODULE_PATH,
 };
@@ -355,7 +355,7 @@ pub struct GlobalData {
     _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
-    pub duplicates: Vec<Duplicate>,
+    // pub duplicates: Vec<Duplicate>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -484,7 +484,7 @@ impl GlobalData {
             _default_trait_impls_class_mapping: Vec::new(),
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
-            duplicates: Vec::new(),
+            // duplicates: Vec::new(),
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
             _scoped_impl_blocks: Vec::new(),
@@ -750,6 +750,31 @@ impl GlobalData {
             .find(|fn_info| fn_info.name == name);
 
         scoped_fn_info.or(module_fn_info).unwrap().clone()
+    }
+
+    pub fn lookup_const_def_known_module(
+        &self,
+        module_path: &[String],
+        scope_id: &Option<Vec<usize>>,
+        name: &str,
+    ) -> ConstDef {
+        let module = self.modules.iter().find(|m| m.path == module_path).unwrap();
+        let scoped_const_def = scope_id
+            .as_ref()
+            .and_then(|scope_id| {
+                module
+                    .scoped_various_definitions
+                    .iter()
+                    .find(|svd| &svd.0 == scope_id)
+            })
+            .and_then(|svd| svd.1.consts.iter().find(|fn_info| fn_info.name == name));
+        let module_const_def = module
+            .various_definitions
+            .consts
+            .iter()
+            .find(|fn_info| fn_info.name == name);
+
+        scoped_const_def.or(module_const_def).unwrap().clone()
     }
 
     pub fn lookup_fn_info_known_module(

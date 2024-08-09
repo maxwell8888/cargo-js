@@ -46,7 +46,9 @@ fn handle_expr_assign(
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
+                PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
+                    (expr, rust_type, is_mut_var)
+                }
             }
         }
         _ => {
@@ -64,7 +66,9 @@ fn handle_expr_assign(
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
+                PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
+                    (expr, rust_type, is_mut_var)
+                }
             }
         }
         _ => {
@@ -437,7 +441,7 @@ pub fn handle_expr(
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                        PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                             (expr, rust_type, is_mut_var)
                         }
                     }
@@ -459,7 +463,7 @@ pub fn handle_expr(
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                        PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                             (expr, rust_type, is_mut_var)
                         }
                     }
@@ -966,7 +970,7 @@ pub fn handle_expr(
                 // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                 PartialRustType::StructIdent(_, _) => panic!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => panic!(),
-                PartialRustType::RustType(rust_type, _is_mut_var) => (js_expr, rust_type),
+                PartialRustType::RustType(rust_type, _is_mut_var, _is_var) => (js_expr, rust_type),
             }
         }
         Expr::Range(_) => todo!(),
@@ -985,7 +989,7 @@ pub fn handle_expr(
                             // We don't allow `handle_expr()` to be call for tuple struct and enum variant (with args) instantiaion, instead they must must be handled within `handle_expr_call()`
                             PartialRustType::StructIdent(_, _) => panic!(),
                             PartialRustType::EnumVariantIdent(_, _, _) => panic!(),
-                            PartialRustType::RustType(rust_type, _is_mut_var) => {
+                            PartialRustType::RustType(rust_type, _is_mut_var, _is_var) => {
                                 (js_expr, rust_type)
                             }
                         }
@@ -1049,7 +1053,7 @@ pub fn handle_expr(
                         match partial {
                             PartialRustType::StructIdent(_, _) => todo!(),
                             PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                            PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                                 if is_mut_var {
                                     (
                                         JsExpr::Field(Box::new(expr), Ident::Str("inner")),
@@ -1173,7 +1177,7 @@ pub fn handle_expr(
                     );
                     (JsExpr::FnCall(Box::new(js_path_expr), vec![obj]), rust_type)
                 }
-                PartialRustType::RustType(_, _) => todo!(),
+                PartialRustType::RustType(_, _, _) => todo!(),
             }
 
             // if segs.len() == 2 {
@@ -1211,7 +1215,7 @@ pub fn handle_expr(
                         match partial {
                             PartialRustType::StructIdent(_, _) => todo!(),
                             PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                            PartialRustType::RustType(rust_type, is_mut_var) => {
+                            PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                                 (expr, rust_type, is_mut_var)
                             }
                         }
@@ -1866,7 +1870,7 @@ fn handle_expr_method_call(
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                PartialRustType::RustType(type_, is_mut_var) => (expr, type_, is_mut_var),
+                PartialRustType::RustType(type_, is_mut_var, _is_var) => (expr, type_, is_mut_var),
             }
         }
         _ => {
@@ -2883,7 +2887,7 @@ fn handle_expr_call(
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                        PartialRustType::RustType(rust_type, is_mut_var) => {
+                        PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                             if arg_is_mut_ref && input_is_mut_ref {
                                 (expr, rust_type)
                             } else if is_mut_var {
@@ -3045,7 +3049,7 @@ fn handle_expr_call(
                         RustType2::StructOrEnum(updated_type_params, item_def)
                     }
                 }
-                PartialRustType::RustType(rust_type, _is_mut_var) => {
+                PartialRustType::RustType(rust_type, _is_mut_var, _is_var) => {
                     // handle_expr_path checks if the path is any scoped/module level fn, enum variant, tuple struct, associated fn, or var with one of these types, but it doesn't know the args the path is being called with so it is at this point that we check if any generics can be made concrete
                     // We also resolved the type to whatever the call returns eg fn path -> fn return type, enum variant path -> enum instance, tuple struct path -> struct instance, etc
                     match rust_type {
@@ -3191,7 +3195,7 @@ fn handle_expr_call(
                     };
                     (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
                 }
-                PartialRustType::RustType(RustType2::FnVanish, _) => {
+                PartialRustType::RustType(RustType2::FnVanish, _, _) => {
                     // TODO for now we are assuming we are dealing with Box::new() so the args must be len=1
                     assert_eq!(args_js_expr.len(), 1);
                     (args_js_expr.remove(0), args_rust_types.remove(0))
@@ -3207,7 +3211,7 @@ fn handle_expr_call(
                         )
                     }
                 }
-                PartialRustType::RustType(_, _) => (
+                PartialRustType::RustType(_, _, _) => (
                     JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
                     rust_type,
                 ),
@@ -3308,8 +3312,14 @@ fn handle_expr_path_inner(
     // 1. Associated fn or const
     // 2. Enum variant (an actual instance if the variant takes no args, otherwise a PartialRustType::EnumVariantIdent)
 
+    // dbg!(&segs_copy_module_path);
+    // dbg!(&segs_copy_item_scope);
+    // dbg!(&segs_copy_item_path);
+
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
-    let partial_rust_type = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+    let (partial_rust_type, mut js_segs_item_path) = if segs_copy_module_path
+        == [PRELUDE_MODULE_PATH]
+    {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
         if let Some(_segs_copy_item_scope) = &segs_copy_item_scope {
             // Look for var
@@ -3327,7 +3337,10 @@ fn handle_expr_path_inner(
                 .find_map(|s| s.variables.iter().find(|v| v.name == path.ident))
                 .unwrap();
 
-            PartialRustType::RustType(var.type_.clone(), var.mut_)
+            (
+                PartialRustType::RustType(var.type_.clone(), var.mut_, true),
+                vec![Ident::String(path.ident.clone())],
+            )
         } else {
             assert_eq!(segs_copy_item_scope, None);
             let path_idents = segs_copy_item_path
@@ -3336,19 +3349,33 @@ fn handle_expr_path_inner(
                 .collect::<Vec<_>>();
             // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
             match path_idents[..] {
-                ["Box", "new"] => PartialRustType::RustType(RustType2::FnVanish, false),
+                ["Box", "new"] => (
+                    PartialRustType::RustType(RustType2::FnVanish, false, false),
+                    segs_copy_item_path
+                        .clone()
+                        .into_iter()
+                        .map(|seg| Ident::String(seg.ident))
+                        .collect::<Vec<_>>(),
+                ),
                 ["Some"] => {
                     // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
                     assert_eq!(segs_copy_module_path, [PRELUDE_MODULE_PATH]);
-                    PartialRustType::EnumVariantIdent(
-                        // TODO handle turbofish
-                        Vec::new(),
-                        global_data.lookup_item_def_known_module_assert_not_func2(
-                            &segs_copy_module_path,
-                            &None,
-                            "Option",
+                    (
+                        PartialRustType::EnumVariantIdent(
+                            // TODO handle turbofish
+                            Vec::new(),
+                            global_data.lookup_item_def_known_module_assert_not_func2(
+                                &segs_copy_module_path,
+                                &None,
+                                "Option",
+                            ),
+                            "Some".to_string(),
                         ),
-                        "Some".to_string(),
+                        segs_copy_item_path
+                            .clone()
+                            .into_iter()
+                            .map(|seg| Ident::String(seg.ident))
+                            .collect::<Vec<_>>(),
                     )
                 }
                 ["None"] => {
@@ -3388,7 +3415,14 @@ fn handle_expr_path_inner(
                         _ => panic!(),
                     };
                     let option = RustType2::Option(rust_type_param);
-                    PartialRustType::RustType(option, false)
+                    (
+                        PartialRustType::RustType(option, false, false),
+                        segs_copy_item_path
+                            .clone()
+                            .into_iter()
+                            .map(|seg| Ident::String(seg.ident))
+                            .collect::<Vec<_>>(),
+                    )
                 }
                 _ => todo!(),
             }
@@ -3436,7 +3470,9 @@ fn handle_expr_path_inner(
                 .iter()
                 .find(|const_def| const_def.name == item_path_seg.ident);
 
-            if var.is_some() || fn_info.is_some() || item_def.is_some() || const_def.is_some() {
+            if segs_copy_item_scope.is_some()
+                && (var.is_some() || fn_info.is_some() || item_def.is_some() || const_def.is_some())
+            {
                 Some(found_item_to_partial_rust_type(
                     item_path_seg,
                     var,
@@ -3453,7 +3489,7 @@ fn handle_expr_path_inner(
         });
 
         // TODO handle user defined len=1 enums like Some(5), None, etc
-        let final_partial_rust_type =
+        let (final_partial_rust_type, path_ident) =
             if let Some(scoped_partial_rust_type) = scoped_partial_rust_type {
                 scoped_partial_rust_type
             } else {
@@ -3490,7 +3526,7 @@ fn handle_expr_path_inner(
                     global_data,
                 )
             };
-        final_partial_rust_type
+        (final_partial_rust_type, vec![path_ident])
     } else if segs_copy_item_path.len() == 2 {
         // NOTE path must start with a struct or enum if item part of the path is length = 2
 
@@ -3545,7 +3581,8 @@ fn handle_expr_path_inner(
             &item_def,
         );
         // dbg!(&impl_method);
-        let impl_method = impl_method.map(|rust_type| PartialRustType::RustType(rust_type, false));
+        let impl_method =
+            impl_method.map(|rust_type| PartialRustType::RustType(rust_type, false, false));
 
         let enum_variant = match &item_def.struct_or_enum_info {
             // Item is struct so we need to look up associated fn
@@ -3598,6 +3635,7 @@ fn handle_expr_path_inner(
                         PartialRustType::RustType(
                             RustType2::StructOrEnum(enum_generics, item_def.clone()),
                             false,
+                            false,
                         )
                     } else {
                         PartialRustType::EnumVariantIdent(
@@ -3610,10 +3648,17 @@ fn handle_expr_path_inner(
             }
         };
         // If you have an enum variant and associated fn with the same name, the code will compile, but if you try to access the fn you will just get the variant instead
+        let mut ident_path = segs_copy_item_path
+            .clone()
+            .into_iter()
+            .map(|seg| Ident::String(seg.ident))
+            .collect::<Vec<_>>();
+        // dbg!(&item_def);
+        ident_path[0] = item_def.js_name.clone();
         if let Some(enum_variant) = enum_variant {
-            enum_variant
+            (enum_variant, ident_path)
         } else if let Some(impl_method) = impl_method {
-            impl_method
+            (impl_method, ident_path)
         } else {
             panic!()
         }
@@ -3653,26 +3698,27 @@ fn handle_expr_path_inner(
     // Check whether it is not globally unique and so has been namespaced
     // dbg!(&segs_copy_item_path);
 
-    let mut js_segs_path = segs_copy_item_path
-        .into_iter()
-        .map(|seg| Ident::String(seg.ident))
-        .collect::<Vec<_>>();
+    // dbg!(&segs_copy_item_path);
+    // dbg!(&partial_rust_type);
 
-    if segs_copy_module_path == ["web_prelude"] && js_segs_path[0] == "Document" {
-        js_segs_path[0] = Ident::Str("document");
+    if segs_copy_module_path == ["web_prelude"] && js_segs_item_path[0] == "Document" {
+        js_segs_item_path[0] = Ident::Str("document");
     }
 
     // TODO why are we converting to JS ident here? JS AST should just store namespace ident and do the join("__") at `.to_string()` time
     // TODO Surely this should be `.is_none()`?
     // if segs_copy_item_scope.is_some() {
-    if segs_copy_item_scope.is_none() {
-        if let Some(dup) = global_data.duplicates.iter().find(|dup| {
-            js_segs_path[0] == dup.name && dup.original_module_path == segs_copy_module_path
-        }) {
-            js_segs_path[0] = Ident::Deduped(dup.namespace.clone());
-        }
-    } else if js_segs_path[0] == "self" {
-        js_segs_path[0] = Ident::Str("this");
+    // if segs_copy_item_scope.is_none() {
+    //     if let Some(dup) = global_data.duplicates.iter().find(|dup| {
+    //         js_segs_item_path[0] == dup.name && dup.original_module_path == segs_copy_module_path
+    //     }) {
+    //         js_segs_item_path[0] = Ident::Deduped(dup.namespace.clone());
+    //     }
+    // } else if js_segs_item_path[0] == "self" {
+    //     js_segs_item_path[0] = Ident::Str("this");
+    // }
+    if js_segs_item_path[0] == "self" {
+        js_segs_item_path[0] = Ident::Str("this");
     }
 
     // dbg!(&js_segs_path);
@@ -3750,7 +3796,7 @@ fn handle_expr_path_inner(
         //     }
         // }
 
-        JsExpr::Path(PathIdent::Path(js_segs_path))
+        JsExpr::Path(PathIdent::Path(js_segs_item_path))
 
         // dbg!("no inner");
         // dbg!(is_mut_ref_js_primative);
@@ -4394,11 +4440,17 @@ fn found_item_to_partial_rust_type(
     module_path: Vec<String>,
     _scope_id: Option<Vec<usize>>,
     global_data: &GlobalData,
-) -> PartialRustType {
+) -> (PartialRustType, Ident) {
     debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
+
+    // IMPORTANT NOTE this fn only handles len=1 item paths which is useful for determing deduplicated idents because it allows us to disregard cases like associated fns.
+
     if let Some(var) = var {
         // This branch is obviously only possible for scoped paths since we can't have module level vars
-        PartialRustType::RustType(var.type_.clone(), var.mut_)
+        (
+            PartialRustType::RustType(var.type_.clone(), var.mut_, true),
+            Ident::String(item_path.ident.clone()),
+        )
     } else if let Some(fn_info) = func {
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
         let fn_generics = if !item_path.turbofish.is_empty() {
@@ -4422,9 +4474,13 @@ fn found_item_to_partial_rust_type(
                 .collect::<Vec<_>>()
         };
 
-        PartialRustType::RustType(
-            RustType2::Fn(None, fn_generics, Box::new(fn_info.clone())),
-            false,
+        (
+            PartialRustType::RustType(
+                RustType2::Fn(None, fn_generics, Box::new(fn_info.clone())),
+                false,
+                false,
+            ),
+            fn_info.js_name.clone(),
         )
     } else if let Some(item_def) = item_def {
         // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
@@ -4451,7 +4507,10 @@ fn found_item_to_partial_rust_type(
         match &item_def.struct_or_enum_info {
             StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
                 // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
-                PartialRustType::StructIdent(item_generics, item_def.clone())
+                (
+                    PartialRustType::StructIdent(item_generics, item_def.clone()),
+                    item_def.js_name.clone(),
+                )
             }
             StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
                 // So we are assuming you can't have a path where the final segment is an enum ident
@@ -4459,7 +4518,14 @@ fn found_item_to_partial_rust_type(
             }
         }
     } else if let Some(const_def) = const_def {
-        PartialRustType::RustType(const_def.type_.clone().into_rust_type2(global_data), false)
+        (
+            PartialRustType::RustType(
+                const_def.type_.clone().into_rust_type2(global_data),
+                false,
+                false,
+            ),
+            const_def.js_name.clone(),
+        )
     } else {
         // dbg!(segs_copy);
         todo!()

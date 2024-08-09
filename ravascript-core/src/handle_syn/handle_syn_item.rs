@@ -51,21 +51,6 @@ pub fn handle_item_fn(
         false
     };
 
-    let js_name = if !at_module_top_level {
-        Ident::Syn(item_fn.sig.ident.clone())
-    } else {
-        let in_module_level_duplicates = global_data
-            .duplicates
-            .iter()
-            .find(|dup| dup.name == name && dup.original_module_path == current_module);
-
-        if let Some(dup) = in_module_level_duplicates {
-            Ident::Deduped(dup.namespace.clone())
-        } else {
-            Ident::Syn(item_fn.sig.ident.clone())
-        }
-    };
-
     // // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // // if !global_data.at_module_top_level {
     // if !at_module_top_level {
@@ -204,7 +189,7 @@ pub fn handle_item_fn(
             export: false,
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
-            name: js_name,
+            name: fn_info.js_name,
             input_names: item_fn
                 .sig
                 .inputs
@@ -239,8 +224,8 @@ pub fn handle_item_const(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
-    let mut name = Ident::Syn(item_const.ident.clone());
-    debug!(name = ?name, "handle_item_const");
+    // let mut name = Ident::Syn(item_const.ident.clone());
+    // debug!(name = ?name, "handle_item_const");
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
     // if !at_module_top_level {
@@ -280,14 +265,12 @@ pub fn handle_item_const(
     //     });
     // }
 
-    // What is this doing?
-    if let Some(dup) = global_data
-        .duplicates
-        .iter()
-        .find(|dup| name == dup.name && dup.original_module_path == *current_module)
-    {
-        name = Ident::Deduped(dup.namespace.clone());
-    }
+    let const_def = global_data.lookup_const_def_known_module(
+        current_module,
+        &global_data.scope_id_as_option(),
+        &item_const.ident.to_string(),
+    );
+
     JsStmt::Local(JsLocal {
         export: false,
         public: match item_const.vis {
@@ -296,7 +279,7 @@ pub fn handle_item_const(
             Visibility::Inherited => false,
         },
         type_: LocalType::Const,
-        lhs: LocalName::Single(name),
+        lhs: LocalName::Single(const_def.js_name),
         value: handle_expr(&item_const.expr, global_data, current_module).0,
     })
 }
@@ -392,7 +375,7 @@ pub fn handle_item_enum(
         };
     }
 
-    let mut class_name = Ident::Syn(item_enum.ident.clone());
+    // let mut class_name = Ident::Syn(item_enum.ident.clone());
 
     let mut methods = Vec::new();
     let body_stmts = vec![
@@ -555,13 +538,12 @@ pub fn handle_item_enum(
     //     &mut static_fields,
     // );
 
-    if let Some(dup) = global_data
-        .duplicates
-        .iter()
-        .find(|dup| class_name == dup.name && dup.original_module_path == current_module)
-    {
-        class_name = Ident::Deduped(dup.namespace.clone());
-    }
+    let enum_def = global_data.lookup_item_def_known_module_assert_not_func2(
+        current_module,
+        &global_data.scope_id_as_option(),
+        &item_enum.ident.to_string(),
+    );
+
     JsStmt::Class(JsClass {
         public: match item_enum.vis {
             Visibility::Public(_) => true,
@@ -570,7 +552,7 @@ pub fn handle_item_enum(
         },
         export: false,
         tuple_struct: false,
-        name: class_name,
+        name: enum_def.js_name,
         inputs: Vec::new(),
         static_fields,
         methods,
@@ -1537,21 +1519,6 @@ pub fn handle_item_struct(
         ));
     }
 
-    let mut js_name = Ident::Syn(item_struct.ident.clone());
-    // dbg!(&global_data.duplicates);
-    // dbg!(&name);
-    // dbg!(&current_module_path);
-    if at_module_top_level {
-        if let Some(dup) = global_data
-            .duplicates
-            .iter()
-            .find(|dup| dup.name == name && dup.original_module_path == *current_module_path)
-        {
-            js_name = Ident::Deduped(dup.namespace.clone());
-        }
-    }
-    // dbg!(&js_name);
-
     let (tuple_struct, inputs) = match &item_struct.fields {
         Fields::Named(fields_named) => (
             false,
@@ -1573,6 +1540,13 @@ pub fn handle_item_struct(
         ),
         Fields::Unit => todo!(),
     };
+
+    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
+        current_module_path,
+        &global_data.scope_id_as_option(),
+        &item_struct.ident.to_string(),
+    );
+
     JsStmt::Class(JsClass {
         export: false,
         public: match item_struct.vis {
@@ -1580,7 +1554,7 @@ pub fn handle_item_struct(
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name: js_name,
+        name: item_def.js_name,
         tuple_struct,
         inputs,
         static_fields,

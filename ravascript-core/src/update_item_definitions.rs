@@ -6,13 +6,16 @@ use syn::{
 use tracing::{debug, debug_span};
 
 use crate::{
+    duplicate_namespacing::Duplicate,
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
+    js_ast::Ident,
     make_item_definitions::{self, ModuleMethods},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
 pub fn update_item_definitions(
     modules: Vec<make_item_definitions::ModuleData>,
+    duplicates: Vec<Duplicate>,
 ) -> (Vec<ModuleData>, Vec<RustImplBlockSimple>) {
     // let global_data_copy = global_data.clone();
 
@@ -283,6 +286,9 @@ pub fn update_item_definitions(
                                 Visibility::Restricted(_) => todo!(),
                                 Visibility::Inherited => false,
                             };
+
+                            let js_name = Ident::Syn(impl_item_fn.sig.ident.clone());
+
                             RustImplItemItemNoJs::Fn(
                                 {
                                     if let Some(input) = impl_item_fn.sig.inputs.first() {
@@ -295,6 +301,7 @@ pub fn update_item_definitions(
                                     }
                                 },
                                 FnInfo {
+                                    js_name,
                                     ident: item_name.clone(),
                                     is_pub,
                                     inputs_types,
@@ -366,6 +373,8 @@ pub fn update_item_definitions(
                 &module_path,
                 &None,
                 &modules_copy,
+                false,
+                &duplicates,
             );
 
             let updated_scoped_various_defs = module
@@ -375,7 +384,14 @@ pub fn update_item_definitions(
                     let scope_id = Some(scope.clone());
                     (
                         scope,
-                        update_various_def(various_def, &module_path, &scope_id, &modules_copy),
+                        update_various_def(
+                            various_def,
+                            &module_path,
+                            &scope_id,
+                            &modules_copy,
+                            true,
+                            &duplicates,
+                        ),
                     )
                 })
                 .collect();
@@ -405,11 +421,24 @@ fn update_various_def(
     module_path: &[String],
     current_scope: &Option<Vec<usize>>,
     modules: &[make_item_definitions::ModuleData],
+    in_scope: bool,
+    duplicates: &[Duplicate],
 ) -> VariousDefintions {
     let new_const_defs = various_definition
         .consts
         .into_iter()
         .map(|const_def| {
+            let js_name = if in_scope {
+                Ident::String(const_def.name.clone())
+            } else if let Some(dup) = duplicates
+                .iter()
+                .find(|dup| const_def.name == dup.name && dup.original_module_path == module_path)
+            {
+                Ident::Deduped(dup.namespace.clone())
+            } else {
+                Ident::String(const_def.name.clone())
+            };
+
             let rust_type = parse_types_for_populate_item_definitions(
                 &const_def.syn_object.ty,
                 &Vec::new(),
@@ -417,7 +446,9 @@ fn update_various_def(
                 current_scope,
                 modules,
             );
+
             ConstDef {
+                js_name,
                 name: const_def.name,
                 is_pub: const_def.is_pub,
                 type_: rust_type,
@@ -520,7 +551,20 @@ fn update_various_def(
                     })
                 }
             };
+
+            let js_name = if in_scope {
+                Ident::String(item_def.ident.clone())
+            } else if let Some(dup) = duplicates
+                .iter()
+                .find(|dup| item_def.ident == dup.name && dup.original_module_path == module_path)
+            {
+                Ident::Deduped(dup.namespace.clone())
+            } else {
+                Ident::String(item_def.ident.clone())
+            };
+
             ItemDefinition {
+                js_name,
                 ident: item_def.ident,
                 is_copy: item_def.is_copy,
                 is_pub: item_def.is_pub,
@@ -539,6 +583,21 @@ fn update_various_def(
                 make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
                 make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
             };
+
+            let js_name = if in_scope {
+                Ident::Syn(item_fn.sig.ident.clone())
+            } else {
+                let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                    item_fn.sig.ident == dup.name && dup.original_module_path == module_path
+                });
+
+                if let Some(dup) = in_module_level_duplicates {
+                    Ident::Deduped(dup.namespace.clone())
+                } else {
+                    Ident::Syn(item_fn.sig.ident.clone())
+                }
+            };
+
             let inputs_types = item_fn
                 .sig
                 .inputs
@@ -586,6 +645,7 @@ fn update_various_def(
             };
 
             FnInfo {
+                js_name,
                 ident: fn_info.ident,
                 is_pub: fn_info.is_pub,
                 inputs_types,
@@ -607,8 +667,23 @@ fn update_various_def(
         .trait_definitons
         .into_iter()
         .map(|trait_def| {
+            let js_name = if in_scope {
+                Ident::String(trait_def.name.clone())
+            } else {
+                let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                    trait_def.name == dup.name && dup.original_module_path == module_path
+                });
+
+                if let Some(dup) = in_module_level_duplicates {
+                    Ident::Deduped(dup.namespace.clone())
+                } else {
+                    Ident::String(trait_def.name.clone())
+                }
+            };
+
             // Currently trait defs don't store any info other than the name, so we don't need to do anything
             RustTraitDefinition {
+                js_name,
                 name: trait_def.name,
                 is_pub: trait_def.is_pub,
                 syn: trait_def.syn,
@@ -671,6 +746,7 @@ pub enum StructOrEnumDefitionInfo {
 /// Just structs and enums or should we include functions?
 #[derive(Debug, Clone)]
 pub struct ItemDefinition {
+    pub js_name: Ident,
     pub ident: String,
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
     // module_path: Option<Vec<String>>,
@@ -712,8 +788,9 @@ impl ItemDefinition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RustTraitDefinition {
+    pub js_name: Ident,
     pub name: String,
     pub is_pub: bool,
     // impl_items:
@@ -1299,6 +1376,7 @@ pub struct VariousDefintions {
 
 #[derive(Debug, Clone)]
 pub struct ConstDef {
+    pub js_name: Ident,
     pub name: String,
     pub is_pub: bool,
     pub type_: RustType,
@@ -1309,6 +1387,7 @@ pub struct ConstDef {
 #[derive(Debug, Clone)]
 pub struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
+    pub js_name: Ident,
     pub ident: String,
     pub is_pub: bool,
     /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything. NO again, updated to include self inputs because we need them.

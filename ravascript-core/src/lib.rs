@@ -144,32 +144,6 @@ struct CrateData {
     _modules: Vec<ModuleData>,
 }
 
-// impl RustTypeGeneric
-
-// #[derive(Debug, Clone)]
-// struct EnumInfo {
-//     ident: String,
-//     methods: Vec<ImplItemTemp>,
-// }
-
-// #[derive(Debug, Clone)]
-// struct StructOrEnumMethod {
-//     item_name: String,
-//     return_type: RustType,
-// }
-
-// #[derive(Debug, Clone)]
-// enum StructOrEnumSynObject {
-//     Struct(ItemStruct),
-//     Enum(ItemEnum),
-// }
-
-// #[derive(Debug, Clone)]
-// enum MemberInfoFieldOrVariant {
-//     Field,
-//     Variant,
-// }
-
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ItemDefintionImpls {
@@ -190,26 +164,6 @@ enum ItemDefinitions {
     Enum,
     Fn,
 }
-
-/// Similar to ImplItemTemp but with less info (might turn out that we need to add more) because we are only using it for scoped items
-// #[derive(Debug, Clone)]
-// struct MethodInfo {
-//     method_ident: String,
-//     item_stmt: JsImplItem,
-//     return_type: RustType,
-// }
-
-// #[derive(Debug, Clone)]
-// struct MyGeneric {
-//     name: String,
-//     type_: RustType,
-// }
-
-// #[derive(Debug, Clone)]
-// pub enum VarOrFnInfo {
-//     ScopedVar(ScopedVar),
-//     FnInfo(FnInfo)
-// }
 
 // TODO I think we want to add *usertype* impls and *impl trait for usertype* (in both cases where the usertype is not generic) as methods to the type's class, but for all other cases, eg *impl trait for T* impls we want to keep the trait impl as an object of fns/class with methods and then still add equivalent methods to the type classes but rather than include the fn body, just point to these fns/methods in the impl block object. This avoids eg potentially duplicating fn bodys on *all* type classes if eg we have `impl<T> MyTrait for T` {}. Though the cost of duplicating the fn bodys should be irrelevant with compression... so the best reason to do this is probably to avoid noise when reading the transpiled JS, and to make the code feel more idiomatic/familiar to the Rust dev.
 // What about somthing like `impl MyTrait for Foo<Bar> { ... }` and `impl MyTrait for Foo<Baz> { ... }`. The methods should live on the Foo class, but the bodies/impls are different depending on the generic eg `let foo = Foo(Bar()).some_trait_method();` vs `let foo = Foo(Baz()).some_trait_method();`
@@ -1024,9 +978,12 @@ pub fn process_items(
             syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
         });
 
+    // find duplicates
+    let duplicates = namespace_duplicates(&actual_modules);
+
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules);
+    let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
 
@@ -1058,13 +1015,10 @@ pub fn process_items(
         bar.get_foo();
     }
 
-    // find duplicates
-    let duplicates = namespace_duplicates(&new_modules);
-
     let mut global_data = GlobalData::new(crate_path);
     global_data.modules = new_modules;
     global_data.impl_blocks_simpl = impl_blocks;
-    global_data.duplicates = duplicates;
+    // global_data.duplicates = duplicates;
 
     // Parse to JS
     for module_data in global_data
@@ -1782,18 +1736,18 @@ fn _get_path_old(
 
         // Check whether it is not globally unique and so has been namespaced
         // TODO surely the global namespacing could and should happen just before writing the JS? It just get's in the way if it is already done at this point and we could just be using the module paths to differentiate
-        if let Some(_dup) = global_data
-            .duplicates
-            .iter()
-            .find(|dup| dup.name == segs[0] && dup.original_module_path == current_module)
-        {
-            // segs[0] = dup
-            //     .namespace
-            //     .iter()
-            //     .map(camel)
-            //     .collect::<Vec<_>>()
-            //     .join("__");
-        }
+        // if let Some(_dup) = global_data
+        //     .duplicates
+        //     .iter()
+        //     .find(|dup| dup.name == segs[0] && dup.original_module_path == current_module)
+        // {
+        //     segs[0] = dup
+        //         .namespace
+        //         .iter()
+        //         .map(camel)
+        //         .collect::<Vec<_>>()
+        //         .join("__");
+        // }
 
         // dbg!("item defined in module");
 
@@ -1904,23 +1858,24 @@ fn _get_path_old(
             original_module,
         );
 
-        if let Some(_dup) = global_data
-            .duplicates
-            .iter()
-            .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
-        {
-            // If the item has been namespaced, we need to replace it with the namespace
-            // segs[0] = dup
-            //     .namespace
-            //     .iter()
-            //     .map(camel)
-            //     .collect::<Vec<_>>()
-            //     .join("__");
-            segs
-        } else {
-            // If the item has not been namespaced, we don't need to do anything
-            segs
-        }
+        // if let Some(_dup) = global_data
+        //     .duplicates
+        //     .iter()
+        //     .find(|dup| dup.name == use_mapping.0 && dup.original_module_path == use_mapping.1)
+        // {
+        //     // If the item has been namespaced, we need to replace it with the namespace
+        //     // segs[0] = dup
+        //     //     .namespace
+        //     //     .iter()
+        //     //     .map(camel)
+        //     //     .collect::<Vec<_>>()
+        //     //     .join("__");
+        //     segs
+        // } else {
+        //     // If the item has not been namespaced, we don't need to do anything
+        //     segs
+        // }
+        segs
         // TODO `this` is a JS ident, we want to be dealing with Rust idents at this point
     } else if segs.len() == 1 && segs[0] == "this" {
         segs

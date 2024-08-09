@@ -413,7 +413,7 @@ impl PartialEq<&'static str> for Ident {
             Ident::Syn(ident) => ident == other,
             Ident::String(ident) => ident == other,
             Ident::Str(ident) => ident == other,
-            Ident::Deduped(_idents) => todo!(),
+            Ident::Deduped(_idents) => false,
             Ident::NoConversion(ident) => ident == other,
         }
     }

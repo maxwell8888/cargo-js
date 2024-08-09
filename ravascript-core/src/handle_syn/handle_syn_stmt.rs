@@ -103,7 +103,9 @@ fn handle_local(
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
-                PartialRustType::RustType(rust_type, is_mut_var) => (expr, rust_type, is_mut_var),
+                PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
+                    (expr, rust_type, is_mut_var)
+                }
             }
         }
         _ => {
@@ -1077,7 +1079,7 @@ pub fn parse_fn_body_stmts(
                                         PartialRustType::EnumVariantIdent(_, _, _) => {
                                             todo!()
                                         }
-                                        PartialRustType::RustType(type_, is_mut) => {
+                                        PartialRustType::RustType(type_, is_mut, _is_var) => {
                                             (expr, type_, is_mut)
                                         }
                                     }

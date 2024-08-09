@@ -1,4 +1,4 @@
-use crate::ModuleData;
+use crate::make_item_definitions::ModuleData;
 
 #[derive(Debug, Clone)]
 pub struct Duplicate {

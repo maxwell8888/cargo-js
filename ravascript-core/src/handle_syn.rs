@@ -498,7 +498,9 @@ enum PartialRustType {
     ///
     /// IMPORTANT NOTE this variant should only be used for tuple and struct variants, normal path variants should be a PartialRustType::RustType
     EnumVariantIdent(Vec<RustTypeParam2>, ItemDefinition, String),
-    RustType(RustType2, bool),
+    // TODO why no type params?
+    /// (rust type, is mut, is var)
+    RustType(RustType2, bool, bool),
 }
 
 #[derive(Debug, Clone)]
