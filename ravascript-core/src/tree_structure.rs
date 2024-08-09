@@ -1,9 +1,10 @@
+#![allow(dead_code)]
+
 use std::{fs, path::PathBuf};
 
 use syn::{
-    Expr, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStruct, ItemTrait, ItemUse, Local, Meta, Signature, Stmt, StmtMacro, Type, UseTree,
-    Visibility,
+    Expr, GenericParam, ImplItem, Item, ItemConst, ItemEnum, ItemImpl, ItemStruct, ItemTrait,
+    ItemUse, Local, Meta, Signature, Stmt, StmtMacro, Type, UseTree, Visibility,
 };
 use tracing::debug;
 use update_definitons::{FnInfoSyn, ItemV2};
@@ -102,7 +103,7 @@ impl RustMod {
                     ItemActual::StructOrEnum(def) => def,
                     _ => todo!(),
                 };
-                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Fn(index) => {
                 let item = &items[*index];
@@ -110,7 +111,7 @@ impl RustMod {
                     ItemActual::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
@@ -118,7 +119,7 @@ impl RustMod {
                     ItemActual::Const(def) => def,
                     _ => todo!(),
                 };
-                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
@@ -126,7 +127,7 @@ impl RustMod {
                     ItemActual::Trait(def) => def,
                     _ => todo!(),
                 };
-                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Mod(_) => todo!(),
             ItemRef::Impl(_) => todo!(),
@@ -136,7 +137,7 @@ impl RustMod {
     pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
         self.items.iter().any(|item| match item {
             ItemRef::Mod(rust_mod) => {
-                &rust_mod.module_path[0] == ident && (use_private || rust_mod.pub_)
+                rust_mod.module_path[0] == ident && (use_private || rust_mod.pub_)
             }
             _ => false,
         })
@@ -155,7 +156,7 @@ impl RustMod {
                     ItemV2::StructOrEnum(def) => def,
                     _ => todo!(),
                 };
-                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Fn(index) => {
                 let item = &items[*index];
@@ -163,7 +164,7 @@ impl RustMod {
                     ItemV2::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                (&def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
@@ -171,7 +172,7 @@ impl RustMod {
                     ItemV2::Const(def) => def,
                     _ => todo!(),
                 };
-                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
@@ -179,7 +180,7 @@ impl RustMod {
                     ItemV2::Trait(def) => def,
                     _ => todo!(),
                 };
-                (&def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Mod(_) => todo!(),
             ItemRef::Impl(_) => todo!(),
@@ -199,7 +200,7 @@ enum ImplItemV1 {
     Const(ConstDef),
 }
 
-fn item_to_rust_item(item: Item) -> ItemRef {
+fn item_to_rust_item(_item: Item) -> ItemRef {
     todo!()
 }
 
@@ -230,7 +231,7 @@ pub fn extract_modules2(
 
     // dbg!(&module_path);
     let mut module_itemrefs = Vec::new();
-    let mut top_mod = RustMod {
+    let _top_mod = RustMod {
         pub_: false,
         module_path: current_path.clone(),
         items: Vec::new(),
@@ -329,7 +330,7 @@ pub fn extract_modules2(
                     Visibility::Inherited => false,
                 };
 
-                let mut rust_stmts = item_fn
+                let rust_stmts = item_fn
                     .block
                     .stmts
                     .clone()
@@ -642,7 +643,7 @@ fn populate_item_definitions_stmts(
     stmts: &[Stmt],
     // global_data: &GlobalData,
     module_path: &[String],
-    current_scope_various_defs: &mut VariousDefintions,
+    _current_scope_various_defs: &mut VariousDefintions,
     module: &mut ModuleData,
     scope_id: &mut Vec<usize>,
 ) {
@@ -663,7 +664,7 @@ fn populate_item_definitions_stmts(
                     false,
                 );
             }
-            Stmt::Item(item) => {
+            Stmt::Item(_item) => {
                 // populate_item_definitions_items_individual_item(
                 //     item,
                 //     // global_data,
@@ -1464,7 +1465,7 @@ fn look_for_module_in_items(
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
-    look_for_scoped_items: bool,
+    _look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
     module_items: &[ItemRef],
@@ -1831,14 +1832,14 @@ mod update_definitons {
     use std::mem;
 
     use syn::{
-        FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum,
-        ItemFn, ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type,
-        TypeParamBound, Visibility,
+        FnArg, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait,
+        Member, Pat, ReturnType, Type,
     };
-    use tracing::{debug, debug_span};
+    use tracing::debug;
 
     use crate::{
-        make_item_definitions, tree_structure::look_for_module_in_items, update_item_definitions::RustTypeImplTrait, RustImplBlockSimple, RustPathSegment, RustType, RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH
+        tree_structure::look_for_module_in_items, RustImplBlockSimple, RustPathSegment, RustType,
+        RustTypeParam, RustTypeParamValue, PRELUDE_MODULE_PATH,
     };
 
     use super::{ItemActual, ItemRef, StmtsRef};
@@ -2275,7 +2276,7 @@ mod update_definitons {
                         item,
                         current_module,
                         module_items_tree,
-                        &item_defs_no_types,
+                        item_defs_no_types,
                         scoped_items,
                     );
 
@@ -2289,7 +2290,7 @@ mod update_definitons {
                         item,
                         current_module,
                         module_items_tree,
-                        &item_defs_no_types,
+                        item_defs_no_types,
                         scoped_items,
                     );
 
@@ -2335,7 +2336,7 @@ mod update_definitons {
                         item,
                         current_module,
                         module_items_tree,
-                        &item_defs_no_types,
+                        item_defs_no_types,
                         scoped_items,
                     );
 
@@ -2349,7 +2350,7 @@ mod update_definitons {
                         item,
                         current_module,
                         module_items_tree,
-                        &item_defs_no_types,
+                        item_defs_no_types,
                         scoped_items,
                     );
 
@@ -2426,7 +2427,7 @@ mod update_definitons {
         module_path: &[String],
         item_refs: &[ItemRef],
         items_copy: &[ItemActual],
-        scoped_items: &Vec<Vec<ItemRef>>,
+        scoped_items: &[Vec<ItemRef>],
     ) -> ItemV2 {
         match item {
             ItemActual::StructOrEnum(item_def) => {
@@ -3010,6 +3011,7 @@ mod update_definitons {
     /// NOTE global data is required by get_path_without_namespacing which only uses pub_definitions etc, not `ItemDefintion`s
     ///
     /// IMPORTANT NOTE this fn is never used in the first pass where item definitions are being recorded, only in the second pass where info about dependant types is being add, so we can safely lookup Path -> ItemDefinition here
+    #[allow(unused_variables)]
     fn parse_types_for_populate_item_definitions(
         type_: &Type,
         // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
@@ -3019,7 +3021,7 @@ mod update_definitons {
         // global_data: &make_item_definitions::GlobalData,
         item_refs: &[ItemRef],
         item_defs: &[ItemActual],
-        scoped_items: &Vec<Vec<ItemRef>>,
+        scoped_items: &[Vec<ItemRef>],
     ) -> RustType {
         todo!()
     }
@@ -3037,7 +3039,7 @@ mod update_definitons {
     pub fn resolve_path(
         // look_for_scoped_vars: bool,
         // TODO can we combine this with `look_for_scoped_vars`?
-        look_for_scoped_items: bool,
+        _look_for_scoped_items: bool,
         use_private_items: bool,
         mut segs: Vec<RustPathSegment>,
         module_items: &[ItemRef],

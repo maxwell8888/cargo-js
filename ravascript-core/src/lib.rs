@@ -1777,6 +1777,7 @@ fn _get_path_old(
         //     // If the item has not been namespaced, we don't need to do anything
         //     segs
         // }
+        #[allow(clippy::let_and_return)]
         segs
         // TODO `this` is a JS ident, we want to be dealing with Rust idents at this point
     } else if segs.len() == 1 && segs[0] == "this" {

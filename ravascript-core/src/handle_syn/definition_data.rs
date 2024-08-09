@@ -4,7 +4,6 @@ use syn::{PathArguments, Type};
 use tracing::debug;
 
 use crate::{
-    duplicate_namespacing::Duplicate,
     handle_syn::RustPathSegment2,
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     update_item_definitions::{
@@ -306,7 +305,7 @@ impl JsImplBlock2 {
 
 #[derive(Debug, Clone)]
 pub struct GlobalData {
-    pub crate_path: Option<PathBuf>,
+    pub _crate_path: Option<PathBuf>,
     pub modules: Vec<ModuleData>,
     _crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
@@ -465,7 +464,7 @@ impl GlobalData {
         // }
 
         GlobalData {
-            crate_path,
+            _crate_path: crate_path,
             modules: Vec::new(),
             // crates: vec![ravascript_prelude_crate],
             _crates: vec![],

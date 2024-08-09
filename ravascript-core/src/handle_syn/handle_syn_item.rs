@@ -120,7 +120,7 @@ pub fn handle_item_fn(
     item_fn: &ItemFn,
     // For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // Good also keep track using a field on global data, but for now seems less error prone to pass values to handle fns because it is always clear whether we are at the top level based on whether the item is being parsed within `handle_statments()`
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -1409,7 +1409,7 @@ pub fn handle_item_impl(
 
 pub fn handle_item_struct(
     item_struct: &ItemStruct,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
@@ -1760,7 +1760,7 @@ pub fn _handle_item_mod(
     let items = if let Some(content) = &item_mod.content {
         // TODO how does `mod bar { mod foo; }` work?
         content.1.clone()
-    } else if let Some(crate_path) = &global_data.crate_path {
+    } else if let Some(crate_path) = &global_data._crate_path {
         let mut file_path = crate_path.clone();
         file_path.push("src");
         if module_path_copy.is_empty() {

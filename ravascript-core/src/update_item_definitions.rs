@@ -403,11 +403,11 @@ pub fn update_item_definitions(
                 private_submodules: module.private_submodules,
                 pub_use_mappings: module.pub_use_mappings,
                 private_use_mappings: module.private_use_mappings,
-                resolved_mappings: module.resolved_mappings,
+                _resolved_mappings: module.resolved_mappings,
                 various_definitions: updated_various_defs,
                 items: module.items,
                 scoped_various_definitions: updated_scoped_various_defs,
-                scoped_syn_impl_items: module.scoped_syn_impl_items,
+                _scoped_syn_impl_items: module.scoped_syn_impl_items,
             }
         })
         .collect();
@@ -708,6 +708,7 @@ pub enum StructFieldInfo {
     RegularStruct(Vec<(String, RustType)>),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StructDefinitionInfo {
     pub fields: StructFieldInfo,
@@ -730,6 +731,7 @@ pub struct EnumVariantInfo {
     pub inputs: Vec<EnumVariantInputsInfo>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EnumDefinitionInfo {
     pub members: Vec<EnumVariantInfo>,
@@ -788,6 +790,7 @@ impl ItemDefinition {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RustTraitDefinition {
     pub js_name: Ident,
@@ -1274,7 +1277,7 @@ pub struct ModuleData {
     pub private_use_mappings: Vec<(String, Vec<String>)>,
     /// Same format as use mapping but has absolute module path
     /// (snake case item name, snake case absolute module path)
-    pub resolved_mappings: Vec<(String, Vec<String>)>,
+    pub _resolved_mappings: Vec<(String, Vec<String>)>,
     /// For recording information about the return type of fns
     ///
     /// TODO what if the fn is just imported from another module?
@@ -1312,7 +1315,7 @@ pub struct ModuleData {
     // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
     // scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
     pub scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
-    pub scoped_syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
+    pub _scoped_syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
 }
 impl ModuleData {
     pub fn item_defined_in_module(&self, use_private: bool, item: &str) -> bool {
@@ -1374,6 +1377,7 @@ pub struct VariousDefintions {
     pub trait_definitons: Vec<RustTraitDefinition>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ConstDef {
     pub js_name: Ident,
@@ -1384,6 +1388,7 @@ pub struct ConstDef {
 }
 
 /// Not just for methods, can also be an enum variant with no inputs
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
@@ -1403,6 +1408,7 @@ pub struct FnInfo {
     pub syn: FnInfoSyn,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FnInfoSyn {
     Standalone(ItemFn),
@@ -1726,8 +1732,7 @@ fn parse_types_for_populate_item_definitions(
                                 PathArguments::AngleBracketed(args) => args
                                     .args
                                     .iter()
-                                    .enumerate()
-                                    .filter_map(|(_i, arg)| match arg {
+                                    .filter_map(|arg| match arg {
                                         GenericArgument::Lifetime(_) => None,
                                         GenericArgument::Type(arg_type_) => {
                                             Some(parse_types_for_populate_item_definitions(
