@@ -349,7 +349,7 @@ fn tree_to_destructure_object(use_tree: &UseTree) -> DestructureObject {
 ///
 /// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
 ///
-fn tree_parsing_for_boilerplate(
+pub fn tree_parsing_for_boilerplate(
     use_tree: &UseTree,
     // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt
     relative_path: &mut Vec<String>,

@@ -100,17 +100,17 @@ async fn it_transpiles_crate_directory() {
             }
   
             // utils
-  
-            // utils::say_something
-            function sayHello() {
-                return 8;
-            }
-  
+
             // utils::colors
             function utils__colors__duplicateName() {
                 return 7;
             }
             
+            // utils::say_something
+            function sayHello() {
+                return 8;
+            }
+  
             // crate_level_inline
             function crateLevelInline__duplicateName() {
                 return 1;

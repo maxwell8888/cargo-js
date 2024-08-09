@@ -141,7 +141,10 @@ async fn option_unwrap_or() {
     assert_eq!(expected, actual);
 }
 
-#[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_literal_unwrap)]
+#[allow(
+    clippy::unnecessary_lazy_evaluations,
+    clippy::unnecessary_literal_unwrap
+)]
 #[ignore]
 #[tokio::test]
 async fn option_unwrap_or_else() {

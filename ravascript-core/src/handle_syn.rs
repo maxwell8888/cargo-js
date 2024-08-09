@@ -8,7 +8,7 @@ pub use definition_data::{
     GlobalData, GlobalDataScope, RustImplItemItemJs, RustType2, RustTypeImplTrait2, RustTypeParam2,
     RustTypeParamValue2,
 };
-pub use handle_syn_item::*;
+pub use handle_syn_item::js_stmts_from_syn_items;
 pub use handle_syn_stmt::handle_stmt;
 use tracing::{debug, info};
 
@@ -288,7 +288,9 @@ fn parse_fn_input_or_field(
                     //     }
                     //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                     // };
-                    return RustType2::TypeParam(generic.clone().into_rust_type_param2(global_data));
+                    return RustType2::TypeParam(
+                        generic.clone().into_rust_type_param2(global_data),
+                    );
                 }
 
                 // For fns:

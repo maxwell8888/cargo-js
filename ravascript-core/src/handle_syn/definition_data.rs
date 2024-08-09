@@ -14,7 +14,7 @@ use crate::{
     CrateData, PRELUDE_MODULE_PATH,
 };
 
-use super::JsImplItem;
+use super::handle_syn_item::JsImplItem;
 
 #[derive(Debug, Clone)]
 pub struct ScopedVar {

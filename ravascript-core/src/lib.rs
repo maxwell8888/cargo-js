@@ -3,16 +3,15 @@ use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 
-use handle_syn::{
-    handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
-    handle_item_trait, handle_stmt, GlobalData, RustImplItemItemJs, RustType2,
-};
+use handle_syn::{handle_stmt, js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
 use js_ast::{
     FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{ExprPath, ImplItem, Item, ItemFn, ItemMod, ItemTrait, UseTree};
 use tracing::debug_span;
+
+mod tree_structure;
 
 mod handle_syn;
 mod js_ast;
@@ -41,98 +40,6 @@ const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
 // TODO consider how to get RA/cargo check to analyze rust inputs in `testing/`
-
-// TODO remove this as it is unnecessary redirection
-/// Converts a Vec<syn::Item> to Vec<JsStmt> and moves method impls into their class
-///
-/// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
-fn js_stmts_from_syn_items(
-    items: Vec<Item>,
-    // Need to keep track of which module we are currently in, for constructing the boilerplate
-    current_module: &[String],
-    global_data: &mut GlobalData,
-) -> Vec<JsStmt> {
-    let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
-    let _guard = span.enter();
-
-    let mut js_stmts = Vec::new();
-    // let mut modules = Vec::new();
-    // TODO this should be optional/configurable, might not always want it
-
-    // We need to know what the syn type is to know whether it is eg a use which needs adding to the boiler plate
-    // but we also need to put the struct impls into the class
-    // solution:
-    // push use to boilerplate in handle_item() and don't push the item to js_stmts
-    // push other items as normal
-    // after loop, group together classes
-    // now that classes are grouped, we can add them to the module object - we either do the conversion to module objects right at the end after parsing all branches, otherwise we are always going to have to be able to amend the classes because impls might be in other modules.
-
-    // remember that `impl Foo` can appear before `struct Foo {}` so classes definitely need multiple passes or to init class when we come across an impl, and then place it and add other data when we reach the actual struct definition
-    // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
-    // dbg!("js_stmts_from_syn_items");
-    // dbg!(&global_data.scope_id);
-    for item in items {
-        // handle_item(item, global_data, current_module, &mut js_stmts);
-        match item {
-            Item::Const(item_const) => {
-                js_stmts.push(handle_item_const(
-                    &item_const,
-                    true,
-                    global_data,
-                    current_module,
-                ));
-            }
-            Item::Enum(item_enum) => {
-                js_stmts.push(handle_item_enum(
-                    item_enum,
-                    true,
-                    global_data,
-                    current_module,
-                ));
-            }
-            Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => {
-                js_stmts.push(handle_item_fn(&item_fn, true, global_data, current_module));
-            }
-            Item::ForeignMod(_) => todo!(),
-            Item::Impl(item_impl) => {
-                // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
-                js_stmts.extend(handle_item_impl(
-                    &item_impl,
-                    true,
-                    global_data,
-                    current_module,
-                ));
-            }
-            Item::Macro(_) => todo!(),
-            Item::Mod(_item_mod) => {
-                // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
-                // handle_item_mod(item_mod, global_data, current_module)
-            }
-            Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {
-                let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module);
-                js_stmts.push(js_stmt);
-            }
-            Item::Trait(item_trait) => {
-                handle_item_trait(&item_trait, true, global_data, current_module);
-                js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
-            }
-            Item::TraitAlias(_) => todo!(),
-            Item::Type(_) => todo!(),
-            Item::Union(_) => todo!(),
-            Item::Use(_item_use) => {
-                //
-                // handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
-            }
-
-            Item::Verbatim(_) => todo!(),
-            _ => todo!(),
-        }
-    }
-
-    js_stmts
-}
 
 // Third party crates
 #[derive(Debug, Clone)]
@@ -1098,11 +1005,6 @@ pub fn process_items(
     // TODO can this not just be done automatically in JsModule.js_string() ??
     // add module name comments when there is more than 1 module
 
-    // for m in &global_data.transpiled_modules {
-    //     dbg!(&m.module_path);
-    //     dbg!(&m.name);
-    //     dbg!(&m.stmts.len());
-    // }
     if global_data.transpiled_modules.len() > 1 {
         for module in global_data
             .transpiled_modules

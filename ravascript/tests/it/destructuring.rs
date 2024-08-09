@@ -84,7 +84,7 @@ async fn destructure_struct_nested() {
         let foo = new Foo(new Bar(1));
         let { bar: { baz } } = foo;
         console.assert(baz === 1);
-        "#
+        "#,
     );
 
     assert_eq!(expected, actual);
