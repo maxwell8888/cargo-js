@@ -3,14 +3,18 @@ use quote::quote;
 use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
 use tracing::debug_span;
 
-use super::handle_syn_expr::{
-    handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match, handle_expr_path,
+use super::{
+    handle_pat,
+    handle_syn_expr::{
+        handle_expr, handle_expr_and_stmt_macro, handle_expr_block, handle_expr_match,
+        handle_expr_path,
+    },
+    handle_syn_item::{
+        handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
+        handle_item_trait,
+    },
+    parse_fn_input_or_field, PartialRustType,
 };
-use super::handle_syn_item::{
-    handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
-    handle_item_trait,
-};
-use super::{handle_pat, parse_fn_input_or_field, PartialRustType};
 
 use super::definition_data::{RustType2, ScopedVar};
 use crate::{

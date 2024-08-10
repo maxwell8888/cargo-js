@@ -1,7 +1,8 @@
 use pretty_assertions::assert_eq;
-use ravascript::format_js;
-use ravascript::prelude::web::Math;
-use ravascript::prelude::JsNumber;
+use ravascript::{
+    format_js,
+    prelude::{web::Math, JsNumber},
+};
 use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;

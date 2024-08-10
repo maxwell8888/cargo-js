@@ -5,33 +5,27 @@ use syn::{
 };
 use tracing::{debug, debug_span, warn};
 
-use super::definition_data::GlobalData;
-use super::definition_data::RustTypeParam2;
-use super::handle_syn_stmt::handle_stmt;
-use super::handle_syn_stmt::parse_fn_body_stmts;
-use super::parse_fn_input_or_field;
+use super::{
+    definition_data::{GlobalData, RustTypeParam2},
+    handle_syn_stmt::{handle_stmt, parse_fn_body_stmts},
+    parse_fn_input_or_field,
+};
 
-use super::definition_data::RustType2;
-use super::definition_data::RustTypeParamValue2;
-use super::definition_data::ScopedVar;
-use super::handle_pat;
-use super::PartialRustType;
-use super::RustPathSegment2;
+use super::{
+    definition_data::{RustType2, RustTypeParamValue2, ScopedVar},
+    handle_pat, PartialRustType, RustPathSegment2,
+};
 
-use crate::handle_syn::definition_data::resolve_path;
-use crate::update_item_definitions::ConstDef;
-use crate::update_item_definitions::FnInfo;
-use crate::update_item_definitions::RustImplItemItemNoJs;
-use crate::update_item_definitions::RustImplItemNoJs;
-use crate::update_item_definitions::RustTypeParam;
-use crate::update_item_definitions::RustTypeParamValue;
-use crate::update_item_definitions::StructOrEnumDefitionInfo;
 use crate::{
+    handle_syn::definition_data::resolve_path,
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
-    update_item_definitions::{EnumVariantInputsInfo, StructFieldInfo},
+    update_item_definitions::{
+        ConstDef, EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
+    },
     ItemDefinition, RustType, PRELUDE_MODULE_PATH,
 };
 

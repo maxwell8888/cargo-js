@@ -799,6 +799,7 @@ pub fn process_items(
     // Look for web prelude
     // TODO make this correct. Whilst it would be easier to identify web_prelude usage if `make_use_mappings_absolute()` (or whatever) was implemented, it is still impossible to know whether web_prelude is being used until we parse the entire syntax in `js_stmts_from_syn_items()` since we can have cases like:
     // `let div = web_prelude::document::create_element("div");`
+    // So better to just rely on Cargo.toml dependencies, and not support web_prelude and other crates in blocks/formats without a Cargo.toml?
     let include_web = look_for_web_prelude(&modules);
 
     if include_web {

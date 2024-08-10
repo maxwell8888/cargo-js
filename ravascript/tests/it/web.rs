@@ -1,12 +1,17 @@
 #![allow(unused_imports)]
 
 use pretty_assertions::assert_eq;
-use ravascript::prelude::web::{
-    try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError, Json,
-    Node, SyntaxError, NAVIGATOR,
+use ravascript::{
+    catch,
+    prelude::{
+        web::{
+            try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError,
+            Json, Node, SyntaxError, NAVIGATOR,
+        },
+        *,
+    },
+    try_,
 };
-use ravascript::prelude::*;
-use ravascript::{catch, try_};
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
 

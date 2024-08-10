@@ -18,8 +18,7 @@ use futures::StreamExt;
 // use biome_formatter::format;
 // use biome_formatter::prelude::*;
 use std::{fs, path::PathBuf};
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 use tracing_tree::HierarchicalLayer;
 
 // use rstest::*;

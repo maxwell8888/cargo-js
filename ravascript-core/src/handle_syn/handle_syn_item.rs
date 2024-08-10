@@ -7,18 +7,19 @@ use syn::{
 };
 use tracing::{debug, debug_span, info};
 
-use super::definition_data::JsImplBlock2;
-use super::definition_data::{GlobalDataScope, RustImplItemJs, ScopedVar};
-use super::handle_syn_stmt::handle_stmt;
-use super::{handle_syn_expr::handle_expr, handle_syn_stmt::parse_fn_body_stmts};
-use super::{RustTypeParam2, RustTypeParamValue2};
-
-use crate::update_item_definitions::{
-    get_item_impl_unique_id, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+use super::{
+    definition_data::{GlobalDataScope, JsImplBlock2, RustImplItemJs, ScopedVar},
+    handle_syn_expr::handle_expr,
+    handle_syn_stmt::{handle_stmt, parse_fn_body_stmts},
+    RustTypeParam2, RustTypeParamValue2,
 };
+
 use crate::{
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
+    },
+    update_item_definitions::{
+        get_item_impl_unique_id, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
     },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,

@@ -1,5 +1,4 @@
-use ravascript::a;
-use ravascript::prelude::*;
+use ravascript::{a, prelude::*};
 
 // cloning
 // JSON.stringify() works for all objects except html elements, recursive objects
