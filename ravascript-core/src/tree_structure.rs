@@ -15,14 +15,14 @@ use crate::{extract_modules::tree_parsing_for_boilerplate, RustPathSegment, PREL
 pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
     let pub_ = matches!(item_use.vis, Visibility::Public(_));
 
-    let (_root_module_or_crate, item_paths) = match &item_use.tree {
+    let item_paths = match &item_use.tree {
         UseTree::Path(use_path) => {
-            let root_module_or_crate = use_path.ident.to_string();
+            let _root_module_or_crate = use_path.ident.to_string();
 
             let mut item_paths = Vec::new();
             let mut relative_path = vec![use_path.ident.to_string()];
             tree_parsing_for_boilerplate(&use_path.tree, &mut relative_path, &mut item_paths);
-            (root_module_or_crate, item_paths)
+            item_paths
         }
         // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
         UseTree::Name(_use_name) => todo!(),

@@ -1193,6 +1193,7 @@ impl GlobalData {
         impl_method
     }
 
+    // TODO what if the impl item is not defined on a struct/enum?
     pub fn lookup_impl_item_item2(
         &self,
         // item_generics: &Vec<RustTypeParam>,

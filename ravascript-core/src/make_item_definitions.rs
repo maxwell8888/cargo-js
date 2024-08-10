@@ -143,7 +143,6 @@ fn populate_item_definitions_items_individual_item(
                     // members: members_for_scope,
                     syn_object: item_enum.clone(),
                 }),
-                impl_block_ids: Vec::new(),
             });
         }
         Item::ExternCrate(_) => todo!(),
@@ -332,7 +331,6 @@ fn populate_item_definitions_items_individual_item(
                     // fields,
                     syn_object: item_struct.clone(),
                 }),
-                impl_block_ids: Vec::new(),
             });
         }
         Item::Trait(item_trait) => {
@@ -739,9 +737,6 @@ pub struct ItemDefinition {
     pub generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
-    // impl_blocks: Vec<ItemDefintionImpls>,
-    /// (unique impl id)
-    pub impl_block_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

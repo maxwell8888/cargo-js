@@ -1293,6 +1293,7 @@ pub fn handle_item_impl(
     dedup_rust_prelude_definitions
         .dedup_by(|(js_name, _item_def), (js_name2, _item_def2)| js_name == js_name2);
 
+    // Push stmts like `Number.prototype.foo = bar.prototype.foo`
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         if prelude_item_def.impl_block_ids.contains(&unique_id) {
             for (_is_used, item) in &rust_impl_block.items {

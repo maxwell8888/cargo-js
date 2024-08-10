@@ -570,7 +570,7 @@ fn update_various_def(
                 is_pub: item_def.is_pub,
                 generics: item_def.generics,
                 struct_or_enum_info: new_struct_or_enum_info,
-                impl_block_ids: item_def.impl_block_ids,
+                impl_block_ids: Vec::new(),
             }
         })
         .collect();
@@ -762,8 +762,17 @@ pub struct ItemDefinition {
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
     // impl_blocks: Vec<ItemDefintionImpls>,
+    /// Should be used for matching only inherent impls to the target type, which is always be a struct or enum (or type alias of a struct or enum)? but trait impls also currently are added
+    ///
+    /// Currently used for:
+    /// -   looking up impl items
+    /// -   add static fields (pointing to trait class) and methods to JsClass (update_classes_stmts())
+    /// -   adding stmts like `Number.prototype.foo = bar.prototype.foo` (handle_syn_item())
+    ///
     /// These are uuids/references to all the impl blocks whose target match this struct/enum
+    ///
     /// (unique impl id)
+    // TODO use reference instead of id?
     pub impl_block_ids: Vec<String>,
 }
 impl ItemDefinition {
