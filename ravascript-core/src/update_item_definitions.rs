@@ -407,7 +407,6 @@ pub fn update_item_definitions(
                 various_definitions: updated_various_defs,
                 items: module.items,
                 scoped_various_definitions: updated_scoped_various_defs,
-                _scoped_syn_impl_items: module.scoped_syn_impl_items,
             }
         })
         .collect();
@@ -1324,7 +1323,6 @@ pub struct ModuleData {
     // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
     // scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
     pub scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
-    pub _scoped_syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
 }
 impl ModuleData {
     pub fn item_defined_in_module(&self, use_private: bool, item: &str) -> bool {

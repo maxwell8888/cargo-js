@@ -755,6 +755,12 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
     js_stmts.append(&mut prelude_stmts);
 }
 
+// Impl handling:
+// make_item_definitions pushes scoped syn Impls to module.scoped_syn_impl_items. update_item_definitions then loops over these and creates RustImplBlockSimple and (indirectly/eventually) pushes to GlobalData.impl_blocks_simpl
+// update_item_definitions appears to do nothing other than the above with scoped impls
+// populate_item_def_impl_blocks simply populates ItemDefinition.impl_block_ids
+// handle_item_impl gets the matching RustImplBlockSimple(s) (gets a Vec???) from global_data.impl_blocks_simpl for *all* syn Impls, and (partly) uses this to create a `JsImplBlock2` (namely the `RustImplItemJs`s), and pushes to GlobalData.impl_blocks. We then create a `JsClass` for the impl (if it is not an inherent impl) and the static fields and methods from the `JsImplBlock2`. We then push stmts like `Number.prototype.foo = bar.prototype.foo` for each prelude type which matches/impls the impl.
+// update_classes2: for each JsClass that is not for an impl block, for each impl block it impls (ie has id in it's impl_block_ids) we get the `JsImplBlock2` from global_data.impl_blocks and copy it's static fields and methods to the JsClass
 pub fn process_items(
     items: Vec<Item>,
     crate_path: Option<PathBuf>,
@@ -1003,7 +1009,7 @@ pub fn process_items(
     // Remember that use might only be `use`ing a module, and then completing the path to the actual item in the code. So the final step of reconciliation will always need make use of the actual paths/items in the code
     // dbg!(global_data.modules);
 
-    // TODO can this not just be done automatically in JsModule.js_string() ??
+    // TODO can this not just be done automatically in JsModule.js_string()? Would require a flag arg so we can avoid the comments for blocks etc, but this is preferrable to polluting this fn with something so trivial.
     // add module name comments when there is more than 1 module
 
     if global_data.transpiled_modules.len() > 1 {
