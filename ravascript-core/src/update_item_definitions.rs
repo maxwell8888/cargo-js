@@ -23,7 +23,8 @@ pub fn update_item_definitions(
     for module in &modules {
         let module_path = module.path.clone();
 
-        for (scope_id, item_impl) in &module.scoped_syn_impl_items {
+        // NOTE .syn_impl_items used to be .scoped_syn_impl_items which is why scope_id is not Option<T>
+        for (scope_id, item_impl) in &module.syn_impl_items {
             // Temporarily store impl block's type params on global data
 
             let impl_item_target_path = match &*item_impl.self_ty {

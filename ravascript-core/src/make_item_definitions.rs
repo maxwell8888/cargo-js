@@ -31,7 +31,7 @@ pub fn make_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleDat
             various_definitions: VariousDefintions::default(),
             items: module_first_pass.items,
             scoped_various_definitions: Vec::new(),
-            scoped_syn_impl_items: Vec::new(),
+            syn_impl_items: Vec::new(),
         };
 
         // TODO Gymnastics to reconcile needing to mutate 4 different vectors which are stored differently for modules and scopes. Should probably have `module.various_defs` and `scope.various_defs` fields
@@ -234,7 +234,7 @@ fn populate_item_definitions_items_individual_item(
             // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
 
             module
-                .scoped_syn_impl_items
+                .syn_impl_items
                 .push((scope_id.clone(), item_impl.clone()));
 
             // TODO also need to go through scopes in impl fns, like with standalone fns
@@ -903,7 +903,7 @@ pub struct ModuleData {
     // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
     // scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
     pub scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
-    pub scoped_syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
+    pub syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
 }
 impl ModuleData {
     pub fn item_defined_in_module(&self, use_private: bool, item: &str) -> bool {

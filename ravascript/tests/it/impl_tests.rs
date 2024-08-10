@@ -201,7 +201,6 @@ async fn full_qualified_trait_method_call() {
 
 #[tokio::test]
 async fn call_method_before_impl_block_definition() {
-    setup_tracing();
     let actual = r2j_file_run_main!(
        struct Foo {
            num: i32,
