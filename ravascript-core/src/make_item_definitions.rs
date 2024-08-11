@@ -1,10 +1,10 @@
 use syn::{
     Expr, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStruct, ItemTrait, Meta, Stmt, Type, Visibility,
+    ItemStruct, ItemTrait, Meta, Signature, Stmt, Type, Visibility,
 };
 use tracing::{debug, debug_span};
 
-use crate::{extract_modules::ModuleDataFirstPass, RustPathSegment};
+use crate::{extract_modules::ModuleDataFirstPass, tree_structure::StmtsRef, RustPathSegment};
 
 pub fn make_item_definitions(modules: Vec<ModuleDataFirstPass>) -> Vec<ModuleData> {
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
@@ -139,10 +139,8 @@ fn populate_item_definitions_items_individual_item(
                 is_copy,
                 is_pub,
                 generics,
-                struct_or_enum_info: StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
-                    // members: members_for_scope,
-                    syn_object: item_enum.clone(),
-                }),
+                struct_or_enum_info: StructOrEnumDefitionInfo::Enum(item_enum.clone()),
+                impl_block_ids: Vec::new(),
             });
         }
         Item::ExternCrate(_) => todo!(),
@@ -170,6 +168,8 @@ fn populate_item_definitions_items_individual_item(
                 generics,
                 // return_type: RustType::Uninit,
                 syn: FnInfoSyn::Standalone(item_fn.clone()),
+                signature: item_fn.sig.clone(),
+                stmts: Vec::new(),
             });
 
             // Get scoped definitions
@@ -329,10 +329,8 @@ fn populate_item_definitions_items_individual_item(
                 is_pub,
                 is_copy,
                 generics,
-                struct_or_enum_info: StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
-                    // fields,
-                    syn_object: item_struct.clone(),
-                }),
+                struct_or_enum_info: StructOrEnumDefitionInfo::Struct(item_struct.clone()),
+                impl_block_ids: Vec::new(),
             });
         }
         Item::Trait(item_trait) => {
@@ -722,8 +720,8 @@ pub struct EnumDefinitionInfo {
 
 #[derive(Debug, Clone)]
 pub enum StructOrEnumDefitionInfo {
-    Struct(StructDefinitionInfo),
-    Enum(EnumDefinitionInfo),
+    Struct(ItemStruct),
+    Enum(ItemEnum),
 }
 
 /// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
@@ -739,6 +737,7 @@ pub struct ItemDefinition {
     pub generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
+    pub impl_block_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -978,7 +977,12 @@ pub struct FnInfo {
     pub ident: String,
     pub is_pub: bool,
     pub generics: Vec<String>,
+    // TODO remove this, just legacy thing we need for now because it gets used in the JS parsing (I think)
     pub syn: FnInfoSyn,
+
+    pub signature: Signature,
+    // pub syn: FnInfoSyn,
+    pub stmts: Vec<StmtsRef>,
 }
 
 #[allow(dead_code)]

@@ -9,7 +9,8 @@ use crate::{
     duplicate_namespacing::Duplicate,
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
-    make_item_definitions::{self, ModuleMethods},
+    make_item_definitions::{self, FnInfoSyn, ModuleMethods},
+    tree_structure::StmtsRef,
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
@@ -309,6 +310,7 @@ pub fn update_item_definitions(
                                     generics: fn_generics,
                                     return_type,
                                     syn: FnInfoSyn::Impl(impl_item_fn.clone()),
+                                    stmts: Vec::new(),
                                 },
                             )
                         }
@@ -463,10 +465,9 @@ fn update_various_def(
         .map(|item_def| {
             let new_struct_or_enum_info = match item_def.struct_or_enum_info {
                 make_item_definitions::StructOrEnumDefitionInfo::Struct(struct_def_info) => {
-                    let fields = if struct_def_info.syn_object.fields.is_empty() {
+                    let fields = if struct_def_info.fields.is_empty() {
                         StructFieldInfo::UnitStruct
                     } else if struct_def_info
-                        .syn_object
                         .fields
                         .iter()
                         .next()
@@ -476,7 +477,6 @@ fn update_various_def(
                     {
                         StructFieldInfo::RegularStruct(
                             struct_def_info
-                                .syn_object
                                 .fields
                                 .iter()
                                 .map(|f| {
@@ -496,7 +496,6 @@ fn update_various_def(
                     } else {
                         StructFieldInfo::TupleStruct(
                             struct_def_info
-                                .syn_object
                                 .fields
                                 .iter()
                                 .map(|f| {
@@ -513,12 +512,11 @@ fn update_various_def(
                     };
                     StructOrEnumDefitionInfo::Struct(StructDefinitionInfo {
                         fields,
-                        syn_object: struct_def_info.syn_object,
+                        syn_object: struct_def_info,
                     })
                 }
                 make_item_definitions::StructOrEnumDefitionInfo::Enum(enum_def_info) => {
                     let members_for_scope = enum_def_info
-                        .syn_object
                         .variants
                         .iter()
                         .map(|v| EnumVariantInfo {
@@ -547,7 +545,7 @@ fn update_various_def(
                         .collect::<Vec<_>>();
                     StructOrEnumDefitionInfo::Enum(EnumDefinitionInfo {
                         members: members_for_scope,
-                        syn_object: enum_def_info.syn_object,
+                        syn_object: enum_def_info,
                     })
                 }
             };
@@ -659,6 +657,7 @@ fn update_various_def(
                         FnInfoSyn::Impl(impl_item_fn)
                     }
                 },
+                stmts: Vec::new(),
             }
         })
         .collect();
@@ -1414,13 +1413,8 @@ pub struct FnInfo {
     // rust_type: RustType,
     // TODO optionally add enum for Field, AssociatedFn, Method, etc
     pub syn: FnInfoSyn,
-}
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub enum FnInfoSyn {
-    Standalone(ItemFn),
-    Impl(ImplItemFn),
+    pub stmts: Vec<StmtsRef>,
 }
 
 impl FnInfo {
