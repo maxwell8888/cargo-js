@@ -18,8 +18,11 @@ use crate::{
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
+    make_item_definitions::FnInfoSyn,
+    tree_structure::{update_definitons::ItemV2, ItemRef},
     update_item_definitions::{
-        get_item_impl_unique_id, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        get_item_impl_unique_id, ConstDef, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        StructOrEnumDefitionInfo,
     },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,
@@ -30,7 +33,7 @@ use crate::{
 ///
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
 pub fn js_stmts_from_syn_items(
-    items: Vec<Item>,
+    // items: Vec<Item>,
     // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &[String],
     global_data: &mut GlobalData,
@@ -54,62 +57,97 @@ pub fn js_stmts_from_syn_items(
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
     // dbg!("js_stmts_from_syn_items");
     // dbg!(&global_data.scope_id);
-    for item in items {
+    let item_defs = global_data.item_defs.clone();
+    for item in &global_data.item_refs.clone() {
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
-            Item::Const(item_const) => {
+            ItemRef::Const(index) => {
+                let item = &item_defs[*index];
+                let const_def = match item {
+                    ItemV2::Const(actual) => actual,
+                    _ => todo!(),
+                };
                 js_stmts.push(handle_item_const(
-                    &item_const,
+                    const_def,
                     true,
                     global_data,
                     current_module,
                 ));
             }
-            Item::Enum(item_enum) => {
-                js_stmts.push(handle_item_enum(
-                    item_enum,
-                    true,
-                    global_data,
-                    current_module,
-                ));
+            ItemRef::StructOrEnum(index) => {
+                let item = &item_defs[*index];
+                let item_enum = match item {
+                    ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+                        StructOrEnumDefitionInfo::Struct(struct_def) => {
+                            js_stmts.push(handle_item_struct(
+                                &struct_def.syn_object,
+                                true,
+                                global_data,
+                                current_module,
+                            ));
+                        }
+                        StructOrEnumDefitionInfo::Enum(enum_def) => {
+                            js_stmts.push(handle_item_enum(
+                                enum_def.syn_object.clone(),
+                                true,
+                                global_data,
+                                current_module,
+                            ));
+                        }
+                    },
+                    _ => todo!(),
+                };
             }
-            Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => {
-                js_stmts.push(handle_item_fn(&item_fn, true, global_data, current_module));
+            // Item::ExternCrate(_) => todo!(),
+            ItemRef::Fn(index) => {
+                let item = &item_defs[*index];
+                let item_fn = match item {
+                    ItemV2::Fn(actual) => match &actual.syn {
+                        FnInfoSyn::Standalone(item_fn) => item_fn,
+                        FnInfoSyn::Impl(_) => todo!(),
+                    },
+                    _ => todo!(),
+                };
+                js_stmts.push(handle_item_fn(item_fn, true, global_data, current_module));
             }
-            Item::ForeignMod(_) => todo!(),
-            Item::Impl(item_impl) => {
+            // Item::ForeignMod(_) => todo!(),
+            ItemRef::Impl(index) => {
+                let item = &item_defs[*index];
+                let item_impl = match item {
+                    ItemV2::Impl(actual) => &actual.syn,
+                    _ => todo!(),
+                };
                 // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
                 js_stmts.extend(handle_item_impl(
-                    &item_impl,
+                    item_impl,
                     true,
                     global_data,
                     current_module,
                 ));
             }
-            Item::Macro(_) => todo!(),
-            Item::Mod(_item_mod) => {
+            // ItemRef::Macro(_) => todo!(),
+            ItemRef::Mod(_item_mod) => {
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
                 // handle_item_mod(item_mod, global_data, current_module)
             }
-            Item::Static(_) => todo!(),
-            Item::Struct(item_struct) => {
-                let js_stmt = handle_item_struct(&item_struct, true, global_data, current_module);
-                js_stmts.push(js_stmt);
-            }
-            Item::Trait(item_trait) => {
-                handle_item_trait(&item_trait, true, global_data, current_module);
+            // ItemRef::Static(_) => todo!(),
+            ItemRef::Trait(index) => {
+                let item = &item_defs[*index];
+                let item_trait = match item {
+                    ItemV2::Trait(actual) => &actual.syn,
+                    _ => todo!(),
+                };
+                handle_item_trait(item_trait, true, global_data, current_module);
                 js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
             }
-            Item::TraitAlias(_) => todo!(),
-            Item::Type(_) => todo!(),
-            Item::Union(_) => todo!(),
-            Item::Use(_item_use) => {
+            // Item::TraitAlias(_) => todo!(),
+            // Item::Type(_) => todo!(),
+            // Item::Union(_) => todo!(),
+            ItemRef::Use(_item_use) => {
                 //
                 // handle_item_use(&item_use, ItemUseModuleOrScope::Module(module));
             }
-
-            Item::Verbatim(_) => todo!(),
+            // Item::Verbatim(_) => todo!(),
             _ => todo!(),
         }
     }
@@ -312,7 +350,7 @@ pub fn handle_item_fn(
 }
 
 pub fn handle_item_const(
-    item_const: &ItemConst,
+    const_def: &ConstDef,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
@@ -358,22 +396,12 @@ pub fn handle_item_const(
     //     });
     // }
 
-    let const_def = global_data.lookup_const_def_known_module(
-        current_module,
-        &global_data.scope_id_as_option(),
-        &item_const.ident.to_string(),
-    );
-
     JsStmt::Local(JsLocal {
         export: false,
-        public: match item_const.vis {
-            Visibility::Public(_) => true,
-            Visibility::Restricted(_) => todo!(),
-            Visibility::Inherited => false,
-        },
+        public: const_def.is_pub,
         type_: LocalType::Const,
-        lhs: LocalName::Single(const_def.js_name),
-        value: handle_expr(&item_const.expr, global_data, current_module).0,
+        lhs: LocalName::Single(const_def.js_name.clone()),
+        value: handle_expr(&const_def.syn_object.expr, global_data, current_module).0,
     })
 }
 

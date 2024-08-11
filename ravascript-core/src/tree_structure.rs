@@ -55,6 +55,18 @@ pub enum ItemActual {
     // Impl(RustMod),
     // Use(RustUse),
 }
+impl ItemActual {
+    pub fn ident(&self) -> &str {
+        match self {
+            ItemActual::StructOrEnum(def) => &def.ident,
+            ItemActual::Fn(def) => &def.ident,
+            ItemActual::Const(def) => &def.name,
+            ItemActual::Trait(def) => &def.name,
+            // ItemActual::Impl(_) => panic!(),
+            ItemActual::None => panic!(),
+        }
+    }
+}
 
 // References to top level deifinitions (used inside Mod's, Fn bodies)
 #[derive(Debug, Clone)]
@@ -1660,17 +1672,20 @@ pub fn resolve_path(
 }
 
 // Update definitions
-mod update_definitons {
+pub mod update_definitons {
     use std::mem;
 
     use syn::{FnArg, Item, ItemImpl, Pat, ReturnType, Type};
     use tracing::debug;
 
     use crate::{
+        duplicate_namespacing::Duplicate,
         js_ast::Ident,
         tree_structure::look_for_module_in_items,
-        update_item_definitions::{ConstDef, FnInfo, ItemDefinition, RustTraitDefinition},
-        RustImplBlockSimple, RustPathSegment, RustType, PRELUDE_MODULE_PATH,
+        update_item_definitions::{
+            ConstDef, FnInfo, ItemDefinition, RustTraitDefinition, RustType,
+        },
+        RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
 
     use super::{ItemActual, ItemRef, StmtsRef};
@@ -1683,6 +1698,7 @@ mod update_definitons {
         mut item_defs_no_types: Vec<ItemActual>,
         current_module: &[String],
         in_scope: bool,
+        duplicates: Vec<Duplicate>,
     ) -> Vec<ItemV2> {
         // (Vec<ModuleData>, Vec<RustImplBlockSimple>)
 
@@ -1697,6 +1713,7 @@ mod update_definitons {
             &mut updated_item_defs,
             &mut scoped_items,
             in_scope,
+            &duplicates,
         );
 
         updated_item_defs
@@ -1710,6 +1727,7 @@ mod update_definitons {
         // TODO use &ItemRef
         scoped_items: &mut Vec<Vec<ItemRef>>,
         in_scope: bool,
+        duplicates: &[Duplicate],
     ) {
         for item_ref in module_items_tree {
             match item_ref {
@@ -1721,6 +1739,8 @@ mod update_definitons {
                         module_items_tree,
                         item_defs_no_types,
                         scoped_items,
+                        in_scope,
+                        &duplicates,
                     );
 
                     if in_scope {
@@ -1735,6 +1755,8 @@ mod update_definitons {
                         module_items_tree,
                         item_defs_no_types,
                         scoped_items,
+                        in_scope,
+                        &duplicates,
                     );
 
                     if in_scope {
@@ -1769,6 +1791,7 @@ mod update_definitons {
                         updated_item_defs,
                         scoped_items,
                         true,
+                        &duplicates,
                     );
 
                     scoped_items.pop();
@@ -1781,6 +1804,8 @@ mod update_definitons {
                         module_items_tree,
                         item_defs_no_types,
                         scoped_items,
+                        in_scope,
+                        &duplicates,
                     );
 
                     if in_scope {
@@ -1795,6 +1820,8 @@ mod update_definitons {
                         module_items_tree,
                         item_defs_no_types,
                         scoped_items,
+                        in_scope,
+                        &duplicates,
                     );
 
                     if in_scope {
@@ -1809,6 +1836,7 @@ mod update_definitons {
                         updated_item_defs,
                         scoped_items,
                         false,
+                        &duplicates,
                     );
                 }
                 // TODO
@@ -1863,6 +1891,8 @@ mod update_definitons {
         item_refs: &[ItemRef],
         items_copy: &[ItemActual],
         scoped_items: &[Vec<ItemRef>],
+        in_scope: bool,
+        duplicates: &[Duplicate],
     ) -> ItemV2 {
         match item {
             ItemActual::StructOrEnum(item_def) => {
@@ -1959,9 +1989,20 @@ mod update_definitons {
                         )
                     }
                 };
+
+                let js_name = if in_scope {
+                    Ident::String(item_def.ident.clone())
+                } else if let Some(dup) = duplicates.iter().find(|dup| {
+                    item_def.ident == dup.name && dup.original_module_path == module_path
+                }) {
+                    Ident::Deduped(dup.namespace.clone())
+                } else {
+                    Ident::String(item_def.ident.clone())
+                };
+
                 ItemV2::StructOrEnum(ItemDefinition {
                     ident: item_def.ident.clone(),
-                    js_name: Ident::String(item_def.ident.clone()),
+                    js_name,
                     is_copy: item_def.is_copy,
                     is_pub: item_def.is_pub,
                     generics: item_def.generics,
@@ -2018,9 +2059,24 @@ mod update_definitons {
                     ),
                 };
 
+                let js_name = if in_scope {
+                    Ident::Syn(fn_info.signature.ident.clone())
+                } else {
+                    let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                        fn_info.signature.ident == dup.name
+                            && dup.original_module_path == module_path
+                    });
+
+                    if let Some(dup) = in_module_level_duplicates {
+                        Ident::Deduped(dup.namespace.clone())
+                    } else {
+                        Ident::Syn(fn_info.signature.ident.clone())
+                    }
+                };
+
                 ItemV2::Fn(FnInfo {
                     ident: fn_info.ident.clone(),
-                    js_name: Ident::String(fn_info.ident),
+                    js_name,
                     is_pub: fn_info.is_pub,
                     inputs_types,
                     generics: fn_info.generics,
@@ -2038,9 +2094,20 @@ mod update_definitons {
                     items_copy,
                     scoped_items,
                 );
+
+                let js_name = if in_scope {
+                    Ident::String(const_def.name.clone())
+                } else if let Some(dup) = duplicates.iter().find(|dup| {
+                    const_def.name == dup.name && dup.original_module_path == module_path
+                }) {
+                    Ident::Deduped(dup.namespace.clone())
+                } else {
+                    Ident::String(const_def.name.clone())
+                };
+
                 ItemV2::Const(ConstDef {
                     name: const_def.name.clone(),
-                    js_name: Ident::String(const_def.name),
+                    js_name,
                     is_pub: const_def.is_pub,
                     type_: rust_type,
                     syn_object: const_def.syn_object,
@@ -2048,9 +2115,23 @@ mod update_definitons {
             }
             ItemActual::Trait(trait_def) => {
                 // Currently trait defs don't store any info other than the name, so we don't need to do anything
+
+                let js_name = if in_scope {
+                    Ident::String(trait_def.name.clone())
+                } else {
+                    let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                        trait_def.name == dup.name && dup.original_module_path == module_path
+                    });
+
+                    if let Some(dup) = in_module_level_duplicates {
+                        Ident::Deduped(dup.namespace.clone())
+                    } else {
+                        Ident::String(trait_def.name.clone())
+                    }
+                };
                 ItemV2::Trait(RustTraitDefinition {
                     name: trait_def.name.clone(),
-                    js_name: Ident::String(trait_def.name),
+                    js_name,
                     is_pub: trait_def.is_pub,
                     syn: trait_def.syn,
                 })

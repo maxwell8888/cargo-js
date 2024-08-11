@@ -10,6 +10,11 @@ use js_ast::{
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{ExprPath, ImplItem, Item, ItemFn, ItemMod, ItemTrait, UseTree};
 use tracing::debug_span;
+use tree_structure::{
+    extract_modules2,
+    update_definitons::{update_item_definitions2, ItemV2},
+    ItemRef, RustMod,
+};
 
 mod tree_structure;
 
@@ -29,8 +34,7 @@ use make_item_definitions::make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    update_item_definitions, ItemDefinition, ModuleData, RustImplBlockSimple, RustType,
-    RustTypeParam, RustTypeParamValue,
+    ItemDefinition, ModuleData, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
 };
 
 pub use js_ast::JsStmt;
@@ -106,7 +110,6 @@ enum ItemDefinitions {
 fn get_traits_implemented_for_item(
     item_impls: &[RustImplBlockSimple],
     item_module_path: &[String],
-    item_scope_id: &Option<Vec<usize>>,
     item_name: &str,
 ) -> Vec<(Vec<String>, Option<Vec<usize>>, String)> {
     // Does class implement the trait bounds of the impl block
@@ -145,25 +148,17 @@ fn get_traits_implemented_for_item(
                 RustType::StructOrEnum(_, _, _, _) | RustType::I32 => {
                     if let Some(impl_trait) = &item_impl.trait_ {
                         let types_match = match &item_impl.target {
-                            RustType::StructOrEnum(_type_params, module_path, scope_id, name) => {
-                                module_path == item_module_path
-                                    && scope_id == item_scope_id
-                                    && name == item_name
+                            RustType::StructOrEnum(_type_params, module_path, name, index) => {
+                                module_path == item_module_path && name == item_name
                             }
                             RustType::I32 => {
-                                item_module_path == [PRELUDE_MODULE_PATH]
-                                    && item_scope_id.is_none()
-                                    && item_name == "i32"
+                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "i32"
                             }
                             RustType::Option(_) => {
-                                item_module_path == [PRELUDE_MODULE_PATH]
-                                    && item_scope_id.is_none()
-                                    && item_name == "Option"
+                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "Option"
                             }
-
                             _ => {
                                 dbg!(&item_module_path);
-                                dbg!(&item_scope_id);
                                 dbg!(&item_name);
                                 todo!()
                             }
@@ -340,47 +335,45 @@ fn get_traits_implemented_for_item(
 // }
 
 /// Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-fn populate_item_def_impl_blocks(modules: &mut [ModuleData], impl_blocks: &[RustImplBlockSimple]) {
+fn populate_item_def_impl_blocks(
+    item_refs: &[ItemRef],
+    item_defs: &mut [ItemV2],
+    impl_blocks: &[RustImplBlockSimple],
+) {
     let span = debug_span!("update_classes");
     let _guard = span.enter();
 
     // let impl_blocks = global_data.impl_blocks_simpl.clone();
     // First update item defs in modules, then update the rust prelude item defs which are global and don't sit in a module
     // for module in &mut global_data.modules {
+    let modules = item_refs.iter().filter_map(|item_ref| match item_ref {
+        ItemRef::Mod(rust_mod) => Some(rust_mod),
+        _ => None,
+    });
     for module in modules {
-        // dbg!(&module.parent_name);
-        // let clone_scoped_various_definitions = module.scoped_various_definitions.clone();
-        // let scoped_impl_blocks = clone_scoped_various_definitions
-        //     .iter()
-        //     .map(|svd| &svd.2)
-        //     .flatten();
-
         // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
 
-        let scoped_item_defs = module
-            .scoped_various_definitions
-            .iter_mut()
-            .flat_map(|svd| {
-                svd.1
-                    .item_definitons
-                    .iter_mut()
-                    .map(|item_def| (item_def, Some(svd.0.clone())))
-            });
-        let module_item_defs = module
-            .various_definitions
-            .item_definitons
-            .iter_mut()
-            .map(|item_def| (item_def, None));
-
         // module level items/classes
-        // dbg!(impl_blocks);
-        for (item_def, item_def_scope_id) in scoped_item_defs.chain(module_item_defs) {
-            update_item_def_block_ids(
-                item_def,
-                &item_def_scope_id,
-                &module.path.clone(),
-                impl_blocks,
-            );
+        for item_ref in &module.items {
+            match item_ref {
+                ItemRef::StructOrEnum(index) => {
+                    let actual = item_defs.get_mut(*index).unwrap();
+                    let item_def = match actual {
+                        ItemV2::StructOrEnum(def) => def,
+                        _ => todo!(),
+                    };
+                    update_item_def_block_ids(
+                        item_def,
+                        // &item_def_scope_id,
+                        &module.module_path.clone(),
+                        impl_blocks,
+                    )
+                }
+                ItemRef::Fn(_) => {}
+                ItemRef::Const(_) => {}
+                ItemRef::Trait(_) => {}
+                _ => {}
+            }
         }
     }
 
@@ -401,13 +394,13 @@ fn populate_item_def_impl_blocks(modules: &mut [ModuleData], impl_blocks: &[Rust
 
 fn update_item_def_block_ids(
     item_def: &mut ItemDefinition,
-    item_def_scope_id: &Option<Vec<usize>>,
+    // item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
     // global_data: &GlobalData,
     impl_blocks: &[RustImplBlockSimple],
 ) {
     let traits_impld_for_class =
-        get_traits_implemented_for_item(impl_blocks, module_path, &None, &item_def.ident);
+        get_traits_implemented_for_item(impl_blocks, module_path, &item_def.ident);
     // for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
     for impl_block in impl_blocks {
         // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds
@@ -416,13 +409,10 @@ fn update_item_def_block_ids(
             RustType::StructOrEnum(
                 _,
                 impl_target_module_path,
-                impl_target_scope_id,
                 impl_target_name,
+                impl_tartget_index,
             ) => {
-                if &item_def.ident == impl_target_name
-                    && module_path == impl_target_module_path
-                    && item_def_scope_id == impl_target_scope_id
-                {
+                if &item_def.ident == impl_target_name && module_path == impl_target_module_path {
                     // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
                     // item_def
                     //     .impl_blocks
@@ -431,10 +421,7 @@ fn update_item_def_block_ids(
                 }
             }
             RustType::I32 => {
-                if item_def.ident == "i32"
-                    && module_path == [PRELUDE_MODULE_PATH]
-                    && item_def_scope_id.is_none()
-                {
+                if item_def.ident == "i32" && module_path == [PRELUDE_MODULE_PATH] {
                     item_def.impl_block_ids.push(impl_block.unique_id.clone());
                 }
             }
@@ -778,6 +765,8 @@ pub fn process_items(
     // We use this to know whether we should insert eg
     is_block: bool,
 ) -> Vec<JsModule> {
+    let mut item_defs = Vec::new();
+
     let mut modules = Vec::new();
     // let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
     let mut crate_module = ModuleDataFirstPass::new("crate".to_string(), vec!["crate".to_string()]);
@@ -787,12 +776,12 @@ pub fn process_items(
     // TODO need borrowed items for inline `mod {}` and owned items for `mod foo` where we read from a file
 
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
-    extract_modules(
+    let mut crate_item_refs = extract_modules2(
         true,
         &items,
         &crate_path,
         &mut vec!["crate".to_string()],
-        &mut modules,
+        &mut item_defs,
     );
 
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
@@ -829,12 +818,21 @@ pub fn process_items(
         module_data.items.clone_from(&prelude_items);
         modules.push(module_data);
 
-        extract_modules(
+        let web_prelude_items = extract_modules2(
             true,
             &prelude_items,
             &Some(web_prelude_crate_path.into()),
             &mut vec!["web_prelude".to_string()],
-            &mut modules,
+            &mut item_defs,
+        );
+
+        crate_item_refs.insert(
+            0,
+            ItemRef::Mod(RustMod {
+                pub_: true,
+                items: web_prelude_items,
+                module_path: vec!["web_prelude".to_string()],
+            }),
         );
     };
 
@@ -850,13 +848,21 @@ pub fn process_items(
     module_data.items.clone_from(&prelude_items);
     modules.push(module_data);
 
-    extract_modules(
+    let rust_prelude_items = extract_modules2(
         true,
         &prelude_items,
         // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
         &None,
         &mut vec![PRELUDE_MODULE_PATH.to_string()],
-        &mut modules,
+        &mut item_defs,
+    );
+    crate_item_refs.insert(
+        0,
+        ItemRef::Mod(RustMod {
+            pub_: true,
+            items: rust_prelude_items,
+            module_path: vec![PRELUDE_MODULE_PATH.to_string()],
+        }),
     );
 
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
@@ -877,36 +883,44 @@ pub fn process_items(
     // We need to only populate the idents of the `ItemDefinition`s etc here, and then in a subsequent pass populate all the fields which use types and therefore might require other `ItemDefinition`s to already exist even though they may appear later in the code.
 
     // Updates module.item_defs etc and module.scoped_various_definitions. Doesn't use any data from global_data, only pushes data to ModuleData
-    let mut actual_modules = make_item_definitions(modules);
+    // let mut actual_modules = make_item_definitions(modules);
 
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
-    let prelude_module_data = actual_modules
-        .iter_mut()
-        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-        .unwrap();
-    prelude_module_data
-        .various_definitions
-        .trait_definitons
-        .push(make_item_definitions::RustTraitDefinition {
-            name: "FnOnce".to_string(),
-            is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
-        });
-    prelude_module_data
-        .various_definitions
-        .trait_definitons
-        .push(make_item_definitions::RustTraitDefinition {
-            name: "Copy".to_string(),
-            is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
-        });
+    // let prelude_module_data = actual_modules
+    //     .iter_mut()
+    //     .find(|m| m.path == [PRELUDE_MODULE_PATH])
+    //     .unwrap();
+    // prelude_module_data
+    //     .various_definitions
+    //     .trait_definitons
+    //     .push(make_item_definitions::RustTraitDefinition {
+    //         name: "FnOnce".to_string(),
+    //         is_pub: true,
+    //         syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
+    //     });
+    // prelude_module_data
+    //     .various_definitions
+    //     .trait_definitons
+    //     .push(make_item_definitions::RustTraitDefinition {
+    //         name: "Copy".to_string(),
+    //         is_pub: true,
+    //         syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
+    //     });
 
     // find duplicates
-    let duplicates = namespace_duplicates(&actual_modules);
+    let duplicates = namespace_duplicates(&crate_item_refs, &item_defs);
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
-    let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
+    // let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
+    let mut item_defs = update_item_definitions2(
+        &crate_item_refs,
+        item_defs,
+        &["crate".to_string()],
+        false,
+        duplicates,
+    );
+    let impl_blocks = Vec::new();
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
 
@@ -914,7 +928,7 @@ pub fn process_items(
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-    populate_item_def_impl_blocks(&mut new_modules, &impl_blocks);
+    populate_item_def_impl_blocks(&crate_item_refs, &mut item_defs, &impl_blocks);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -938,26 +952,23 @@ pub fn process_items(
         bar.get_foo();
     }
 
-    let mut global_data = GlobalData::new(crate_path);
-    global_data.modules = new_modules;
-    global_data.impl_blocks_simpl = impl_blocks;
-    // global_data.duplicates = duplicates;
+    let mut global_data = GlobalData::new(crate_path, crate_item_refs, item_defs);
+    // global_data.modules = new_modules;
+    // global_data.impl_blocks_simpl = impl_blocks;
 
     // Parse to JS
-    for module_data in global_data
-        .modules
-        .clone()
-        .into_iter()
-        .filter(|m| m.path != ["web_prelude"] && m.path != [PRELUDE_MODULE_PATH])
-    {
-        global_data.scope_count.clear();
-        global_data.scope_count.push(0);
-        global_data.scope_id.clear();
+    let item_refs = global_data.item_refs.clone();
+    let modules = item_refs.iter().filter_map(|item_ref| match item_ref {
+        ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
+            && rust_mod.module_path != [PRELUDE_MODULE_PATH])
+        .then_some(rust_mod),
+        _ => None,
+    });
+    for module_data in modules {
         global_data.scopes.clear();
-        let mut stmts =
-            js_stmts_from_syn_items(module_data.items, &module_data.path, &mut global_data);
+        let mut stmts = js_stmts_from_syn_items(&module_data.module_path, &mut global_data);
 
-        if with_rust_types && module_data.path == ["crate"] {
+        if with_rust_types && module_data.module_path == ["crate"] {
             let stmts = if is_block {
                 assert_eq!(stmts.len(), 1);
                 match stmts.first_mut().unwrap() {
@@ -975,8 +986,8 @@ pub fn process_items(
 
         global_data.transpiled_modules.push(JsModule {
             public: true,
-            name: Ident::String(module_data.name.clone()),
-            module_path: module_data.path.clone(),
+            name: Ident::String(module_data.module_path.last().unwrap().clone()),
+            module_path: module_data.module_path.clone(),
             stmts,
         });
     }
