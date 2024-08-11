@@ -763,9 +763,13 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
 // `handle_item_impl()` gets the matching RustImplBlockSimple(s) (gets a Vec???) from global_data.impl_blocks_simpl for *all* syn Impls, and (partly) uses this to create a `JsImplBlock2` (namely the `RustImplItemJs`s), and pushes to GlobalData.impl_blocks. We then create a `JsClass` for the impl (if it is not an inherent impl) and the static fields and methods from the `JsImplBlock2`. We then push stmts like `Number.prototype.foo = bar.prototype.foo` for each prelude type which matches/impls the impl.
 // update_classes2: for each JsClass that is not for an impl block, for each impl block it impls (ie has id in it's impl_block_ids) we get the `JsImplBlock2` from global_data.impl_blocks and copy it's static fields and methods to the JsClass
 
-// Plan
-// Create ItemWraper
-// Include ItemWrapper::ImplBlock
+// Plan: remove update_classes2
+// During syn->JS handling, for structs and enums, already know their impls. We look for inherent impls and trait impls that target a concrete type and parse them directly in the struct/enum handler, so that we can directly add the methods etc to the JsClass, and then there is no need to do anything for that impl in handle_item_impl(), so we can just ignore inherent impls and trait impls that target a concrete type in handle_item_impl(). Note that for traits with a default that is not overwritten in the impl block, we will need to take the below approach.
+// For trait impls that don't target a concrete type, we simply add a field/method/prototype field pointing to the trait impl class/object that we know will exist. In the case that the type param only ends up matching a single concrete type, we could just add it directly to the type class like above, but this is not a priority optimisation, so just ignore this for now.
+// What about generics in either above case?:
+// If the impl doesn't specify any concrete types from the target type, we can just treat it the same as a non-generic target type.
+// In the case where there is more than one impl, and at least one of them specifies a concrete type for one of the type params, we need to create to classes eg `class Foo_i32 {}` and `class Foo_f32 {}` and add methods etc to them accordingly.
+// UPDATE still need to do this. Made an attempt but gave up because I ran into scope_id issues.
 pub fn process_items(
     items: Vec<Item>,
     crate_path: Option<PathBuf>,
@@ -1045,11 +1049,6 @@ pub fn process_items(
 
 fn update_classes2(js_stmt_modules: &mut Vec<JsModule>, global_data: &GlobalData) {
     for js_module in js_stmt_modules {
-        let _module = global_data
-            .modules
-            .iter()
-            .find(|m| m.path == js_module.module_path)
-            .unwrap();
         update_classes_stmts(&mut js_module.stmts, global_data);
     }
 }
@@ -1077,19 +1076,6 @@ fn update_classes_stmts(js_stmts: &mut Vec<JsStmt>, global_data: &GlobalData) {
                 dedup_impl_block_ids.sort();
                 dedup_impl_block_ids.dedup();
                 for impl_block_id in &dedup_impl_block_ids {
-                    // dbg!(&global_data.impl_blocks_simpl);
-                    // dbg!(impl_block_id);
-                    // let module_rust_impl_block = global_data
-                    //     .impl_blocks_simpl
-                    //     .iter()
-                    //     .find(|rib| &rib.unique_id == impl_block_id)
-                    //     .unwrap();
-                    // let scoped_rust_impl_block = global_data
-                    //     .s
-                    //     .impl_blocks_simpl
-                    //     .iter()
-                    //     .find(|rib| &rib.unique_id == impl_block_id)
-                    //     .unwrap();
                     for js_impl_block in global_data
                         .impl_blocks
                         .iter()

@@ -231,6 +231,8 @@ fn populate_item_definitions_items_individual_item(
         }
         Item::ForeignMod(_) => todo!(),
         Item::Impl(item_impl) => {
+            // There is no reason to create a version of `RustImplBlockSimple` without RustType's here. We do for the other items, because we need the names of the types to be able to create the `RustType`s for fields etc, but impl blocks don't create anything that lives in `RustType`s? So given the `RustImplBlockSimple` itself *does* need to use `RustType`s we need to create it in `update_item_definitions()` As a matter of fact, there is not much point doing anything here other than recording the names, and then doing all the syn parsing in update_item_definitions, rather than having this somewhat confusing artificial separation.
+
             // TODO IMPORTANT currently we are adding top level impl blocks to `global_data.impl_blocks` in handle_item_impl(). It would be better to push (non-scoped) impl blocks here, so that they are already available if a method defined on the impl is called before the impl block itself is reached/parsed by `handle_item_impl()`. However we still need to find a way to solve this problem for the scoped impl blocks anyway. Leave it as is for now until we do some refactoring and deduplication, to avoid need to repeat a bunch of code here.
 
             module
