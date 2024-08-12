@@ -20,18 +20,20 @@ use super::definition_data::{RustType2, ScopedVar};
 use crate::{
     extract_modules::{handle_item_use, ItemUseModuleOrScope},
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
-    tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
+    tree_structure::{
+        update_definitons::ItemV2, ExprRef, ItemRef, LocalRef, RustExprPath, StmtsRef,
+    },
     update_item_definitions::StructOrEnumDefitionInfo,
     GlobalData,
 };
 
 fn handle_local(
-    local: &Local,
+    local: &LocalRef,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
-    let span = debug_span!("handle_local", lhs = ?quote! { #local }.to_string());
-    let _guard = span.enter();
+    // let span = debug_span!("handle_local", lhs = ?quote! { #local }.to_string());
+    // let _guard = span.enter();
 
     // TODO should also check:
     // by_ref: Some(
@@ -104,7 +106,7 @@ fn handle_local(
     // dbg!("handle_local");
     // println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type, rhs_is_mut_var) = match &*local_init.expr {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module_path);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
@@ -183,7 +185,7 @@ fn handle_local(
     };
 
     // NOTE need to consider whether lhs is destructuring given `let foo = some_number_array;` needs `.copy()`ing whereas `let [one, two] = some_number_array;` doesn't.
-    let mut handle_should_add_copy_expr_path = |expr_path: &ExprPath| {
+    let mut handle_should_add_copy_expr_path = |expr_path: &RustExprPath| {
         if expr_path.path.segments.len() == 1 {
             let scopes_clone = global_data.scopes.clone();
             let var = scopes_clone.iter().rev().find_map(|s| {
@@ -262,26 +264,26 @@ fn handle_local(
         }
     };
     let rhs_should_add_copy = match &*local_init.expr {
-        Expr::Async(_) => todo!(),
-        Expr::Await(_) => todo!(),
+        ExprRef::Async(_) => todo!(),
+        ExprRef::Await(_) => todo!(),
         // TODO not sure if this is correct, need to add some tests for objects that need `.copy()`ing and are returned from blocks
-        Expr::Block(_) => false,
-        Expr::Cast(_) => todo!(),
-        Expr::Const(_) => todo!(),
-        Expr::Continue(_) => todo!(),
-        Expr::Field(_) => todo!(),
-        Expr::ForLoop(_) => todo!(),
-        Expr::Group(_) => todo!(),
-        Expr::Index(_) => todo!(),
-        Expr::Infer(_) => todo!(),
-        Expr::Let(_) => todo!(),
-        Expr::Loop(_) => todo!(),
-        Expr::Paren(_) => todo!(),
-        Expr::Path(expr_path) => handle_should_add_copy_expr_path(expr_path),
-        Expr::Range(_) => todo!(),
-        Expr::Reference(expr_reference) => {
+        ExprRef::Block(_) => false,
+        ExprRef::Cast(_) => todo!(),
+        ExprRef::Const(_) => todo!(),
+        ExprRef::Continue(_) => todo!(),
+        ExprRef::Field(_) => todo!(),
+        ExprRef::ForLoop(_) => todo!(),
+        ExprRef::Group(_) => todo!(),
+        ExprRef::Index(_) => todo!(),
+        ExprRef::Infer(_) => todo!(),
+        ExprRef::Let(_) => todo!(),
+        ExprRef::Loop(_) => todo!(),
+        ExprRef::Paren(_) => todo!(),
+        ExprRef::Path(expr_path) => handle_should_add_copy_expr_path(expr_path),
+        ExprRef::Range(_) => todo!(),
+        ExprRef::Reference(expr_reference) => {
             #[allow(clippy::all)]
-            if expr_reference.mutability.is_some() {
+            if expr_reference.mutability {
                 match &expr_reference.expr {
                     // Expr::Path(expr_path) => {
                     //     handle_should_add_copy_expr_path(expr_path)
@@ -292,15 +294,15 @@ fn handle_local(
                 false
             }
         }
-        Expr::Repeat(_) => todo!(),
-        Expr::Return(_) => todo!(),
-        Expr::Try(_) => todo!(),
-        Expr::TryBlock(_) => todo!(),
-        Expr::Unary(_) => false,
-        Expr::Unsafe(_) => todo!(),
-        Expr::Verbatim(_) => todo!(),
-        Expr::While(_) => todo!(),
-        Expr::Yield(_) => todo!(),
+        ExprRef::Repeat(_) => todo!(),
+        ExprRef::Return(_) => todo!(),
+        ExprRef::Try(_) => todo!(),
+        ExprRef::TryBlock(_) => todo!(),
+        ExprRef::Unary(_) => false,
+        ExprRef::Unsafe(_) => todo!(),
+        ExprRef::Verbatim(_) => todo!(),
+        ExprRef::While(_) => todo!(),
+        ExprRef::Yield(_) => todo!(),
         _ => false,
     };
     // TODO We have two `rhs_should_add_copy`s because for some cases it is easier to check the syn expr, in some cases it is easier/necessary to look at the parsed RustType. Ideally we would store sufficient info on the RustType to combine these??
@@ -951,30 +953,30 @@ pub fn parse_fn_body_stmts(
             StmtsRef::Local(_) => false,
             StmtsRef::Item(_) => false,
             StmtsRef::Expr(expr, _) => match expr {
-                Expr::Array(_) => true,
-                Expr::Assign(_) => true,
-                Expr::Async(_) => todo!(),
-                Expr::Await(_) => true,
-                Expr::Binary(_) => true,
-                Expr::Call(_) => true,
-                Expr::Cast(_) => true,
-                Expr::Field(_) => true,
+                ExprRef::Array(_) => true,
+                ExprRef::Assign(_) => true,
+                ExprRef::Async(_) => todo!(),
+                ExprRef::Await(_) => true,
+                ExprRef::Binary(_) => true,
+                ExprRef::Call(_) => true,
+                ExprRef::Cast(_) => true,
+                ExprRef::Field(_) => true,
                 // TODO should be true for if expressions that transpile to a (short) ternary
-                Expr::If(_) => false,
-                Expr::Index(_) => true,
-                Expr::Lit(_) => true,
-                Expr::Macro(_) => true,
-                Expr::MethodCall(_) => true,
-                Expr::Paren(_) => true,
-                Expr::Path(_) => true,
-                Expr::Range(_) => todo!(),
-                Expr::Reference(_) => true,
-                Expr::Repeat(_) => true,
-                Expr::Struct(_) => true,
-                Expr::Tuple(_) => true,
-                Expr::Unary(_) => true,
-                Expr::Unsafe(_) => todo!(),
-                Expr::Verbatim(_) => todo!(),
+                ExprRef::If(_) => false,
+                ExprRef::Index(_) => true,
+                ExprRef::Lit(_) => true,
+                ExprRef::Macro(_) => true,
+                ExprRef::MethodCall(_) => true,
+                ExprRef::Paren(_) => true,
+                ExprRef::Path(_) => true,
+                ExprRef::Range(_) => todo!(),
+                ExprRef::Reference(_) => true,
+                ExprRef::Repeat(_) => true,
+                ExprRef::Struct(_) => true,
+                ExprRef::Tuple(_) => true,
+                ExprRef::Unary(_) => true,
+                ExprRef::Unsafe(_) => todo!(),
+                ExprRef::Verbatim(_) => todo!(),
                 _ => false,
             },
             StmtsRef::Macro(_) => true,
@@ -991,7 +993,7 @@ pub fn parse_fn_body_stmts(
             match stmt {
                 StmtsRef::Expr(expr, semi) => match expr {
                     // TODO how is this different to the normal Expr::If handling??? Is this unnecessary duplication?
-                    Expr::If(expr_if) => {
+                    ExprRef::If(expr_if) => {
                         if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
@@ -1002,10 +1004,10 @@ pub fn parse_fn_body_stmts(
                                 handle_expr(&expr_if.cond, global_data, current_module);
                             let condition = Box::new(condition);
 
-                            let fail = expr_if.else_branch.as_ref().map(|(_, expr)| {
+                            let fail = expr_if.else_branch.as_ref().map(|expr| {
                                 //
                                 match &**expr {
-                                    Expr::Block(expr_block) => {
+                                    ExprRef::Block(expr_block) => {
                                         // Box::new(handle_expr(&*expr, global_data, current_module).0)
                                         // println!("{}", quote! { #expr_block });
                                         Box::new(
@@ -1019,7 +1021,7 @@ pub fn parse_fn_body_stmts(
                                             .0,
                                         )
                                     }
-                                    Expr::If(_) => {
+                                    ExprRef::If(_) => {
                                         Box::new(handle_expr(expr, global_data, current_module).0)
                                     }
                                     _ => panic!(),
@@ -1034,7 +1036,6 @@ pub fn parse_fn_body_stmts(
                                     condition,
                                     succeed: expr_if
                                         .then_branch
-                                        .stmts
                                         .iter()
                                         .flat_map(|stmt| {
                                             handle_stmt(stmt, global_data, current_module)
@@ -1050,7 +1051,7 @@ pub fn parse_fn_body_stmts(
                             return_type = Some(type_);
                         }
                     }
-                    Expr::Match(expr_match) => {
+                    ExprRef::Match(expr_match) => {
                         if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
@@ -1068,7 +1069,7 @@ pub fn parse_fn_body_stmts(
                             return_type = Some(type_);
                         }
                     }
-                    Expr::Path(expr_path)
+                    ExprRef::Path(expr_path)
                         if returns_non_mut_ref_val
                             && expr_path.path.segments.len() == 1
                             && !semi =>
@@ -1115,7 +1116,7 @@ pub fn parse_fn_body_stmts(
                             // dbg!("print expr");
                             // println!("{}", quote! { #expr });
                             let (mut js_expr, type_, is_mut) = match expr {
-                                Expr::Path(expr_path) => {
+                                ExprRef::Path(expr_path) => {
                                     let (expr, partial) =
                                         handle_expr_path(expr_path, global_data, current_module);
                                     match partial {

@@ -10,8 +10,8 @@ use syn::{
     ExprInfer, ExprLet, ExprLit, ExprLoop, ExprMacro, ExprMatch, ExprMethodCall, ExprParen,
     ExprPath, ExprRange, ExprReference, ExprRepeat, ExprReturn, ExprStruct, ExprTry, ExprTryBlock,
     ExprTuple, ExprUnary, ExprUnsafe, ExprWhile, ExprYield, FieldValue, GenericParam, ImplItem,
-    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Local, Macro, Member, Meta, Pat, PatConst,
-    PatLit, PatMacro, PatPath, PatRange, QSelf, RangeLimits, ReturnType, Stmt, StmtMacro,
+    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Local, LocalInit, Macro, Member, Meta, Pat,
+    PatConst, PatLit, PatMacro, PatPath, PatRange, QSelf, RangeLimits, ReturnType, Stmt, StmtMacro,
     TraitItem, Type, UnOp, UseTree, Visibility,
 };
 use tracing::debug;
@@ -700,14 +700,7 @@ pub fn extract_modules2(
                                 .stmts
                                 .clone()
                                 .into_iter()
-                                .map(|stmt| match stmt {
-                                    Stmt::Local(local) => StmtsRef::Local(local),
-                                    Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
-                                    Stmt::Expr(expr, semi) => {
-                                        StmtsRef::Expr(expr_to_expr_ref(expr), semi.is_some())
-                                    }
-                                    Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
-                                })
+                                .map(stmt_to_stmts_ref)
                                 .collect();
 
                             rust_impl_items.push(ImplItemV1::Fn(FnInfo {
@@ -891,17 +884,7 @@ pub fn extract_modules2(
                                         .stmts
                                         .clone()
                                         .into_iter()
-                                        .map(|stmt| match stmt {
-                                            Stmt::Local(local) => StmtsRef::Local(local),
-                                            Stmt::Item(item) => {
-                                                StmtsRef::Item(item_to_rust_item(item))
-                                            }
-                                            Stmt::Expr(expr, semi) => StmtsRef::Expr(
-                                                expr_to_expr_ref(expr),
-                                                semi.is_some(),
-                                            ),
-                                            Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
-                                        })
+                                        .map(stmt_to_stmts_ref)
                                         .collect();
 
                                     Some(FnInfo {
@@ -1011,7 +994,16 @@ pub fn extract_modules2(
 
 pub fn stmt_to_stmts_ref(stmt: Stmt) -> StmtsRef {
     match stmt {
-        Stmt::Local(local) => StmtsRef::Local(local),
+        Stmt::Local(local) => StmtsRef::Local(LocalRef {
+            attrs: local.attrs,
+            pat: local.pat,
+            init: local.init.map(|local_init| LocalInitRef {
+                expr: Box::new(expr_to_expr_ref(*local_init.expr)),
+                diverge: local_init
+                    .diverge
+                    .map(|(_, diverge)| Box::new(expr_to_expr_ref(*diverge))),
+            }),
+        }),
         Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
         Stmt::Expr(expr, semi) => StmtsRef::Expr(expr_to_expr_ref(expr), semi.is_some()),
         Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
@@ -1683,10 +1675,21 @@ pub struct VariousDefintions {
 
 #[derive(Debug, Clone)]
 pub enum StmtsRef {
-    Local(Local),
+    Local(LocalRef),
     Item(ItemRef),
     Expr(ExprRef, bool),
     Macro(StmtMacro),
+}
+#[derive(Debug, Clone)]
+pub struct LocalRef {
+    pub attrs: Vec<Attribute>,
+    pub pat: Pat,
+    pub init: Option<LocalInitRef>,
+}
+#[derive(Debug, Clone)]
+pub struct LocalInitRef {
+    pub expr: Box<ExprRef>,
+    pub diverge: Option<Box<ExprRef>>,
 }
 
 pub trait ModuleMethods {
@@ -2251,7 +2254,7 @@ pub mod update_definitons {
         RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
 
-    use super::{ItemActual, ItemRef, StmtsRef};
+    use super::{expr_to_expr_ref, ItemActual, ItemRef, StmtsRef};
 
     // This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
     // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
@@ -2673,7 +2676,8 @@ pub mod update_definitons {
                     js_name,
                     is_pub: const_def.is_pub,
                     type_: rust_type,
-                    syn_object: const_def.syn_object,
+                    syn_object: const_def.syn_object.clone(),
+                    expr: expr_to_expr_ref(*const_def.syn_object.expr),
                 })
             }
             ItemActual::Trait(trait_def) => {

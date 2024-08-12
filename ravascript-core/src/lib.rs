@@ -30,7 +30,6 @@ mod extract_modules;
 use extract_modules::{extract_modules, ModuleDataFirstPass};
 
 mod make_item_definitions;
-use make_item_definitions::make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{

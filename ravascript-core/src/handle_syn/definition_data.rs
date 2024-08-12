@@ -656,7 +656,7 @@ impl GlobalData {
                     .segments
                     .iter()
                     .map(|seg| {
-                        RustPathSegment {
+                        RustPathSegment2 {
                             ident: seg.ident.to_string(),
                             turbofish: match seg.arguments {
                                 PathArguments::None => Vec::new(),
@@ -872,7 +872,7 @@ impl GlobalData {
             true,
             true,
             path.iter()
-                .map(|seg| RustPathSegment {
+                .map(|seg| RustPathSegment2 {
                     ident: seg.clone(),
                     turbofish: Vec::new(),
                 })
@@ -920,7 +920,7 @@ impl GlobalData {
             true,
             true,
             path.into_iter()
-                .map(|seg| RustPathSegment {
+                .map(|seg| RustPathSegment2 {
                     ident: seg.as_ref().to_string(),
                     turbofish: Vec::new(),
                 })
@@ -1452,7 +1452,7 @@ pub fn resolve_path(
     // TODO scopes would ideally be set to None when resovle_path is called recursively since that means the path length is > 1 which is not possible for scoped vars and items, however it is possible for a scoped use_mapping to have path length > 1.
     // scopes: &Option<Vec<GlobalDataScope>>,
     scopes: &Vec<GlobalDataScope>,
-) -> (Vec<String>, Vec<RustPathSegment>, bool, Option<usize>) {
+) -> (Vec<String>, Vec<RustPathSegment2>, bool, Option<usize>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
@@ -1636,7 +1636,7 @@ pub fn resolve_path(
         // TODO IMPORTANT seems like we are not correctly populating turbofish here
         let mut use_segs = use_segs
             .into_iter()
-            .map(|s| RustPathSegment {
+            .map(|s| RustPathSegment2 {
                 ident: s,
                 turbofish: Vec::new(),
             })

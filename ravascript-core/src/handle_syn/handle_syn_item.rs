@@ -22,7 +22,8 @@ use crate::{
     tree_structure::{update_definitons::ItemV2, ItemRef},
     update_item_definitions::{
         get_item_impl_unique_id, ConstDef, FnInfo, ItemDefinition, RustGeneric,
-        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition, StructOrEnumDefitionInfo,
+        RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition,
+        StructOrEnumDefitionInfo,
     },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,
@@ -163,6 +164,7 @@ pub fn handle_item_fn(
     let item_fn = match &fn_info.syn {
         FnInfoSyn::Standalone(item_fn) => item_fn,
         FnInfoSyn::Impl(_) => todo!(),
+        FnInfoSyn::Trait(_) => todo!(),
     };
 
     let name = item_fn.sig.ident.to_string();
@@ -397,7 +399,7 @@ pub fn handle_item_const(
         public: const_def.is_pub,
         type_: LocalType::Const,
         lhs: LocalName::Single(const_def.js_name.clone()),
-        value: handle_expr(&const_def.syn_object.expr, global_data, current_module).0,
+        value: handle_expr(&const_def.expr, global_data, current_module).0,
     })
 }
 
@@ -986,7 +988,7 @@ pub fn handle_item_impl(
         .cloned()
         .collect::<Vec<_>>();
 
-    let an_impl_block = impl_blocks[0].clone();
+    let an_impl_block: RustImplBlockSimple = impl_blocks[0].clone();
 
     // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
     let impl_item_target_path = match &*item_impl.self_ty {
@@ -1106,51 +1108,86 @@ pub fn handle_item_impl(
         .push(target_rust_type.clone());
 
     // let mut impl_stmts = Vec::new();
-    let mut rust_impl_items = Vec::new();
-    for impl_item in &item_impl.items {
-        match impl_item {
-            ImplItem::Const(impl_item_const) => {
-                let js_local = JsLocal {
-                    public: false,
-                    export: false,
-                    type_: LocalType::Static,
-                    lhs: LocalName::Single(Ident::Syn(impl_item_const.ident.clone())),
-                    value: handle_expr(&impl_item_const.expr, global_data, current_module_path).0,
-                };
+    // let mut rust_impl_items = Vec::new();
+    // for impl_item in &item_impl.items {
+    //     match impl_item {
+    //         ImplItem::Const(impl_item_const) => {
+    //             let js_local = JsLocal {
+    //                 public: false,
+    //                 export: false,
+    //                 type_: LocalType::Static,
+    //                 lhs: LocalName::Single(Ident::Syn(impl_item_const.ident.clone())),
+    //                 value: handle_expr(&impl_item_const.expr, global_data, current_module_path).0,
+    //             };
 
-                rust_impl_items.push(RustImplItemJs {
-                    ident: impl_item_const.ident.to_string(),
-                    item: RustImplItemItemJs::Const(js_local),
-                    // syn_object: impl_item.clone(),
-                });
-            }
-            ImplItem::Fn(impl_item_fn) => {
-                let rust_impl_item = impl_blocks
-                    .iter()
-                    .find_map(|impl_block| {
-                        impl_block
-                            .rust_items
-                            .iter()
-                            .find(|i| impl_item_fn.sig.ident == i.ident)
-                    })
-                    .unwrap();
+    //             rust_impl_items.push(RustImplItemJs {
+    //                 ident: impl_item_const.ident.to_string(),
+    //                 item: RustImplItemItemJs::Const(js_local),
+    //                 // syn_object: impl_item.clone(),
+    //             });
+    //         }
+    //         ImplItem::Fn(impl_item_fn) => {
+    //             let rust_impl_item = impl_blocks
+    //                 .iter()
+    //                 .find_map(|impl_block| {
+    //                     impl_block
+    //                         .rust_items
+    //                         .iter()
+    //                         .find(|i| impl_item_fn.sig.ident == i.ident)
+    //                 })
+    //                 .unwrap();
 
-                handle_impl_item_fn(
-                    &mut rust_impl_items,
-                    impl_item,
-                    impl_item_fn,
-                    global_data,
-                    current_module_path,
-                    &target_rust_type,
-                    rust_impl_item,
-                )
-            }
-            ImplItem::Type(_) => todo!(),
-            ImplItem::Macro(_) => todo!(),
-            ImplItem::Verbatim(_) => todo!(),
-            _ => todo!(),
-        }
-    }
+    //             handle_impl_item_fn(
+    //                 &mut rust_impl_items,
+    //                 impl_item,
+    //                 impl_item_fn,
+    //                 global_data,
+    //                 current_module_path,
+    //                 &target_rust_type,
+    //                 rust_impl_item,
+    //             )
+    //         }
+    //         ImplItem::Type(_) => todo!(),
+    //         ImplItem::Macro(_) => todo!(),
+    //         ImplItem::Verbatim(_) => todo!(),
+    //         _ => todo!(),
+    //     }
+    // }
+
+    let rust_impl_items = an_impl_block
+        .rust_items
+        .into_iter()
+        .map(|item| RustImplItemJs {
+            ident: item.ident.clone(),
+            item: match item.item {
+                RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                    // TODO IMPORTANT reuse code from handle_item_fn
+
+                    // let js = handle_impl_item_fn(
+                    //     &mut rust_impl_items,
+                    //     impl_item,
+                    //     impl_item_fn,
+                    //     global_data,
+                    //     current_module_path,
+                    //     &target_rust_type,
+                    //     rust_impl_item,
+                    // );
+                    let js = JsFn {
+                        iife: todo!(),
+                        public: todo!(),
+                        export: todo!(),
+                        async_: todo!(),
+                        is_method: todo!(),
+                        name: todo!(),
+                        input_names: todo!(),
+                        body_stmts: todo!(),
+                    };
+                    RustImplItemItemJs::Fn(static_, fn_info, js)
+                }
+                RustImplItemItemNoJs::Const => RustImplItemItemJs::Const(todo!()),
+            },
+        })
+        .collect::<Vec<_>>();
 
     let rust_impl_block = JsImplBlock2 {
         unique_id: unique_id.clone(),

@@ -23,9 +23,9 @@ use crate::{
         LocalName, LocalType, PathIdent,
     },
     tree_structure::{
-        expr_to_expr_ref, stmt_to_stmts_ref, update_definitons::ItemV2, ExprRef, RustExprAssign,
-        RustExprBlock, RustExprCall, RustExprClosure, RustExprMatch, RustExprMethodCall,
-        RustExprPath, StmtsRef,
+        expr_to_expr_ref, stmt_to_stmts_ref, update_definitons::ItemV2, ExprRef, ItemRef,
+        RustExprAssign, RustExprBlock, RustExprCall, RustExprClosure, RustExprMatch,
+        RustExprMethodCall, RustExprPath, StmtsRef,
     },
     update_item_definitions::{
         ConstDef, EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
@@ -3300,340 +3300,296 @@ fn handle_expr_path_inner(
     // dbg!(&segs_copy_item_path);
 
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
-    let (partial_rust_type, mut js_segs_item_path) = if segs_copy_module_path
-        == [PRELUDE_MODULE_PATH]
-    {
-        // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
-        if segs_copy_is_scoped {
-            // Look for var
-            // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
-            assert_eq!(segs_copy_item_path.len(), 1);
-            let path = segs_copy_item_path.first().unwrap();
-            // dbg!(&segs_copy_item_path);
+    let (partial_rust_type, mut js_segs_item_path) =
+        if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+            // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
+            if segs_copy_is_scoped {
+                // Look for var
+                // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
+                assert_eq!(segs_copy_item_path.len(), 1);
+                let path = segs_copy_item_path.first().unwrap();
+                // dbg!(&segs_copy_item_path);
 
-            // NOTE prelude type definitions cannot be scoped so we only need to look for vars
-            // TODO look through all transparent scopes
-            let var = global_data
-                .scopes
-                .iter()
-                .rev()
-                .find_map(|s| s.variables.iter().find(|v| v.name == path.ident))
-                .unwrap();
-
-            (
-                PartialRustType::RustType(var.type_.clone(), var.mut_, true),
-                vec![Ident::String(path.ident.clone())],
-            )
-        } else {
-            let path_idents = segs_copy_item_path
-                .iter()
-                .map(|seg| seg.ident.as_str())
-                .collect::<Vec<_>>();
-            // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
-            match path_idents[..] {
-                ["Box", "new"] => (
-                    PartialRustType::RustType(RustType2::FnVanish, false, false),
-                    segs_copy_item_path
-                        .clone()
-                        .into_iter()
-                        .map(|seg| Ident::String(seg.ident))
-                        .collect::<Vec<_>>(),
-                ),
-                ["Some"] => {
-                    // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
-                    assert_eq!(segs_copy_module_path, [PRELUDE_MODULE_PATH]);
-                    (
-                        PartialRustType::EnumVariantIdent(
-                            // TODO handle turbofish
-                            Vec::new(),
-                            global_data.get_prelude_item_def("Option"),
-                            "Some".to_string(),
-                        ),
-                        segs_copy_item_path
-                            .clone()
-                            .into_iter()
-                            .map(|seg| Ident::String(seg.ident))
-                            .collect::<Vec<_>>(),
-                    )
-                }
-                ["None"] => {
-                    let item_def = global_data.get_prelude_item_def("Option");
-                    assert_eq!(item_def.generics.len(), 1);
-                    let rust_type_type_param = match &item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                        StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-                            // Some member has a RustType::TypeParam input which is what we want
-                            // TODO yes but surely it will always be RustType::TypeParam(T)??? Is this simply for getting the name of the generic? Maybe we should assert this?
-                            let some_member = enum_def_info
-                                .members
-                                .iter()
-                                .find(|m| m.ident == "Some")
-                                .unwrap();
-                            assert_eq!(some_member.inputs.len(), 1);
-                            match some_member.inputs.first().unwrap() {
-                                EnumVariantInputsInfo::Named { .. } => todo!(),
-                                EnumVariantInputsInfo::Unnamed(rust_type) => {
-                                    rust_type.clone().into_rust_type2(global_data)
-                                }
-                            }
-                        }
-                    };
-                    let rust_type_param = match rust_type_type_param {
-                        RustType2::TypeParam(rust_type_param) => rust_type_param,
-                        _ => panic!(),
-                    };
-                    let option = RustType2::Option(rust_type_param);
-                    (
-                        PartialRustType::RustType(option, false, false),
-                        segs_copy_item_path
-                            .clone()
-                            .into_iter()
-                            .map(|seg| Ident::String(seg.ident))
-                            .collect::<Vec<_>>(),
-                    )
-                }
-                _ => todo!(),
-            }
-        }
-    } else if segs_copy_item_path.len() == 1 {
-        // TODO IMPORTANT needs to look/iterate through the static scopes, and var scope in unison, because they can shadow each other.
-        // Is path a variable?
-        let mut temp_scope_id = global_data.scope_id.clone();
-        let mut scopes = Vec::new();
-        while !temp_scope_id.is_empty() {
-            let var_scope = global_data
-                .scopes
-                .iter()
-                .find(|s| s.scope_id == temp_scope_id)
-                .unwrap()
-                .clone();
-            let static_scope = module
-                .scoped_various_definitions
-                .iter()
-                .find(|svd| svd.0 == temp_scope_id)
-                .unwrap()
-                .clone();
-            scopes.push((static_scope, var_scope));
-            temp_scope_id.pop();
-        }
-
-        let scoped_partial_rust_type = scopes.iter().find_map(|(static_scope, var_scope)| {
-            let var = var_scope
-                .variables
-                .iter()
-                .find(|v| v.name == item_path_seg.ident);
-            let fn_info = static_scope
-                .1
-                .fn_info
-                .iter()
-                .find(|fn_info| fn_info.ident == item_path_seg.ident);
-            let item_def = static_scope
-                .1
-                .item_definitons
-                .iter()
-                .find(|se| se.ident == item_path_seg.ident);
-            let const_def = static_scope
-                .1
-                .consts
-                .iter()
-                .find(|const_def| const_def.name == item_path_seg.ident);
-
-            if segs_copy_item_scope.is_some()
-                && (var.is_some() || fn_info.is_some() || item_def.is_some() || const_def.is_some())
-            {
-                Some(found_item_to_partial_rust_type(
-                    item_path_seg,
-                    var,
-                    fn_info,
-                    item_def,
-                    const_def,
-                    segs_copy_module_path.clone(),
-                    segs_copy_item_scope.clone(),
-                    global_data,
-                ))
-            } else {
-                None
-            }
-        });
-
-        // TODO handle user defined len=1 enums like Some(5), None, etc
-        let (final_partial_rust_type, path_ident) =
-            if let Some(scoped_partial_rust_type) = scoped_partial_rust_type {
-                scoped_partial_rust_type
-            } else {
-                // We don't have a scoped match so path must be a module level definiton
-                let item_module = global_data
-                    .modules
+                // NOTE prelude type definitions cannot be scoped so we only need to look for vars
+                // TODO look through all transparent scopes
+                let var = global_data
+                    .scopes
                     .iter()
-                    .find(|module| module.path == segs_copy_module_path)
+                    .rev()
+                    .find_map(|s| s.variables.iter().find(|v| v.name == path.ident))
                     .unwrap();
-                let func = item_module
-                    .various_definitions
-                    .fn_info
-                    .iter()
-                    .find(|se| se.ident == item_path_seg.ident);
-                let item_def = item_module
-                    .various_definitions
-                    .item_definitons
-                    .iter()
-                    .find(|se| se.ident == item_path_seg.ident);
-                let const_def = item_module
-                    .various_definitions
-                    .consts
-                    .iter()
-                    .find(|const_def| const_def.name == item_path_seg.ident);
 
-                found_item_to_partial_rust_type(
-                    item_path_seg,
-                    None,
-                    func,
-                    item_def,
-                    const_def,
-                    segs_copy_module_path.clone(),
-                    segs_copy_item_scope.clone(),
-                    global_data,
+                (
+                    PartialRustType::RustType(var.type_.clone(), var.mut_, true),
+                    vec![Ident::String(path.ident.clone())],
                 )
-            };
-        (final_partial_rust_type, vec![path_ident])
-    } else if segs_copy_item_path.len() == 2 {
-        // NOTE path must start with a struct or enum if item part of the path is length = 2
-
-        // NOTE when specifying type params for enum instantiation with turbofish, we can use *either* `Enum::<usize>::Variant(5)` *or* `Enum::Variant::<usize>(5)`, however for associated fns we must use only use `Struct::<usize>::associated_fn()` for type params of the struct and `Struct::associated_fn::<usize>()` only for type params defined on the method itself.
-
-        let sub_path = &segs_copy_item_path[1];
-        // ie:
-        // Struct/Enum::associated_fn
-        // Struct/Enum::associated_const
-        // Enum::Variant
-        // Enum::Variant ()
-        // Enum::Variant {}
-
-        let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-            &segs_copy_module_path,
-            &segs_copy_item_scope,
-            &item_path_seg.ident,
-        );
-        // dbg!(&item_def);
-
-        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-        let item_generics = if !item_path_seg.turbofish.is_empty() {
-            item_path_seg
-                .turbofish
-                .iter()
-                .enumerate()
-                .map(|(i, g)| RustTypeParam2 {
-                    name: item_def.generics[i].clone(),
-                    type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-            assert!(item_def.generics.is_empty());
-            item_def
-                .generics
-                .iter()
-                .map(|g| RustTypeParam2 {
-                    name: g.clone(),
-                    type_: RustTypeParamValue2::Unresolved,
-                })
-                .collect::<Vec<_>>()
-        };
-
-        // TODO don't like returning an Option here, should probably follow how rust does which I believe is to see if it is an enum variant first else it must be an associated fn, else panic
-        let impl_method = global_data.lookup_associated_fn(
-            &item_generics,
-            &segs_copy_module_path,
-            &segs_copy_item_scope,
-            sub_path,
-            &item_path_seg.ident,
-            &item_def,
-        );
-        // dbg!(&impl_method);
-        let impl_method =
-            impl_method.map(|rust_type| PartialRustType::RustType(rust_type, false, false));
-
-        let enum_variant = match &item_def.struct_or_enum_info {
-            // Item is struct so we need to look up associated fn
-            StructOrEnumDefitionInfo::Struct(_struct_definition_info) => None,
-            StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
-                // Check if we have a variant of the enum
-                let enum_variant = enum_definition_info
-                    .members
+            } else {
+                let path_idents = segs_copy_item_path
                     .iter()
-                    .find(|member| member.ident == sub_path.ident);
-
-                let enum_variant_generics = if !sub_path.turbofish.is_empty() {
-                    sub_path
-                        .turbofish
-                        .iter()
-                        .enumerate()
-                        .map(|(i, g)| RustTypeParam2 {
-                            name: item_def.generics[i].clone(),
-                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    item_def
-                        .generics
-                        .iter()
-                        .map(|g| RustTypeParam2 {
-                            name: g.clone(),
-                            type_: RustTypeParamValue2::Unresolved,
-                        })
-                        .collect::<Vec<_>>()
-                };
-
-                let mut enum_generics = Vec::new();
-                // An enum variant instantiation cannot have turbofish on both the enum and the variant
-                if !item_path_seg.turbofish.is_empty() {
-                    assert!(!sub_path.turbofish.is_empty());
-                    enum_generics = item_generics;
-                }
-                if !sub_path.turbofish.is_empty() {
-                    assert!(!item_path_seg.turbofish.is_empty());
-                    enum_generics = enum_variant_generics;
-                }
-                // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-                if !item_def.generics.is_empty() {
-                    assert!(!enum_generics.is_empty());
-                }
-
-                enum_variant.map(|enum_variant| {
-                    if enum_variant.inputs.is_empty() {
-                        PartialRustType::RustType(
-                            RustType2::StructOrEnum(enum_generics, item_def.clone()),
-                            false,
-                            false,
-                        )
-                    } else {
-                        PartialRustType::EnumVariantIdent(
-                            enum_generics,
-                            item_def.clone(),
-                            sub_path.ident.clone(),
+                    .map(|seg| seg.ident.as_str())
+                    .collect::<Vec<_>>();
+                // TODO need to know whether we have mut var like `let mut foo = Box::new;`???
+                match path_idents[..] {
+                    ["Box", "new"] => (
+                        PartialRustType::RustType(RustType2::FnVanish, false, false),
+                        segs_copy_item_path
+                            .clone()
+                            .into_iter()
+                            .map(|seg| Ident::String(seg.ident))
+                            .collect::<Vec<_>>(),
+                    ),
+                    ["Some"] => {
+                        // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
+                        assert_eq!(segs_copy_module_path, [PRELUDE_MODULE_PATH]);
+                        (
+                            PartialRustType::EnumVariantIdent(
+                                // TODO handle turbofish
+                                Vec::new(),
+                                global_data.get_prelude_item_def("Option"),
+                                "Some".to_string(),
+                            ),
+                            segs_copy_item_path
+                                .clone()
+                                .into_iter()
+                                .map(|seg| Ident::String(seg.ident))
+                                .collect::<Vec<_>>(),
                         )
                     }
-                })
+                    ["None"] => {
+                        let item_def = global_data.get_prelude_item_def("Option");
+                        assert_eq!(item_def.generics.len(), 1);
+                        let rust_type_type_param = match &item_def.struct_or_enum_info {
+                            StructOrEnumDefitionInfo::Struct(_) => todo!(),
+                            StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                                // Some member has a RustType::TypeParam input which is what we want
+                                // TODO yes but surely it will always be RustType::TypeParam(T)??? Is this simply for getting the name of the generic? Maybe we should assert this?
+                                let some_member = enum_def_info
+                                    .members
+                                    .iter()
+                                    .find(|m| m.ident == "Some")
+                                    .unwrap();
+                                assert_eq!(some_member.inputs.len(), 1);
+                                match some_member.inputs.first().unwrap() {
+                                    EnumVariantInputsInfo::Named { .. } => todo!(),
+                                    EnumVariantInputsInfo::Unnamed(rust_type) => {
+                                        rust_type.clone().into_rust_type2(global_data)
+                                    }
+                                }
+                            }
+                        };
+                        let rust_type_param = match rust_type_type_param {
+                            RustType2::TypeParam(rust_type_param) => rust_type_param,
+                            _ => panic!(),
+                        };
+                        let option = RustType2::Option(rust_type_param);
+                        (
+                            PartialRustType::RustType(option, false, false),
+                            segs_copy_item_path
+                                .clone()
+                                .into_iter()
+                                .map(|seg| Ident::String(seg.ident))
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    _ => todo!(),
+                }
             }
-        };
-        // If you have an enum variant and associated fn with the same name, the code will compile, but if you try to access the fn you will just get the variant instead
-        let mut ident_path = segs_copy_item_path
-            .clone()
-            .into_iter()
-            .map(|seg| Ident::String(seg.ident))
-            .collect::<Vec<_>>();
-        // dbg!(&item_def);
-        ident_path[0] = item_def.js_name.clone();
-        if let Some(enum_variant) = enum_variant {
-            (enum_variant, ident_path)
-        } else if let Some(impl_method) = impl_method {
-            (impl_method, ident_path)
+        } else if segs_copy_item_path.len() == 1 {
+            // TODO IMPORTANT needs to look/iterate through the static scopes, and var scope in unison, because they can shadow each other.
+            // Is path a variable?
+
+            let scoped_partial_rust_type = global_data.scopes.iter().rev().find_map(|scope| {
+                let def = scope
+                    .items
+                    .iter()
+                    .find(|item_def| item_def.ident() == item_path_seg.ident);
+
+                let var = scope
+                    .variables
+                    .iter()
+                    .find(|var| var.name == item_path_seg.ident);
+
+                if segs_copy_is_scoped && (var.is_some() || def.is_some()) {
+                    Some(found_item_to_partial_rust_type(
+                        item_path_seg,
+                        var,
+                        def,
+                        global_data,
+                    ))
+                } else {
+                    None
+                }
+            });
+
+            // TODO handle user defined len=1 enums like Some(5), None, etc
+            let (final_partial_rust_type, path_ident) =
+                if let Some(scoped_partial_rust_type) = scoped_partial_rust_type {
+                    scoped_partial_rust_type
+                } else {
+                    // We don't have a scoped match so path must be a module level definiton
+                    let item_module = global_data.get_module(&segs_copy_module_path);
+                    let item_def = item_module
+                        .items
+                        .iter()
+                        .find_map(|item_ref| match item_ref {
+                            ItemRef::StructOrEnum(index) => {
+                                let item = &global_data.item_defs[*index];
+                                (item.ident() == item_path_seg.ident).then_some(item)
+                            }
+                            ItemRef::Fn(index) => {
+                                let item = &global_data.item_defs[*index];
+                                (item.ident() == item_path_seg.ident).then_some(item)
+                            }
+                            ItemRef::Const(index) => {
+                                let item = &global_data.item_defs[*index];
+                                (item.ident() == item_path_seg.ident).then_some(item)
+                            }
+                            _ => todo!(),
+                        });
+
+                    found_item_to_partial_rust_type(item_path_seg, None, item_def, global_data)
+                };
+            (final_partial_rust_type, vec![path_ident])
+        } else if segs_copy_item_path.len() == 2 {
+            // NOTE path must start with a struct or enum if item part of the path is length = 2
+
+            // NOTE when specifying type params for enum instantiation with turbofish, we can use *either* `Enum::<usize>::Variant(5)` *or* `Enum::Variant::<usize>(5)`, however for associated fns we must use only use `Struct::<usize>::associated_fn()` for type params of the struct and `Struct::associated_fn::<usize>()` only for type params defined on the method itself.
+
+            let sub_path = &segs_copy_item_path[1];
+            // ie:
+            // Struct/Enum::associated_fn
+            // Struct/Enum::associated_const
+            // Enum::Variant
+            // Enum::Variant ()
+            // Enum::Variant {}
+
+            let item = &global_data.item_defs[segs_copy_index.unwrap()];
+            let item_def = match item {
+                ItemV2::StructOrEnum(item_def) => item_def,
+                _ => todo!(),
+            };
+
+            // dbg!(&item_def);
+
+            // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
+            let item_generics = if !item_path_seg.turbofish.is_empty() {
+                item_path_seg
+                    .turbofish
+                    .iter()
+                    .enumerate()
+                    .map(|(i, g)| RustTypeParam2 {
+                        name: item_def.generics[i].clone(),
+                        type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+                assert!(item_def.generics.is_empty());
+                item_def
+                    .generics
+                    .iter()
+                    .map(|g| RustTypeParam2 {
+                        name: g.clone(),
+                        type_: RustTypeParamValue2::Unresolved,
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            // TODO don't like returning an Option here, should probably follow how rust does which I believe is to see if it is an enum variant first else it must be an associated fn, else panic
+            let impl_method = global_data.lookup_associated_fn(
+                &item_generics,
+                &segs_copy_module_path,
+                &None,
+                sub_path,
+                &item_path_seg.ident,
+                &item_def,
+            );
+            // dbg!(&impl_method);
+            let impl_method =
+                impl_method.map(|rust_type| PartialRustType::RustType(rust_type, false, false));
+
+            let enum_variant = match &item_def.struct_or_enum_info {
+                // Item is struct so we need to look up associated fn
+                StructOrEnumDefitionInfo::Struct(_struct_definition_info) => None,
+                StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
+                    // Check if we have a variant of the enum
+                    let enum_variant = enum_definition_info
+                        .members
+                        .iter()
+                        .find(|member| member.ident == sub_path.ident);
+
+                    let enum_variant_generics = if !sub_path.turbofish.is_empty() {
+                        sub_path
+                            .turbofish
+                            .iter()
+                            .enumerate()
+                            .map(|(i, g)| RustTypeParam2 {
+                                name: item_def.generics[i].clone(),
+                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        item_def
+                            .generics
+                            .iter()
+                            .map(|g| RustTypeParam2 {
+                                name: g.clone(),
+                                type_: RustTypeParamValue2::Unresolved,
+                            })
+                            .collect::<Vec<_>>()
+                    };
+
+                    let mut enum_generics = Vec::new();
+                    // An enum variant instantiation cannot have turbofish on both the enum and the variant
+                    if !item_path_seg.turbofish.is_empty() {
+                        assert!(!sub_path.turbofish.is_empty());
+                        enum_generics = item_generics;
+                    }
+                    if !sub_path.turbofish.is_empty() {
+                        assert!(!item_path_seg.turbofish.is_empty());
+                        enum_generics = enum_variant_generics;
+                    }
+                    // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+                    if !item_def.generics.is_empty() {
+                        assert!(!enum_generics.is_empty());
+                    }
+
+                    enum_variant.map(|enum_variant| {
+                        if enum_variant.inputs.is_empty() {
+                            PartialRustType::RustType(
+                                RustType2::StructOrEnum(enum_generics, item_def.clone()),
+                                false,
+                                false,
+                            )
+                        } else {
+                            PartialRustType::EnumVariantIdent(
+                                enum_generics,
+                                item_def.clone(),
+                                sub_path.ident.clone(),
+                            )
+                        }
+                    })
+                }
+            };
+            // If you have an enum variant and associated fn with the same name, the code will compile, but if you try to access the fn you will just get the variant instead
+            let mut ident_path = segs_copy_item_path
+                .clone()
+                .into_iter()
+                .map(|seg| Ident::String(seg.ident))
+                .collect::<Vec<_>>();
+            // dbg!(&item_def);
+            ident_path[0] = item_def.js_name.clone();
+            if let Some(enum_variant) = enum_variant {
+                (enum_variant, ident_path)
+            } else if let Some(impl_method) = impl_method {
+                (impl_method, ident_path)
+            } else {
+                panic!()
+            }
         } else {
-            panic!()
-        }
-    } else {
-        // Not sure how an item can have a path with len 0 or greater than 2, panic if it happens so I can see this case
-        todo!()
-    };
+            // Not sure how an item can have a path with len 0 or greater than 2, panic if it happens so I can see this case
+            todo!()
+        };
 
     // TODO methods and associated fns can have their own generics (separate to the struct they are defined on) and thus can have their own turbofish, also associated fns can be assigned to vars so we need to ensure we are storing any turbofish-resolved types on the returned RustType::Fn
     // Get any generics specified on the path
@@ -3781,7 +3737,7 @@ fn handle_expr_path_inner(
 /// (rhs, assignments/destructuring at start of body Vec)
 fn handle_match_pat(
     arm_pat: &Pat,
-    expr_match: &ExprMatch,
+    expr_match: &RustExprMatch,
     global_data: &mut GlobalData,
     current_module: &[String],
     match_condition_type: &RustType2,
@@ -3919,24 +3875,7 @@ fn handle_match_pat(
             ) -> (ItemDefinition, bool) {
                 match match_condition_type {
                     RustType2::StructOrEnum(_type_params, item_def) => (item_def.clone(), false),
-                    RustType2::Option(_) => {
-                        let prelude_module = global_data
-                            .modules
-                            .iter()
-                            .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                            .unwrap();
-                        (
-                            prelude_module
-                                .various_definitions
-                                .item_definitons
-                                .iter()
-                                .find_map(|item_def| {
-                                    (item_def.ident == "Option").then_some(item_def.clone())
-                                })
-                                .unwrap(),
-                            true,
-                        )
-                    }
+                    RustType2::Option(_) => (global_data.get_prelude_item_def("Option"), true),
                     _ => {
                         dbg!(match_condition_type);
                         todo!()
@@ -4065,7 +4004,7 @@ pub fn handle_expr_match(
 ) -> (JsExpr, RustType2) {
     // (assignment, condition, succeed, fail)
     // TODO we need to know whether match result is being assigned to a var and therefore the if statement should be adding assignments to the end of each block
-    debug_span!("handle_expr_match", expr_match = ?quote! { #expr_match }.to_string());
+    // debug_span!("handle_expr_match", expr_match = ?quote! { #expr_match }.to_string());
 
     let (match_condition_expr, match_condition_type) =
         handle_expr(&expr_match.expr, global_data, current_module);
@@ -4073,7 +4012,7 @@ pub fn handle_expr_match(
     fn handle_option_match(
         match_condition_expr: &JsExpr,
         match_condition_type: &RustType2,
-        expr_match: &ExprMatch,
+        expr_match: &RustExprMatch,
         global_data: &mut GlobalData,
         current_module: &[String],
     ) -> Option<(JsExpr, RustType2)> {
@@ -4117,12 +4056,13 @@ pub fn handle_expr_match(
                 let (succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                     // TODO not sure what this is for???
-                    Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo),
-                    Expr::Block(expr_block) => {
+                    ExprRef::Array(_) => {
+                        (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo)
+                    }
+                    ExprRef::Block(expr_block) => {
                         dbg!("block");
                         // TODO should probably be using handle_body() or something for this
                         let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
-                            .block
                             .stmts
                             .iter()
                             .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
@@ -4185,11 +4125,12 @@ pub fn handle_expr_match(
                 let (mut fail_body_js_stmts, _fail_body_return_type) = match &*fail_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                     // TODO not sure what this is for???
-                    Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo),
-                    Expr::Block(expr_block) => {
+                    ExprRef::Array(_) => {
+                        (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo)
+                    }
+                    ExprRef::Block(expr_block) => {
                         // TODO should probably be using handle_body() or something for this
                         let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
-                            .block
                             .stmts
                             .iter()
                             .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
@@ -4308,11 +4249,10 @@ pub fn handle_expr_match(
             let (body_js_stmts, body_return_type) = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
                 // TODO not sure what this is for???
-                Expr::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo),
-                Expr::Block(expr_block) => {
+                ExprRef::Array(_) => (vec![JsStmt::Raw("sdafasdf".to_string())], RustType2::Todo),
+                ExprRef::Block(expr_block) => {
                     // TODO should probably be using handle_body() or something for this
                     let (js_stmts, types_): (Vec<_>, Vec<_>) = expr_block
-                        .block
                         .stmts
                         .iter()
                         .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
@@ -4402,14 +4342,10 @@ pub fn handle_expr_match(
 fn found_item_to_partial_rust_type(
     item_path: &RustPathSegment2,
     var: Option<&ScopedVar>,
-    func: Option<&FnInfo>,
-    item_def: Option<&ItemDefinition>,
-    const_def: Option<&ConstDef>,
-    module_path: Vec<String>,
-    _scope_id: Option<Vec<usize>>,
+    item_def: Option<&ItemV2>,
     global_data: &GlobalData,
 ) -> (PartialRustType, Ident) {
-    debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
+    // debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
 
     // IMPORTANT NOTE this fn only handles len=1 item paths which is useful for determing deduplicated idents because it allows us to disregard cases like associated fns.
 
@@ -4419,81 +4355,86 @@ fn found_item_to_partial_rust_type(
             PartialRustType::RustType(var.type_.clone(), var.mut_, true),
             Ident::String(item_path.ident.clone()),
         )
-    } else if let Some(fn_info) = func {
-        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
-        let fn_generics = if !item_path.turbofish.is_empty() {
-            item_path
-                .turbofish
-                .iter()
-                .enumerate()
-                .map(|(i, g)| RustTypeParam2 {
-                    name: fn_info.generics[i].clone(),
-                    type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            fn_info
-                .generics
-                .iter()
-                .map(|g| RustTypeParam2 {
-                    name: g.clone(),
-                    type_: RustTypeParamValue2::Unresolved,
-                })
-                .collect::<Vec<_>>()
-        };
+    } else if let Some(def) = item_def {
+        match def {
+            ItemV2::StructOrEnum(item_def) => {
+                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
+                let item_generics = if !item_path.turbofish.is_empty() {
+                    item_path
+                        .turbofish
+                        .iter()
+                        .enumerate()
+                        .map(|(i, g)| RustTypeParam2 {
+                            name: item_def.generics[i].clone(),
+                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    item_def
+                        .generics
+                        .iter()
+                        .map(|g| RustTypeParam2 {
+                            name: g.clone(),
+                            type_: RustTypeParamValue2::Unresolved,
+                        })
+                        .collect::<Vec<_>>()
+                };
+                match &item_def.struct_or_enum_info {
+                    StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
+                        // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
+                        (
+                            PartialRustType::StructIdent(item_generics, item_def.clone()),
+                            item_def.js_name.clone(),
+                        )
+                    }
+                    StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
+                        // So we are assuming you can't have a path where the final segment is an enum ident
+                        panic!()
+                    }
+                }
+            }
+            ItemV2::Fn(fn_info) => {
+                // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
+                let fn_generics = if !item_path.turbofish.is_empty() {
+                    item_path
+                        .turbofish
+                        .iter()
+                        .enumerate()
+                        .map(|(i, g)| RustTypeParam2 {
+                            name: fn_info.generics[i].clone(),
+                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    fn_info
+                        .generics
+                        .iter()
+                        .map(|g| RustTypeParam2 {
+                            name: g.clone(),
+                            type_: RustTypeParamValue2::Unresolved,
+                        })
+                        .collect::<Vec<_>>()
+                };
 
-        (
-            PartialRustType::RustType(
-                RustType2::Fn(None, fn_generics, Box::new(fn_info.clone())),
-                false,
-                false,
-            ),
-            fn_info.js_name.clone(),
-        )
-    } else if let Some(item_def) = item_def {
-        // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
-        let item_generics = if !item_path.turbofish.is_empty() {
-            item_path
-                .turbofish
-                .iter()
-                .enumerate()
-                .map(|(i, g)| RustTypeParam2 {
-                    name: item_def.generics[i].clone(),
-                    type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            item_def
-                .generics
-                .iter()
-                .map(|g| RustTypeParam2 {
-                    name: g.clone(),
-                    type_: RustTypeParamValue2::Unresolved,
-                })
-                .collect::<Vec<_>>()
-        };
-        match &item_def.struct_or_enum_info {
-            StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
-                // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
                 (
-                    PartialRustType::StructIdent(item_generics, item_def.clone()),
-                    item_def.js_name.clone(),
+                    PartialRustType::RustType(
+                        RustType2::Fn(None, fn_generics, Box::new(fn_info.clone())),
+                        false,
+                        false,
+                    ),
+                    fn_info.js_name.clone(),
                 )
             }
-            StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
-                // So we are assuming you can't have a path where the final segment is an enum ident
-                panic!()
-            }
-        }
-    } else if let Some(const_def) = const_def {
-        (
-            PartialRustType::RustType(
-                const_def.type_.clone().into_rust_type2(global_data),
-                false,
-                false,
+            ItemV2::Const(const_def) => (
+                PartialRustType::RustType(
+                    const_def.type_.clone().into_rust_type2(global_data),
+                    false,
+                    false,
+                ),
+                const_def.js_name.clone(),
             ),
-            const_def.js_name.clone(),
-        )
+            _ => todo!(),
+        }
     } else {
         // dbg!(segs_copy);
         todo!()

@@ -10,7 +10,7 @@ use crate::{
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
     make_item_definitions::{self, FnInfoSyn, ModuleMethods},
-    tree_structure::{ItemActual, ItemRef, StmtsRef},
+    tree_structure::{ExprRef, ItemActual, ItemRef, StmtsRef},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
@@ -1378,6 +1378,7 @@ pub struct ConstDef {
     pub name: String,
     pub is_pub: bool,
     pub type_: RustType,
+    pub expr: ExprRef,
     pub syn_object: ItemConst,
 }
 
