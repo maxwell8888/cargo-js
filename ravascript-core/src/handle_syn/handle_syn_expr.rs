@@ -22,6 +22,11 @@ use crate::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
+    tree_structure::{
+        expr_to_expr_ref, stmt_to_stmts_ref, update_definitons::ItemV2, ExprRef, RustExprAssign,
+        RustExprBlock, RustExprCall, RustExprClosure, RustExprMatch, RustExprMethodCall,
+        RustExprPath, StmtsRef,
+    },
     update_item_definitions::{
         ConstDef, EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
@@ -30,12 +35,12 @@ use crate::{
 };
 
 fn handle_expr_assign(
-    expr_assign: &ExprAssign,
+    expr_assign: &RustExprAssign,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsExpr {
     let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_assign.left {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
@@ -55,7 +60,7 @@ fn handle_expr_assign(
     // assert!(lhs_is_mut_var);
 
     let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_assign.right {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
@@ -333,13 +338,13 @@ fn handle_expr_assign(
 /// NOTE handle_expr should never be called multiple times on the same expr, even if you are confident it won't mutate global_data twice, it will mess up the logging
 /// -> (JsExpr, return type)
 pub fn handle_expr(
-    expr: &Expr,
+    expr: &ExprRef,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
     debug!("handle_expr");
     match expr {
-        Expr::Array(expr_array) => {
+        ExprRef::Array(expr_array) => {
             // TODO how to handle `let a: [i32, 0] = [];`? or other cases where there is no elements and the type is inferred from elsewhere
 
             let type_ = if !expr_array.elems.is_empty() {
@@ -364,18 +369,18 @@ pub fn handle_expr(
                 RustType2::Array(Box::new(type_)),
             )
         }
-        Expr::Assign(expr_assign) => (
+        ExprRef::Assign(expr_assign) => (
             handle_expr_assign(expr_assign, global_data, current_module),
             RustType2::Unit,
         ),
-        Expr::Async(_) => todo!(),
-        Expr::Await(expr_await) => {
+        ExprRef::Async(_) => todo!(),
+        ExprRef::Await(expr_await) => {
             let js_expr = handle_expr(&expr_await.base, global_data, current_module);
             (JsExpr::Await(Box::new(js_expr.0)), js_expr.1)
         }
-        Expr::Binary(expr_binary) => {
-            let span = debug_span!("handle_expr_binary", expr_binary = ?quote! { #expr_binary }.to_string());
-            let _guard = span.enter();
+        ExprRef::Binary(expr_binary) => {
+            // let span = debug_span!("handle_expr_binary", expr_binary = ?quote! { #expr_binary }.to_string());
+            // let _guard = span.enter();
 
             // // TODO hack to not convert === to .eq() when comparing JS primitives
             // let primitive = match &*expr_binary.left {
@@ -430,7 +435,7 @@ pub fn handle_expr(
             //     handle_expr(&expr_binary.right, global_data, current_module);
 
             let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_binary.left {
-                Expr::Path(expr_path) => {
+                ExprRef::Path(expr_path) => {
                     let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
@@ -452,7 +457,7 @@ pub fn handle_expr(
             // dbg!(&lhs_is_mut_var);
 
             let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_binary.right {
-                Expr::Path(expr_path) => {
+                ExprRef::Path(expr_path) => {
                     let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
@@ -610,18 +615,18 @@ pub fn handle_expr(
             };
             (expr, type_)
         }
-        Expr::Block(expr_block) => {
+        ExprRef::Block(expr_block) => {
             handle_expr_block(expr_block, global_data, current_module, true, true)
         }
-        Expr::Break(_) => (JsExpr::Break, RustType2::NotAllowed),
-        Expr::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
-        Expr::Cast(_) => todo!(),
-        Expr::Closure(expr_closure) => {
+        ExprRef::Break(_) => (JsExpr::Break, RustType2::NotAllowed),
+        ExprRef::Call(expr_call) => handle_expr_call(expr_call, global_data, current_module),
+        ExprRef::Cast(_) => todo!(),
+        ExprRef::Closure(expr_closure) => {
             handle_expr_closure(expr_closure, global_data, current_module, None)
         }
-        Expr::Const(_) => todo!(),
-        Expr::Continue(_) => todo!(),
-        Expr::Field(expr_field) => {
+        ExprRef::Const(_) => todo!(),
+        ExprRef::Continue(_) => todo!(),
+        ExprRef::Field(expr_field) => {
             let (base_expr, base_type) = handle_expr(&expr_field.base, global_data, current_module);
             // TODO for a field, the type must be a struct or tuple, so look it up and get the type of the field
             match &expr_field.member {
@@ -711,7 +716,7 @@ pub fn handle_expr(
                 }
             }
         }
-        Expr::ForLoop(expr_for_loop) => {
+        ExprRef::ForLoop(expr_for_loop) => {
             // TODO handle multiple vars/patterns like `for (one, two, three) in data {}`
             let pat = match &*expr_for_loop.pat {
                 Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
@@ -765,7 +770,7 @@ pub fn handle_expr(
                 false,
                 false,
                 false,
-                &expr_for_loop.body.stmts,
+                &expr_for_loop.body,
                 global_data,
                 current_module,
             );
@@ -778,11 +783,11 @@ pub fn handle_expr(
                 RustType2::Unit,
             )
         }
-        Expr::Group(_) => todo!(),
-        Expr::If(expr_if) => {
+        ExprRef::Group(_) => todo!(),
+        ExprRef::If(expr_if) => {
             #[allow(clippy::all)]
             match &*expr_if.cond {
-                Expr::Let(_) => todo!(),
+                ExprRef::Let(_) => todo!(),
                 _ => {}
             }
 
@@ -793,7 +798,6 @@ pub fn handle_expr(
             // TODO For now assume first block return types
             let (succeed_stmts, types): (Vec<_>, Vec<RustType2>) = expr_if
                 .then_branch
-                .stmts
                 .iter()
                 .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .unzip();
@@ -802,10 +806,10 @@ pub fn handle_expr(
             // update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
 
             // NOTE we need to directly handle fail blocks to ensure the block doesn't get converted to an IFFE which would happen if it we handled by handle_expr_block
-            let fail = expr_if.else_branch.as_ref().map(|(_, expr)| {
+            let fail = expr_if.else_branch.as_ref().map(|expr| {
                 //
                 match &**expr {
-                    Expr::Block(expr_block) => {
+                    ExprRef::Block(expr_block) => {
                         // Box::new(handle_expr(&*expr, global_data, current_module).0)
                         Box::new(
                             handle_expr_block(
@@ -818,7 +822,7 @@ pub fn handle_expr(
                             .0,
                         )
                     }
-                    Expr::If(_) => Box::new(handle_expr(expr, global_data, current_module).0),
+                    ExprRef::If(_) => Box::new(handle_expr(expr, global_data, current_module).0),
                     _ => panic!(),
                 }
             });
@@ -836,7 +840,7 @@ pub fn handle_expr(
                 types.last().unwrap().clone(),
             )
         }
-        Expr::Index(expr_index) => {
+        ExprRef::Index(expr_index) => {
             let (expr, type_) = handle_expr(&expr_index.expr, global_data, current_module);
             let (index_expr, _index_type) =
                 handle_expr(&expr_index.index, global_data, current_module);
@@ -876,12 +880,12 @@ pub fn handle_expr(
                 rust_type,
             )
         }
-        Expr::Infer(_) => todo!(),
-        Expr::Let(expr_let) => {
+        ExprRef::Infer(_) => todo!(),
+        ExprRef::Let(expr_let) => {
             dbg!(expr_let);
             todo!()
         }
-        Expr::Lit(expr_lit) => match &expr_lit.lit {
+        ExprRef::Lit(expr_lit) => match &expr_lit.lit {
             Lit::Str(lit_str) => {
                 // global_data.rust_prelude_types.string = true;
                 // JsExpr::New(
@@ -925,12 +929,11 @@ pub fn handle_expr(
             Lit::Verbatim(_) => todo!(),
             _ => todo!(),
         },
-        Expr::Loop(expr_loop) => (
+        ExprRef::Loop(expr_loop) => (
             JsExpr::While(
                 Box::new(JsExpr::LitBool(true)),
                 expr_loop
                     .body
-                    .stmts
                     .iter()
                     .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
@@ -941,20 +944,20 @@ pub fn handle_expr(
             ),
             RustType2::Never,
         ),
-        Expr::Macro(expr_macro) => {
+        ExprRef::Macro(expr_macro) => {
             handle_expr_and_stmt_macro(&expr_macro.mac, global_data, current_module)
         }
-        Expr::Match(expr_match) => {
+        ExprRef::Match(expr_match) => {
             handle_expr_match(expr_match, false, global_data, current_module)
         }
-        Expr::MethodCall(expr_method_call) => {
+        ExprRef::MethodCall(expr_method_call) => {
             handle_expr_method_call(expr_method_call, global_data, current_module)
         }
-        Expr::Paren(expr_paren) => {
+        ExprRef::Paren(expr_paren) => {
             let (expr, type_) = handle_expr(&expr_paren.expr, global_data, current_module);
             (JsExpr::Paren(Box::new(expr)), type_)
         }
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             // dbg!("handle_expr expr_path:");
             // dbg!(&expr_path);
             let (js_expr, partial_rust_type) =
@@ -967,13 +970,13 @@ pub fn handle_expr(
                 PartialRustType::RustType(rust_type, _is_mut_var, _is_var) => (js_expr, rust_type),
             }
         }
-        Expr::Range(_) => todo!(),
-        Expr::Reference(expr_reference) => {
-            if expr_reference.mutability.is_some() {
+        ExprRef::Range(_) => todo!(),
+        ExprRef::Reference(expr_reference) => {
+            if expr_reference.mutability {
                 // Vars need to know whether they are having a mut ref taken to know whether they should copy or not ie `var.inner`, `var.copy()`, or whatever. So we repeat the path handle from `handle_expr()` here so that we can explicitly pass a true argument for `is_having_mut_ref_taken` to handle_expr_path().
                 // dbg!("yes");
                 let (expr, rust_type) = match &*expr_reference.expr {
-                    Expr::Path(expr_path) => {
+                    ExprRef::Path(expr_path) => {
                         let (js_expr, partial_rust_type) =
                             handle_expr_path(expr_path, global_data, current_module);
                         // dbg!(&expr_path);
@@ -1041,7 +1044,7 @@ pub fn handle_expr(
                 (expr, RustType2::MutRef(Box::new(rust_type)))
             } else {
                 let (expr, rust_type) = match &*expr_reference.expr {
-                    Expr::Path(expr_path) => {
+                    ExprRef::Path(expr_path) => {
                         let (expr, partial) =
                             handle_expr_path(expr_path, global_data, current_module);
                         match partial {
@@ -1064,12 +1067,12 @@ pub fn handle_expr(
                 (expr, rust_type)
             }
         }
-        Expr::Repeat(_) => todo!(),
-        Expr::Return(expr_return) => {
+        ExprRef::Repeat(_) => todo!(),
+        ExprRef::Return(expr_return) => {
             if let Some(expr) = &expr_return.expr {
                 // If return is the deref of a &mut, then `.copy()` it
                 let (js_expr, type_) = match &**expr {
-                    Expr::Unary(expr_unary) => match expr_unary.op {
+                    ExprRef::Unary(expr_unary) => match expr_unary.op {
                         UnOp::Deref(_) => {
                             let (expr, type_) = handle_expr(expr, global_data, current_module);
                             (
@@ -1089,7 +1092,7 @@ pub fn handle_expr(
                 // (JsExpr::Return(Box::new(JsExpr::Vanish)), RustType::Todo)
             }
         }
-        Expr::Struct(expr_struct) => {
+        ExprRef::Struct(expr_struct) => {
             // NOTE remember this handles both struct and enum variant instantiation eg `MyStruct {}` and `MyEnum::Variant { num: 0 }`
             // dbg!("handle expr_struct");
             // println!("{}", quote! { #expr_struct });
@@ -1197,13 +1200,13 @@ pub fn handle_expr(
             //     }
             // }
         }
-        Expr::Try(_) => todo!(),
-        Expr::TryBlock(_) => todo!(),
-        Expr::Tuple(_) => todo!(),
-        Expr::Unary(expr_unary) => match expr_unary.op {
+        ExprRef::Try(_) => todo!(),
+        ExprRef::TryBlock(_) => todo!(),
+        ExprRef::Tuple(_) => todo!(),
+        ExprRef::Unary(expr_unary) => match expr_unary.op {
             UnOp::Deref(_) => {
                 let (mut expr, rust_type, is_mut_var) = match &*expr_unary.expr {
-                    Expr::Path(expr_path) => {
+                    ExprRef::Path(expr_path) => {
                         let (expr, partial) =
                             handle_expr_path(expr_path, global_data, current_module);
                         match partial {
@@ -1295,14 +1298,13 @@ pub fn handle_expr(
             }
             _ => todo!(),
         },
-        Expr::Unsafe(_) => todo!(),
-        Expr::Verbatim(_) => todo!(),
-        Expr::While(expr_while) => (
+        ExprRef::Unsafe(_) => todo!(),
+        ExprRef::Verbatim(_) => todo!(),
+        ExprRef::While(expr_while) => (
             JsExpr::While(
                 Box::new(handle_expr(&expr_while.cond, global_data, current_module).0),
                 expr_while
                     .body
-                    .stmts
                     .iter()
                     .flat_map(|stmt| {
                         handle_stmt(stmt, global_data, current_module)
@@ -1313,39 +1315,39 @@ pub fn handle_expr(
             ),
             RustType2::Unit,
         ),
-        Expr::Yield(_) => todo!(),
+        ExprRef::Yield(_) => todo!(),
         _ => todo!(),
     }
 }
 
 fn handle_expr_closure(
-    expr_closure: &ExprClosure,
+    expr_closure: &RustExprClosure,
     global_data: &mut GlobalData,
     current_module: &[String],
     // (input types, return type)
     known_type: Option<(Vec<RustType2>, RustType2)>,
 ) -> (JsExpr, RustType2) {
-    let async_ = matches!(&*expr_closure.body, Expr::Async(_));
+    let async_ = matches!(&*expr_closure.body, ExprRef::Async(_));
 
     let body_is_js_block = match &*expr_closure.body {
-        Expr::Async(expr_async) => {
+        ExprRef::Async(expr_async) => {
             // If we have a single statement which is an expression that has no semi so is being returned then in Rust async we have to put it in a block but in Javascript we don't need to
 
             // multi lines should be in blocks
-            let stmts = &expr_async.block.stmts;
+            let stmts = &expr_async.stmts;
             if stmts.len() > 1 {
                 true
             } else {
                 let is_expr_with_no_semi = match stmts.last().unwrap() {
-                    Stmt::Expr(_, semi) => semi.is_none(),
-                    Stmt::Macro(_) => todo!(),
+                    StmtsRef::Expr(_, semi) => *semi,
+                    StmtsRef::Macro(_) => todo!(),
                     _ => false,
                 };
                 !is_expr_with_no_semi
             }
         }
-        Expr::Block(_) => true,
-        Expr::Match(_) => true,
+        ExprRef::Block(_) => true,
+        ExprRef::Match(_) => true,
         _ => false,
     };
 
@@ -1506,23 +1508,23 @@ fn handle_expr_closure(
 
     // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
     let (body_stmts, return_type) = match &*expr_closure.body {
-        Expr::Block(expr_block) => parse_fn_body_stmts(
+        ExprRef::Block(expr_block) => parse_fn_body_stmts(
             true,
             false,
             true,
-            &expr_block.block.stmts,
+            &expr_block.stmts,
             global_data,
             current_module,
         ),
-        Expr::Async(expr_async) => parse_fn_body_stmts(
+        ExprRef::Async(expr_async) => parse_fn_body_stmts(
             true,
             false,
             true,
-            &expr_async.block.stmts,
+            &expr_async.stmts,
             global_data,
             current_module,
         ),
-        Expr::Match(expr_match) => {
+        ExprRef::Match(expr_match) => {
             let (expr, type_) = handle_expr_match(expr_match, true, global_data, current_module);
             (vec![JsStmt::Expr(expr, false)], type_)
         }
@@ -1567,14 +1569,16 @@ pub fn handle_expr_and_stmt_macro(
             let expr_array = syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
             let vec_type = if let Some(elem) = expr_array.elems.first() {
                 // IMPORTANT need to be careful about calling handle_expr an element twice like here in case information is added to global_data.scope twice, or similar problems? duplicates shouldn't cause problems for scope data?
-                handle_expr(elem, global_data, current_module).1
+                handle_expr(&expr_to_expr_ref(elem.clone()), global_data, current_module).1
             } else {
                 RustType2::Unknown
             };
             let expr_vec = expr_array
                 .elems
                 .iter()
-                .map(|elem| handle_expr(elem, global_data, current_module).0)
+                .map(|elem| {
+                    handle_expr(&expr_to_expr_ref(elem.clone()), global_data, current_module).0
+                })
                 .collect::<Vec<_>>();
             return (JsExpr::Array(expr_vec), RustType2::Vec(Box::new(vec_type)));
         }
@@ -1590,9 +1594,13 @@ pub fn handle_expr_and_stmt_macro(
                 .stmts
                 .iter()
                 .flat_map(|stmt| {
-                    handle_stmt(stmt, global_data, current_module)
-                        .into_iter()
-                        .map(|(stmt, _type_)| stmt)
+                    handle_stmt(
+                        &stmt_to_stmts_ref(stmt.clone()),
+                        global_data,
+                        current_module,
+                    )
+                    .into_iter()
+                    .map(|(stmt, _type_)| stmt)
                 })
                 .collect();
             return (JsExpr::TryBlock(stmt_vec), RustType2::Unit);
@@ -1608,7 +1616,7 @@ pub fn handle_expr_and_stmt_macro(
             let catch_block = parts.collect::<String>();
             let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
             let stmt_vec = catch_block.stmts.into_iter().flat_map(|stmt| {
-                handle_stmt(&stmt, global_data, current_module)
+                handle_stmt(&stmt_to_stmts_ref(stmt), global_data, current_module)
                     .into_iter()
                     .map(|(stmt, _type_)| stmt)
             });
@@ -1625,12 +1633,22 @@ pub fn handle_expr_and_stmt_macro(
             let condition_js = if bool_is_mut {
                 JsExpr::Field(
                     Box::new(JsExpr::Paren(Box::new(
-                        handle_expr(&condition_expr, global_data, current_module).0,
+                        handle_expr(
+                            &expr_to_expr_ref(condition_expr),
+                            global_data,
+                            current_module,
+                        )
+                        .0,
                     ))),
                     Ident::Str("jsBoolean"),
                 )
             } else {
-                handle_expr(&condition_expr, global_data, current_module).0
+                handle_expr(
+                    &expr_to_expr_ref(condition_expr),
+                    global_data,
+                    current_module,
+                )
+                .0
             };
             warn!("after");
 
@@ -1649,11 +1667,15 @@ pub fn handle_expr_and_stmt_macro(
 
             let lhs = parts.next().unwrap();
             let syn_lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
-            let lhs = handle_expr(&syn_lhs, global_data, current_module);
+            let lhs = handle_expr(
+                &expr_to_expr_ref(syn_lhs.clone()),
+                global_data,
+                current_module,
+            );
 
             let rhs = parts.next().unwrap();
             let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
-            let rhs = handle_expr(&rhs, global_data, current_module);
+            let rhs = handle_expr(&expr_to_expr_ref(rhs), global_data, current_module);
 
             // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
             // Check if we have primatives so can use === otherwise use .eq()
@@ -1752,13 +1774,13 @@ pub fn handle_expr_and_stmt_macro(
 }
 
 fn handle_expr_method_call(
-    expr_method_call: &ExprMethodCall,
+    expr_method_call: &RustExprMethodCall,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
     let _method_name = expr_method_call.method.to_string();
-    let span = debug_span!("handle_expr_method_call", expr_method_call = ?quote! { #expr_method_call }.to_string());
-    let _guard = span.enter();
+    // let span = debug_span!("handle_expr_method_call", expr_method_call = ?quote! { #expr_method_call }.to_string());
+    // let _guard = span.enter();
 
     // // Look up types... should really be looking up item types when handling the receiver, and then at this stage we are just seeing if there are generics we can resolve with the argument types
     // // Look up variable
@@ -1783,26 +1805,26 @@ fn handle_expr_method_call(
     // JS doesn't allow eg `1.foo()` so need to check for literals and wrap them in parens like `(1).foo()`
     // TODO also want to check for other things like sting literals etc
     let receiver_needs_parens = match &*expr_method_call.receiver {
-        Expr::Array(_) => todo!(),
-        Expr::Assign(_) => todo!(),
-        Expr::Async(_) => todo!(),
-        Expr::Await(_) => todo!(),
-        Expr::Binary(_) => todo!(),
-        Expr::Block(_) => todo!(),
-        Expr::Break(_) => todo!(),
-        Expr::Call(_) => todo!(),
-        Expr::Cast(_) => todo!(),
-        Expr::Closure(_) => todo!(),
-        Expr::Const(_) => todo!(),
-        Expr::Continue(_) => todo!(),
-        Expr::Field(_) => false,
-        Expr::ForLoop(_) => todo!(),
-        Expr::Group(_) => todo!(),
-        Expr::If(_) => todo!(),
-        Expr::Index(_) => todo!(),
-        Expr::Infer(_) => todo!(),
-        Expr::Let(_) => todo!(),
-        Expr::Lit(_expr_lit) => {
+        ExprRef::Array(_) => todo!(),
+        ExprRef::Assign(_) => todo!(),
+        ExprRef::Async(_) => todo!(),
+        ExprRef::Await(_) => todo!(),
+        ExprRef::Binary(_) => todo!(),
+        ExprRef::Block(_) => todo!(),
+        ExprRef::Break(_) => todo!(),
+        ExprRef::Call(_) => todo!(),
+        ExprRef::Cast(_) => todo!(),
+        ExprRef::Closure(_) => todo!(),
+        ExprRef::Const(_) => todo!(),
+        ExprRef::Continue(_) => todo!(),
+        ExprRef::Field(_) => false,
+        ExprRef::ForLoop(_) => todo!(),
+        ExprRef::Group(_) => todo!(),
+        ExprRef::If(_) => todo!(),
+        ExprRef::Index(_) => todo!(),
+        ExprRef::Infer(_) => todo!(),
+        ExprRef::Let(_) => todo!(),
+        ExprRef::Lit(_expr_lit) => {
             // match expr_lit.lit {
             //     Lit::Str(_) => todo!(),
             //     Lit::ByteStr(_) => todo!(),
@@ -1817,25 +1839,25 @@ fn handle_expr_method_call(
             // }
             true
         }
-        Expr::Loop(_) => todo!(),
-        Expr::Macro(_) => todo!(),
-        Expr::Match(_) => todo!(),
-        Expr::MethodCall(_) => false,
-        Expr::Paren(_) => todo!(),
-        Expr::Path(_) => false,
-        Expr::Range(_) => todo!(),
-        Expr::Reference(_) => todo!(),
-        Expr::Repeat(_) => todo!(),
-        Expr::Return(_) => todo!(),
-        Expr::Struct(_) => todo!(),
-        Expr::Try(_) => todo!(),
-        Expr::TryBlock(_) => todo!(),
-        Expr::Tuple(_) => todo!(),
-        Expr::Unary(_) => todo!(),
-        Expr::Unsafe(_) => todo!(),
-        Expr::Verbatim(_) => todo!(),
-        Expr::While(_) => todo!(),
-        Expr::Yield(_) => todo!(),
+        ExprRef::Loop(_) => todo!(),
+        ExprRef::Macro(_) => todo!(),
+        ExprRef::Match(_) => todo!(),
+        ExprRef::MethodCall(_) => false,
+        ExprRef::Paren(_) => todo!(),
+        ExprRef::Path(_) => false,
+        ExprRef::Range(_) => todo!(),
+        ExprRef::Reference(_) => todo!(),
+        ExprRef::Repeat(_) => todo!(),
+        ExprRef::Return(_) => todo!(),
+        ExprRef::Struct(_) => todo!(),
+        ExprRef::Try(_) => todo!(),
+        ExprRef::TryBlock(_) => todo!(),
+        ExprRef::Tuple(_) => todo!(),
+        ExprRef::Unary(_) => todo!(),
+        ExprRef::Unsafe(_) => todo!(),
+        ExprRef::Verbatim(_) => todo!(),
+        ExprRef::While(_) => todo!(),
+        ExprRef::Yield(_) => todo!(),
         _ => todo!(),
     };
     let mut method_name = expr_method_call.method.to_string();
@@ -1859,7 +1881,7 @@ fn handle_expr_method_call(
     // };
 
     let (mut receiver, receiver_type, receiver_is_mut_var) = match &*expr_method_call.receiver {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
@@ -1885,8 +1907,13 @@ fn handle_expr_method_call(
             .map(|generic_arg| match generic_arg {
                 GenericArgument::Lifetime(_) => todo!(),
                 GenericArgument::Type(type_) => {
-                    let item_def =
+                    let (type_params, module_path, name, index) =
                         global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
+                    let item = &global_data.item_defs[index];
+                    let item_def = match item {
+                        ItemV2::StructOrEnum(item_def) => item_def.clone(),
+                        _ => todo!(),
+                    };
 
                     RustType2::StructOrEnum(
                         item_def
@@ -1973,7 +2000,7 @@ fn handle_expr_method_call(
                 // dbg!(&arg);
                 // dbg!(&resolved_input_type);
                 match arg {
-                    Expr::Closure(expr_closure) => {
+                    ExprRef::Closure(expr_closure) => {
                         // This particular method input is a closure
                         let closure_types = match resolved_input_type {
                             RustType2::TypeParam(_) => todo!(),
@@ -2439,22 +2466,13 @@ fn get_receiver_params_and_method_impl_item(
         RustType2::TypeParam(_) => todo!(),
         RustType2::I32 => {
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let i32_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "i32")
-                .unwrap();
+
+            let i32_def = global_data.get_prelude_item_def("i32");
 
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(i32_def, sub_path)
+                    .lookup_impl_item_item2(&i32_def, sub_path)
                     .unwrap(),
             )
             // match impl_method.item {
@@ -2482,17 +2500,9 @@ fn get_receiver_params_and_method_impl_item(
             // } else {
             //     todo!()
             // }
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let string_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "String")
-                .unwrap();
+
+            let string_def = &global_data.get_prelude_item_def("String");
+
             // dbg!(&string_def);
             // dbg!(&sub_path);
             // dbg!(&global_data.impl_blocks_simpl);
@@ -2505,17 +2515,7 @@ fn get_receiver_params_and_method_impl_item(
             )
         }
         RustType2::Option(type_param) => {
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let item_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "Option")
-                .unwrap();
+            let item_def = global_data.get_prelude_item_def("Option");
             // let type_param = match &*type_param {
             //     RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
             //     other_rust_type => RustTypeParam {
@@ -2526,7 +2526,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 vec![type_param],
                 global_data
-                    .lookup_impl_item_item2(item_def, sub_path)
+                    .lookup_impl_item_item2(&item_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2576,17 +2576,8 @@ fn get_receiver_params_and_method_impl_item(
             // } else {
             //     todo!()
             // }
-            let prelude_module = global_data
-                .modules
-                .iter()
-                .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                .unwrap();
-            let vec_def = prelude_module
-                .various_definitions
-                .item_definitons
-                .iter()
-                .find(|item_def| item_def.ident == "Vec")
-                .unwrap();
+
+            let vec_def = &global_data.get_prelude_item_def("Vec");
             // dbg!(&string_def);
             // dbg!(&sub_path);
             // dbg!(&global_data.impl_blocks_simpl);
@@ -2781,7 +2772,7 @@ fn _method_return_type_generic_resolve_to_rust_type(
 }
 
 pub fn handle_expr_block(
-    expr_block: &ExprBlock,
+    expr_block: &RustExprBlock,
     global_data: &mut GlobalData,
     current_module: &[String],
     allow_convert_to_iffe: bool,
@@ -2805,7 +2796,7 @@ pub fn handle_expr_block(
         false,
         true,
         allow_return,
-        &expr_block.block.stmts,
+        &expr_block.stmts,
         global_data,
         current_module,
     );
@@ -2840,14 +2831,14 @@ pub fn handle_expr_block(
 }
 
 fn handle_expr_call(
-    expr_call: &ExprCall,
+    expr_call: &RustExprCall,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
     // dbg!(expr_call);
 
     let js_primitive = match &*expr_call.func {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             if expr_path.path.segments.len() == 1 {
                 let ident = &expr_path.path.segments.first().unwrap().ident;
                 ident == "JsNumber" || ident == "JsString" || ident == "JsBoolean"
@@ -2862,13 +2853,13 @@ fn handle_expr_call(
     }
 
     fn parse_args(
-        expr_call: &ExprCall,
+        expr_call: &RustExprCall,
         fn_inputs: Option<&[RustType]>,
         global_data: &mut GlobalData,
         current_module: &[String],
     ) -> (Vec<JsExpr>, Vec<RustType2>) {
         fn parse_args_inner(
-            arg_expr: &Expr,
+            arg_expr: &ExprRef,
             input_is_mut_ref: bool,
             // Arg is &mut
             arg_is_mut_ref: bool,
@@ -2876,7 +2867,7 @@ fn handle_expr_call(
             current_module: &[String],
         ) -> (JsExpr, RustType2) {
             match arg_expr {
-                Expr::Path(expr_path) => {
+                ExprRef::Path(expr_path) => {
                     let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
@@ -2895,10 +2886,10 @@ fn handle_expr_call(
                         }
                     }
                 }
-                Expr::Reference(expr_reference) => parse_args_inner(
+                ExprRef::Reference(expr_reference) => parse_args_inner(
                     &expr_reference.expr,
                     input_is_mut_ref,
-                    expr_reference.mutability.is_some(),
+                    expr_reference.mutability,
                     global_data,
                     current_module,
                 ),
@@ -2941,7 +2932,7 @@ fn handle_expr_call(
 
     // parse fn call
     match &*expr_call.func {
-        Expr::Path(expr_path) => {
+        ExprRef::Path(expr_path) => {
             // if let Some(js_expr) = hardcoded_conversions(expr_path, args_js_expr.clone()) {
             //     return js_expr;
             // }
@@ -3223,7 +3214,7 @@ fn handle_expr_call(
 }
 
 pub fn handle_expr_path(
-    expr_path: &ExprPath,
+    expr_path: &RustExprPath,
     global_data: &mut GlobalData,
     current_module: &[String],
     // is_call: bool,
@@ -3246,11 +3237,7 @@ fn handle_expr_path_inner(
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
-    let module = global_data
-        .modules
-        .iter()
-        .find(|module| module.path == current_module)
-        .unwrap();
+    let module = global_data.get_module(current_module);
 
     // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
 
@@ -3275,17 +3262,19 @@ fn handle_expr_path_inner(
     // dbg!(&current_module);
     // dbg!(&global_data.scope_id_as_option());
     // dbg!(&segs_copy);
-    let (segs_copy_module_path, segs_copy_item_path, segs_copy_item_scope) = resolve_path(
-        // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
-        true,
-        true,
-        true,
-        segs_copy,
-        global_data,
-        current_module,
-        current_module,
-        &global_data.scope_id_as_option(),
-    );
+    let (segs_copy_module_path, segs_copy_item_path, segs_copy_is_scoped, segs_copy_index) =
+        resolve_path(
+            // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+            true,
+            true,
+            true,
+            segs_copy,
+            &global_data.item_refs,
+            &global_data.item_defs,
+            current_module,
+            current_module,
+            &global_data.scopes,
+        );
     // dbg!(&segs_copy_module_path);
     // dbg!(&segs_copy_item_scope);
     // dbg!(&segs_copy_item_path);
@@ -3315,7 +3304,7 @@ fn handle_expr_path_inner(
         == [PRELUDE_MODULE_PATH]
     {
         // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
-        if let Some(_segs_copy_item_scope) = &segs_copy_item_scope {
+        if segs_copy_is_scoped {
             // Look for var
             // NOTE this will only catch vars defined *in* the PRELUDE_MODULE_PATH module. Vars that are defined outside of the module but have a prelude type will not have PRELUDE_MODULE_PATH as their module path, it will be whatever module they were defined in
             assert_eq!(segs_copy_item_path.len(), 1);
@@ -3336,7 +3325,6 @@ fn handle_expr_path_inner(
                 vec![Ident::String(path.ident.clone())],
             )
         } else {
-            assert_eq!(segs_copy_item_scope, None);
             let path_idents = segs_copy_item_path
                 .iter()
                 .map(|seg| seg.ident.as_str())
@@ -3358,11 +3346,7 @@ fn handle_expr_path_inner(
                         PartialRustType::EnumVariantIdent(
                             // TODO handle turbofish
                             Vec::new(),
-                            global_data.lookup_item_def_known_module_assert_not_func2(
-                                &segs_copy_module_path,
-                                &None,
-                                "Option",
-                            ),
+                            global_data.get_prelude_item_def("Option"),
                             "Some".to_string(),
                         ),
                         segs_copy_item_path
@@ -3373,17 +3357,7 @@ fn handle_expr_path_inner(
                     )
                 }
                 ["None"] => {
-                    let prelude_module = global_data
-                        .modules
-                        .iter()
-                        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-                        .unwrap();
-                    let item_def = prelude_module
-                        .various_definitions
-                        .item_definitons
-                        .iter()
-                        .find(|item_def| item_def.ident == "Option")
-                        .unwrap();
+                    let item_def = global_data.get_prelude_item_def("Option");
                     assert_eq!(item_def.generics.len(), 1);
                     let rust_type_type_param = match &item_def.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(_) => todo!(),
@@ -4084,7 +4058,7 @@ fn handle_match_pat(
 }
 
 pub fn handle_expr_match(
-    expr_match: &ExprMatch,
+    expr_match: &RustExprMatch,
     is_returned: bool,
     global_data: &mut GlobalData,
     current_module: &[String],

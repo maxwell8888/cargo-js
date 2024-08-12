@@ -2,9 +2,17 @@
 
 use std::{fs, path::PathBuf};
 
+use proc_macro2::TokenStream;
 use syn::{
-    Expr, GenericParam, ImplItem, Item, ItemImpl, ItemUse, Local, Meta, Stmt, StmtMacro, Type,
-    UseTree, Visibility,
+    AngleBracketedGenericArguments, Arm, Attribute, BinOp, Block, BoundLifetimes, Expr, ExprArray,
+    ExprAssign, ExprAsync, ExprAwait, ExprBinary, ExprBlock, ExprBreak, ExprCall, ExprCast,
+    ExprClosure, ExprConst, ExprContinue, ExprField, ExprForLoop, ExprGroup, ExprIf, ExprIndex,
+    ExprInfer, ExprLet, ExprLit, ExprLoop, ExprMacro, ExprMatch, ExprMethodCall, ExprParen,
+    ExprPath, ExprRange, ExprReference, ExprRepeat, ExprReturn, ExprStruct, ExprTry, ExprTryBlock,
+    ExprTuple, ExprUnary, ExprUnsafe, ExprWhile, ExprYield, FieldValue, GenericParam, ImplItem,
+    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Local, Macro, Member, Meta, Pat, PatConst,
+    PatLit, PatMacro, PatPath, PatRange, QSelf, RangeLimits, ReturnType, Stmt, StmtMacro,
+    TraitItem, Type, UnOp, UseTree, Visibility,
 };
 use tracing::debug;
 use update_definitons::ItemV2;
@@ -89,6 +97,299 @@ impl ItemRef {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprRef {
+    Array(RustExprArray),
+    Assign(RustExprAssign),
+    Async(RustExprAsync),
+    Await(RustExprAwait),
+    Binary(RustExprBinary),
+    Block(RustExprBlock),
+    Break(RustExprBreak),
+    Call(RustExprCall),
+    Cast(RustExprCast),
+    Closure(RustExprClosure),
+    Const(RustExprConst),
+    Continue(RustExprContinue),
+    Field(RustExprField),
+    ForLoop(RustExprForLoop),
+    Group(RustExprGroup),
+    If(RustExprIf),
+    Index(RustExprIndex),
+    Infer(RustExprInfer),
+    Let(RustExprLet),
+    Lit(RustExprLit),
+    Loop(RustExprLoop),
+    Macro(RustExprMacro),
+    Match(RustExprMatch),
+    MethodCall(RustExprMethodCall),
+    Paren(RustExprParen),
+    Path(RustExprPath),
+    Range(RustExprRange),
+    Reference(RustExprReference),
+    Repeat(RustExprRepeat),
+    Return(RustExprReturn),
+    Struct(RustExprStruct),
+    Try(RustExprTry),
+    TryBlock(RustExprTryBlock),
+    Tuple(RustExprTuple),
+    Unary(RustExprUnary),
+    Unsafe(RustExprUnsafe),
+    Verbatim(RustTokenStream),
+    While(RustExprWhile),
+    Yield(RustExprYield),
+}
+
+#[derive(Debug, Clone)]
+pub struct RustExprArray {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAssign {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAsync {
+    pub attrs: Vec<Attribute>,
+    pub capture: bool,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAwait {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBinary {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub op: BinOp,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBlock {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBreak {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCall {
+    pub attrs: Vec<Attribute>,
+    pub func: Box<ExprRef>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCast {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub ty: Box<Type>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprClosure {
+    pub attrs: Vec<Attribute>,
+    pub lifetimes: Option<BoundLifetimes>,
+    pub constness: bool,
+    pub movability: bool,
+    pub asyncness: bool,
+    pub capture: bool,
+    pub inputs: Vec<Pat>,
+    pub output: ReturnType,
+    pub body: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprConst {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprContinue {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprField {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+    pub member: Member,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprForLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprGroup {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIf {
+    pub attrs: Vec<Attribute>,
+    pub cond: Box<ExprRef>,
+    pub then_branch: Vec<StmtsRef>,
+    pub else_branch: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIndex {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub index: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprInfer {
+    pub attrs: Vec<Attribute>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLet {
+    pub attrs: Vec<Attribute>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLit {
+    pub attrs: Vec<Attribute>,
+    pub lit: Lit,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprMacro {
+    pub attrs: Vec<Attribute>,
+    pub mac: Macro,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprMatch {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub arms: Vec<RustArm>,
+}
+#[derive(Debug, Clone)]
+pub struct RustArm {
+    pub attrs: Vec<Attribute>,
+    // TODO Pat can contain an expression and thus an item - need to check whether items can really be defined *anywhere*
+    pub pat: Pat,
+    pub guard: Option<Box<ExprRef>>,
+    pub body: Box<ExprRef>,
+    pub comma: bool,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprMethodCall {
+    pub attrs: Vec<Attribute>,
+    pub receiver: Box<ExprRef>,
+    pub method: syn::Ident,
+    pub turbofish: Option<AngleBracketedGenericArguments>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprParen {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+// TODO this type is unnecessary, can just use ExprPath directly
+#[derive(Debug, Clone)]
+pub struct RustExprPath {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRange {
+    pub attrs: Vec<Attribute>,
+    pub start: Option<Box<ExprRef>>,
+    pub limits: RangeLimits,
+    pub end: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReference {
+    pub attrs: Vec<Attribute>,
+    pub mutability: bool,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRepeat {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub len: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReturn {
+    pub attrs: Vec<Attribute>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprStruct {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+    pub fields: Vec<RustFieldValue>,
+    pub dot2_token: bool,
+    pub rest: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustFieldValue {
+    pub attrs: Vec<Attribute>,
+    pub member: Member,
+    pub colon_token: bool,
+    pub expr: ExprRef,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTry {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTryBlock {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTuple {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnary {
+    pub attrs: Vec<Attribute>,
+    pub op: UnOp,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnsafe {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustTokenStream {
+    syn: TokenStream,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprWhile {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub cond: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprYield {
+    syn: ExprYield,
 }
 
 #[derive(Debug, Clone)]
@@ -350,12 +651,7 @@ pub fn extract_modules2(
                     .stmts
                     .clone()
                     .into_iter()
-                    .map(|stmt| match stmt {
-                        Stmt::Local(local) => StmtsRef::Local(local),
-                        Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
-                        Stmt::Expr(expr, semi) => StmtsRef::Expr(expr, semi.is_some()),
-                        Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
-                    })
+                    .map(|stmt| stmt_to_stmts_ref(stmt))
                     .collect();
 
                 actual_item_defs.push(ItemActual::Fn(FnInfo {
@@ -407,7 +703,9 @@ pub fn extract_modules2(
                                 .map(|stmt| match stmt {
                                     Stmt::Local(local) => StmtsRef::Local(local),
                                     Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
-                                    Stmt::Expr(expr, semi) => StmtsRef::Expr(expr, semi.is_some()),
+                                    Stmt::Expr(expr, semi) => {
+                                        StmtsRef::Expr(expr_to_expr_ref(expr), semi.is_some())
+                                    }
                                     Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
                                 })
                                 .collect();
@@ -567,10 +865,70 @@ pub fn extract_modules2(
                     Visibility::Restricted(_) => todo!(),
                     Visibility::Inherited => false,
                 };
+                let default_impls = item_trait
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        match item {
+                            TraitItem::Const(_) => todo!(),
+                            TraitItem::Fn(item_fn) => {
+                                if let Some(block) = &item_fn.default {
+                                    let generics = item_fn
+                                        .sig
+                                        .generics
+                                        .params
+                                        .iter()
+                                        .filter_map(|g| match g {
+                                            GenericParam::Lifetime(_) => None,
+                                            GenericParam::Type(type_param) => {
+                                                Some(type_param.ident.to_string())
+                                            }
+                                            GenericParam::Const(_) => todo!(),
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    let rust_stmts = block
+                                        .stmts
+                                        .clone()
+                                        .into_iter()
+                                        .map(|stmt| match stmt {
+                                            Stmt::Local(local) => StmtsRef::Local(local),
+                                            Stmt::Item(item) => {
+                                                StmtsRef::Item(item_to_rust_item(item))
+                                            }
+                                            Stmt::Expr(expr, semi) => StmtsRef::Expr(
+                                                expr_to_expr_ref(expr),
+                                                semi.is_some(),
+                                            ),
+                                            Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
+                                        })
+                                        .collect();
+
+                                    Some(FnInfo {
+                                        ident: item_fn.sig.ident.to_string(),
+                                        is_pub,
+                                        generics,
+                                        signature: item_fn.sig.clone(),
+                                        // syn: FnInfoSyn::Standalone(item_fn.clone()),
+                                        stmts: rust_stmts,
+                                        syn: FnInfoSyn::Trait(item_fn.clone()),
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                            TraitItem::Type(_) => todo!(),
+                            TraitItem::Macro(_) => todo!(),
+                            TraitItem::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        }
+                    })
+                    .collect();
                 actual_item_defs.push(ItemActual::Trait(RustTraitDefinition {
                     name: item_trait.ident.to_string(),
                     is_pub,
                     syn: item_trait.clone(),
+                    default_impls,
                 }));
                 module_itemrefs.push(ItemRef::Trait(actual_item_defs.len() - 1));
             }
@@ -650,6 +1008,211 @@ pub fn extract_modules2(
 //     }
 //     new_modules
 // }
+
+pub fn stmt_to_stmts_ref(stmt: Stmt) -> StmtsRef {
+    match stmt {
+        Stmt::Local(local) => StmtsRef::Local(local),
+        Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
+        Stmt::Expr(expr, semi) => StmtsRef::Expr(expr_to_expr_ref(expr), semi.is_some()),
+        Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
+    }
+}
+
+pub fn expr_to_expr_ref(expr: Expr) -> ExprRef {
+    match expr {
+        Expr::Array(expr_array) => ExprRef::Array(RustExprArray {
+            attrs: expr_array.attrs,
+            elems: expr_array
+                .elems
+                .into_iter()
+                .map(|expr| expr_to_expr_ref(expr))
+                .collect(),
+        }),
+        Expr::Assign(expr_assign) => ExprRef::Assign(RustExprAssign {
+            attrs: expr_assign.attrs,
+            left: Box::new(expr_to_expr_ref(*expr_assign.left)),
+            right: Box::new(expr_to_expr_ref(*expr_assign.right)),
+        }),
+        Expr::Async(expr_async) => ExprRef::Async(RustExprAsync {
+            attrs: expr_async.attrs,
+            capture: expr_async.capture.is_some(),
+            stmts: expr_async
+                .block
+                .stmts
+                .into_iter()
+                .map(stmt_to_stmts_ref)
+                .collect(),
+        }),
+        Expr::Await(expr_await) => ExprRef::Await(RustExprAwait {
+            attrs: expr_await.attrs,
+            base: Box::new(expr_to_expr_ref(*expr_await.base)),
+        }),
+        Expr::Binary(expr_binary) => ExprRef::Binary(RustExprBinary {
+            attrs: expr_binary.attrs,
+            left: Box::new(expr_to_expr_ref(*expr_binary.left)),
+            op: expr_binary.op,
+            right: Box::new(expr_to_expr_ref(*expr_binary.right)),
+        }),
+        Expr::Block(expr_block) => ExprRef::Block(RustExprBlock {
+            attrs: expr_block.attrs,
+            label: expr_block.label,
+            stmts: expr_block
+                .block
+                .stmts
+                .into_iter()
+                .map(stmt_to_stmts_ref)
+                .collect(),
+        }),
+        Expr::Break(_) => todo!(),
+        Expr::Call(expr_call) => ExprRef::Call(RustExprCall {
+            attrs: expr_call.attrs,
+            func: Box::new(expr_to_expr_ref(*expr_call.func)),
+            args: expr_call.args.into_iter().map(expr_to_expr_ref).collect(),
+        }),
+        Expr::Cast(_) => todo!(),
+        Expr::Closure(expr_closure) => ExprRef::Closure(RustExprClosure {
+            attrs: expr_closure.attrs,
+            lifetimes: expr_closure.lifetimes,
+            constness: expr_closure.constness.is_some(),
+            movability: expr_closure.movability.is_some(),
+            asyncness: expr_closure.asyncness.is_some(),
+            capture: expr_closure.capture.is_some(),
+            inputs: expr_closure.inputs.into_iter().collect(),
+            output: expr_closure.output,
+            body: Box::new(expr_to_expr_ref(*expr_closure.body)),
+        }),
+        Expr::Const(_) => todo!(),
+        Expr::Continue(_) => todo!(),
+        Expr::Field(expr_field) => ExprRef::Field(RustExprField {
+            attrs: expr_field.attrs,
+            base: Box::new(expr_to_expr_ref(*expr_field.base)),
+            member: expr_field.member,
+        }),
+        Expr::ForLoop(expr_for_loop) => ExprRef::ForLoop(RustExprForLoop {
+            attrs: expr_for_loop.attrs,
+            label: expr_for_loop.label,
+            pat: expr_for_loop.pat,
+            expr: Box::new(expr_to_expr_ref(*expr_for_loop.expr)),
+            body: expr_for_loop
+                .body
+                .stmts
+                .into_iter()
+                .map(stmt_to_stmts_ref)
+                .collect(),
+        }),
+        Expr::Group(_) => todo!(),
+        Expr::If(expr_if) => ExprRef::If(RustExprIf {
+            attrs: expr_if.attrs,
+            cond: Box::new(expr_to_expr_ref(*expr_if.cond)),
+            then_branch: expr_if
+                .then_branch
+                .stmts
+                .into_iter()
+                .map(stmt_to_stmts_ref)
+                .collect(),
+            else_branch: expr_if
+                .else_branch
+                .map(|(_, expr)| Box::new(expr_to_expr_ref(*expr))),
+        }),
+        Expr::Index(expr_index) => ExprRef::Index(RustExprIndex {
+            attrs: expr_index.attrs,
+            expr: Box::new(expr_to_expr_ref(*expr_index.expr)),
+            index: Box::new(expr_to_expr_ref(*expr_index.index)),
+        }),
+        Expr::Infer(_) => todo!(),
+        Expr::Let(expr_let) => ExprRef::Let(RustExprLet {
+            attrs: expr_let.attrs,
+            pat: expr_let.pat,
+            expr: Box::new(expr_to_expr_ref(*expr_let.expr)),
+        }),
+        Expr::Lit(expr_lit) => ExprRef::Lit(RustExprLit {
+            attrs: expr_lit.attrs,
+            lit: expr_lit.lit,
+        }),
+        Expr::Loop(_) => todo!(),
+        Expr::Macro(_) => todo!(),
+        Expr::Match(expr_match) => ExprRef::Match(RustExprMatch {
+            attrs: expr_match.attrs,
+            expr: Box::new(expr_to_expr_ref(*expr_match.expr)),
+            arms: expr_match
+                .arms
+                .into_iter()
+                .map(|arm| RustArm {
+                    attrs: arm.attrs,
+                    pat: arm.pat,
+                    guard: arm.guard.map(|(_, expr)| Box::new(expr_to_expr_ref(*expr))),
+                    body: Box::new(expr_to_expr_ref(*arm.body)),
+                    comma: arm.comma.is_some(),
+                })
+                .collect(),
+        }),
+        Expr::MethodCall(expr_method_call) => ExprRef::MethodCall(RustExprMethodCall {
+            attrs: expr_method_call.attrs,
+            receiver: Box::new(expr_to_expr_ref(*expr_method_call.receiver)),
+            method: expr_method_call.method,
+            turbofish: expr_method_call.turbofish,
+            args: expr_method_call
+                .args
+                .into_iter()
+                .map(expr_to_expr_ref)
+                .collect(),
+        }),
+        Expr::Paren(_) => todo!(),
+        Expr::Path(expr_path) => ExprRef::Path(RustExprPath {
+            attrs: expr_path.attrs,
+            qself: expr_path.qself,
+            path: expr_path.path,
+        }),
+        Expr::Range(_) => todo!(),
+        Expr::Reference(expr_reference) => ExprRef::Reference(RustExprReference {
+            attrs: expr_reference.attrs,
+            mutability: expr_reference.mutability.is_some(),
+            expr: Box::new(expr_to_expr_ref(*expr_reference.expr)),
+        }),
+        Expr::Repeat(_) => todo!(),
+        Expr::Return(expr_return) => ExprRef::Return(RustExprReturn {
+            attrs: expr_return.attrs,
+            expr: expr_return
+                .expr
+                .map(|expr| Box::new(expr_to_expr_ref(*expr))),
+        }),
+        Expr::Struct(expr_struct) => ExprRef::Struct(RustExprStruct {
+            attrs: expr_struct.attrs,
+            qself: expr_struct.qself,
+            path: expr_struct.path,
+            fields: expr_struct
+                .fields
+                .into_iter()
+                .map(|field| RustFieldValue {
+                    attrs: field.attrs,
+                    member: field.member,
+                    colon_token: field.colon_token.is_some(),
+                    expr: expr_to_expr_ref(field.expr),
+                })
+                .collect(),
+            dot2_token: expr_struct.dot2_token.is_some(),
+            rest: expr_struct
+                .rest
+                .map(|expr| Box::new(expr_to_expr_ref(*expr))),
+        }),
+        Expr::Try(_) => todo!(),
+        Expr::TryBlock(_) => todo!(),
+        Expr::Tuple(expr_tuple) => ExprRef::Tuple(RustExprTuple {
+            attrs: expr_tuple.attrs,
+            elems: expr_tuple.elems.into_iter().map(expr_to_expr_ref).collect(),
+        }),
+        Expr::Unary(expr_unary) => ExprRef::Unary(RustExprUnary {
+            attrs: expr_unary.attrs,
+            op: expr_unary.op,
+            expr: Box::new(expr_to_expr_ref(*expr_unary.expr)),
+        }),
+        Expr::Unsafe(_) => todo!(),
+        Expr::Verbatim(_) => todo!(),
+        Expr::While(_) => todo!(),
+        Expr::Yield(_) => todo!(),
+        _ => todo!(),
+    }
+}
 
 fn populate_item_definitions_stmts(
     stmts: &[Stmt],
@@ -1122,7 +1685,7 @@ pub struct VariousDefintions {
 pub enum StmtsRef {
     Local(Local),
     Item(ItemRef),
-    Expr(Expr, bool),
+    Expr(ExprRef, bool),
     Macro(StmtMacro),
 }
 
@@ -2134,6 +2697,82 @@ pub mod update_definitons {
                     js_name,
                     is_pub: trait_def.is_pub,
                     syn: trait_def.syn,
+                    default_impls: trait_def
+                        .default_impls
+                        .into_iter()
+                        .map(|fn_info| {
+                            let inputs_types = fn_info
+                                .signature
+                                .inputs
+                                .iter()
+                                .map(|input| match input {
+                                    FnArg::Receiver(_) => {
+                                        // standalone functions cannot have self/receiver inputs
+                                        panic!();
+                                    }
+                                    FnArg::Typed(pat_type) => (
+                                        false,
+                                        match &*pat_type.pat {
+                                            Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                                            _ => todo!(),
+                                        },
+                                        match &*pat_type.pat {
+                                            Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                            _ => todo!(),
+                                        },
+                                        parse_types_for_populate_item_definitions(
+                                            &pat_type.ty,
+                                            &fn_info.generics,
+                                            module_path,
+                                            item_refs,
+                                            items_copy,
+                                            scoped_items,
+                                        ),
+                                    ),
+                                })
+                                .collect::<Vec<_>>();
+
+                            let return_type = match &fn_info.signature.output {
+                                ReturnType::Default => RustType::Unit,
+                                ReturnType::Type(_, type_) => {
+                                    parse_types_for_populate_item_definitions(
+                                        type_,
+                                        &fn_info.generics,
+                                        module_path,
+                                        item_refs,
+                                        items_copy,
+                                        scoped_items,
+                                    )
+                                }
+                            };
+
+                            let js_name = if in_scope {
+                                Ident::Syn(fn_info.signature.ident.clone())
+                            } else {
+                                let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                                    fn_info.signature.ident == dup.name
+                                        && dup.original_module_path == module_path
+                                });
+
+                                if let Some(dup) = in_module_level_duplicates {
+                                    Ident::Deduped(dup.namespace.clone())
+                                } else {
+                                    Ident::Syn(fn_info.signature.ident.clone())
+                                }
+                            };
+
+                            FnInfo {
+                                ident: fn_info.ident.clone(),
+                                js_name,
+                                is_pub: fn_info.is_pub,
+                                inputs_types,
+                                generics: fn_info.generics,
+                                return_type,
+                                stmts: fn_info.stmts,
+                                syn: fn_info.syn,
+                            }
+                        })
+                        .collect(),
                 })
             }
             ItemActual::None => panic!(),

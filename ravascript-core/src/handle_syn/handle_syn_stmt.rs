@@ -20,6 +20,8 @@ use super::definition_data::{RustType2, ScopedVar};
 use crate::{
     extract_modules::{handle_item_use, ItemUseModuleOrScope},
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
+    tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
+    update_item_definitions::StructOrEnumDefitionInfo,
     GlobalData,
 };
 
@@ -797,12 +799,105 @@ fn handle_local(
 }
 
 pub fn handle_stmt(
-    stmt: &Stmt,
+    stmt: &StmtsRef,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> Vec<(JsStmt, RustType2)> {
+    // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
+    let item_defs = global_data.item_defs.clone();
     match stmt {
-        Stmt::Expr(expr, closing_semi) => {
+        StmtsRef::Local(local) => {
+            vec![(
+                handle_local(local, global_data, current_module_path),
+                RustType2::Unit,
+            )]
+        }
+        StmtsRef::Item(item_ref) => {
+            match item_ref {
+                ItemRef::StructOrEnum(index) => {
+                    let item = &item_defs.clone()[*index];
+                    match item {
+                        ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+                            StructOrEnumDefitionInfo::Struct(struct_def) => {
+                                vec![(
+                                    handle_item_struct(
+                                        actual,
+                                        false,
+                                        global_data,
+                                        current_module_path,
+                                    ),
+                                    RustType2::Unit,
+                                )]
+                            }
+                            StructOrEnumDefitionInfo::Enum(enum_def) => {
+                                vec![(
+                                    handle_item_enum(
+                                        actual,
+                                        false,
+                                        global_data,
+                                        current_module_path,
+                                    ),
+                                    RustType2::Unit,
+                                )]
+                            }
+                        },
+                        _ => todo!(),
+                    }
+                }
+                ItemRef::Fn(index) => {
+                    let item = &item_defs[*index];
+                    let fn_info = match item {
+                        ItemV2::Fn(fn_info) => fn_info,
+                        _ => todo!(),
+                    };
+                    vec![(
+                        handle_item_fn(fn_info, false, global_data, current_module_path),
+                        RustType2::Unit,
+                    )]
+                }
+                ItemRef::Const(index) => {
+                    let item = &item_defs[*index];
+                    let const_def = match item {
+                        ItemV2::Const(actual) => actual,
+                        _ => todo!(),
+                    };
+                    vec![(
+                        handle_item_const(const_def, false, global_data, current_module_path),
+                        RustType2::Unit,
+                    )]
+                }
+                ItemRef::Trait(index) => {
+                    let item = &item_defs[*index];
+                    let trait_def = match item {
+                        ItemV2::Trait(actual) => actual,
+                        _ => todo!(),
+                    };
+                    handle_item_trait(trait_def, true, global_data, current_module_path);
+                    vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
+                }
+                ItemRef::Impl(index) => {
+                    let item = &item_defs[*index];
+                    let item_impl = match item {
+                        ItemV2::Impl(actual) => &actual.syn,
+                        _ => todo!(),
+                    };
+                    // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
+                    handle_item_impl(item_impl, false, global_data, current_module_path)
+                        .into_iter()
+                        .map(|stmt| (stmt, RustType2::Unit))
+                        .collect()
+                }
+                ItemRef::Mod(rust_mod) => todo!(),
+                ItemRef::Use(rust_use) => {
+                    // TODO surely need to handle scoped use statements as they could shadow other item idents?
+                    // let scope = global_data.scopes.last_mut().unwrap();
+                    // handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
+                    // vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
+                    vec![]
+                }
+            }
+        }
+        StmtsRef::Expr(expr, closing_semi) => {
             let (js_expr, type_) = handle_expr(expr, global_data, current_module_path);
             // copying etc should be handled in handle_expr, not here?
             // if should_copy_expr_unary(expr, global_data) {
@@ -811,78 +906,23 @@ pub fn handle_stmt(
 
             // TODO this is the only case where the returned RustType is not RustType::Unit, specifically where there is no semi, but surely this shouldn't be considered a stmt and then we wouldn't have to worry about returning the RustType. I guess it is feasible that while me might have a stmt in *Rust*, what we want to transpile it to is merely an expression. should add a todo here to find what cases it is being used for.
             vec![(
-                JsStmt::Expr(js_expr, closing_semi.is_some()),
-                if closing_semi.is_some() {
+                JsStmt::Expr(js_expr, *closing_semi),
+                if *closing_semi {
                     RustType2::Unit
                 } else {
                     type_
                 },
             )]
         }
-        Stmt::Local(local) => vec![(
-            handle_local(local, global_data, current_module_path),
-            RustType2::Unit,
-        )],
-        Stmt::Item(item) => match item {
-            // TODO this should all be handled by `fn handle_item()`??? Yes, but need to remove `at_module_top_level: bool,` args form `handle_` fns, and better to do that when the codebase is more settled and we have more tests to avoid introducing bugs from managing `at_module_top_level` on GlobalData.
-            Item::Const(item_const) => vec![(
-                handle_item_const(item_const, false, global_data, current_module_path),
+        StmtsRef::Macro(stmt_macro) => {
+            vec![(
+                JsStmt::Expr(
+                    handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
+                    stmt_macro.semi_token.is_some(),
+                ),
                 RustType2::Unit,
-            )],
-            Item::Enum(item_enum) => vec![(
-                handle_item_enum(item_enum.clone(), false, global_data, current_module_path),
-                RustType2::Unit,
-            )],
-            Item::ExternCrate(_) => todo!(),
-            Item::Fn(item_fn) => vec![(
-                handle_item_fn(item_fn, false, global_data, current_module_path),
-                RustType2::Unit,
-            )],
-            Item::ForeignMod(_) => todo!(),
-            Item::Impl(item_impl) => {
-                // handle_item_impl(item_impl, false, global_data, current_module_path);
-                // (JsStmt::Expr(JsExpr::Vanish, false), RustType::Unit)
-                // (
-                //     handle_item_impl(item_impl, false, global_data, current_module_path),
-                //     RustType::Unit,
-                // )
-                handle_item_impl(item_impl, false, global_data, current_module_path)
-                    .into_iter()
-                    .map(|stmt| (stmt, RustType2::Unit))
-                    .collect()
-            }
-            Item::Macro(_) => todo!(),
-            Item::Mod(_) => todo!(),
-            Item::Static(_) => todo!(),
-            // Item::Struct(_) => JsStmt::Expr(JsExpr::Vanish, false),
-            Item::Struct(item_struct) => vec![(
-                handle_item_struct(item_struct, false, global_data, current_module_path),
-                RustType2::Unit,
-            )],
-            Item::Trait(item_trait) => {
-                handle_item_trait(item_trait, false, global_data, current_module_path);
-                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
-            }
-            Item::TraitAlias(_) => todo!(),
-            Item::Type(_) => todo!(),
-            Item::Union(_) => todo!(),
-            // Item::Use(item_use) => handle_item_use(item_use),
-            // TODO surely need to handle scoped use statements as they could shadow other item idents?
-            Item::Use(item_use) => {
-                let scope = global_data.scopes.last_mut().unwrap();
-                handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
-                vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
-            }
-            Item::Verbatim(_) => todo!(),
-            _ => todo!(),
-        },
-        Stmt::Macro(stmt_macro) => vec![(
-            JsStmt::Expr(
-                handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
-                stmt_macro.semi_token.is_some(),
-            ),
-            RustType2::Unit,
-        )],
+            )]
+        }
     }
 }
 
@@ -892,7 +932,7 @@ pub fn parse_fn_body_stmts(
     returns_non_mut_ref_val: bool,
     // `return` can only be used in fns and closures so need this to prevent them being added to blocks
     allow_return: bool,
-    stmts: &[Stmt],
+    stmts: &[StmtsRef],
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (Vec<JsStmt>, RustType2) {
@@ -908,9 +948,9 @@ pub fn parse_fn_body_stmts(
     // It is important to be able to generate no body arrow fns like `(x) => x + 1` eg for `.map()` etc but we need to be able to determine whether the resultant expression is suitable to fit in or should be within braces and thus require a return statement, which is not straightforward. Eg a call might be a single line depending on how many args/length of idents, a macro might be depending on what it expands/transpiles to, etc. Really we need to parse it, format it, then check whether it is a single line. We take a simplified approach here.
     let is_single_expr_return = if stmts.len() == 1 {
         match stmts.first().unwrap() {
-            Stmt::Local(_) => false,
-            Stmt::Item(_) => false,
-            Stmt::Expr(expr, _) => match expr {
+            StmtsRef::Local(_) => false,
+            StmtsRef::Item(_) => false,
+            StmtsRef::Expr(expr, _) => match expr {
                 Expr::Array(_) => true,
                 Expr::Assign(_) => true,
                 Expr::Async(_) => todo!(),
@@ -937,7 +977,7 @@ pub fn parse_fn_body_stmts(
                 Expr::Verbatim(_) => todo!(),
                 _ => false,
             },
-            Stmt::Macro(_) => true,
+            StmtsRef::Macro(_) => true,
         }
     } else {
         false
@@ -949,10 +989,10 @@ pub fn parse_fn_body_stmts(
         // Manually set assignment var name for if expressions that are a return stmt
         if i == stmts.len() - 1 {
             match stmt {
-                Stmt::Expr(expr, semi) => match expr {
+                StmtsRef::Expr(expr, semi) => match expr {
                     // TODO how is this different to the normal Expr::If handling??? Is this unnecessary duplication?
                     Expr::If(expr_if) => {
-                        if semi.is_some() {
+                        if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
                             js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
@@ -1011,7 +1051,7 @@ pub fn parse_fn_body_stmts(
                         }
                     }
                     Expr::Match(expr_match) => {
-                        if semi.is_some() {
+                        if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
                             js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));
@@ -1031,7 +1071,7 @@ pub fn parse_fn_body_stmts(
                     Expr::Path(expr_path)
                         if returns_non_mut_ref_val
                             && expr_path.path.segments.len() == 1
-                            && semi.is_none() =>
+                            && !semi =>
                     {
                         // NOTE a len=1 path could also be a const or a fn
                         let var_name = expr_path.path.segments.first().unwrap().ident.to_string();
@@ -1067,7 +1107,7 @@ pub fn parse_fn_body_stmts(
                     _other => {
                         // dbg!("parse_fn_body_stmts");
                         // println!("{}", quote! { #other });
-                        if semi.is_some() {
+                        if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);
                             return_type = Some(stmts.last().unwrap().1.clone());
                             js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));

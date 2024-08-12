@@ -21,8 +21,8 @@ use crate::{
     make_item_definitions::FnInfoSyn,
     tree_structure::{update_definitons::ItemV2, ItemRef},
     update_item_definitions::{
-        get_item_impl_unique_id, ConstDef, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
-        StructOrEnumDefitionInfo,
+        get_item_impl_unique_id, ConstDef, FnInfo, ItemDefinition, RustGeneric,
+        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition, StructOrEnumDefitionInfo,
     },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,
@@ -80,7 +80,7 @@ pub fn js_stmts_from_syn_items(
                     ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def) => {
                             js_stmts.push(handle_item_struct(
-                                &struct_def.syn_object,
+                                actual,
                                 true,
                                 global_data,
                                 current_module,
@@ -88,7 +88,7 @@ pub fn js_stmts_from_syn_items(
                         }
                         StructOrEnumDefitionInfo::Enum(enum_def) => {
                             js_stmts.push(handle_item_enum(
-                                enum_def.syn_object.clone(),
+                                actual,
                                 true,
                                 global_data,
                                 current_module,
@@ -101,14 +101,11 @@ pub fn js_stmts_from_syn_items(
             // Item::ExternCrate(_) => todo!(),
             ItemRef::Fn(index) => {
                 let item = &item_defs[*index];
-                let item_fn = match item {
-                    ItemV2::Fn(actual) => match &actual.syn {
-                        FnInfoSyn::Standalone(item_fn) => item_fn,
-                        FnInfoSyn::Impl(_) => todo!(),
-                    },
+                let fn_info = match item {
+                    ItemV2::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                js_stmts.push(handle_item_fn(item_fn, true, global_data, current_module));
+                js_stmts.push(handle_item_fn(fn_info, true, global_data, current_module));
             }
             // Item::ForeignMod(_) => todo!(),
             ItemRef::Impl(index) => {
@@ -133,11 +130,11 @@ pub fn js_stmts_from_syn_items(
             // ItemRef::Static(_) => todo!(),
             ItemRef::Trait(index) => {
                 let item = &item_defs[*index];
-                let item_trait = match item {
-                    ItemV2::Trait(actual) => &actual.syn,
+                let trait_def = match item {
+                    ItemV2::Trait(actual) => actual,
                     _ => todo!(),
                 };
-                handle_item_trait(item_trait, true, global_data, current_module);
+                handle_item_trait(trait_def, true, global_data, current_module);
                 js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
             }
             // Item::TraitAlias(_) => todo!(),
@@ -156,13 +153,18 @@ pub fn js_stmts_from_syn_items(
 }
 
 pub fn handle_item_fn(
-    item_fn: &ItemFn,
+    fn_info: &FnInfo,
     // For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // Good also keep track using a field on global data, but for now seems less error prone to pass values to handle fns because it is always clear whether we are at the top level based on whether the item is being parsed within `handle_statments()`
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
+    let item_fn = match &fn_info.syn {
+        FnInfoSyn::Standalone(item_fn) => item_fn,
+        FnInfoSyn::Impl(_) => todo!(),
+    };
+
     let name = item_fn.sig.ident.to_string();
     let span = debug_span!("handle_item_fn", name = ?name);
     let _guard = span.enter();
@@ -200,12 +202,6 @@ pub fn handle_item_fn(
     //     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
     // }
 
-    let fn_info = global_data.lookup_fn_info_known_module(
-        current_module,
-        &global_data.scope_id_as_option(),
-        &name,
-    );
-
     // Create new scope for fn vars
     global_data.push_new_scope(false, Vec::new());
 
@@ -213,12 +209,12 @@ pub fn handle_item_fn(
     // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
     let mut copy_stmts = Vec::new();
 
-    for (_is_self, is_mut, name, type_) in fn_info.inputs_types {
+    for (_is_self, is_mut, name, type_) in &fn_info.inputs_types {
         let type_ = type_.clone().into_rust_type2(global_data);
 
         let scoped_var = ScopedVar {
             name: name.clone(),
-            mut_: is_mut,
+            mut_: *is_mut,
             type_: type_.clone(),
         };
         // record add var to scope
@@ -231,7 +227,7 @@ pub fn handle_item_fn(
 
         // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
         // TODO need to add this to `handle_impl_fn_item()`
-        if is_mut {
+        if *is_mut {
             copy_stmts.push(JsStmt::Local(JsLocal {
                 public: false,
                 export: false,
@@ -300,7 +296,7 @@ pub fn handle_item_fn(
             false,
             returns_non_mut_ref_val,
             true,
-            &item_fn.block.stmts,
+            &fn_info.stmts,
             global_data,
             current_module,
         );
@@ -320,7 +316,7 @@ pub fn handle_item_fn(
             export: false,
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
-            name: fn_info.js_name,
+            name: fn_info.js_name.clone(),
             input_names: item_fn
                 .sig
                 .inputs
@@ -408,11 +404,16 @@ pub fn handle_item_const(
 /// We convert enum variants like Foo::Bar to Foo.bar because otherwise when the variant has arguments, syn is not able to distinguish it from an associated method, so we cannot deduce when Pascal or Camel case should be used, so stick to Pascal for both case.
 /// We must store separate <variant name>Id fields because otherwise we end up in a situation where a variable containing an enum variant only contains the data returned the the method with that name and then we can't do myVariantVar === MyEnum::Variant because the lhs is data and the rhs is a function.
 pub fn handle_item_enum(
-    item_enum: ItemEnum,
+    item_def: &ItemDefinition,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
+    let item_enum = match &item_def.struct_or_enum_info {
+        StructOrEnumDefitionInfo::Struct(_) => todo!(),
+        StructOrEnumDefitionInfo::Enum(enum_def_info) => &enum_def_info.syn_object,
+    };
+
     let enum_name = item_enum.ident.to_string();
     debug!(enum_name = ?enum_name, "handle_item_enum");
     // dbg!(item_enum.attrs);
@@ -659,13 +660,7 @@ pub fn handle_item_enum(
     //     &mut static_fields,
     // );
 
-    let enum_def = global_data.lookup_item_def_known_module_assert_not_func2(
-        current_module,
-        &global_data.scope_id_as_option(),
-        &item_enum.ident.to_string(),
-    );
-
-    JsStmt::Class(JsClass {
+    let mut js_class = JsClass {
         public: match item_enum.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
@@ -673,7 +668,7 @@ pub fn handle_item_enum(
         },
         export: false,
         tuple_struct: false,
-        name: enum_def.js_name,
+        name: item_def.js_name.clone(),
         inputs: Vec::new(),
         static_fields,
         methods,
@@ -684,7 +679,53 @@ pub fn handle_item_enum(
         // struct_or_enum: StructOrEnumSynObject::Enum(item_enum.clone()),
         // impld_methods: methods,
         // generic_trait_impl_methods: todo!(),
-    })
+    };
+
+    let mut dedup_impl_block_ids = item_def.impl_block_ids.clone();
+    dedup_impl_block_ids.sort();
+    dedup_impl_block_ids.dedup();
+    for impl_block_id in &dedup_impl_block_ids {
+        for js_impl_block in global_data
+            .impl_blocks
+            .iter()
+            .filter(|jib| &jib.unique_id == impl_block_id)
+        {
+            let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
+
+            for (_used, impl_item) in &js_impl_block.items {
+                // TODO implement used
+                // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
+                match &impl_item.item {
+                    RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
+                        if is_generic_impl {
+                            js_class.static_fields.push(JsLocal {
+                                public: false,
+                                export: false,
+                                type_: LocalType::None,
+                                lhs: LocalName::Single(js_fn.name.clone()),
+                                value: JsExpr::Path(PathIdent::Path(
+                                    [
+                                        js_impl_block.js_name(),
+                                        Ident::Str("prototype"),
+                                        js_fn.name.clone(),
+                                    ]
+                                    .to_vec(),
+                                )),
+                            });
+                        } else {
+                            js_class.methods.push((
+                                Ident::String(item_def.ident.clone()),
+                                *static_,
+                                js_fn.clone(),
+                            ));
+                        }
+                    }
+                    RustImplItemItemJs::Const(_) => todo!(),
+                }
+            }
+        }
+    }
+    JsStmt::Class(js_class)
 }
 
 pub fn handle_impl_item_fn(
@@ -696,12 +737,6 @@ pub fn handle_impl_item_fn(
     target_rust_type: &RustType2,
     rust_impl_item: &RustImplItemNoJs,
 ) {
-    let scope_count = {
-        let scope_count = global_data.scope_count.last_mut().unwrap();
-        *scope_count += 1;
-        *scope_count
-    };
-
     let _static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
     // let private = !export;
     let js_input_names = impl_item_fn
@@ -810,12 +845,8 @@ pub fn handle_impl_item_fn(
 
     // Create scope for impl method/fn body
     info!("handle_item_impl new scope");
-    // dbg!(&global_data.scopes);
-    global_data.scope_count.push(0);
-    global_data.scope_id.push(scope_count);
 
     global_data.scopes.push(GlobalDataScope {
-        scope_id: global_data.scope_id.clone(),
         variables: vars,
         // fns: Vec::new(),
         // generics: fn_generics,
@@ -825,6 +856,7 @@ pub fn handle_impl_item_fn(
         // trait_definitons: Vec::new(),
         // consts: Vec::new(),
         use_mappings: Vec::new(),
+        items: Vec::new(),
     });
 
     // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
@@ -863,14 +895,20 @@ pub fn handle_impl_item_fn(
     // What about `let foo: Foo<i32> = foo_maker.method(5)` or something?
     //
 
-    let body_stmts = parse_fn_body_stmts(
-        false,
-        returns_non_mut_ref_val,
-        true,
-        &body_stmts,
-        global_data,
-        current_module_path,
-    );
+    let body_stmts = match &rust_impl_item.item {
+        RustImplItemItemNoJs::Fn(_static, fn_info) => {
+            //
+            parse_fn_body_stmts(
+                false,
+                returns_non_mut_ref_val,
+                true,
+                &fn_info.stmts,
+                global_data,
+                current_module_path,
+            )
+        }
+        RustImplItemItemNoJs::Const => todo!(),
+    };
 
     let body_stmts = Some(body_stmts);
 
@@ -915,8 +953,7 @@ pub fn handle_impl_item_fn(
     }
     info!("handle_item_impl after scope");
     // dbg!(&global_data.scopes);
-    global_data.scope_count.pop();
-    global_data.scope_id.pop();
+
     global_data.scopes.pop();
 }
 
@@ -949,11 +986,7 @@ pub fn handle_item_impl(
         .cloned()
         .collect::<Vec<_>>();
 
-    let _module = global_data
-        .modules
-        .iter()
-        .find(|m| m.path == current_module_path)
-        .unwrap();
+    let an_impl_block = impl_blocks[0].clone();
 
     // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
     let impl_item_target_path = match &*item_impl.self_ty {
@@ -966,45 +999,7 @@ pub fn handle_item_impl(
         _ => todo!(),
     };
 
-    let rust_impl_block_generics = item_impl
-        .generics
-        .params
-        .iter()
-        .filter_map(|gen| match gen {
-            GenericParam::Lifetime(_) => None,
-            GenericParam::Type(type_param) => Some(RustGeneric {
-                ident: type_param.ident.to_string(),
-                trait_bounds: type_param
-                    .bounds
-                    .iter()
-                    .filter_map(|bound| {
-                        // First lookup trait
-                        match bound {
-                            TypeParamBound::Trait(trait_bound) => {
-                                let trait_path = trait_bound
-                                    .path
-                                    .segments
-                                    .iter()
-                                    .map(|seg| seg.ident.to_string())
-                                    .collect::<Vec<_>>();
-                                let (module_path, scope_id, trait_def) = global_data
-                                    .lookup_trait_definition_any_module(
-                                        current_module_path,
-                                        &global_data.scope_id_as_option(),
-                                        trait_path,
-                                    );
-                                Some((module_path, scope_id, trait_def.name))
-                            }
-                            TypeParamBound::Lifetime(_) => None,
-                            TypeParamBound::Verbatim(_) => todo!(),
-                            _ => todo!(),
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            }),
-            GenericParam::Const(_) => todo!(),
-        })
-        .collect::<Vec<_>>();
+    let rust_impl_block_generics = an_impl_block.generics;
 
     let target_type_param = match &*item_impl.self_ty {
         Type::Path(type_path) => {
@@ -1021,18 +1016,19 @@ pub fn handle_item_impl(
         _ => None,
     };
 
-    let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-        let (module_path, scope_id, trait_def) = global_data.lookup_trait_definition_any_module(
-            current_module_path,
-            &global_data.scope_id_as_option(),
-            trait_
-                .segments
-                .iter()
-                .map(|seg| seg.ident.to_string())
-                .collect::<Vec<_>>(),
-        );
-        (module_path, scope_id, trait_def.name)
-    });
+    // let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
+    //     let (module_path, scope_id, trait_def) = global_data.lookup_trait_definition_any_module(
+    //         current_module_path,
+    //         &global_data.scope_id_as_option(),
+    //         trait_
+    //             .segments
+    //             .iter()
+    //             .map(|seg| seg.ident.to_string())
+    //             .collect::<Vec<_>>(),
+    //     );
+    //     (module_path, scope_id, trait_def.name)
+    // });
+    let trait_path_and_name = an_impl_block.trait_;
 
     // if let Some(trait_) = &item_impl.trait_ {
     //     if trait_.1.segments.len() != 1 {
@@ -1044,61 +1040,66 @@ pub fn handle_item_impl(
     //     ));
     // }
 
-    let (target_rust_type, is_target_type_param) =
-        if let Some(target_type_param) = target_type_param {
-            (
-                RustType2::TypeParam(RustTypeParam2 {
-                    name: target_type_param.ident.clone(),
-                    type_: RustTypeParamValue2::Unresolved,
-                }),
-                true,
-            )
-        } else {
-            // Get type of impl target
-            let opt_scope_id = global_data.scope_id_as_option();
-            let (target_item_module, _resolved_scope_id, target_item) = global_data
-                .lookup_item_definition_any_module_or_scope(
-                    current_module_path,
-                    &opt_scope_id,
-                    &impl_item_target_path,
-                );
+    // let (target_rust_type, is_target_type_param) =
+    //     if let Some(target_type_param) = target_type_param {
+    //         (
+    //             RustType2::TypeParam(RustTypeParam2 {
+    //                 name: target_type_param.ident.clone(),
+    //                 type_: RustTypeParamValue2::Unresolved,
+    //             }),
+    //             true,
+    //         )
+    //     } else {
+    //         // Get type of impl target
+    //         let opt_scope_id = global_data.scope_id_as_option();
+    //         let (target_item_module, _resolved_scope_id, target_item) = global_data
+    //             .lookup_item_definition_any_module_or_scope(
+    //                 current_module_path,
+    //                 &opt_scope_id,
+    //                 &impl_item_target_path,
+    //             );
 
-            // TODO seems like we are only handling cases like `impl<T> Foo<T>` and not `impl Foo<i32>`?
-            let target_item_type_params = target_item
-                .generics
-                .iter()
-                .map(|g| RustTypeParam2 {
-                    name: g.clone(),
-                    type_: RustTypeParamValue2::Unresolved,
-                })
-                .collect::<Vec<_>>();
+    //         // TODO seems like we are only handling cases like `impl<T> Foo<T>` and not `impl Foo<i32>`?
+    //         let target_item_type_params = target_item
+    //             .generics
+    //             .iter()
+    //             .map(|g| RustTypeParam2 {
+    //                 name: g.clone(),
+    //                 type_: RustTypeParamValue2::Unresolved,
+    //             })
+    //             .collect::<Vec<_>>();
 
-            if target_item_module == [PRELUDE_MODULE_PATH] {
-                // NOTE we have called lookup_item_definition_any_module_or_scope which of course returns an ItemDefinition but this might be for eg `Option`, so we must check and return the correct RustType
-                match target_item.ident.as_str() {
-                    "Option" => {
-                        assert_eq!(target_item_type_params.len(), 1);
-                        (
-                            RustType2::Option(target_item_type_params.into_iter().next().unwrap()),
-                            false,
-                        )
-                    }
-                    "i32" => {
-                        assert_eq!(target_item_type_params.len(), 0);
-                        (RustType2::I32, false)
-                    }
-                    _ => {
-                        dbg!(target_item);
-                        todo!()
-                    }
-                }
-            } else {
-                (
-                    RustType2::StructOrEnum(target_item_type_params, target_item),
-                    false,
-                )
-            }
-        };
+    //         if target_item_module == [PRELUDE_MODULE_PATH] {
+    //             // NOTE we have called lookup_item_definition_any_module_or_scope which of course returns an ItemDefinition but this might be for eg `Option`, so we must check and return the correct RustType
+    //             match target_item.ident.as_str() {
+    //                 "Option" => {
+    //                     assert_eq!(target_item_type_params.len(), 1);
+    //                     (
+    //                         RustType2::Option(target_item_type_params.into_iter().next().unwrap()),
+    //                         false,
+    //                     )
+    //                 }
+    //                 "i32" => {
+    //                     assert_eq!(target_item_type_params.len(), 0);
+    //                     (RustType2::I32, false)
+    //                 }
+    //                 _ => {
+    //                     dbg!(target_item);
+    //                     todo!()
+    //                 }
+    //             }
+    //         } else {
+    //             (
+    //                 RustType2::StructOrEnum(target_item_type_params, target_item),
+    //                 false,
+    //             )
+    //         }
+    //     };
+    let target_rust_type = an_impl_block.target.into_rust_type2(global_data);
+    let is_target_type_param = match target_rust_type {
+        RustType2::TypeParam(_) => true,
+        _ => false,
+    };
 
     global_data
         .impl_block_target_type
@@ -1297,23 +1298,26 @@ pub fn handle_item_impl(
             _ => todo!(),
         }
     }
-    let prelude_module = global_data
-        .modules
-        .iter()
-        .find(|m| m.path == [PRELUDE_MODULE_PATH])
-        .unwrap();
+
+    let prelude_module = global_data.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
     let mut dedup_rust_prelude_definitions = prelude_module
-        .various_definitions
-        .item_definitons
+        .items
         .iter()
-        .cloned()
-        .filter_map(|item_def| {
-            let new_name = prelude_item_def_name_to_js(&item_def.ident);
-            if new_name != "donotuse" {
-                Some((new_name, item_def))
-            } else {
-                None
+        .filter_map(|item_ref| match item_ref {
+            ItemRef::StructOrEnum(index) => {
+                let item = &global_data.item_defs[*index];
+                let item_def = match item {
+                    ItemV2::StructOrEnum(item_def) => item_def,
+                    _ => todo!(),
+                };
+                let new_name = prelude_item_def_name_to_js(&item_def.ident);
+                if new_name != "donotuse" {
+                    Some((new_name, item_def))
+                } else {
+                    None
+                }
             }
+            _ => None,
         })
         .collect::<Vec<_>>();
     // Need to use sort by because of lifetimes: https://users.rust-lang.org/t/sort-by-key-and-probably-a-simple-lifetime-issue/73358
@@ -1438,11 +1442,15 @@ pub fn handle_item_impl(
 //                 }
 
 pub fn handle_item_struct(
-    item_struct: &ItemStruct,
+    item_def: &ItemDefinition,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
+    let item_struct = match &item_def.struct_or_enum_info {
+        StructOrEnumDefitionInfo::Struct(struct_def_info) => &struct_def_info.syn_object,
+        StructOrEnumDefitionInfo::Enum(_) => todo!(),
+    };
     let name = item_struct.ident.to_string();
     // dbg!(&global_data.scopes);
     debug!(name = ?name, "handle_item_struct");
@@ -1663,20 +1671,14 @@ pub fn handle_item_struct(
         Fields::Unit => todo!(),
     };
 
-    let item_def = global_data.lookup_item_def_known_module_assert_not_func2(
-        current_module_path,
-        &global_data.scope_id_as_option(),
-        &item_struct.ident.to_string(),
-    );
-
-    JsStmt::Class(JsClass {
+    let mut js_class = JsClass {
         export: false,
         public: match item_struct.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
             Visibility::Inherited => false,
         },
-        name: item_def.js_name,
+        name: item_def.js_name.clone(),
         tuple_struct,
         inputs,
         static_fields,
@@ -1685,7 +1687,54 @@ pub fn handle_item_struct(
         is_impl_block: false,
         module_path: current_module_path.to_vec(),
         scope_id: global_data.scope_id_as_option(),
-    })
+    };
+
+    let mut dedup_impl_block_ids = item_def.impl_block_ids.clone();
+    dedup_impl_block_ids.sort();
+    dedup_impl_block_ids.dedup();
+    for impl_block_id in &dedup_impl_block_ids {
+        for js_impl_block in global_data
+            .impl_blocks
+            .iter()
+            .filter(|jib| &jib.unique_id == impl_block_id)
+        {
+            let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
+
+            for (_used, impl_item) in &js_impl_block.items {
+                // TODO implement used
+                // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
+                match &impl_item.item {
+                    RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
+                        if is_generic_impl {
+                            js_class.static_fields.push(JsLocal {
+                                public: false,
+                                export: false,
+                                type_: LocalType::None,
+                                lhs: LocalName::Single(js_fn.name.clone()),
+                                value: JsExpr::Path(PathIdent::Path(
+                                    [
+                                        js_impl_block.js_name(),
+                                        Ident::Str("prototype"),
+                                        js_fn.name.clone(),
+                                    ]
+                                    .to_vec(),
+                                )),
+                            });
+                        } else {
+                            js_class.methods.push((
+                                Ident::String(item_def.ident.clone()),
+                                *static_,
+                                js_fn.clone(),
+                            ));
+                        }
+                    }
+                    RustImplItemItemJs::Const(_) => todo!(),
+                }
+            }
+        }
+    }
+
+    JsStmt::Class(js_class)
 }
 
 // pub fn handle_item(
@@ -1823,7 +1872,7 @@ pub fn _handle_item_mod(
     // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
 
     global_data.transpiled_modules.push(js_stmt_submodule);
-    let stmts = js_stmts_from_syn_items(items, current_module_path, global_data);
+    let stmts = js_stmts_from_syn_items(current_module_path, global_data);
     let js_stmt_module = global_data
         .transpiled_modules
         .iter_mut()
@@ -1836,11 +1885,11 @@ pub fn _handle_item_mod(
 }
 
 pub fn handle_item_trait(
-    item_trait: &ItemTrait,
+    trait_def: &RustTraitDefinition,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
-) {
+) -> JsStmt {
     debug!("handle_item_trait");
 
     // NOTE we only push scoped definitions because module level definition are already pushed in extract_data_populate_item_definitions
@@ -1851,65 +1900,55 @@ pub fn handle_item_trait(
     //     });
     // }
 
-    // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not
-    for trait_item in &item_trait.items {
-        match trait_item {
-            TraitItem::Const(_) => todo!(),
-            TraitItem::Fn(trait_item_fn) => {
-                if let Some(default) = &trait_item_fn.default {
-                    let js_fn = JsFn {
-                        iife: false,
-                        public: false,
-                        export: false,
-                        async_: false,
-                        is_method: true,
-                        name: Ident::Syn(trait_item_fn.sig.ident.clone()),
-                        input_names: trait_item_fn
-                            .sig
-                            .inputs
-                            .iter()
-                            .filter_map(|input| match input {
-                                FnArg::Receiver(_) => None,
-                                FnArg::Typed(pat_type) => match &*pat_type.pat {
-                                    Pat::Ident(pat_ident) => {
-                                        Some(Ident::Syn(pat_ident.ident.clone()))
-                                    }
-                                    _ => todo!(),
-                                },
-                            })
-                            .collect::<Vec<_>>(),
-                        body_stmts: default
-                            .stmts
-                            .iter()
-                            .flat_map(|stmt| {
-                                handle_stmt(stmt, global_data, current_module_path)
-                                    .into_iter()
-                                    .map(|(stmt, _type_)| stmt)
-                            })
-                            .collect(),
-                    };
-                    global_data.default_trait_impls.push((
-                        item_trait.ident.to_string(),
-                        // TODO remove class name from JsImplItem::ClassMethod
-                        JsImplItem::ClassMethod(
-                            "shouldntneedclassnamehere".to_string(),
-                            false,
-                            match trait_item_fn.sig.inputs.first() {
-                                Some(FnArg::Receiver(_)) => false,
-                                Some(FnArg::Typed(_)) => true,
-                                None => true,
-                            },
-                            js_fn,
-                        ),
-                    ));
-                }
-            }
-            TraitItem::Type(_) => todo!(),
-            TraitItem::Macro(_) => todo!(),
-            TraitItem::Verbatim(_) => todo!(),
-            _ => todo!(),
-        }
+    if trait_def.default_impls.len() > 0 {
+        let methods = trait_def
+            .default_impls
+            .iter()
+            .map(|fn_info| {
+                let js_fn = JsFn {
+                    iife: false,
+                    public: false,
+                    export: false,
+                    async_: false,
+                    is_method: true,
+                    name: fn_info.js_name.clone(),
+                    input_names: todo!(),
+                    body_stmts: todo!(),
+                };
+                // global_data.default_trait_impls.push((
+                //     item_trait.ident.to_string(),
+                //     // TODO remove class name from JsImplItem::ClassMethod
+                //     JsImplItem::ClassMethod(
+                //         "shouldntneedclassnamehere".to_string(),
+                //         false,
+                //         match trait_item_fn.sig.inputs.first() {
+                //             Some(FnArg::Receiver(_)) => false,
+                //             Some(FnArg::Typed(_)) => true,
+                //             None => true,
+                //         },
+                //         js_fn,
+                //     ),
+                // ));
+            })
+            .collect::<Vec<_>>();
+        JsStmt::Class(JsClass {
+            public: todo!(),
+            export: todo!(),
+            tuple_struct: todo!(),
+            name: todo!(),
+            inputs: todo!(),
+            static_fields: todo!(),
+            methods: todo!(),
+            rust_name: todo!(),
+            module_path: todo!(),
+            scope_id: todo!(),
+            is_impl_block: todo!(),
+        })
+    } else {
+        JsStmt::Raw("".to_string())
     }
+
+    // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not
 }
 
 #[allow(dead_code)]

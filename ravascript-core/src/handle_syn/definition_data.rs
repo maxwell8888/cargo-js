@@ -200,7 +200,7 @@ pub enum RustTypeImplTrait2 {
 pub struct GlobalDataScope {
     // NOTE techincally we don't need this but it is useful to be able to reconcile with the static/preprocessed scopes to ensure we are talking about the same thing
     pub variables: Vec<ScopedVar>,
-    items: Vec<ItemV2>,
+    pub items: Vec<ItemV2>,
     // fns: Vec<FnInfo>,
     /// Why does a scope have generics?? for fns/methods?
     // generics: Vec<MyGeneric>,
@@ -229,7 +229,7 @@ pub struct GlobalDataScope {
     // trait_definitons: Vec<RustTraitDefinition>,
     // consts: Vec<ConstDef>,
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
-    _look_in_outer_scope: bool,
+    pub _look_in_outer_scope: bool,
     pub use_mappings: Vec<(String, Vec<String>)>,
 }
 
@@ -307,7 +307,7 @@ impl JsImplBlock2 {
 
 #[derive(Debug, Clone)]
 pub struct GlobalData {
-    _crate_path: Option<PathBuf>,
+    pub _crate_path: Option<PathBuf>,
     // modules: Vec<ModuleData>,
     _crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
@@ -323,7 +323,7 @@ pub struct GlobalData {
     /// (the purpose originally was for self not Self... which is not needed, but Self is neccessary) the purpose of this is for storing the type of `Self` *not* `self`, eg if a impl fn body contains `let foo: Self = Self {};`, we will want to know what Self is so we know the types of `foo.some_field` etc
     ///
     /// We have a Vec in case there is an impl block nested inside an impl block?
-    impl_block_target_type: Vec<RustType>,
+    pub impl_block_target_type: Vec<RustType2>,
     /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
     /// TODO Should be Vec of Vecs for same reason impl_block_target_type is a Vec
     _impl_block_type_params: Vec<RustTypeParam>,
@@ -336,7 +336,7 @@ pub struct GlobalData {
     // TODO should this just be a big struct rather than a vec so we don't have to do lookups?
     // rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
     /// (trait name, impl item)
-    default_trait_impls: Vec<(String, JsImplItem)>,
+    pub default_trait_impls: Vec<(String, JsImplItem)>,
     /// Used for working out which `default_trait_impls` elements to add to which classes
     ///
     /// (class name, trait name)
@@ -348,7 +348,7 @@ pub struct GlobalData {
     // impl_items_for_types: Vec<(RustType, RustImplItem)>,
     // We keep the impl blocks at the crate level rather than in the relevant Module because different it is not possible to impl the same eg method name on the same struct, even using impl blocks in completely separate modules. Impl item idents must be unique for a given type across the entire crate. I believe this is also the case for scoped impls? This is because impl'd items are available on the item definition/instance they are targetting, not only in parent scopes, but also parent modules.
     // impl_blocks: Vec<ItemImpl>,
-    impl_blocks: Vec<JsImplBlock2>,
+    pub impl_blocks: Vec<JsImplBlock2>,
     /// The purpose of having this here is so that all crate scoped impl blocks are immeditately available when parsing the syn to JS, eg if we come across a class (module level or scoped), we want to be able to add the methods which are implemented for it at that point, but these impls might not appear until later in the code, so instead we popualte scoped_impl_blocks in extract_data_populate_item_definitions to ensure it is available
     /// Given method names (impld for the same item) must be unqiue across the crate, for module level impls, we can just store all impl blocks in a big list, and add all their methods to all matching classes/items/enums/structs, whether the method is private/public is irrelevant since if it has been defined it must/should get used at some point.
     /// Scoped impls are a litte more complicated though, because in the same way we distinguish between different module level structs with the same name by taking into account their module path, for scoped structs we need to take into account the scope, ie a scoped `impl Foo { ... }` should only be applied to the first `Foo` that is found in parent scopes, else any module (of course taking into account the full module path used in `impl Foo { ... }`), because there might be another `Foo` in a higher scope with the same method impld, so we must not apply it there.
@@ -357,7 +357,7 @@ pub struct GlobalData {
     #[allow(clippy::type_complexity)]
     _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
-    impl_blocks_simpl: Vec<RustImplBlockSimple>,
+    pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -643,7 +643,7 @@ impl GlobalData {
     //     }
     // }
 
-    fn syn_type_to_rust_type_struct_or_enum(
+    pub fn syn_type_to_rust_type_struct_or_enum(
         &self,
         current_module: &[String],
         // generics: &Vec<RustTypeParam>,
@@ -746,7 +746,7 @@ impl GlobalData {
     //     }
     // }
 
-    fn get_prelude_item_def(&self, name: &str) -> ItemDefinition {
+    pub fn get_prelude_item_def(&self, name: &str) -> ItemDefinition {
         let prelude_module = self.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
         prelude_module
             .items
@@ -765,7 +765,7 @@ impl GlobalData {
             })
             .unwrap()
     }
-    fn get_module(&self, module_path: &[String]) -> &RustMod {
+    pub fn get_module(&self, module_path: &[String]) -> &RustMod {
         self.item_refs
             .iter()
             .find_map(|item_ref| match item_ref {
@@ -1440,7 +1440,7 @@ pub fn resolve_path(
     // TODO can we combine this with `look_for_scoped_vars`?
     look_for_scoped_items: bool,
     use_private_items: bool,
-    mut segs: Vec<RustPathSegment>,
+    mut segs: Vec<RustPathSegment2>,
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     module_items: &[ItemRef],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier

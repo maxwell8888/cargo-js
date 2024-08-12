@@ -806,6 +806,7 @@ pub struct RustTraitDefinition {
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
+    pub default_impls: Vec<FnInfo>,
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
