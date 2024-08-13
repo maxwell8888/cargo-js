@@ -897,6 +897,7 @@ pub fn handle_stmt(
                     // vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                     vec![]
                 }
+                ItemRef::Macro => todo!(),
             }
         }
         StmtsRef::Expr(expr, closing_semi) => {

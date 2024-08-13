@@ -1585,7 +1585,13 @@ pub fn handle_expr_and_stmt_macro(
             let expr_array = syn::parse_str::<syn::ExprArray>(&format!("[{input}]")).unwrap();
             let vec_type = if let Some(elem) = expr_array.elems.first() {
                 // IMPORTANT need to be careful about calling handle_expr an element twice like here in case information is added to global_data.scope twice, or similar problems? duplicates shouldn't cause problems for scope data?
-                handle_expr(&expr_to_expr_ref(elem.clone()), global_data, current_module).1
+                handle_expr(
+                    // TODO IMPORTANT should be parsing macro tokens in update/make_item_definitions/extract_data/etc so we don't have to use (, &mut vec![], &None, &mut vec![]) here.
+                    &expr_to_expr_ref(elem.clone(), &mut vec![], &None, &mut vec![]),
+                    global_data,
+                    current_module,
+                )
+                .1
             } else {
                 RustType2::Unknown
             };
@@ -1593,7 +1599,12 @@ pub fn handle_expr_and_stmt_macro(
                 .elems
                 .iter()
                 .map(|elem| {
-                    handle_expr(&expr_to_expr_ref(elem.clone()), global_data, current_module).0
+                    handle_expr(
+                        &expr_to_expr_ref(elem.clone(), &mut vec![], &None, &mut vec![]),
+                        global_data,
+                        current_module,
+                    )
+                    .0
                 })
                 .collect::<Vec<_>>();
             return (JsExpr::Array(expr_vec), RustType2::Vec(Box::new(vec_type)));
@@ -1611,7 +1622,7 @@ pub fn handle_expr_and_stmt_macro(
                 .iter()
                 .flat_map(|stmt| {
                     handle_stmt(
-                        &stmt_to_stmts_ref(stmt.clone()),
+                        &stmt_to_stmts_ref(stmt.clone(), &mut vec![], &None, &mut vec![]),
                         global_data,
                         current_module,
                     )
@@ -1632,9 +1643,13 @@ pub fn handle_expr_and_stmt_macro(
             let catch_block = parts.collect::<String>();
             let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
             let stmt_vec = catch_block.stmts.into_iter().flat_map(|stmt| {
-                handle_stmt(&stmt_to_stmts_ref(stmt), global_data, current_module)
-                    .into_iter()
-                    .map(|(stmt, _type_)| stmt)
+                handle_stmt(
+                    &stmt_to_stmts_ref(stmt, &mut vec![], &None, &mut vec![]),
+                    global_data,
+                    current_module,
+                )
+                .into_iter()
+                .map(|(stmt, _type_)| stmt)
             });
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType2::Unit);
@@ -1650,7 +1665,7 @@ pub fn handle_expr_and_stmt_macro(
                 JsExpr::Field(
                     Box::new(JsExpr::Paren(Box::new(
                         handle_expr(
-                            &expr_to_expr_ref(condition_expr),
+                            &expr_to_expr_ref(condition_expr, &mut vec![], &None, &mut vec![]),
                             global_data,
                             current_module,
                         )
@@ -1660,7 +1675,7 @@ pub fn handle_expr_and_stmt_macro(
                 )
             } else {
                 handle_expr(
-                    &expr_to_expr_ref(condition_expr),
+                    &expr_to_expr_ref(condition_expr, &mut vec![], &None, &mut vec![]),
                     global_data,
                     current_module,
                 )
@@ -1684,14 +1699,18 @@ pub fn handle_expr_and_stmt_macro(
             let lhs = parts.next().unwrap();
             let syn_lhs = syn::parse_str::<syn::Expr>(lhs).unwrap();
             let lhs = handle_expr(
-                &expr_to_expr_ref(syn_lhs.clone()),
+                &expr_to_expr_ref(syn_lhs.clone(), &mut vec![], &None, &mut vec![]),
                 global_data,
                 current_module,
             );
 
             let rhs = parts.next().unwrap();
             let rhs = syn::parse_str::<syn::Expr>(rhs).unwrap();
-            let rhs = handle_expr(&expr_to_expr_ref(rhs), global_data, current_module);
+            let rhs = handle_expr(
+                &expr_to_expr_ref(rhs, &mut vec![], &None, &mut vec![]),
+                global_data,
+                current_module,
+            );
 
             // let equality_check = JsExpr::Binary(Box::new(lhs), JsOp::Eq, Box::new(rhs));
             // Check if we have primatives so can use === otherwise use .eq()

@@ -6,7 +6,7 @@ use tracing::{debug, debug_span};
 
 use crate::{
     extract_modules::ModuleDataFirstPass,
-    tree_structure::{ItemActual, ItemRef, RustMod, StmtsRef},
+    tree_structure::{ExprRef, ItemActual, ItemRef, RustMod, StmtsRef},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
@@ -274,6 +274,7 @@ pub struct ConstDef {
     pub name: String,
     pub is_pub: bool,
     pub syn_object: ItemConst,
+    pub expr: ExprRef,
 }
 
 /// Not just for methods, can also be an enum variant with no inputs
@@ -436,6 +437,7 @@ pub fn resolve_path(
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
             ItemRef::Use(_) => None,
+            ItemRef::Macro => todo!(),
         })
     });
 
