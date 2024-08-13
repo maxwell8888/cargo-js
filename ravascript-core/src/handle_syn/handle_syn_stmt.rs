@@ -919,8 +919,8 @@ pub fn handle_stmt(
         StmtsRef::Macro(stmt_macro) => {
             vec![(
                 JsStmt::Expr(
-                    handle_expr_and_stmt_macro(&stmt_macro.mac, global_data, current_module_path).0,
-                    stmt_macro.semi_token.is_some(),
+                    handle_expr_and_stmt_macro(&stmt_macro, global_data, current_module_path).0,
+                    stmt_macro.semi_token,
                 ),
                 RustType2::Unit,
             )]

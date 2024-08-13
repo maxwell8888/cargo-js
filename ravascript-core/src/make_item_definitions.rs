@@ -327,7 +327,7 @@ pub fn resolve_path(
     look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
-    module_items: &[ItemRef],
+    item_refs: &[ItemRef],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
     items_defs: &[ItemActual],
@@ -335,14 +335,17 @@ pub fn resolve_path(
     current_mod: &[String],
     // Only used to determine if current module is the original module
     orig_mod: &[String],
-    scoped_items: &Vec<Vec<ItemRef>>,
+    scoped_items: &[Vec<ItemRef>],
+    // TODO we are not handling vars in this version so index should not be in Option?
 ) -> (Vec<String>, Vec<RustPathSegment>, bool, Option<usize>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    let module = look_for_module_in_items(module_items, items_defs, current_mod).unwrap();
+    dbg!(&current_mod);
+    // dbg!(&item_refs);
+    let module = look_for_module_in_items(item_refs, items_defs, current_mod).unwrap();
 
     // dbg!(&segs);
     // dbg!(&current_mod);
@@ -467,7 +470,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            item_refs,
             items_defs,
             &current_module,
             orig_mod,
@@ -481,7 +484,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            item_refs,
             items_defs,
             current_mod,
             orig_mod,
@@ -496,7 +499,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            item_refs,
             items_defs,
             &current_module,
             orig_mod,
@@ -513,7 +516,7 @@ pub fn resolve_path(
             false,
             false,
             segs,
-            module_items,
+            item_refs,
             items_defs,
             &submod_path,
             orig_mod,
@@ -560,7 +563,7 @@ pub fn resolve_path(
             false,
             true,
             use_segs,
-            module_items,
+            item_refs,
             items_defs,
             // &new_mod,
             current_mod,
@@ -582,7 +585,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            item_refs,
             items_defs,
             &current_module,
             orig_mod,
@@ -618,7 +621,7 @@ pub fn resolve_path(
         {
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
-            let item_index = module_items
+            let item_index = item_refs
                 .iter()
                 .find_map(|item_ref| match item_ref {
                     ItemRef::Mod(rust_mod) => {

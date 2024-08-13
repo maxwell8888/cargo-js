@@ -766,22 +766,22 @@ pub fn process_items(
 ) -> Vec<JsModule> {
     let mut item_defs = Vec::new();
 
-    let mut modules = Vec::new();
-    // let mut crate_module = ModuleData::new("crate".to_string(), None, vec!["crate".to_string()]);
-    let mut crate_module = ModuleDataFirstPass::new("crate".to_string(), vec!["crate".to_string()]);
-    crate_module.items.clone_from(&items);
-    modules.push(crate_module);
-
     // TODO need borrowed items for inline `mod {}` and owned items for `mod foo` where we read from a file
 
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
-    let mut crate_item_refs = extract_modules2(
+    let crate_item_refs = extract_modules2(
         true,
         &items,
         &crate_path,
         &mut vec!["crate".to_string()],
         &mut item_defs,
     );
+
+    let mut crate_item_refs = vec![ItemRef::Mod(RustMod {
+        pub_: true,
+        items: crate_item_refs,
+        module_path: vec!["crate".to_string()],
+    })];
 
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
@@ -803,7 +803,9 @@ pub fn process_items(
     // TODO make this correct. Whilst it would be easier to identify web_prelude usage if `make_use_mappings_absolute()` (or whatever) was implemented, it is still impossible to know whether web_prelude is being used until we parse the entire syntax in `js_stmts_from_syn_items()` since we can have cases like:
     // `let div = web_prelude::document::create_element("div");`
     // So better to just rely on Cargo.toml dependencies, and not support web_prelude and other crates in blocks/formats without a Cargo.toml?
-    let include_web = look_for_web_prelude(&modules);
+
+    // let include_web = look_for_web_prelude(&modules);
+    let include_web = false;
 
     if include_web {
         let web_prelude_crate_path = "../web-prelude";
@@ -812,10 +814,6 @@ pub fn process_items(
         let code = include_str!("../../web-prelude/src/lib.rs");
         let file = syn::parse_file(code).unwrap();
         let prelude_items = file.items;
-        let mut module_data =
-            ModuleDataFirstPass::new("web_prelude".to_string(), vec!["web_prelude".to_string()]);
-        module_data.items.clone_from(&prelude_items);
-        modules.push(module_data);
 
         let web_prelude_items = extract_modules2(
             true,
@@ -839,13 +837,6 @@ pub fn process_items(
     let code = include_str!("rust_prelude/option.rs");
     let file = syn::parse_file(code).unwrap();
     let prelude_items = file.items;
-    let mut module_data = ModuleDataFirstPass::new(
-        PRELUDE_MODULE_PATH.to_string(),
-        vec![PRELUDE_MODULE_PATH.to_string()],
-    );
-
-    module_data.items.clone_from(&prelude_items);
-    modules.push(module_data);
 
     let rust_prelude_items = extract_modules2(
         true,
@@ -912,6 +903,7 @@ pub fn process_items(
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
     // let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
+
     let mut item_defs = update_item_definitions2(
         &crate_item_refs,
         item_defs,
@@ -919,6 +911,7 @@ pub fn process_items(
         false,
         duplicates,
     );
+
     let impl_blocks = Vec::new();
 
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
@@ -963,6 +956,7 @@ pub fn process_items(
         .then_some(rust_mod),
         _ => None,
     });
+
     for module_data in modules {
         global_data.scopes.clear();
         let mut stmts = js_stmts_from_syn_items(&module_data.module_path, &mut global_data);

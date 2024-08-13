@@ -122,7 +122,8 @@ pub enum ExprRef {
     Let(RustExprLet),
     Lit(RustExprLit),
     Loop(RustExprLoop),
-    Macro(RustExprMacro),
+    // Macro(RustExprMacro),
+    Macro(RustExprOrStmtMacro),
     Match(RustExprMatch),
     MethodCall(RustExprMethodCall),
     Paren(RustExprParen),
@@ -270,11 +271,11 @@ pub struct RustExprLoop {
     pub label: Option<Label>,
     pub body: Vec<StmtsRef>,
 }
-#[derive(Debug, Clone)]
-pub struct RustExprMacro {
-    pub attrs: Vec<Attribute>,
-    pub mac: Macro,
-}
+// #[derive(Debug, Clone)]
+// pub struct RustExprMacro {
+//     pub attrs: Vec<Attribute>,
+//     pub mac: Macro,
+// }
 #[derive(Debug, Clone)]
 pub struct RustExprMatch {
     pub attrs: Vec<Attribute>,
@@ -415,6 +416,9 @@ impl RustMod {
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
+        dbg!(&self.items);
+        dbg!(name);
+
         self.items.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
@@ -434,6 +438,7 @@ impl RustMod {
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
+                dbg!(item);
                 let def = match item {
                     ItemActual::Const(def) => def,
                     _ => todo!(),
@@ -448,9 +453,9 @@ impl RustMod {
                 };
                 (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
-            ItemRef::Mod(_) => todo!(),
-            ItemRef::Impl(_) => todo!(),
-            ItemRef::Use(_) => todo!(),
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
         })
     }
     pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
@@ -550,11 +555,6 @@ pub fn extract_modules2(
 
     // dbg!(&module_path);
     let mut module_itemrefs = Vec::new();
-    let _top_mod = RustMod {
-        pub_: false,
-        module_path: current_path.clone(),
-        items: Vec::new(),
-    };
 
     // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
     for item in items {
@@ -728,12 +728,6 @@ pub fn extract_modules2(
                     Visibility::Inherited => false,
                 };
 
-                let mut rust_mod = RustMod {
-                    pub_,
-                    module_path: current_path.clone(),
-                    items: Vec::new(),
-                };
-
                 // let module_data = modules.get_mut(current_path);
                 // match item_mod.vis {
                 //     Visibility::Public(_) => {
@@ -747,6 +741,12 @@ pub fn extract_modules2(
 
                 let _parent_name = current_path.last().cloned();
                 current_path.push(item_mod.ident.to_string());
+
+                let mut rust_mod = RustMod {
+                    pub_,
+                    module_path: current_path.clone(),
+                    items: Vec::new(),
+                };
 
                 // let mut partial_module_data = ModuleDataFirstPass::new(
                 //     item_mod.ident.to_string(),
@@ -928,6 +928,15 @@ pub fn extract_modules2(
         }
     }
 
+    // if crate_path.is_some() {
+    //     vec![ItemRef::Mod(RustMod {
+    //         pub_: false,
+    //         module_path: current_path.clone(),
+    //         items: module_itemrefs,
+    //     })]
+    // } else {
+    //     module_itemrefs
+    // }
     module_itemrefs
 }
 
@@ -1006,7 +1015,11 @@ pub fn stmt_to_stmts_ref(stmt: Stmt) -> StmtsRef {
         }),
         Stmt::Item(item) => StmtsRef::Item(item_to_rust_item(item)),
         Stmt::Expr(expr, semi) => StmtsRef::Expr(expr_to_expr_ref(expr), semi.is_some()),
-        Stmt::Macro(stmt_macro) => StmtsRef::Macro(stmt_macro),
+        Stmt::Macro(stmt_macro) => StmtsRef::Macro(RustExprOrStmtMacro {
+            attrs: stmt_macro.attrs,
+            mac: stmt_macro.mac,
+            semi_token: stmt_macro.semi_token.is_some(),
+        }),
     }
 }
 
@@ -1122,7 +1135,11 @@ pub fn expr_to_expr_ref(expr: Expr) -> ExprRef {
             lit: expr_lit.lit,
         }),
         Expr::Loop(_) => todo!(),
-        Expr::Macro(_) => todo!(),
+        Expr::Macro(expr_macro) => ExprRef::Macro(RustExprOrStmtMacro {
+            attrs: expr_macro.attrs,
+            mac: expr_macro.mac,
+            semi_token: false,
+        }),
         Expr::Match(expr_match) => ExprRef::Match(RustExprMatch {
             attrs: expr_match.attrs,
             expr: Box::new(expr_to_expr_ref(*expr_match.expr)),
@@ -1678,7 +1695,13 @@ pub enum StmtsRef {
     Local(LocalRef),
     Item(ItemRef),
     Expr(ExprRef, bool),
-    Macro(StmtMacro),
+    Macro(RustExprOrStmtMacro),
+}
+#[derive(Debug, Clone)]
+pub struct RustExprOrStmtMacro {
+    pub attrs: Vec<Attribute>,
+    pub mac: Macro,
+    pub semi_token: bool,
 }
 #[derive(Debug, Clone)]
 pub struct LocalRef {
@@ -2241,15 +2264,20 @@ pub fn resolve_path(
 pub mod update_definitons {
     use std::mem;
 
-    use syn::{FnArg, Item, ItemImpl, Pat, ReturnType, Type};
+    use syn::{
+        FnArg, GenericArgument, Item, ItemImpl, Pat, PathArguments, ReturnType, Type,
+        TypeParamBound,
+    };
     use tracing::debug;
 
     use crate::{
         duplicate_namespacing::Duplicate,
         js_ast::Ident,
+        make_item_definitions,
         tree_structure::look_for_module_in_items,
         update_item_definitions::{
-            ConstDef, FnInfo, ItemDefinition, RustTraitDefinition, RustType,
+            ConstDef, FnInfo, ItemDefinition, RustTraitDefinition, RustType, RustTypeImplTrait,
+            RustTypeParam, RustTypeParamValue,
         },
         RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
@@ -2260,7 +2288,7 @@ pub mod update_definitons {
     // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
     // IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
     pub fn update_item_definitions2(
-        module_items_tree: &[ItemRef],
+        item_refs: &[ItemRef],
         mut item_defs_no_types: Vec<ItemActual>,
         current_module: &[String],
         in_scope: bool,
@@ -2272,8 +2300,9 @@ pub mod update_definitons {
         let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
         updated_item_defs.resize_with(item_defs_no_types.len(), || ItemV2::None);
 
-        do_things(
-            module_items_tree,
+        update_item_defs_recurisve(
+            item_refs,
+            item_refs,
             &mut item_defs_no_types,
             current_module,
             &mut updated_item_defs,
@@ -2285,8 +2314,10 @@ pub mod update_definitons {
         updated_item_defs
     }
 
-    fn do_things(
-        module_items_tree: &[ItemRef],
+    #[allow(clippy::too_many_arguments)]
+    fn update_item_defs_recurisve(
+        item_refs: &[ItemRef],
+        item_refs_all: &[ItemRef],
         item_defs_no_types: &mut [ItemActual],
         current_module: &[String],
         updated_item_defs: &mut [ItemV2],
@@ -2295,18 +2326,21 @@ pub mod update_definitons {
         in_scope: bool,
         duplicates: &[Duplicate],
     ) {
-        for item_ref in module_items_tree {
+        for item_ref in item_refs {
             match item_ref {
                 ItemRef::StructOrEnum(index) => {
-                    let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    dbg!("structorenum");
+                    // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place?
+                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
                         item,
                         current_module,
-                        module_items_tree,
+                        item_refs_all,
                         item_defs_no_types,
                         scoped_items,
                         in_scope,
-                        &duplicates,
+                        duplicates,
                     );
 
                     if in_scope {
@@ -2314,15 +2348,17 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Fn(index) => {
-                    let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    dbg!("fn");
+                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
                         item,
                         current_module,
-                        module_items_tree,
+                        item_refs_all,
                         item_defs_no_types,
                         scoped_items,
                         in_scope,
-                        &duplicates,
+                        duplicates,
                     );
 
                     if in_scope {
@@ -2336,42 +2372,40 @@ pub mod update_definitons {
                     let fn_body_items = fn_info
                         .stmts
                         .iter()
-                        .filter_map(|stmt| {
-                            match stmt {
-                                StmtsRef::Item(item_ref) => Some(item_ref.clone()),
-                                // TODO handle item defs in Exprs
-                                // StmtsV1::Local(_) => todo!(),
-                                // StmtsV1::Expr(_, _) => todo!(),
-                                _ => None,
-                            }
+                        .filter_map(|stmt| match stmt {
+                            StmtsRef::Item(item_ref) => Some(item_ref.clone()),
+                            _ => None,
                         })
                         .collect::<Vec<_>>();
 
                     // Item in fn body are scoped so create a new scope
                     scoped_items.push(Vec::new());
 
-                    do_things(
+                    update_item_defs_recurisve(
                         &fn_body_items,
+                        item_refs_all,
                         item_defs_no_types,
                         current_module,
                         updated_item_defs,
                         scoped_items,
                         true,
-                        &duplicates,
+                        duplicates,
                     );
 
                     scoped_items.pop();
                 }
                 ItemRef::Const(index) => {
-                    let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    dbg!("const");
+                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
                         item,
                         current_module,
-                        module_items_tree,
+                        item_refs_all,
                         item_defs_no_types,
                         scoped_items,
                         in_scope,
-                        &duplicates,
+                        duplicates,
                     );
 
                     if in_scope {
@@ -2379,15 +2413,17 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Trait(index) => {
-                    let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    dbg!("trait");
+                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                    let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
                         item,
                         current_module,
-                        module_items_tree,
+                        item_refs_all,
                         item_defs_no_types,
                         scoped_items,
                         in_scope,
-                        &duplicates,
+                        duplicates,
                     );
 
                     if in_scope {
@@ -2395,14 +2431,16 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Mod(rust_mod) => {
-                    do_things(
-                        module_items_tree,
+                    dbg!(&rust_mod.module_path);
+                    update_item_defs_recurisve(
+                        &rust_mod.items,
+                        item_refs_all,
                         item_defs_no_types,
                         &rust_mod.module_path,
                         updated_item_defs,
                         scoped_items,
                         false,
-                        &duplicates,
+                        duplicates,
                     );
                 }
                 // TODO
@@ -2455,7 +2493,7 @@ pub mod update_definitons {
         item: ItemActual,
         module_path: &[String],
         item_refs: &[ItemRef],
-        items_copy: &[ItemActual],
+        item_actual_defs_copy: &[ItemActual],
         scoped_items: &[Vec<ItemRef>],
         in_scope: bool,
         duplicates: &[Duplicate],
@@ -2486,7 +2524,7 @@ pub mod update_definitons {
                                                 &item_def.generics,
                                                 module_path,
                                                 item_refs,
-                                                items_copy,
+                                                item_actual_defs_copy,
                                                 scoped_items,
                                             ),
                                         )
@@ -2504,7 +2542,7 @@ pub mod update_definitons {
                                             &item_def.generics,
                                             module_path,
                                             item_refs,
-                                            items_copy,
+                                            item_actual_defs_copy,
                                             scoped_items,
                                         )
                                     })
@@ -2533,7 +2571,7 @@ pub mod update_definitons {
                                             &item_def.generics,
                                             module_path,
                                             item_refs,
-                                            items_copy,
+                                            item_actual_defs_copy,
                                             scoped_items,
                                         );
                                         match &f.ident {
@@ -2606,7 +2644,7 @@ pub mod update_definitons {
                                 &fn_info.generics,
                                 module_path,
                                 item_refs,
-                                items_copy,
+                                item_actual_defs_copy,
                                 scoped_items,
                             ),
                         ),
@@ -2620,7 +2658,7 @@ pub mod update_definitons {
                         &fn_info.generics,
                         module_path,
                         item_refs,
-                        items_copy,
+                        item_actual_defs_copy,
                         scoped_items,
                     ),
                 };
@@ -2652,12 +2690,13 @@ pub mod update_definitons {
                 })
             }
             ItemActual::Const(const_def) => {
+                dbg!("herere");
                 let rust_type = parse_types_for_populate_item_definitions(
                     &const_def.syn_object.ty,
                     &Vec::new(),
                     module_path,
                     item_refs,
-                    items_copy,
+                    item_actual_defs_copy,
                     scoped_items,
                 );
 
@@ -2729,7 +2768,7 @@ pub mod update_definitons {
                                             &fn_info.generics,
                                             module_path,
                                             item_refs,
-                                            items_copy,
+                                            item_actual_defs_copy,
                                             scoped_items,
                                         ),
                                     ),
@@ -2744,7 +2783,7 @@ pub mod update_definitons {
                                         &fn_info.generics,
                                         module_path,
                                         item_refs,
-                                        items_copy,
+                                        item_actual_defs_copy,
                                         scoped_items,
                                     )
                                 }
@@ -2916,7 +2955,408 @@ pub mod update_definitons {
         item_defs: &[ItemActual],
         scoped_items: &[Vec<ItemRef>],
     ) -> RustType {
-        todo!()
+        dbg!(item_defs);
+        match type_ {
+            Type::Array(_) => todo!(),
+            Type::BareFn(_) => todo!(),
+            Type::Group(_) => todo!(),
+            Type::ImplTrait(type_impl_trait) => {
+                debug!(type_ = ?type_, "parse_fn_input_or_field Type::ImplTrait");
+
+                // We distinguish between normal traits which -> RustType::Impl, and fn/closure traits which -> RustType::Fn
+                if type_impl_trait.bounds.len() == 1 {
+                    let bound = type_impl_trait.bounds.first().unwrap();
+                    match bound {
+                        TypeParamBound::Trait(trait_bound) => {
+                            if trait_bound.path.segments.len() == 1 {
+                                let seg = trait_bound.path.segments.first().unwrap();
+                                if seg.ident == "Fn"
+                                    || seg.ident == "FnOnce"
+                                    || seg.ident == "FnMut"
+                                {
+                                    return match &seg.arguments {
+                                        PathArguments::None => todo!(),
+                                        PathArguments::AngleBracketed(_) => todo!(),
+                                        PathArguments::Parenthesized(args) => {
+                                            let inputs = args
+                                                .inputs
+                                                .iter()
+                                                .map(|input_type| {
+                                                    parse_types_for_populate_item_definitions(
+                                                        input_type,
+                                                        root_parent_item_definition_generics,
+                                                        current_module,
+                                                        item_refs,
+                                                        item_defs,
+                                                        scoped_items,
+                                                    )
+                                                })
+                                                .collect();
+                                            let return_type = match &args.output {
+                                                ReturnType::Default => RustType::Unit,
+                                                ReturnType::Type(_, return_type) => {
+                                                    parse_types_for_populate_item_definitions(
+                                                        return_type,
+                                                        root_parent_item_definition_generics,
+                                                        current_module,
+                                                        item_refs,
+                                                        item_defs,
+                                                        scoped_items,
+                                                    )
+                                                }
+                                            };
+                                            RustType::Closure(inputs, Box::new(return_type))
+                                        }
+                                    };
+                                }
+                            }
+                        }
+                        TypeParamBound::Lifetime(_) => {}
+                        TypeParamBound::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    }
+                }
+
+                let bounds = type_impl_trait
+                    .bounds
+                    .iter()
+                    .filter_map(|b| {
+                        match b {
+                            TypeParamBound::Trait(trait_bound) => {
+                                // TODO handle segment arguments because we might have eg `impl GenericFooTrait<Bar>`
+                                let trait_bound_path = trait_bound
+                                    .path
+                                    .segments
+                                    .iter()
+                                    .map(|seg| RustPathSegment {
+                                        ident: seg.ident.to_string(),
+                                        turbofish: match &seg.arguments {
+                                            PathArguments::None => Vec::new(),
+                                            PathArguments::AngleBracketed(args) => args
+                                                .args
+                                                .iter()
+                                                .map(|arg| match arg {
+                                                    GenericArgument::Lifetime(_) => todo!(),
+                                                    GenericArgument::Type(arg_type_) => {
+                                                        parse_types_for_populate_item_definitions(
+                                                            arg_type_,
+                                                            root_parent_item_definition_generics,
+                                                            current_module,
+                                                            item_refs,
+                                                            item_defs,
+                                                            scoped_items,
+                                                        )
+                                                    }
+                                                    GenericArgument::Const(_) => todo!(),
+                                                    GenericArgument::AssocType(_) => todo!(),
+                                                    GenericArgument::AssocConst(_) => todo!(),
+                                                    GenericArgument::Constraint(_) => todo!(),
+                                                    _ => todo!(),
+                                                })
+                                                .collect::<Vec<_>>(),
+                                            PathArguments::Parenthesized(_) => {
+                                                dbg!(seg);
+                                                todo!();
+                                            }
+                                        },
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                // TODO lookup trait in global data to get module path
+                                let (
+                                    trait_module_path,
+                                    trait_item_path,
+                                    trait_item_scope,
+                                    item_index,
+                                ) = make_item_definitions::resolve_path(
+                                    true,
+                                    true,
+                                    trait_bound_path,
+                                    item_refs,
+                                    item_defs,
+                                    current_module,
+                                    current_module,
+                                    scoped_items,
+                                );
+                                // A Trait bound should just be a trait, no associated fn or whatever
+                                assert!(trait_item_path.len() == 1);
+
+                                // let (module_path, trait_definition) = global_data
+                                //     .lookup_trait_definition_any_module(&trait_name, current_module)
+                                //     .unwrap();
+                                Some(RustTypeImplTrait::SimpleTrait(item_index.unwrap()))
+                            }
+                            TypeParamBound::Lifetime(_) => None,
+                            TypeParamBound::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                RustType::ImplTrait(bounds)
+            }
+            Type::Infer(_) => todo!(),
+            Type::Macro(_) => todo!(),
+            Type::Never(_) => todo!(),
+            Type::Paren(_) => todo!(),
+            Type::Path(type_path) => {
+                debug!(type_ = ?type_, "parse_fn_input_or_field Type::Path");
+                // eg:
+                // Foo<i32>
+                // Foo<T>
+                // Self (which given we are dealing with field or input, *must* be a different instance/type from self)
+                // T (where the types bounds of T are elsewhere eg `where T: FooTrait` or `<T: FooTrait>`)
+                // T: impl FooTrait
+
+                // If it is a field, a type with a generic like T or Foo<T> means the generic depends on the parent so for
+                // let foo = Foo { gen_field: i32 };
+                // let field = foo.gen_field;
+                // If we have just stored that the type of gen_field is T, we can just resolve T to i32 because we will haev the type of foo which will contain the resolved generics.
+                // What happens if it hasn't been resolved yet? eg it might get resolved by being passed as an argument to a fn, so the arg type defines it? Should be fine as long as know we have an unresolved generic, so can (should be able to) look up the input types for the fn/method
+
+                let seg = type_path.path.segments.first().unwrap();
+                let seg_name = seg.ident.to_string();
+                let seg_name_str = seg_name.as_str();
+
+                // Look to see if name is a generic which has been declared
+                let generic = root_parent_item_definition_generics
+                    .iter()
+                    .find(|generic| generic == &seg_name_str);
+                if let Some(generic) = generic {
+                    // return match &generic.type_ {
+                    //     RustTypeParamValue::Unresolved => todo!(),
+                    //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
+                    // };
+                    return RustType::TypeParam(RustTypeParam {
+                        name: generic.clone(),
+                        type_: RustTypeParamValue::Unresolved,
+                    });
+                }
+
+                // For fns:
+                // the names of generics should be stored on FnInfo
+                // Sometimes we can work out what the type of a generic is, eg it impls Fn in which case we only care about the return type, but mostly the generic will just be eg T, maybe with some trait bound, but that doesn't help us determine what the actual type is. We need to record where the generic type is inferred from, eg:
+                // 1. the generic is used as the type for an input: easy, just check the type of the thing that eventually gets passed as an arg
+                // 2. the generic is used as the return type: redundant, we don't need to know the type since we already determine the return type from the body
+
+                // For structs
+                // Can always be inferred from the arguments used to construct the struct?
+
+                // dbg!(seg_name_str);
+
+                // For impl blocks
+                #[allow(unreachable_code)]
+                match seg_name_str {
+                    // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
+                    "Option" => {
+                        todo!();
+                        let generic_type = match &seg.arguments {
+                            PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                                // Option only has
+                                match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                    GenericArgument::Lifetime(_) => todo!(),
+                                    GenericArgument::Type(type_) => {
+                                        parse_types_for_populate_item_definitions(
+                                            type_,
+                                            root_parent_item_definition_generics,
+                                            current_module,
+                                            item_refs,
+                                            item_defs,
+                                            scoped_items,
+                                        )
+                                    }
+                                    GenericArgument::Const(_) => todo!(),
+                                    GenericArgument::AssocType(_) => todo!(),
+                                    GenericArgument::AssocConst(_) => todo!(),
+                                    GenericArgument::Constraint(_) => todo!(),
+                                    _ => todo!(),
+                                }
+                            }
+                            _ => todo!(),
+                        };
+                        RustType::Option(RustTypeParam {
+                            // TODO "T" shouldn't be hardcoded here
+                            name: "T".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                        })
+                    }
+                    "Result" => {
+                        let generic_type = match &seg.arguments {
+                            PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                                // Option only has
+                                match angle_bracketed_generic_arguments.args.first().unwrap() {
+                                    GenericArgument::Lifetime(_) => todo!(),
+                                    GenericArgument::Type(type_) => {
+                                        parse_types_for_populate_item_definitions(
+                                            type_,
+                                            root_parent_item_definition_generics,
+                                            current_module,
+                                            item_refs,
+                                            item_defs,
+                                            scoped_items,
+                                        )
+                                    }
+                                    GenericArgument::Const(_) => todo!(),
+                                    GenericArgument::AssocType(_) => todo!(),
+                                    GenericArgument::AssocConst(_) => todo!(),
+                                    GenericArgument::Constraint(_) => todo!(),
+                                    _ => todo!(),
+                                }
+                            }
+                            _ => todo!(),
+                        };
+                        RustType::Result(RustTypeParam {
+                            // TODO "T" shouldn't be hardcoded here
+                            name: "T".to_string(),
+                            type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                        })
+                    }
+                    _ => {
+                        // get full path
+                        // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
+                        // NOTE also, get_path_without_namespacing() only preserves `RustPathSeg`s/turbofish, it doesn't use or update them so we could just populate them later
+                        // dbg!("parse type path");
+                        // println!("{}", quote! { #type_path });
+
+                        let rust_path = type_path
+                            .path
+                            .segments
+                            .iter()
+                            .map(|seg| RustPathSegment {
+                                ident: seg.ident.to_string(),
+                                turbofish: match &seg.arguments {
+                                    PathArguments::None => Vec::new(),
+                                    PathArguments::AngleBracketed(args) => args
+                                        .args
+                                        .iter()
+                                        .enumerate()
+                                        .filter_map(|(_i, arg)| match arg {
+                                            GenericArgument::Lifetime(_) => None,
+                                            GenericArgument::Type(arg_type_) => {
+                                                Some(parse_types_for_populate_item_definitions(
+                                                    arg_type_,
+                                                    root_parent_item_definition_generics,
+                                                    current_module,
+                                                    item_refs,
+                                                    item_defs,
+                                                    scoped_items,
+                                                ))
+                                            }
+                                            GenericArgument::Const(_) => todo!(),
+                                            GenericArgument::AssocType(_) => todo!(),
+                                            GenericArgument::AssocConst(_) => todo!(),
+                                            GenericArgument::Constraint(_) => todo!(),
+                                            _ => todo!(),
+                                        })
+                                        .collect(),
+                                    PathArguments::Parenthesized(_) => todo!(),
+                                },
+                            })
+                            .collect();
+
+                        // TODO important should replace get_path with item lookup like below
+                        // let (item_definition_module_path, resolved_scope_id, item_definition) =
+                        //     global_data.lookup_item_definition_any_module_or_scope(
+                        //         current_module,
+                        //         &global_data.scope_id_as_option(),
+                        //         &vec![struct_or_enum_name.to_string()],
+                        //     );
+                        let (item_module_path, item_path_seg, item_scope, item_index) =
+                            make_item_definitions::resolve_path(
+                                true,
+                                true,
+                                rust_path,
+                                item_refs,
+                                item_defs,
+                                current_module,
+                                current_module,
+                                scoped_items,
+                            );
+                        let item_seg = &item_path_seg[0];
+
+                        let mut type_params = item_seg
+                            .turbofish
+                            .iter()
+                            .map(|rt| RustTypeParam {
+                                name: "unknown_todo".to_string(),
+                                type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
+                            })
+                            .collect::<Vec<_>>();
+
+                        if item_module_path == vec!["prelude_special_case".to_string()] {
+                            if item_seg.ident == "i32" {
+                                // if has_mut_keyword {
+                                //     global_data.rust_prelude_types.rust_integer = true;
+                                // }
+                                RustType::I32
+                            } else if item_seg.ident == "String" || item_seg.ident == "str" {
+                                // if has_mut_keyword {
+                                //     global_data.rust_prelude_types.rust_string = true;
+                                // }
+                                RustType::String
+                            } else if item_seg.ident == "bool" {
+                                // if has_mut_keyword {
+                                //     global_data.rust_prelude_types.rust_string = true;
+                                // }
+                                RustType::Bool
+                            } else if item_seg.ident == "Vec" {
+                                // if has_mut_keyword {
+                                //     global_data.rust_prelude_types.rust_string = true;
+                                // }
+                                // dbg!(&type_params);
+                                // dbg!(&type_path.path.segments);
+                                assert_eq!(type_params.len(), 1);
+                                RustType::Vec(Box::new(RustType::TypeParam(type_params.remove(0))))
+                            } else {
+                                dbg!(&item_seg.ident);
+                                todo!()
+                            }
+                        } else {
+                            // NOTE for now we are assuming the type must be a struct or enum. fn() types will get matched by Type::BareFn not Type::Path, and traits should only appear in Type::ImplTrait. However we need to handle associated items eg `field: <MyStruct as MyTrait>::some_associated_type` which is a Path but to a type, not necessarily a struct/enum.
+                            RustType::StructOrEnum(
+                                type_params,
+                                item_module_path,
+                                item_seg.ident.clone(),
+                                item_index.unwrap(),
+                            )
+                        }
+                    }
+                }
+            }
+            Type::Ptr(_) => todo!(),
+            Type::Reference(type_reference) => {
+                // let type_ = parse_type(&type_reference.elem);
+                // let type_ = match type_ {
+                //     TypeOrVar::RustType(rust_type) => rust_type,
+                //     TypeOrVar::Unknown => RustType::Unknown,
+                // };
+                // TypeOrVar::Var(ScopedVar {
+                //     name: "donotuse".to_string(),
+                //     mut_: false,
+                //     mut_ref: type_reference.mutability.is_some(),
+                //     type_,
+                // })
+                let type_ = parse_types_for_populate_item_definitions(
+                    &type_reference.elem,
+                    root_parent_item_definition_generics,
+                    current_module,
+                    item_refs,
+                    item_defs,
+                    scoped_items,
+                );
+                if type_reference.mutability.is_some() {
+                    RustType::MutRef(Box::new(type_))
+                } else {
+                    // RustType::Ref(Box::new(type_))
+                    type_
+                }
+            }
+            Type::Slice(_) => todo!(),
+            Type::TraitObject(_) => todo!(),
+            Type::Tuple(_) => todo!(),
+            Type::Verbatim(_) => todo!(),
+            _ => todo!(),
+        }
     }
 
     // #[allow(dead_code)]

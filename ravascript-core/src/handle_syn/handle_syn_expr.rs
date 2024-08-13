@@ -25,7 +25,7 @@ use crate::{
     tree_structure::{
         expr_to_expr_ref, stmt_to_stmts_ref, update_definitons::ItemV2, ExprRef, ItemRef,
         RustExprAssign, RustExprBlock, RustExprCall, RustExprClosure, RustExprMatch,
-        RustExprMethodCall, RustExprPath, StmtsRef,
+        RustExprMethodCall, RustExprOrStmtMacro, RustExprPath, StmtsRef,
     },
     update_item_definitions::{
         ConstDef, EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
@@ -945,7 +945,7 @@ pub fn handle_expr(
             RustType2::Never,
         ),
         ExprRef::Macro(expr_macro) => {
-            handle_expr_and_stmt_macro(&expr_macro.mac, global_data, current_module)
+            handle_expr_and_stmt_macro(&expr_macro, global_data, current_module)
         }
         ExprRef::Match(expr_match) => {
             handle_expr_match(expr_match, false, global_data, current_module)
@@ -1546,10 +1546,11 @@ fn handle_expr_closure(
 
 // TODO might want to split this up so that in some cases we can return JsStmt and JsExpr in others
 pub fn handle_expr_and_stmt_macro(
-    mac: &Macro,
+    mac: &RustExprOrStmtMacro,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
+    let mac = mac.mac.clone();
     let path_segs = mac
         .path
         .segments
