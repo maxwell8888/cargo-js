@@ -3301,7 +3301,11 @@ fn handle_expr_path_inner(
     // println!("{}", quote! { #expr_path });
     // dbg!(&current_module);
     // dbg!(&global_data.scope_id_as_option());
+
+    // dbg!(&current_module);
     // dbg!(&segs_copy);
+    // dbg!(&global_data.item_refs);
+    // dbg!(&global_data.item_defs);
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_is_scoped, segs_copy_index) =
         resolve_path(
             // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
@@ -3316,8 +3320,9 @@ fn handle_expr_path_inner(
             &global_data.scopes,
         );
     // dbg!(&segs_copy_module_path);
-    // dbg!(&segs_copy_item_scope);
     // dbg!(&segs_copy_item_path);
+    // dbg!(&segs_copy_is_scoped);
+    // dbg!(&segs_copy_index);
 
     assert!(segs_copy_item_path.len() <= 2);
 
@@ -3439,10 +3444,10 @@ fn handle_expr_path_inner(
             // Is path a variable?
 
             let scoped_partial_rust_type = global_data.scopes.iter().rev().find_map(|scope| {
-                let def = scope
-                    .items
-                    .iter()
-                    .find(|item_def| item_def.ident() == item_path_seg.ident);
+                let def = scope.items.iter().find_map(|index| {
+                    let item_def = &global_data.item_defs[*index];
+                    (item_def.ident() == item_path_seg.ident).then_some(item_def)
+                });
 
                 let var = scope
                     .variables

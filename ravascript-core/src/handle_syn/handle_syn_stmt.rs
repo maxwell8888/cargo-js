@@ -823,7 +823,7 @@ pub fn handle_stmt(
                             StructOrEnumDefitionInfo::Struct(struct_def) => {
                                 vec![(
                                     handle_item_struct(
-                                        actual,
+                                        *index,
                                         false,
                                         global_data,
                                         current_module_path,

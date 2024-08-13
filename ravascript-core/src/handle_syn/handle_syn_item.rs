@@ -79,7 +79,7 @@ pub fn js_stmts_from_syn_items(
                     ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def) => {
                             js_stmts.push(handle_item_struct(
-                                actual,
+                                *index,
                                 true,
                                 global_data,
                                 current_module,
@@ -361,7 +361,7 @@ pub fn handle_item_fn(
 
 pub fn handle_item_const(
     const_def: &ConstDef,
-    _at_module_top_level: bool,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -1492,11 +1492,31 @@ pub fn handle_item_impl(
 //                 }
 
 pub fn handle_item_struct(
-    item_def: &ItemDefinition,
+    // item_def: &ItemDefinition,
+    index: usize,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
+    let item = &global_data.item_defs[index];
+    let item_def = match item {
+        ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+            StructOrEnumDefitionInfo::Struct(struct_def) => {
+                // js_stmts.push(handle_item_struct(
+                //     actual,
+                //     true,
+                //     global_data,
+                //     current_module,
+                // ));
+                actual.clone()
+            }
+            StructOrEnumDefitionInfo::Enum(enum_def) => {
+                todo!()
+            }
+        },
+        _ => todo!(),
+    };
+
     let item_struct = match &item_def.struct_or_enum_info {
         StructOrEnumDefitionInfo::Struct(struct_def_info) => &struct_def_info.syn_object,
         StructOrEnumDefitionInfo::Enum(_) => todo!(),
@@ -1720,6 +1740,11 @@ pub fn handle_item_struct(
         ),
         Fields::Unit => todo!(),
     };
+
+    if !_at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.items.push(index);
+    }
 
     let mut js_class = JsClass {
         export: false,

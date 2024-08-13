@@ -200,7 +200,7 @@ pub enum RustTypeImplTrait2 {
 pub struct GlobalDataScope {
     // NOTE techincally we don't need this but it is useful to be able to reconcile with the static/preprocessed scopes to ensure we are talking about the same thing
     pub variables: Vec<ScopedVar>,
-    pub items: Vec<ItemV2>,
+    pub items: Vec<usize>,
     // fns: Vec<FnInfo>,
     /// Why does a scope have generics?? for fns/methods?
     // generics: Vec<MyGeneric>,
@@ -1480,17 +1480,23 @@ pub fn resolve_path(
 
     // TODO only look through transparent scopes
     // We look through scopes, simultaneously looking for a matching var, use_mapping, or item
+    #[derive(Debug, Clone)]
     enum ScopedThing {
         UseMapping((String, Vec<String>)),
         Var(ScopedVar),
-        Item(ItemV2),
+        Item(usize),
     }
+
+    #[allow(clippy::manual_map)]
     let scoped_thing = scopes.iter().rev().find_map(|s| {
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
         } else if let Some(scoped_var) = s.variables.iter().find(|v| v.name == segs[0].ident) {
             Some(ScopedThing::Var(scoped_var.clone()))
-        } else if let Some(scoped_item) = s.items.iter().find(|i| i.ident() == segs[0].ident) {
+        } else if let Some(scoped_item) = s.items.iter().find(|index| {
+            let item_def = &items_defs[**index];
+            item_def.ident() == segs[0].ident
+        }) {
             Some(ScopedThing::Item(scoped_item.clone()))
         } else {
             None
@@ -1554,6 +1560,9 @@ pub fn resolve_path(
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
         (current_mod.to_vec(), segs, true, None)
+    } else if let Some(ScopedThing::Item(index)) = scoped_thing {
+        assert!(current_mod == orig_mod);
+        (current_mod.to_vec(), segs, true, Some(index))
     } else if item_defined_in_module.is_some() {
         (current_mod.to_vec(), segs, false, item_defined_in_module)
     } else if segs[0].ident == "super" {

@@ -92,7 +92,7 @@ async fn destructure_struct_nested() {
 }
 
 #[tokio::test]
-async fn destructure_array() {
+async fn destructure_array_simple() {
     // setup_tracing();
     let actual = r2j_block!({
         let arr = [1, 2];
