@@ -1477,10 +1477,6 @@ pub fn resolve_path(
         use_private_items || is_parent_or_same_module,
         &segs[0].ident,
     );
-    dbg!(&module);
-    dbg!(&is_parent_or_same_module);
-    dbg!(&segs[0].ident);
-    dbg!(path_starts_with_sub_module);
 
     // TODO only look through transparent scopes
     // We look through scopes, simultaneously looking for a matching var, use_mapping, or item

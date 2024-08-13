@@ -62,18 +62,15 @@ pub fn js_stmts_from_syn_items(
     let item_defs = global_data.item_defs.clone();
     // for item in &global_data.item_refs_to_render.clone() {
     for item in module_item_refs {
-        dbg!(item);
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
             ItemRef::Const(index) => {
-                dbg!("const hera");
                 let item = &item_defs[*index];
                 let const_def = match item {
                     ItemV2::Const(actual) => actual,
                     _ => todo!(),
                 };
                 let js_stmt = handle_item_const(const_def, true, global_data, current_module);
-                dbg!(&js_stmt);
                 js_stmts.push(js_stmt);
             }
             ItemRef::StructOrEnum(index) => {
@@ -125,9 +122,18 @@ pub fn js_stmts_from_syn_items(
                 ));
             }
             // ItemRef::Macro(_) => todo!(),
-            ItemRef::Mod(_item_mod) => {
+            ItemRef::Mod(rust_mod) => {
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
                 // handle_item_mod(item_mod, global_data, current_module)
+
+                let stmts =
+                    js_stmts_from_syn_items(&rust_mod.items, &rust_mod.module_path, global_data);
+                global_data.transpiled_modules.push(JsModule {
+                    public: true,
+                    name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
+                    module_path: rust_mod.module_path.clone(),
+                    stmts,
+                });
             }
             // ItemRef::Static(_) => todo!(),
             ItemRef::Trait(index) => {
@@ -1916,7 +1922,7 @@ pub fn _handle_item_mod(
     };
     // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
 
-    global_data.transpiled_modules.push(js_stmt_submodule);
+    // global_data.transpiled_modules.push(js_stmt_submodule);
     // let stmts = js_stmts_from_syn_items(current_module_path, global_data);
     // let js_stmt_module = global_data
     //     .transpiled_modules

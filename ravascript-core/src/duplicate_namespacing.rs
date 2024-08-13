@@ -1,4 +1,4 @@
-use crate::tree_structure::{ItemActual, ItemRef};
+use crate::tree_structure::{ItemActual, ItemRef, RustMod};
 
 #[derive(Debug, Clone)]
 pub struct Duplicate {
@@ -8,7 +8,7 @@ pub struct Duplicate {
     pub original_module_path: Vec<String>,
 }
 
-pub fn namespace_duplicates(item_refs: &Vec<ItemRef>, item_defs: &Vec<ItemActual>) -> Vec<Duplicate> {
+pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> Vec<Duplicate> {
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
 
@@ -23,20 +23,33 @@ pub fn namespace_duplicates(item_refs: &Vec<ItemRef>, item_defs: &Vec<ItemActual
     // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
     // (module path, item name)
     let mut names_to_dedup = Vec::new();
-    let mut scoped_names_to_dedup = Vec::new();
+    let scoped_names_to_dedup = Vec::new();
 
-    let rust_mods = item_refs.iter().filter_map(|item_ref| match item_ref {
-        ItemRef::Mod(rust_mod) => Some(rust_mod),
-        _ => None,
-    });
-    for m in rust_mods {
-        for item in &m.items {
-            if let Some(index) = item.index() {
-                let actual = &item_defs[index];
-                names_to_dedup.push((&m.module_path, actual.ident()));
+    fn recurse<'a>(
+        rust_mods: &[&RustMod],
+        item_defs: &[ItemActual],
+        names_to_dedup: &mut Vec<(Vec<String>, String)>,
+    ) {
+        for rust_mod in rust_mods {
+            for item in &rust_mod.items {
+                if let ItemRef::Mod(rust_mod2) = item {
+                    recurse(&[rust_mod2], item_defs, names_to_dedup);
+                } else if let Some(index) = item.index() {
+                    let actual = &item_defs[index];
+                    names_to_dedup.push((rust_mod.module_path.clone(), actual.ident().to_owned()));
+                }
             }
         }
     }
+
+    let rust_mods = item_refs
+        .iter()
+        .filter_map(|item_ref| match item_ref {
+            ItemRef::Mod(rust_mod) => Some(rust_mod),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    recurse(&rust_mods, item_defs, &mut names_to_dedup);
 
     let mut duplicates = Vec::new();
     for name in &names_to_dedup {
@@ -56,7 +69,7 @@ pub fn namespace_duplicates(item_refs: &Vec<ItemRef>, item_defs: &Vec<ItemActual
             };
 
             // To start off, add a single path segment to names that are duplicated by scoped items
-            let is_scoped_name = scoped_names_to_dedup.iter().any(|s| &dup.name == s.1);
+            let is_scoped_name = scoped_names_to_dedup.iter().any(|s| dup.name == s.1);
             if is_scoped_name {
                 dup.namespace.insert(0, dup.module_path.pop().unwrap())
             }

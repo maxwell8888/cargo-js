@@ -959,8 +959,9 @@ pub fn process_items(
             _ => None,
         })
         .collect::<Vec<_>>();
-    dbg!(&modules);
     // global_data.item_refs_to_render = modules;
+
+    // We need/want to keep modules in tree for syn parsing to make it easy to lookup module submodules etc. However, we also want flattened modules to make it easy to iterate over them and render distinct modules
 
     for rust_mod in modules {
         global_data.scopes.clear();
@@ -983,12 +984,15 @@ pub fn process_items(
             push_rust_types(&global_data, stmts);
         };
 
-        global_data.transpiled_modules.push(JsModule {
-            public: true,
-            name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
-            module_path: rust_mod.module_path.clone(),
-            stmts,
-        });
+        global_data.transpiled_modules.insert(
+            0,
+            JsModule {
+                public: true,
+                name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
+                module_path: rust_mod.module_path.clone(),
+                stmts,
+            },
+        );
     }
 
     // global_data.transpiled_modules.push(JsModule {
@@ -1031,9 +1035,9 @@ pub fn process_items(
     // TODO can this not just be done automatically in JsModule.js_string()? Would require a flag arg so we can avoid the comments for blocks etc, but this is preferrable to polluting this fn with something so trivial.
     // add module name comments when there is more than 1 module
 
-    if global_data.transpiled_modules.len() > 1 {
-        for module in global_data
-            .transpiled_modules
+    let mut transpiled_modules = global_data.transpiled_modules;
+    if transpiled_modules.len() > 1 {
+        for module in transpiled_modules
             .iter_mut()
             .filter(|m| m.module_path != ["web_prelude"])
         {
@@ -1054,7 +1058,7 @@ pub fn process_items(
         }
     }
 
-    global_data.transpiled_modules
+    transpiled_modules
 }
 
 // fn update_classes2(js_stmt_modules: &mut Vec<JsModule>, global_data: &GlobalData) {

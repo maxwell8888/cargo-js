@@ -3448,8 +3448,6 @@ fn handle_expr_path_inner(
                     scoped_partial_rust_type
                 } else {
                     // We don't have a scoped match so path must be a module level definiton
-                    dbg!(&global_data.item_refs);
-                    dbg!(&segs_copy_module_path);
                     let item_module = global_data.get_module(&segs_copy_module_path);
                     let item_def = item_module
                         .items
