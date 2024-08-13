@@ -416,9 +416,6 @@ impl RustMod {
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
-        dbg!(&self.items);
-        dbg!(name);
-
         self.items.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
@@ -438,7 +435,6 @@ impl RustMod {
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
-                dbg!(item);
                 let def = match item {
                     ItemActual::Const(def) => def,
                     _ => todo!(),
@@ -461,7 +457,8 @@ impl RustMod {
     pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
         self.items.iter().any(|item| match item {
             ItemRef::Mod(rust_mod) => {
-                rust_mod.module_path[0] == ident && (use_private || rust_mod.pub_)
+                rust_mod.module_path[rust_mod.module_path.len() - 1] == ident
+                    && (use_private || rust_mod.pub_)
             }
             _ => false,
         })
@@ -506,9 +503,9 @@ impl RustMod {
                 };
                 (def.name == name && (use_private || def.is_pub)).then_some(*index)
             }
-            ItemRef::Mod(_) => todo!(),
-            ItemRef::Impl(_) => todo!(),
-            ItemRef::Use(_) => todo!(),
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
         })
     }
 }
@@ -2329,7 +2326,6 @@ pub mod update_definitons {
         for item_ref in item_refs {
             match item_ref {
                 ItemRef::StructOrEnum(index) => {
-                    dbg!("structorenum");
                     // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place?
                     // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
                     let item = item_defs_no_types[*index].clone();
@@ -2348,7 +2344,6 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Fn(index) => {
-                    dbg!("fn");
                     // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
                     let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
@@ -2395,7 +2390,6 @@ pub mod update_definitons {
                     scoped_items.pop();
                 }
                 ItemRef::Const(index) => {
-                    dbg!("const");
                     // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
                     let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
@@ -2413,7 +2407,6 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Trait(index) => {
-                    dbg!("trait");
                     // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
                     let item = item_defs_no_types[*index].clone();
                     updated_item_defs[*index] = update_item_def(
@@ -2431,7 +2424,6 @@ pub mod update_definitons {
                     }
                 }
                 ItemRef::Mod(rust_mod) => {
-                    dbg!(&rust_mod.module_path);
                     update_item_defs_recurisve(
                         &rust_mod.items,
                         item_refs_all,
@@ -2690,7 +2682,6 @@ pub mod update_definitons {
                 })
             }
             ItemActual::Const(const_def) => {
-                dbg!("herere");
                 let rust_type = parse_types_for_populate_item_definitions(
                     &const_def.syn_object.ty,
                     &Vec::new(),
@@ -2955,7 +2946,6 @@ pub mod update_definitons {
         item_defs: &[ItemActual],
         scoped_items: &[Vec<ItemRef>],
     ) -> RustType {
-        dbg!(item_defs);
         match type_ {
             Type::Array(_) => todo!(),
             Type::BareFn(_) => todo!(),

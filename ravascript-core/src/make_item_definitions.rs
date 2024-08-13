@@ -343,7 +343,6 @@ pub fn resolve_path(
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    dbg!(&current_mod);
     // dbg!(&item_refs);
     let module = look_for_module_in_items(item_refs, items_defs, current_mod).unwrap();
 

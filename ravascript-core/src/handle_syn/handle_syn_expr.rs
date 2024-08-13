@@ -17,7 +17,7 @@ use super::{
 };
 
 use crate::{
-    handle_syn::definition_data::resolve_path,
+    handle_syn::{definition_data::resolve_path, GlobalDataScope},
     js_ast::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
@@ -753,7 +753,12 @@ pub fn handle_expr(
             //     .collect();
 
             // Create new scope for fn vars
-            global_data.push_new_scope(true, Vec::new());
+            global_data.scopes.push(GlobalDataScope {
+                variables: Vec::new(),
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+            });
 
             global_data
                 .scopes
@@ -776,7 +781,7 @@ pub fn handle_expr(
             );
 
             // pop fn scope
-            global_data.pop_scope();
+            global_data.scopes.pop();
 
             (
                 JsExpr::ForLoop(pat, Box::new(iter_expr), stmts),
@@ -791,7 +796,12 @@ pub fn handle_expr(
                 _ => {}
             }
 
-            global_data.push_new_scope(true, Vec::new());
+            global_data.scopes.push(GlobalDataScope {
+                variables: Vec::new(),
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+            });
             // TODO block needs to use something like parse_fn_body to be able to return the type
 
             // NOTE that like match expressions, we can't rely on a single block to get the return type since some might return never/unreachable, so we need to go through each block until we find a non never/unreachable type.
@@ -802,7 +812,7 @@ pub fn handle_expr(
                 .flat_map(|stmt| handle_stmt(stmt, global_data, current_module))
                 .unzip();
 
-            global_data.pop_scope();
+            global_data.scopes.pop();
             // update_classes_js_stmts(&mut succeed_stmts, &scope.impl_blocks);
 
             // NOTE we need to directly handle fail blocks to ensure the block doesn't get converted to an IFFE which would happen if it we handled by handle_expr_block
@@ -1373,7 +1383,12 @@ fn handle_expr_closure(
     // Create scope for closure body
     // NOTE the closure arguments are added to `GlobalDataScope.variables` in the for loop below. TODO can probably clean this up.
     // TODO IMPORTANT surely a closure body scope should look outside the scope so we should pass true??
-    global_data.push_new_scope(false, Vec::new());
+    global_data.scopes.push(GlobalDataScope {
+        variables: Vec::new(),
+        items: Vec::new(),
+        _look_in_outer_scope: false,
+        use_mappings: Vec::new(),
+    });
 
     // Below is copied/adapted from `handle_item_fn()`. Ideally we would use the same code for both but closure inputs are just pats because they have no self/reciever and might not even have a type eg `|x| x + 1`
     // record which vars are mut and/or &mut
@@ -1534,7 +1549,7 @@ fn handle_expr_closure(
         }
     };
 
-    global_data.pop_scope();
+    global_data.scopes.pop();
 
     (
         JsExpr::ArrowFn(async_, body_is_js_block, inputs, body_stmts),
@@ -2785,7 +2800,12 @@ pub fn handle_expr_block(
     let span = debug_span!("handle_expr_block");
     let _guard = span.enter();
 
-    global_data.push_new_scope(true, Vec::new());
+    global_data.scopes.push(GlobalDataScope {
+        variables: Vec::new(),
+        items: Vec::new(),
+        _look_in_outer_scope: true,
+        use_mappings: Vec::new(),
+    });
     // TODO block needs to use something like parse_fn_body to be able to return the type
     // let (stmts, types): (Vec<_>, Vec<_>) = expr_block
     //     .block
@@ -2803,7 +2823,7 @@ pub fn handle_expr_block(
     );
 
     // pop block scope
-    global_data.pop_scope();
+    global_data.scopes.pop();
     // update_classes_js_stmts(&mut stmts, &scope.unwrap().impl_blocks);
 
     let block_returns_value = match stmts.last().unwrap() {
@@ -3428,6 +3448,8 @@ fn handle_expr_path_inner(
                     scoped_partial_rust_type
                 } else {
                     // We don't have a scoped match so path must be a module level definiton
+                    dbg!(&global_data.item_refs);
+                    dbg!(&segs_copy_module_path);
                     let item_module = global_data.get_module(&segs_copy_module_path);
                     let item_def = item_module
                         .items
@@ -4052,7 +4074,12 @@ pub fn handle_expr_match(
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
                 let index = cond_rhs.len() - 1;
                 cond_rhs[index] = format!("{}Id", cond_rhs[index].clone());
-                global_data.push_new_scope(true, scoped_vars);
+                global_data.scopes.push(GlobalDataScope {
+                    variables: scoped_vars,
+                    items: Vec::new(),
+                    _look_in_outer_scope: true,
+                    use_mappings: Vec::new(),
+                });
 
                 let (succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -4096,7 +4123,7 @@ pub fn handle_expr_match(
                 }
 
                 // pop match arm scope stuff
-                global_data.pop_scope();
+                global_data.scopes.pop();
 
                 // body_data_destructure.extend(body_js_stmts.into_iter());
                 // let succeed_body = body_data_destructure;
@@ -4121,7 +4148,12 @@ pub fn handle_expr_match(
                 // Need to take the path which will be eg [MyEnum, Baz], and convert to [MyEnum.bazId]
                 let index = cond_rhs.len() - 1;
                 cond_rhs[index] = format!("{}_id", cond_rhs[index].clone());
-                global_data.push_new_scope(true, scoped_vars);
+                global_data.scopes.push(GlobalDataScope {
+                    variables: scoped_vars,
+                    items: Vec::new(),
+                    _look_in_outer_scope: true,
+                    use_mappings: Vec::new(),
+                });
 
                 let (mut fail_body_js_stmts, _fail_body_return_type) = match &*fail_arm.body {
                     // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -4161,7 +4193,7 @@ pub fn handle_expr_match(
                 }
 
                 // pop match arm scope stuff
-                global_data.pop_scope();
+                global_data.scopes.pop();
 
                 // body_data_destructure.extend(body_js_stmts.into_iter());
                 // let fail_body = body_data_destructure;
@@ -4245,7 +4277,12 @@ pub fn handle_expr_match(
 
             // Create new scope for match arm block
             // NOTE even if there is no curly braces it is still a scope
-            global_data.push_new_scope(true, scoped_vars);
+            global_data.scopes.push(GlobalDataScope {
+                variables: scoped_vars,
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+            });
 
             let (body_js_stmts, body_return_type) = match &*arm.body {
                 // Expr::Array(_) => [JsStmt::Raw("sdafasdf".to_string())].to_vec(),
@@ -4270,7 +4307,7 @@ pub fn handle_expr_match(
             };
 
             // pop match arm scope stuff
-            global_data.pop_scope();
+            global_data.scopes.pop();
 
             body_data_destructure.extend(body_js_stmts);
             let body = body_data_destructure;

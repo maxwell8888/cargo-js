@@ -315,6 +315,7 @@ pub struct GlobalData {
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
     pub item_refs: Vec<ItemRef>,
+    pub item_refs_to_render: Vec<ItemRef>,
     pub item_defs: Vec<ItemV2>,
     pub scopes: Vec<GlobalDataScope>,
     // TODO combine this with impl_items
@@ -476,6 +477,7 @@ impl GlobalData {
             // crates: vec![ravascript_prelude_crate],
             _crates: vec![],
             item_refs,
+            item_refs_to_render: Vec::new(),
             item_defs,
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
@@ -500,17 +502,6 @@ impl GlobalData {
             // scope_count: vec![0],
             // at_module_top_level: false,
         }
-    }
-
-    pub fn scope_id_as_option(&self) -> Option<Vec<usize>> {
-        todo!()
-    }
-
-    pub fn push_new_scope(&mut self, look_in_outer_scope: bool, variables: Vec<ScopedVar>) {
-        todo!()
-    }
-    pub fn pop_scope(&mut self) {
-        todo!()
     }
 
     pub fn get_trait(&self, index: usize) -> RustTraitDefinition {
@@ -766,13 +757,22 @@ impl GlobalData {
             .unwrap()
     }
     pub fn get_module(&self, module_path: &[String]) -> &RustMod {
-        self.item_refs
-            .iter()
-            .find_map(|item_ref| match item_ref {
-                ItemRef::Mod(rust_mod) if rust_mod.module_path == module_path => Some(rust_mod),
+        fn get_module_from_refs<'a>(
+            item_refs: &'a [ItemRef],
+            module_path: &[String],
+        ) -> Option<&'a RustMod> {
+            item_refs.iter().find_map(|item_ref| match item_ref {
+                ItemRef::Mod(rust_mod) => {
+                    if rust_mod.module_path == module_path {
+                        Some(rust_mod)
+                    } else {
+                        get_module_from_refs(&rust_mod.items, module_path)
+                    }
+                }
                 _ => None,
             })
-            .unwrap()
+        }
+        get_module_from_refs(&self.item_refs, module_path).unwrap()
     }
 
     // NOTE don't need this because we are already resolving paths with get_path()??
@@ -1477,6 +1477,10 @@ pub fn resolve_path(
         use_private_items || is_parent_or_same_module,
         &segs[0].ident,
     );
+    dbg!(&module);
+    dbg!(&is_parent_or_same_module);
+    dbg!(&segs[0].ident);
+    dbg!(path_starts_with_sub_module);
 
     // TODO only look through transparent scopes
     // We look through scopes, simultaneously looking for a matching var, use_mapping, or item

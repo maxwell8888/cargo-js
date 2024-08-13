@@ -35,6 +35,7 @@ use crate::{
 /// all users (eg crate, fn, file) want to group classes, but only crates want to populate boilerplate
 pub fn js_stmts_from_syn_items(
     // items: Vec<Item>,
+    module_item_refs: &[ItemRef],
     // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &[String],
     global_data: &mut GlobalData,
@@ -59,25 +60,25 @@ pub fn js_stmts_from_syn_items(
     // dbg!("js_stmts_from_syn_items");
     // dbg!(&global_data.scope_id);
     let item_defs = global_data.item_defs.clone();
-    for item in &global_data.item_refs.clone() {
+    // for item in &global_data.item_refs_to_render.clone() {
+    for item in module_item_refs {
+        dbg!(item);
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
             ItemRef::Const(index) => {
+                dbg!("const hera");
                 let item = &item_defs[*index];
                 let const_def = match item {
                     ItemV2::Const(actual) => actual,
                     _ => todo!(),
                 };
-                js_stmts.push(handle_item_const(
-                    const_def,
-                    true,
-                    global_data,
-                    current_module,
-                ));
+                let js_stmt = handle_item_const(const_def, true, global_data, current_module);
+                dbg!(&js_stmt);
+                js_stmts.push(js_stmt);
             }
             ItemRef::StructOrEnum(index) => {
                 let item = &item_defs[*index];
-                let item_enum = match item {
+                match item {
                     ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
                         StructOrEnumDefitionInfo::Struct(struct_def) => {
                             js_stmts.push(handle_item_struct(
@@ -97,7 +98,7 @@ pub fn js_stmts_from_syn_items(
                         }
                     },
                     _ => todo!(),
-                };
+                }
             }
             // Item::ExternCrate(_) => todo!(),
             ItemRef::Fn(index) => {
@@ -205,7 +206,12 @@ pub fn handle_item_fn(
     // }
 
     // Create new scope for fn vars
-    global_data.push_new_scope(false, Vec::new());
+    global_data.scopes.push(GlobalDataScope {
+        variables: Vec::new(),
+        items: Vec::new(),
+        _look_in_outer_scope: false,
+        use_mappings: Vec::new(),
+    });
 
     // Adds fn args as `ScopedVar`s
     // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
@@ -342,7 +348,7 @@ pub fn handle_item_fn(
     };
 
     // pop fn scope
-    global_data.pop_scope();
+    global_data.scopes.pop();
 
     stmt
 }
@@ -677,7 +683,7 @@ pub fn handle_item_enum(
         rust_name: item_enum.ident.to_string(),
         is_impl_block: false,
         module_path: current_module.to_vec(),
-        scope_id: global_data.scope_id_as_option(),
+        scope_id: None,
         // struct_or_enum: StructOrEnumSynObject::Enum(item_enum.clone()),
         // impld_methods: methods,
         // generic_trait_impl_methods: todo!(),
@@ -978,7 +984,8 @@ pub fn handle_item_impl(
 
     let unique_id = get_item_impl_unique_id(
         current_module_path,
-        &global_data.scope_id_as_option(),
+        // &global_data.scope_id_as_option(),
+        &None,
         item_impl,
     );
     let impl_blocks = global_data
@@ -1723,7 +1730,8 @@ pub fn handle_item_struct(
         rust_name: item_struct.ident.to_string(),
         is_impl_block: false,
         module_path: current_module_path.to_vec(),
-        scope_id: global_data.scope_id_as_option(),
+        // scope_id: global_data.scope_id_as_option(),
+        scope_id: None,
     };
 
     let mut dedup_impl_block_ids = item_def.impl_block_ids.clone();
@@ -1909,13 +1917,13 @@ pub fn _handle_item_mod(
     // convert from `syn` to `JsStmts`, passing the updated `current_file_path` to be used by any `mod` calls within the new module
 
     global_data.transpiled_modules.push(js_stmt_submodule);
-    let stmts = js_stmts_from_syn_items(current_module_path, global_data);
-    let js_stmt_module = global_data
-        .transpiled_modules
-        .iter_mut()
-        .find(|tm| tm.module_path == current_module_path_copy)
-        .unwrap();
-    js_stmt_module.stmts = stmts;
+    // let stmts = js_stmts_from_syn_items(current_module_path, global_data);
+    // let js_stmt_module = global_data
+    //     .transpiled_modules
+    //     .iter_mut()
+    //     .find(|tm| tm.module_path == current_module_path_copy)
+    //     .unwrap();
+    // js_stmt_module.stmts = stmts;
     current_module_path.pop();
 
     // TODO shouldn't be using .export field as this is for importing from separate files. We don't want to add "export " to public values in a module, simply add them to the return statement of the function.

@@ -950,18 +950,24 @@ pub fn process_items(
 
     // Parse to JS
     let item_refs = global_data.item_refs.clone();
-    let modules = item_refs.iter().filter_map(|item_ref| match item_ref {
-        ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
-            && rust_mod.module_path != [PRELUDE_MODULE_PATH])
-        .then_some(rust_mod),
-        _ => None,
-    });
+    let modules = item_refs
+        .iter()
+        .filter_map(|item_ref| match item_ref {
+            ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
+                && rust_mod.module_path != [PRELUDE_MODULE_PATH])
+            .then_some(rust_mod),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    dbg!(&modules);
+    // global_data.item_refs_to_render = modules;
 
-    for module_data in modules {
+    for rust_mod in modules {
         global_data.scopes.clear();
-        let mut stmts = js_stmts_from_syn_items(&module_data.module_path, &mut global_data);
+        let mut stmts =
+            js_stmts_from_syn_items(&rust_mod.items, &rust_mod.module_path, &mut global_data);
 
-        if with_rust_types && module_data.module_path == ["crate"] {
+        if with_rust_types && rust_mod.module_path == ["crate"] {
             let stmts = if is_block {
                 assert_eq!(stmts.len(), 1);
                 match stmts.first_mut().unwrap() {
@@ -979,8 +985,8 @@ pub fn process_items(
 
         global_data.transpiled_modules.push(JsModule {
             public: true,
-            name: Ident::String(module_data.module_path.last().unwrap().clone()),
-            module_path: module_data.module_path.clone(),
+            name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
+            module_path: rust_mod.module_path.clone(),
             stmts,
         });
     }
