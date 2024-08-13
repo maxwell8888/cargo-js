@@ -65,12 +65,7 @@ pub fn js_stmts_from_syn_items(
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
             ItemRef::Const(index) => {
-                let item = &item_defs[*index];
-                let const_def = match item {
-                    ItemV2::Const(actual) => actual,
-                    _ => todo!(),
-                };
-                let js_stmt = handle_item_const(const_def, true, global_data, current_module);
+                let js_stmt = handle_item_const(*index, true, global_data, current_module);
                 js_stmts.push(js_stmt);
             }
             ItemRef::StructOrEnum(index) => {
@@ -87,7 +82,7 @@ pub fn js_stmts_from_syn_items(
                         }
                         StructOrEnumDefitionInfo::Enum(enum_def) => {
                             js_stmts.push(handle_item_enum(
-                                actual,
+                                *index,
                                 true,
                                 global_data,
                                 current_module,
@@ -99,12 +94,7 @@ pub fn js_stmts_from_syn_items(
             }
             // Item::ExternCrate(_) => todo!(),
             ItemRef::Fn(index) => {
-                let item = &item_defs[*index];
-                let fn_info = match item {
-                    ItemV2::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-                js_stmts.push(handle_item_fn(fn_info, true, global_data, current_module));
+                js_stmts.push(handle_item_fn(*index, true, global_data, current_module));
             }
             // Item::ForeignMod(_) => todo!(),
             ItemRef::Impl(index) => {
@@ -137,12 +127,7 @@ pub fn js_stmts_from_syn_items(
             }
             // ItemRef::Static(_) => todo!(),
             ItemRef::Trait(index) => {
-                let item = &item_defs[*index];
-                let trait_def = match item {
-                    ItemV2::Trait(actual) => actual,
-                    _ => todo!(),
-                };
-                handle_item_trait(trait_def, true, global_data, current_module);
+                handle_item_trait(*index, true, global_data, current_module);
                 js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
             }
             // Item::TraitAlias(_) => todo!(),
@@ -161,13 +146,19 @@ pub fn js_stmts_from_syn_items(
 }
 
 pub fn handle_item_fn(
-    fn_info: &FnInfo,
+    // fn_info: &FnInfo,
+    index: usize,
     // For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // Good also keep track using a field on global data, but for now seems less error prone to pass values to handle fns because it is always clear whether we are at the top level based on whether the item is being parsed within `handle_statments()`
-    _at_module_top_level: bool,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
+    let fn_info = match &global_data.item_defs[index] {
+        ItemV2::Fn(fn_info) => fn_info.clone(),
+        _ => todo!(),
+    };
+
     let item_fn = match &fn_info.syn {
         FnInfoSyn::Standalone(item_fn) => item_fn,
         FnInfoSyn::Impl(_) => todo!(),
@@ -210,6 +201,11 @@ pub fn handle_item_fn(
 
     //     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
     // }
+
+    if !at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.items.push(index);
+    }
 
     // Create new scope for fn vars
     global_data.scopes.push(GlobalDataScope {
@@ -360,7 +356,7 @@ pub fn handle_item_fn(
 }
 
 pub fn handle_item_const(
-    const_def: &ConstDef,
+    index: usize,
     at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
@@ -406,6 +402,16 @@ pub fn handle_item_const(
     //     });
     // }
 
+    if !at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.items.push(index);
+    }
+
+    let const_def = match &global_data.item_defs[index] {
+        ItemV2::Const(const_def) => const_def.clone(),
+        _ => todo!(),
+    };
+
     JsStmt::Local(JsLocal {
         export: false,
         public: const_def.is_pub,
@@ -418,11 +424,17 @@ pub fn handle_item_const(
 /// We convert enum variants like Foo::Bar to Foo.bar because otherwise when the variant has arguments, syn is not able to distinguish it from an associated method, so we cannot deduce when Pascal or Camel case should be used, so stick to Pascal for both case.
 /// We must store separate <variant name>Id fields because otherwise we end up in a situation where a variable containing an enum variant only contains the data returned the the method with that name and then we can't do myVariantVar === MyEnum::Variant because the lhs is data and the rhs is a function.
 pub fn handle_item_enum(
-    item_def: &ItemDefinition,
-    _at_module_top_level: bool,
+    index: usize,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
+    let item = &global_data.item_defs[index];
+    let item_def = match item {
+        ItemV2::StructOrEnum(item_def) => item_def,
+        _ => todo!(),
+    };
+
     let item_enum = match &item_def.struct_or_enum_info {
         StructOrEnumDefitionInfo::Struct(_) => todo!(),
         StructOrEnumDefitionInfo::Enum(enum_def_info) => &enum_def_info.syn_object,
@@ -673,6 +685,11 @@ pub fn handle_item_enum(
     //     &mut methods,
     //     &mut static_fields,
     // );
+
+    if !at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.items.push(index);
+    }
 
     let mut js_class = JsClass {
         public: match item_enum.vis {
@@ -1494,7 +1511,7 @@ pub fn handle_item_impl(
 pub fn handle_item_struct(
     // item_def: &ItemDefinition,
     index: usize,
-    _at_module_top_level: bool,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
@@ -1741,7 +1758,7 @@ pub fn handle_item_struct(
         Fields::Unit => todo!(),
     };
 
-    if !_at_module_top_level {
+    if !at_module_top_level {
         let scope = global_data.scopes.last_mut().unwrap();
         scope.items.push(index);
     }
@@ -1961,8 +1978,8 @@ pub fn _handle_item_mod(
 }
 
 pub fn handle_item_trait(
-    trait_def: &RustTraitDefinition,
-    _at_module_top_level: bool,
+    index: usize,
+    at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
@@ -1975,6 +1992,16 @@ pub fn handle_item_trait(
     //         name: item_trait.ident.to_string(),
     //     });
     // }
+
+    let trait_def = match &global_data.item_defs[index] {
+        ItemV2::Trait(trait_def) => trait_def,
+        _ => todo!(),
+    };
+
+    if !at_module_top_level {
+        let scope = global_data.scopes.last_mut().unwrap();
+        scope.items.push(index);
+    }
 
     if trait_def.default_impls.len() > 0 {
         let methods = trait_def
@@ -2007,6 +2034,7 @@ pub fn handle_item_trait(
                 // ));
             })
             .collect::<Vec<_>>();
+
         JsStmt::Class(JsClass {
             public: todo!(),
             export: todo!(),

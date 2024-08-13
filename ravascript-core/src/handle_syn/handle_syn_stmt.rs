@@ -834,7 +834,7 @@ pub fn handle_stmt(
                             StructOrEnumDefitionInfo::Enum(enum_def) => {
                                 vec![(
                                     handle_item_enum(
-                                        actual,
+                                        *index,
                                         false,
                                         global_data,
                                         current_module_path,
@@ -847,34 +847,19 @@ pub fn handle_stmt(
                     }
                 }
                 ItemRef::Fn(index) => {
-                    let item = &item_defs[*index];
-                    let fn_info = match item {
-                        ItemV2::Fn(fn_info) => fn_info,
-                        _ => todo!(),
-                    };
                     vec![(
-                        handle_item_fn(fn_info, false, global_data, current_module_path),
+                        handle_item_fn(*index, false, global_data, current_module_path),
                         RustType2::Unit,
                     )]
                 }
                 ItemRef::Const(index) => {
-                    let item = &item_defs[*index];
-                    let const_def = match item {
-                        ItemV2::Const(actual) => actual,
-                        _ => todo!(),
-                    };
                     vec![(
-                        handle_item_const(const_def, false, global_data, current_module_path),
+                        handle_item_const(*index, false, global_data, current_module_path),
                         RustType2::Unit,
                     )]
                 }
                 ItemRef::Trait(index) => {
-                    let item = &item_defs[*index];
-                    let trait_def = match item {
-                        ItemV2::Trait(actual) => actual,
-                        _ => todo!(),
-                    };
-                    handle_item_trait(trait_def, true, global_data, current_module_path);
+                    handle_item_trait(*index, true, global_data, current_module_path);
                     vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                 }
                 ItemRef::Impl(index) => {
