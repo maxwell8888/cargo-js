@@ -388,6 +388,10 @@ fn populate_item_def_impl_blocks(
     }
     let mut impl_blocks = Vec::new();
     extract_impl_blocks(item_refs, item_defs, &mut impl_blocks);
+    // dbg!(impl_blocks
+    //     .iter()
+    //     .map(|(index, block)| (index, &block.syn.self_ty))
+    //     .collect::<Vec<_>>());
 
     // Recursively update all structs/enums
     fn update_all_structs_enums(

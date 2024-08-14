@@ -3489,7 +3489,7 @@ fn handle_expr_path_inner(
                                 let item = &global_data.item_defs[*index];
                                 (item.ident() == item_path_seg.ident).then_some(item)
                             }
-                            _ => todo!(),
+                            _ => None,
                         });
 
                     found_item_to_partial_rust_type(item_path_seg, None, item_def, global_data)
