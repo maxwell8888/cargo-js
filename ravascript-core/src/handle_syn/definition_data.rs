@@ -1519,7 +1519,7 @@ pub fn resolve_path(
             .find(|v| single_element_path && is_parent_or_same_module && v.name == segs[0].ident);
         let scoped_item = s.items.iter().find(|index| {
             let item_def = &items_defs[**index];
-            single_element_path && is_parent_or_same_module && item_def.ident() == segs[0].ident
+            is_parent_or_same_module && item_def.ident() == segs[0].ident
         });
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
