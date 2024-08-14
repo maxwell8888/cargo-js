@@ -1087,7 +1087,6 @@ pub fn parse_fn_body_stmts(
                     //     // (JsStmt::Expr(expr, false), type_)
                     // }
                     _other => {
-                        // dbg!("parse_fn_body_stmts");
                         // println!("{}", quote! { #other });
                         if *semi {
                             let stmts = handle_stmt(stmt, global_data, current_module);

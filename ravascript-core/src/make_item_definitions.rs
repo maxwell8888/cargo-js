@@ -620,6 +620,13 @@ pub fn resolve_path(
             || seg.ident == "Copy"
             || seg.ident == "Vec"
         {
+            fn prelude_item_def_name_to_js(item_def_name: &str) -> &str {
+                match item_def_name {
+                    "bool" => "Bool",
+                    other => other,
+                }
+            }
+            let seg_new = prelude_item_def_name_to_js(&seg.ident);
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             let item_index = item_refs
@@ -632,7 +639,7 @@ pub fn resolve_path(
                                     let item = &items_defs[*index];
                                     match item {
                                         ItemActual::StructOrEnum(def) => {
-                                            (def.ident == seg.ident).then_some(*index)
+                                            (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }
@@ -641,7 +648,7 @@ pub fn resolve_path(
                                     let item = &items_defs[*index];
                                     match item {
                                         ItemActual::Fn(def) => {
-                                            (def.ident == seg.ident).then_some(*index)
+                                            (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }
@@ -650,7 +657,7 @@ pub fn resolve_path(
                                     let item = &items_defs[*index];
                                     match item {
                                         ItemActual::Const(def) => {
-                                            (def.name == seg.ident).then_some(*index)
+                                            (def.name == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }
@@ -659,7 +666,7 @@ pub fn resolve_path(
                                     let item = &items_defs[*index];
                                     match item {
                                         ItemActual::Trait(def) => {
-                                            (def.name == seg.ident).then_some(*index)
+                                            (def.name == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }

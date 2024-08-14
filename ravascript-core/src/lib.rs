@@ -13,7 +13,7 @@ use tracing::debug_span;
 use tree_structure::{
     extract_modules2,
     update_definitons::{update_item_definitions2, ItemV2},
-    ItemRef, RustMod,
+    ItemActual, ItemRef, RustMod,
 };
 
 mod tree_structure;
@@ -343,10 +343,34 @@ fn get_traits_implemented_for_item(
 fn populate_item_def_impl_blocks(
     item_refs: &[ItemRef],
     item_defs: &mut [ItemV2],
-    impl_blocks: &[(usize, RustImplBlockSimple)],
+    // impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
     let span = debug_span!("update_classes");
     let _guard = span.enter();
+
+    fn extract_impl_blocks(
+        item_refs: &[ItemRef],
+        item_defs: &[ItemV2],
+        impl_blocks: &mut Vec<(usize, RustImplBlockSimple)>,
+    ) {
+        for item_ref in item_refs {
+            match item_ref {
+                ItemRef::Impl(index) => {
+                    let impl_def = match item_defs[*index].clone() {
+                        ItemV2::Impl(impl_def) => impl_def,
+                        _ => todo!(),
+                    };
+                    impl_blocks.push((*index, impl_def))
+                }
+                ItemRef::Mod(rust_mod) => {
+                    extract_impl_blocks(&rust_mod.items, item_defs, impl_blocks);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut impl_blocks = Vec::new();
+    extract_impl_blocks(item_refs, item_defs, &mut impl_blocks);
 
     // let impl_blocks = global_data.impl_blocks_simpl.clone();
     // First update item defs in modules, then update the rust prelude item defs which are global and don't sit in a module
@@ -371,7 +395,7 @@ fn populate_item_def_impl_blocks(
                         item_def,
                         // &item_def_scope_id,
                         &module.module_path.clone(),
-                        impl_blocks,
+                        &impl_blocks,
                     )
                 }
                 ItemRef::Fn(_) => {}
@@ -849,7 +873,7 @@ pub fn process_items(
     let file = syn::parse_file(code).unwrap();
     let prelude_items = file.items;
 
-    let rust_prelude_items = extract_modules2(
+    let mut rust_prelude_items = extract_modules2(
         true,
         &prelude_items,
         // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
@@ -857,6 +881,26 @@ pub fn process_items(
         &mut vec![PRELUDE_MODULE_PATH.to_string()],
         &mut item_defs,
     );
+    // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
+    item_defs.push(ItemActual::Trait(
+        make_item_definitions::RustTraitDefinition {
+            name: "FnOnce".to_string(),
+            is_pub: true,
+            syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
+            default_impls: Vec::new(),
+        },
+    ));
+    rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
+    item_defs.push(ItemActual::Trait(
+        make_item_definitions::RustTraitDefinition {
+            name: "Copy".to_string(),
+            is_pub: true,
+            syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
+            default_impls: Vec::new(),
+        },
+    ));
+
+    rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
     crate_item_refs.insert(
         0,
         ItemRef::Mod(RustMod {
@@ -886,28 +930,6 @@ pub fn process_items(
     // Updates module.item_defs etc and module.scoped_various_definitions. Doesn't use any data from global_data, only pushes data to ModuleData
     // let mut actual_modules = make_item_definitions(modules);
 
-    // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
-    // let prelude_module_data = actual_modules
-    //     .iter_mut()
-    //     .find(|m| m.path == [PRELUDE_MODULE_PATH])
-    //     .unwrap();
-    // prelude_module_data
-    //     .various_definitions
-    //     .trait_definitons
-    //     .push(make_item_definitions::RustTraitDefinition {
-    //         name: "FnOnce".to_string(),
-    //         is_pub: true,
-    //         syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
-    //     });
-    // prelude_module_data
-    //     .various_definitions
-    //     .trait_definitons
-    //     .push(make_item_definitions::RustTraitDefinition {
-    //         name: "Copy".to_string(),
-    //         is_pub: true,
-    //         syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
-    //     });
-
     // find duplicates
     let duplicates = namespace_duplicates(&crate_item_refs, &item_defs);
 
@@ -923,15 +945,13 @@ pub fn process_items(
         duplicates,
     );
 
-    let impl_blocks = Vec::new();
-
     // global_data_crate_path is use when reading module files eg global_data_crate_path = "../my_crate/" which is used to prepend "src/some_module/submodule.rs"
 
     // Match `RustImplBlockSimpl`s to item definitions. It is necessary to do it at this stage so that we can look up method info when parsing syn -> JS. We also use this in update_classes2 to know which parsed JS impls to lookup to add their methods/fields to the class. What??? there doesn't seem to be any JS parsing here?
     // iterates through `global_data.impl_blocks_simpl`'s `RustImplBlockSimple`s to populate `item_def.impl_blocks` with `ItemDefintionImpls`s
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
-    populate_item_def_impl_blocks(&crate_item_refs, &mut item_defs, &impl_blocks);
+    populate_item_def_impl_blocks(&crate_item_refs, &mut item_defs);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -959,7 +979,6 @@ pub fn process_items(
     // global_data.modules = new_modules;
     // global_data.impl_blocks_simpl = impl_blocks;
 
-    // Parse to JS
     let item_refs = global_data.item_refs.clone();
     let modules = item_refs
         .iter()

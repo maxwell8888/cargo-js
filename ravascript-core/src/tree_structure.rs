@@ -22,6 +22,7 @@ use crate::{
     make_item_definitions::{
         ConstDef, FnInfo, FnInfoSyn, ItemDefinition, RustTraitDefinition, StructOrEnumDefitionInfo,
     },
+    update_item_definitions::{RustImplBlockSimple, RustType},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
@@ -49,6 +50,12 @@ pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ImplItemExprStmtRefs {
+    Fn(Vec<StmtsRef>),
+    Const,
+}
+
 // Actual definitions (only use at top level)
 #[derive(Debug, Clone)]
 pub enum ItemActual {
@@ -56,7 +63,8 @@ pub enum ItemActual {
     Fn(FnInfo),
     Const(ConstDef),
     Trait(RustTraitDefinition),
-    Impl(ItemImpl),
+    // TODO replace these with proper type to be more consistent with othe variants?
+    Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
     // Should never be handled, only used for empty initialisation
     // TODO replace use with Option?
     None,
@@ -72,7 +80,7 @@ impl ItemActual {
             ItemActual::Const(def) => &def.name,
             ItemActual::Trait(def) => &def.name,
             // ItemActual::Impl(_) => panic!(),
-            ItemActual::Impl(_) => panic!(),
+            ItemActual::Impl(_, _) => panic!(),
             ItemActual::None => panic!(),
         }
     }
@@ -703,7 +711,36 @@ fn item_to_item_ref(
             //     }
             // }
 
-            actual_item_defs.push(ItemActual::Impl(item_impl));
+            let item_actual = ItemActual::Impl(
+                item_impl.clone(),
+                item_impl
+                    .items
+                    .into_iter()
+                    .map(|impl_item| match impl_item {
+                        ImplItem::Const(_) => ImplItemExprStmtRefs::Const,
+                        ImplItem::Fn(impl_item_fn) => ImplItemExprStmtRefs::Fn(
+                            impl_item_fn
+                                .block
+                                .stmts
+                                .into_iter()
+                                .map(|stmt| {
+                                    stmt_to_stmts_ref(
+                                        stmt,
+                                        actual_item_defs,
+                                        crate_path,
+                                        current_path,
+                                    )
+                                })
+                                .collect(),
+                        ),
+                        ImplItem::Type(_) => todo!(),
+                        ImplItem::Macro(_) => todo!(),
+                        ImplItem::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    })
+                    .collect(),
+            );
+            actual_item_defs.push(item_actual);
             ItemRef::Impl(actual_item_defs.len() - 1)
         }
         Item::Macro(_) => {
@@ -2463,7 +2500,7 @@ pub mod update_definitons {
         RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
 
-    use super::{expr_to_expr_ref, ItemActual, ItemRef, StmtsRef};
+    use super::{expr_to_expr_ref, stmt_to_stmts_ref, ItemActual, ItemRef, StmtsRef};
 
     // This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
     // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
@@ -2620,7 +2657,23 @@ pub mod update_definitons {
                     );
                 }
                 // TODO
-                ItemRef::Impl(_) => {}
+                ItemRef::Impl(index) => {
+                    let item = item_defs_no_types[*index].clone();
+                    updated_item_defs[*index] = update_item_def(
+                        item,
+                        current_module,
+                        item_refs_all,
+                        item_defs_no_types,
+                        scoped_items,
+                        in_scope,
+                        duplicates,
+                    );
+
+                    if in_scope {
+                        // TODO
+                        // scoped_items.last_mut().unwrap().push(item_ref.clone());
+                    }
+                }
                 ItemRef::Use(_) => {}
                 ItemRef::Macro => todo!(),
             }
@@ -2994,7 +3047,7 @@ pub mod update_definitons {
                         .collect(),
                 })
             }
-            ItemActual::Impl(item_impl) => {
+            ItemActual::Impl(item_impl, impl_items_refs) => {
                 let impl_item_target_path = match &*item_impl.self_ty {
                     Type::Path(type_path) => type_path
                         .path
@@ -3186,7 +3239,8 @@ pub mod update_definitons {
                 let rust_items = item_impl
                     .items
                     .iter()
-                    .map(|syn_item| {
+                    .zip(impl_items_refs)
+                    .map(|(syn_item, exprs_stmts_refs)| {
                         let item_name = match syn_item {
                             ImplItem::Const(_) => todo!(),
                             ImplItem::Fn(impl_item_fn) => impl_item_fn.sig.ident.to_string(),
@@ -3324,7 +3378,10 @@ pub mod update_definitons {
                                         generics: fn_generics,
                                         return_type,
                                         syn: FnInfoSyn::Impl(impl_item_fn.clone()),
-                                        stmts: Vec::new(),
+                                        stmts: match exprs_stmts_refs {
+                                            super::ImplItemExprStmtRefs::Fn(stmt_refs) => stmt_refs,
+                                            super::ImplItemExprStmtRefs::Const => todo!(),
+                                        },
                                     },
                                 )
                             }
@@ -4205,6 +4262,15 @@ pub mod update_definitons {
                 || seg.ident == "Copy"
                 || seg.ident == "Vec"
             {
+                // TODO shouldn't need this
+                fn prelude_item_def_name_to_js(item_def_name: &str) -> &str {
+                    match item_def_name {
+                        "bool" => "Bool",
+                        other => other,
+                    }
+                }
+                let seg_new = prelude_item_def_name_to_js(&seg.ident);
+
                 // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
                 // TODO properly encode "prelude_special_case" in a type rather than a String
                 let item_index = module_items
@@ -4212,12 +4278,15 @@ pub mod update_definitons {
                     .find_map(|item_ref| match item_ref {
                         ItemRef::Mod(rust_mod) => {
                             if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
+                                dbg!("got prelude 2");
                                 rust_mod.items.iter().find_map(|item_ref| match item_ref {
                                     ItemRef::StructOrEnum(index) => {
                                         let item = &items_defs[*index];
                                         match item {
                                             ItemActual::StructOrEnum(def) => {
-                                                (def.ident == seg.ident).then_some(*index)
+                                                dbg!(&seg_new);
+                                                dbg!(&def.ident);
+                                                (def.ident == seg_new).then_some(*index)
                                             }
                                             _ => todo!(),
                                         }
@@ -4226,7 +4295,7 @@ pub mod update_definitons {
                                         let item = &items_defs[*index];
                                         match item {
                                             ItemActual::Fn(def) => {
-                                                (def.ident == seg.ident).then_some(*index)
+                                                (def.ident == seg_new).then_some(*index)
                                             }
                                             _ => todo!(),
                                         }
@@ -4235,7 +4304,7 @@ pub mod update_definitons {
                                         let item = &items_defs[*index];
                                         match item {
                                             ItemActual::Const(def) => {
-                                                (def.name == seg.ident).then_some(*index)
+                                                (def.name == seg_new).then_some(*index)
                                             }
                                             _ => todo!(),
                                         }
@@ -4244,7 +4313,7 @@ pub mod update_definitons {
                                         let item = &items_defs[*index];
                                         match item {
                                             ItemActual::Trait(def) => {
-                                                (def.name == seg.ident).then_some(*index)
+                                                (def.name == seg_new).then_some(*index)
                                             }
                                             _ => todo!(),
                                         }

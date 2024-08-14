@@ -1130,6 +1130,9 @@ impl GlobalData {
 
         // impl_method
 
+        // dbg!(&item_def.ident);
+        // dbg!(&item_def.impl_block_ids);
+        // dbg!(&sub_path.ident);
         Some(
             item_def
                 .impl_block_ids

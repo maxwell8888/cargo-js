@@ -750,14 +750,14 @@ pub fn handle_item_enum(
 }
 
 pub fn handle_impl_item_fn(
-    js_impl_items: &mut Vec<RustImplItemJs>,
-    _impl_item: &ImplItem,
+    // _impl_item: &ImplItem,
     impl_item_fn: &ImplItemFn,
     global_data: &mut GlobalData,
     current_module_path: &[String],
     target_rust_type: &RustType2,
     rust_impl_item: &RustImplItemNoJs,
-) {
+    // ) -> RustImplItemJs {
+) -> RustImplItemItemJs {
     let _static_ = matches!(impl_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
     // let private = !export;
     let js_input_names = impl_item_fn
@@ -919,6 +919,7 @@ pub fn handle_impl_item_fn(
     let body_stmts = match &rust_impl_item.item {
         RustImplItemItemNoJs::Fn(_static, fn_info) => {
             //
+
             parse_fn_body_stmts(
                 false,
                 returns_non_mut_ref_val,
@@ -932,6 +933,8 @@ pub fn handle_impl_item_fn(
     };
 
     let body_stmts = Some(body_stmts);
+
+    global_data.scopes.pop();
 
     // TODO no idea why body_stmts is an `Option`
     // Push to rust_impl_items
@@ -966,16 +969,15 @@ pub fn handle_impl_item_fn(
             input_names: js_input_names,
             body_stmts,
         };
-        js_impl_items.push(RustImplItemJs {
-            ident: impl_item_fn.sig.ident.to_string(),
-            item: RustImplItemItemJs::Fn(static_, fn_info, js_fn),
-            // syn_object: impl_item.clone(),
-        });
+        // RustImplItemJs {
+        //     ident: impl_item_fn.sig.ident.to_string(),
+        //     item: RustImplItemItemJs::Fn(static_, fn_info, js_fn),
+        //     // syn_object: impl_item.clone(),
+        // }
+        RustImplItemItemJs::Fn(static_, fn_info, js_fn)
+    } else {
+        todo!()
     }
-    info!("handle_item_impl after scope");
-    // dbg!(&global_data.scopes);
-
-    global_data.scopes.pop();
 }
 
 pub fn handle_item_impl(
@@ -987,7 +989,11 @@ pub fn handle_item_impl(
 ) -> Vec<JsStmt> {
     let rust_impl_block = match global_data.item_defs[index].clone() {
         ItemV2::Impl(impl_block) => impl_block,
-        _ => todo!(),
+        other => {
+            dbg!(index);
+            dbg!(other);
+            todo!()
+        }
     };
     let item_impl = rust_impl_block.syn.clone();
 
@@ -997,134 +1003,11 @@ pub fn handle_item_impl(
     };
     let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
     let _guard = span.enter();
-    // dbg!(format!(
-    //     "handle_impl_item: {:?}, {:?}",
-    //     &item_impl.trait_, &item_impl.self_ty
-    // ));
-
-    // let unique_id = get_item_impl_unique_id(
-    //     current_module_path,
-    //     // &global_data.scope_id_as_option(),
-    //     &None,
-    //     item_impl,
-    // );
-
-    // let impl_blocks = global_data
-    //     .impl_blocks_simpl
-    //     .iter()
-    //     .filter(|ib| ib.index == unique_id)
-    //     .cloned()
-    //     .collect::<Vec<_>>();
-
-    // let an_impl_block: RustImplBlockSimple = impl_blocks[0].clone();
-
-    // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
-    let impl_item_target_path = match &*item_impl.self_ty {
-        Type::Path(type_path) => type_path
-            .path
-            .segments
-            .iter()
-            .map(|s| s.ident.to_string())
-            .collect::<Vec<_>>(),
-        _ => todo!(),
-    };
 
     let rust_impl_block_generics = rust_impl_block.generics;
 
-    let target_type_param = match &*item_impl.self_ty {
-        Type::Path(type_path) => {
-            if type_path.path.segments.len() == 1 {
-                rust_impl_block_generics
-                    .iter()
-                    .find(|generic| type_path.path.segments.first().unwrap().ident == generic.ident)
-                    .cloned()
-            } else {
-                None
-            }
-        }
-        // TODO handle other `Type`s properly
-        _ => None,
-    };
-
-    // let trait_path_and_name = item_impl.trait_.as_ref().map(|(_, trait_, _)| {
-    //     let (module_path, scope_id, trait_def) = global_data.lookup_trait_definition_any_module(
-    //         current_module_path,
-    //         &global_data.scope_id_as_option(),
-    //         trait_
-    //             .segments
-    //             .iter()
-    //             .map(|seg| seg.ident.to_string())
-    //             .collect::<Vec<_>>(),
-    //     );
-    //     (module_path, scope_id, trait_def.name)
-    // });
     let trait_path_and_name = rust_impl_block.trait_;
 
-    // if let Some(trait_) = &item_impl.trait_ {
-    //     if trait_.1.segments.len() != 1 {
-    //         todo!()
-    //     }
-    //     global_data.default_trait_impls_class_mapping.push((
-    //         target_item.ident.clone(),
-    //         trait_.1.segments.first().unwrap().ident.to_string(),
-    //     ));
-    // }
-
-    // let (target_rust_type, is_target_type_param) =
-    //     if let Some(target_type_param) = target_type_param {
-    //         (
-    //             RustType2::TypeParam(RustTypeParam2 {
-    //                 name: target_type_param.ident.clone(),
-    //                 type_: RustTypeParamValue2::Unresolved,
-    //             }),
-    //             true,
-    //         )
-    //     } else {
-    //         // Get type of impl target
-    //         let opt_scope_id = global_data.scope_id_as_option();
-    //         let (target_item_module, _resolved_scope_id, target_item) = global_data
-    //             .lookup_item_definition_any_module_or_scope(
-    //                 current_module_path,
-    //                 &opt_scope_id,
-    //                 &impl_item_target_path,
-    //             );
-
-    //         // TODO seems like we are only handling cases like `impl<T> Foo<T>` and not `impl Foo<i32>`?
-    //         let target_item_type_params = target_item
-    //             .generics
-    //             .iter()
-    //             .map(|g| RustTypeParam2 {
-    //                 name: g.clone(),
-    //                 type_: RustTypeParamValue2::Unresolved,
-    //             })
-    //             .collect::<Vec<_>>();
-
-    //         if target_item_module == [PRELUDE_MODULE_PATH] {
-    //             // NOTE we have called lookup_item_definition_any_module_or_scope which of course returns an ItemDefinition but this might be for eg `Option`, so we must check and return the correct RustType
-    //             match target_item.ident.as_str() {
-    //                 "Option" => {
-    //                     assert_eq!(target_item_type_params.len(), 1);
-    //                     (
-    //                         RustType2::Option(target_item_type_params.into_iter().next().unwrap()),
-    //                         false,
-    //                     )
-    //                 }
-    //                 "i32" => {
-    //                     assert_eq!(target_item_type_params.len(), 0);
-    //                     (RustType2::I32, false)
-    //                 }
-    //                 _ => {
-    //                     dbg!(target_item);
-    //                     todo!()
-    //                 }
-    //             }
-    //         } else {
-    //             (
-    //                 RustType2::StructOrEnum(target_item_type_params, target_item),
-    //                 false,
-    //             )
-    //         }
-    //     };
     let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
     let is_target_type_param = match target_rust_type {
         RustType2::TypeParam(_) => true,
@@ -1135,89 +1018,35 @@ pub fn handle_item_impl(
         .impl_block_target_type
         .push(target_rust_type.clone());
 
-    // let mut impl_stmts = Vec::new();
-    // let mut rust_impl_items = Vec::new();
-    // for impl_item in &item_impl.items {
-    //     match impl_item {
-    //         ImplItem::Const(impl_item_const) => {
-    //             let js_local = JsLocal {
-    //                 public: false,
-    //                 export: false,
-    //                 type_: LocalType::Static,
-    //                 lhs: LocalName::Single(Ident::Syn(impl_item_const.ident.clone())),
-    //                 value: handle_expr(&impl_item_const.expr, global_data, current_module_path).0,
-    //             };
-
-    //             rust_impl_items.push(RustImplItemJs {
-    //                 ident: impl_item_const.ident.to_string(),
-    //                 item: RustImplItemItemJs::Const(js_local),
-    //                 // syn_object: impl_item.clone(),
-    //             });
-    //         }
-    //         ImplItem::Fn(impl_item_fn) => {
-    //             let rust_impl_item = impl_blocks
-    //                 .iter()
-    //                 .find_map(|impl_block| {
-    //                     impl_block
-    //                         .rust_items
-    //                         .iter()
-    //                         .find(|i| impl_item_fn.sig.ident == i.ident)
-    //                 })
-    //                 .unwrap();
-
-    //             handle_impl_item_fn(
-    //                 &mut rust_impl_items,
-    //                 impl_item,
-    //                 impl_item_fn,
-    //                 global_data,
-    //                 current_module_path,
-    //                 &target_rust_type,
-    //                 rust_impl_item,
-    //             )
-    //         }
-    //         ImplItem::Type(_) => todo!(),
-    //         ImplItem::Macro(_) => todo!(),
-    //         ImplItem::Verbatim(_) => todo!(),
-    //         _ => todo!(),
-    //     }
-    // }
-
     let rust_impl_items = rust_impl_block
         .rust_items
         .into_iter()
         .map(|item| RustImplItemJs {
             ident: item.ident.clone(),
-            item: match item.item {
+            item: match &item.item {
                 RustImplItemItemNoJs::Fn(static_, fn_info) => {
                     // TODO IMPORTANT reuse code from handle_item_fn
 
-                    // let js = handle_impl_item_fn(
-                    //     &mut rust_impl_items,
-                    //     impl_item,
-                    //     impl_item_fn,
-                    //     global_data,
-                    //     current_module_path,
-                    //     &target_rust_type,
-                    //     rust_impl_item,
-                    // );
-                    let js = JsFn {
-                        iife: todo!(),
-                        public: todo!(),
-                        export: todo!(),
-                        async_: todo!(),
-                        is_method: todo!(),
-                        name: todo!(),
-                        input_names: todo!(),
-                        body_stmts: todo!(),
-                    };
-                    RustImplItemItemJs::Fn(static_, fn_info, js)
+                    // RustImplItemItemJs::Fn(static_, fn_info, js)
+                    handle_impl_item_fn(
+                        // impl_item,
+                        match &fn_info.syn {
+                            FnInfoSyn::Standalone(_) => todo!(),
+                            FnInfoSyn::Impl(impl_item_fn) => impl_item_fn,
+                            FnInfoSyn::Trait(_) => todo!(),
+                        },
+                        global_data,
+                        current_module_path,
+                        &target_rust_type,
+                        &item,
+                    )
                 }
                 RustImplItemItemNoJs::Const => RustImplItemItemJs::Const(todo!()),
             },
         })
         .collect::<Vec<_>>();
 
-    let rust_impl_block = JsImplBlock2 {
+    let js_impl_block = JsImplBlock2 {
         index,
         _generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
@@ -1227,6 +1056,9 @@ pub fn handle_item_impl(
             .map(|x| (false, x))
             .collect::<Vec<_>>(),
     };
+    global_data.impl_block_target_type.pop();
+
+    global_data.impl_blocks.push(js_impl_block.clone());
 
     // If the block gets pushed to `global_data.impl_blocks` then `update_clases()` should add the method to the appropriate class, however if the block is added to a scope then we need to do what `update_classes()` does here.
 
@@ -1305,12 +1137,8 @@ pub fn handle_item_impl(
     //     global_data.impl_blocks.push(rust_impl_block.clone());
     // }
 
-    global_data.impl_blocks.push(rust_impl_block.clone());
-
-    global_data.impl_block_target_type.pop();
-
     let class_stmt = if is_target_type_param || matches!(target_rust_type, RustType2::I32) {
-        let static_fields = rust_impl_block
+        let static_fields = js_impl_block
             .items
             .iter()
             .cloned()
@@ -1319,13 +1147,13 @@ pub fn handle_item_impl(
                 RustImplItemItemJs::Const(js_local) => Some(js_local),
             })
             .collect::<Vec<_>>();
-        let methods = rust_impl_block
+        let methods = js_impl_block
             .items
             .iter()
             .cloned()
             .filter_map(|(_used, item)| match item.item {
                 RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
-                    Some((rust_impl_block.js_name(), static_, js_fn))
+                    Some((js_impl_block.js_name(), static_, js_fn))
                 }
                 RustImplItemItemJs::Const(_) => None,
             })
@@ -1335,7 +1163,7 @@ pub fn handle_item_impl(
             public: false,
             export: false,
             tuple_struct: false,
-            name: rust_impl_block.js_name(),
+            name: js_impl_block.js_name(),
             inputs: Vec::new(),
             static_fields,
             methods,
@@ -1356,6 +1184,7 @@ pub fn handle_item_impl(
             "String" => "String",
             "str" => "String",
             // "bool" => "Boolean",
+            // TODO why Bool not bool?????
             "Bool" => "Boolean",
             "Box" => "donotuse",
             "Option" => "donotuse",
@@ -1395,10 +1224,10 @@ pub fn handle_item_impl(
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         // If impl block matches the prelude type, push prototype assignments for each item in block
         if prelude_item_def.impl_block_ids.contains(&index) {
-            for (_is_used, item) in &rust_impl_block.items {
+            for (_is_used, item) in &js_impl_block.items {
                 // TODO only add if `is_used == true`
                 let item_name = Ident::String(item.ident.clone());
-                let block_name = &rust_impl_block.js_name();
+                let block_name = &js_impl_block.js_name();
 
                 // methods on primative values like i32 need to be added to eg `RustInteger` rather than `Number` if they take `&mut self`
                 let method_self_mut_ref = match &item.item {
@@ -1789,39 +1618,98 @@ pub fn handle_item_struct(
             .impl_blocks
             .iter()
             .filter(|jib| &jib.index == impl_block_id)
-        {
-            let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
+        {}
 
-            for (_used, impl_item) in &js_impl_block.items {
-                // TODO implement used
-                // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
-                match &impl_item.item {
-                    RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
-                        if is_generic_impl {
-                            js_class.static_fields.push(JsLocal {
-                                public: false,
-                                export: false,
-                                type_: LocalType::None,
-                                lhs: LocalName::Single(js_fn.name.clone()),
-                                value: JsExpr::Path(PathIdent::Path(
-                                    [
-                                        js_impl_block.js_name(),
-                                        Ident::Str("prototype"),
-                                        js_fn.name.clone(),
-                                    ]
-                                    .to_vec(),
-                                )),
-                            });
-                        } else {
-                            js_class.methods.push((
-                                Ident::String(item_def.ident.clone()),
-                                *static_,
-                                js_fn.clone(),
-                            ));
-                        }
+        // let js_impl_block = &global_data.impl_blocks[*impl_block_id];
+
+        // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
+
+        let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
+            ItemV2::Impl(impl_block) => impl_block,
+            other => {
+                dbg!(index);
+                dbg!(other);
+                todo!()
+            }
+        };
+
+        let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
+
+        global_data
+            .impl_block_target_type
+            .push(target_rust_type.clone());
+
+        let rust_impl_items = rust_impl_block
+            .rust_items
+            .into_iter()
+            .map(|item| RustImplItemJs {
+                ident: item.ident.clone(),
+                item: match &item.item {
+                    RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                        // TODO IMPORTANT reuse code from handle_item_fn
+
+                        // RustImplItemItemJs::Fn(static_, fn_info, js)
+                        handle_impl_item_fn(
+                            // impl_item,
+                            match &fn_info.syn {
+                                FnInfoSyn::Standalone(_) => todo!(),
+                                FnInfoSyn::Impl(impl_item_fn) => impl_item_fn,
+                                FnInfoSyn::Trait(_) => todo!(),
+                            },
+                            global_data,
+                            current_module_path,
+                            &target_rust_type,
+                            &item,
+                        )
                     }
-                    RustImplItemItemJs::Const(_) => todo!(),
+                    RustImplItemItemNoJs::Const => RustImplItemItemJs::Const(todo!()),
+                },
+            })
+            .collect::<Vec<_>>();
+        // dbg!(&rust_impl_items);
+
+        let js_impl_block = JsImplBlock2 {
+            index,
+            _generics: rust_impl_block.generics,
+            trait_: rust_impl_block.trait_,
+            target: target_rust_type.clone(),
+            items: rust_impl_items
+                .into_iter()
+                .map(|x| (false, x))
+                .collect::<Vec<_>>(),
+        };
+
+        let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
+
+        for (_used, impl_item) in &js_impl_block.items {
+            // TODO implement used
+            // TODO What about `impl Foo for T {}`? This means we need to add prototype fields, not methods?
+            match &impl_item.item {
+                RustImplItemItemJs::Fn(static_, _fn_info, js_fn) => {
+                    if is_generic_impl {
+                        js_class.static_fields.push(JsLocal {
+                            public: false,
+                            export: false,
+                            type_: LocalType::None,
+                            lhs: LocalName::Single(js_fn.name.clone()),
+                            value: JsExpr::Path(PathIdent::Path(
+                                [
+                                    js_impl_block.js_name(),
+                                    Ident::Str("prototype"),
+                                    js_fn.name.clone(),
+                                ]
+                                .to_vec(),
+                            )),
+                        });
+                    } else {
+                        js_class.methods.push((
+                            Ident::String(item_def.ident.clone()),
+                            *static_,
+                            js_fn.clone(),
+                        ));
+                    }
                 }
+                RustImplItemItemJs::Const(_) => todo!(),
             }
         }
     }
