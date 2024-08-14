@@ -13,7 +13,7 @@ use tracing::debug_span;
 use tree_structure::{
     extract_modules2,
     update_definitons::{update_item_definitions2, ItemV2},
-    ItemActual, ItemRef, RustMod,
+    ItemActual, ItemRef, RustMod, StmtsRef,
 };
 
 mod tree_structure;
@@ -345,6 +345,8 @@ fn populate_item_def_impl_blocks(
     item_defs: &mut [ItemV2],
     // impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
+    // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
+
     let span = debug_span!("update_classes");
     let _guard = span.enter();
 
@@ -365,6 +367,21 @@ fn populate_item_def_impl_blocks(
                 ItemRef::Mod(rust_mod) => {
                     extract_impl_blocks(&rust_mod.items, item_defs, impl_blocks);
                 }
+                ItemRef::Fn(index) => match item_defs[*index].clone() {
+                    ItemV2::Fn(fn_info) => {
+                        let item_refs = fn_info
+                            .clone()
+                            .stmts
+                            .into_iter()
+                            .filter_map(|stmt_ref| match stmt_ref {
+                                StmtsRef::Item(item_ref) => Some(item_ref),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        extract_impl_blocks(&item_refs, item_defs, impl_blocks)
+                    }
+                    _ => todo!(),
+                },
                 _ => {}
             }
         }
@@ -372,18 +389,14 @@ fn populate_item_def_impl_blocks(
     let mut impl_blocks = Vec::new();
     extract_impl_blocks(item_refs, item_defs, &mut impl_blocks);
 
-    // let impl_blocks = global_data.impl_blocks_simpl.clone();
-    // First update item defs in modules, then update the rust prelude item defs which are global and don't sit in a module
-    // for module in &mut global_data.modules {
-    let modules = item_refs.iter().filter_map(|item_ref| match item_ref {
-        ItemRef::Mod(rust_mod) => Some(rust_mod),
-        _ => None,
-    });
-    for module in modules {
-        // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
-
-        // module level items/classes
-        for item_ref in &module.items {
+    // Recursively update all structs/enums
+    fn update_all_structs_enums(
+        item_refs: &[ItemRef],
+        item_defs: &mut [ItemV2],
+        current_module: Vec<String>,
+        impl_blocks: &[(usize, RustImplBlockSimple)],
+    ) {
+        for item_ref in item_refs {
             match item_ref {
                 ItemRef::StructOrEnum(index) => {
                     let actual = item_defs.get_mut(*index).unwrap();
@@ -392,19 +405,48 @@ fn populate_item_def_impl_blocks(
                         _ => todo!(),
                     };
                     update_item_def_block_ids(
+                        *index,
                         item_def,
                         // &item_def_scope_id,
-                        &module.module_path.clone(),
-                        &impl_blocks,
+                        &current_module,
+                        impl_blocks,
                     )
                 }
-                ItemRef::Fn(_) => {}
-                ItemRef::Const(_) => {}
-                ItemRef::Trait(_) => {}
+                ItemRef::Mod(rust_mod) => {
+                    update_all_structs_enums(
+                        &rust_mod.items,
+                        item_defs,
+                        rust_mod.module_path.clone(),
+                        impl_blocks,
+                    );
+                }
+                ItemRef::Fn(index) => match item_defs[*index].clone() {
+                    ItemV2::Fn(fn_info) => {
+                        let item_refs = fn_info
+                            .clone()
+                            .stmts
+                            .into_iter()
+                            .filter_map(|stmt_ref| match stmt_ref {
+                                StmtsRef::Item(item_ref) => Some(item_ref),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        update_all_structs_enums(
+                            &item_refs,
+                            item_defs,
+                            current_module.clone(),
+                            impl_blocks,
+                        )
+                    }
+                    _ => todo!(),
+                },
                 _ => {}
             }
         }
     }
+
+    // TODO assuming first recursion should be finding only modules so can just past empty module name to start
+    update_all_structs_enums(item_refs, item_defs, vec![], &impl_blocks);
 
     // let prelude_module = global_data
     //     .modules
@@ -422,6 +464,7 @@ fn populate_item_def_impl_blocks(
 }
 
 fn update_item_def_block_ids(
+    item_index: usize,
     item_def: &mut ItemDefinition,
     // item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
@@ -441,14 +484,17 @@ fn update_item_def_block_ids(
                 impl_target_name,
                 impl_tartget_index,
             ) => {
-                if &item_def.ident == impl_target_name && module_path == impl_target_module_path {
-                    // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
-                    // item_def
-                    //     .impl_blocks
-                    //     .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
-
+                // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
+                if item_index == *impl_tartget_index {
                     item_def.impl_block_ids.push(*index);
                 }
+                // if &item_def.ident == impl_target_name && module_path == impl_target_module_path {
+                //     // item_def
+                //     //     .impl_blocks
+                //     //     .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
+
+                //     item_def.impl_block_ids.push(*index);
+                // }
             }
             RustType::I32 => {
                 if item_def.ident == "i32" && module_path == [PRELUDE_MODULE_PATH] {
