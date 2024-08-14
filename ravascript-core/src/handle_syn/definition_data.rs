@@ -1490,6 +1490,7 @@ pub fn resolve_path(
     } else {
         false
     };
+    let single_element_path = segs.len() == 1;
 
     let use_private = use_private_items || is_parent_or_same_module;
     let item_defined_in_module =
@@ -1511,14 +1512,20 @@ pub fn resolve_path(
 
     #[allow(clippy::manual_map)]
     let scoped_thing = scopes.iter().rev().find_map(|s| {
+        // TODO it is wasteful to pre-find these elements but the expressions are too long to embed directly in if statements. Could make fns or closure but that is extra verbose. Probably want methods on GlobalDataScope which take closures which we can create here.
+        let scoped_var = s
+            .variables
+            .iter()
+            .find(|v| single_element_path && is_parent_or_same_module && v.name == segs[0].ident);
+        let scoped_item = s.items.iter().find(|index| {
+            let item_def = &items_defs[**index];
+            single_element_path && is_parent_or_same_module && item_def.ident() == segs[0].ident
+        });
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
-        } else if let Some(scoped_var) = s.variables.iter().find(|v| v.name == segs[0].ident) {
+        } else if let Some(scoped_var) = scoped_var {
             Some(ScopedThing::Var(scoped_var.clone()))
-        } else if let Some(scoped_item) = s.items.iter().find(|index| {
-            let item_def = &items_defs[**index];
-            item_def.ident() == segs[0].ident
-        }) {
+        } else if let Some(scoped_item) = scoped_item {
             Some(ScopedThing::Item(scoped_item.clone()))
         } else {
             None
@@ -1577,7 +1584,6 @@ pub fn resolve_path(
     if let Some(ScopedThing::Var(_scoped_var)) = scoped_thing {
         // Variables and scoped items
         // Need to handle scoped vars and items first, otherwise when handling as module paths, we would always first have to check if the path is a scoped var/item
-
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
