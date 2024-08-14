@@ -1133,22 +1133,16 @@ impl GlobalData {
         // dbg!(&item_def.ident);
         // dbg!(&item_def.impl_block_ids);
         // dbg!(&sub_path.ident);
-        Some(
-            item_def
-                .impl_block_ids
-                .iter()
-                .find_map(|block_id| {
-                    let impl_block = match self.item_defs[*block_id].clone() {
-                        ItemV2::Impl(impl_block) => impl_block,
-                        _ => todo!(),
-                    };
-                    impl_block
-                        .rust_items
-                        .into_iter()
-                        .find(|rust_item| rust_item.ident == sub_path.ident)
-                })
-                .unwrap(),
-        )
+        item_def.impl_block_ids.iter().find_map(|block_id| {
+            let impl_block = match self.item_defs[*block_id].clone() {
+                ItemV2::Impl(impl_block) => impl_block,
+                _ => todo!(),
+            };
+            impl_block
+                .rust_items
+                .into_iter()
+                .find(|rust_item| rust_item.ident == sub_path.ident)
+        })
     }
 
     // TODO method should just take a RustType rather than specifically an item/struct
