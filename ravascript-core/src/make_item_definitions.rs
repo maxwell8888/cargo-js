@@ -41,7 +41,7 @@ pub struct ItemDefinition {
     pub generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
-    pub impl_block_ids: Vec<String>,
+    // pub impl_block_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -772,7 +772,7 @@ pub struct ItemDefinition {
     ///
     /// (unique impl id)
     // TODO use reference instead of id?
-    pub impl_block_ids: Vec<String>,
+    pub impl_block_ids: Vec<usize>,
 }
 impl ItemDefinition {
     pub fn get_type(&self, field_member: &Member, global_data: &GlobalData) -> RustType2 {
@@ -1886,15 +1886,18 @@ fn parse_types_for_populate_item_definitions(
 pub struct RustGeneric {
     pub ident: String,
     // (module path, trait name)
-    pub trait_bounds: Vec<(Vec<String>, Option<Vec<usize>>, String)>,
+    // pub trait_bounds: Vec<(Vec<String>, Option<Vec<usize>>, String)>,
+    pub trait_bounds: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RustImplBlockSimple {
-    pub unique_id: String,
+    // pub unique_id: String,
     // TODO Should this include generics that are defined on the target type, or just new generics introduced for the impl Trait or used in the methods/items? For now just assume it is everything.
     pub generics: Vec<RustGeneric>,
-    pub trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
+    /// NOTE we include module and name for generating a unique name for the impl block. TODO probably not best approach, what about identical signature?
+    /// (module, name, index)
+    pub trait_: Option<(Vec<String>, String, usize)>,
     // Note this can a generic param
     pub target: RustType,
     pub rust_items: Vec<RustImplItemNoJs>,

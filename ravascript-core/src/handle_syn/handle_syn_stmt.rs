@@ -863,13 +863,8 @@ pub fn handle_stmt(
                     vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                 }
                 ItemRef::Impl(index) => {
-                    let item = &item_defs[*index];
-                    let item_impl = match item {
-                        ItemV2::Impl(actual) => &actual.syn,
-                        _ => todo!(),
-                    };
                     // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
-                    handle_item_impl(item_impl, false, global_data, current_module_path)
+                    handle_item_impl(*index, false, global_data, current_module_path)
                         .into_iter()
                         .map(|stmt| (stmt, RustType2::Unit))
                         .collect()

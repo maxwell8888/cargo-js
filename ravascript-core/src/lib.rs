@@ -107,21 +107,22 @@ enum ItemDefinitions {
 // }
 
 fn get_traits_implemented_for_item(
-    item_impls: &[RustImplBlockSimple],
+    item_impls: &[(usize, RustImplBlockSimple)],
     item_module_path: &[String],
     item_name: &str,
-) -> Vec<(Vec<String>, Option<Vec<usize>>, String)> {
+    // TODO change to Vec<usize>
+) -> Vec<(Vec<String>, String, usize)> {
     // Does class implement the trait bounds of the impl block
 
     // TODO this code is duplicated from elsewhere
     // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
     let mut found_traits_count = 0;
     // (trait module path (None for scoped), trait name)
-    let mut found_traits: Vec<(Vec<String>, Option<Vec<usize>>, String)> = Vec::new();
+    let mut found_traits: Vec<(Vec<String>, String, usize)> = Vec::new();
     loop {
         found_traits.clear();
 
-        for item_impl in item_impls {
+        for (index, item_impl) in item_impls {
             // TODO this needs extending to handle matching any target type, rather than just user structs
             match &item_impl.target {
                 RustType::TypeParam(rust_type_param) => {
@@ -137,9 +138,14 @@ fn get_traits_implemented_for_item(
                         .trait_bounds;
 
                     // Does our struct impl all of these traits?
-                    let struct_impls_all_bounds = type_param_bounds
-                        .iter()
-                        .all(|type_param_bound| found_traits.contains(type_param_bound));
+                    let struct_impls_all_bounds =
+                        type_param_bounds.iter().all(|type_param_bound| {
+                            found_traits
+                                .iter()
+                                .map(|(module_path, name, index)| *index)
+                                .collect::<Vec<_>>()
+                                .contains(type_param_bound)
+                        });
                     if struct_impls_all_bounds {
                         found_traits.push(rust_trait);
                     }
@@ -337,7 +343,7 @@ fn get_traits_implemented_for_item(
 fn populate_item_def_impl_blocks(
     item_refs: &[ItemRef],
     item_defs: &mut [ItemV2],
-    impl_blocks: &[RustImplBlockSimple],
+    impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
     let span = debug_span!("update_classes");
     let _guard = span.enter();
@@ -396,12 +402,12 @@ fn update_item_def_block_ids(
     // item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
     // global_data: &GlobalData,
-    impl_blocks: &[RustImplBlockSimple],
+    impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
     let traits_impld_for_class =
         get_traits_implemented_for_item(impl_blocks, module_path, &item_def.ident);
     // for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
-    for impl_block in impl_blocks {
+    for (index, impl_block) in impl_blocks {
         // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds
         match &impl_block.target {
             // Concrete type target
@@ -416,12 +422,13 @@ fn update_item_def_block_ids(
                     // item_def
                     //     .impl_blocks
                     //     .push(ItemDefintionImpls::ConcreteImpl(impl_block.items.clone()));
-                    item_def.impl_block_ids.push(impl_block.unique_id.clone());
+
+                    item_def.impl_block_ids.push(*index);
                 }
             }
             RustType::I32 => {
                 if item_def.ident == "i32" && module_path == [PRELUDE_MODULE_PATH] {
-                    item_def.impl_block_ids.push(impl_block.unique_id.clone());
+                    item_def.impl_block_ids.push(*index);
                 }
             }
             // For a generic impl like `impl<T> Foo for T {}`, remember this will add methods to matching items in *all* scopes, both parent and children, the only restriction is the the `impl`d trait must be in accessible/in scope *when the method is called*
@@ -435,14 +442,18 @@ fn update_item_def_block_ids(
                     .trait_bounds;
 
                 // Does our struct impl all of these traits?
-                let struct_impls_all_bounds = type_param_bounds
-                    .iter()
-                    .all(|type_param_bound| traits_impld_for_class.contains(type_param_bound));
+                let struct_impls_all_bounds = type_param_bounds.iter().all(|type_param_bound| {
+                    traits_impld_for_class
+                        .iter()
+                        .map(|(module_path, name, index)| *index)
+                        .collect::<Vec<_>>()
+                        .contains(type_param_bound)
+                });
 
                 // TODO we might be adding this impl to items that meet the trait bound, but methods from the impl'd trait are not acutally called. There doesn't seem to be any easy, direct way to check this, the best approach is possibly for each method stored on the `ItemDefinition` to have a flag which get's set to true when the method is called/looked up, and otherwise remains false and is not used/output when the item/class is written to JS.
 
                 if struct_impls_all_bounds {
-                    item_def.impl_block_ids.push(impl_block.unique_id.clone());
+                    item_def.impl_block_ids.push(*index);
                 }
             }
             // IMPORTANT NOTE I did have a todo! here but it would without fail cause rust-analyzer to crash when I moved my cursor there, and take down vscode with it

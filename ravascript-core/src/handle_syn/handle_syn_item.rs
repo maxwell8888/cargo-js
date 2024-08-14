@@ -98,18 +98,8 @@ pub fn js_stmts_from_syn_items(
             }
             // Item::ForeignMod(_) => todo!(),
             ItemRef::Impl(index) => {
-                let item = &item_defs[*index];
-                let item_impl = match item {
-                    ItemV2::Impl(actual) => &actual.syn,
-                    _ => todo!(),
-                };
                 // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?
-                js_stmts.extend(handle_item_impl(
-                    item_impl,
-                    true,
-                    global_data,
-                    current_module,
-                ));
+                js_stmts.extend(handle_item_impl(*index, true, global_data, current_module));
             }
             // ItemRef::Macro(_) => todo!(),
             ItemRef::Mod(rust_mod) => {
@@ -716,11 +706,11 @@ pub fn handle_item_enum(
     dedup_impl_block_ids.sort();
     dedup_impl_block_ids.dedup();
     for impl_block_id in &dedup_impl_block_ids {
-        for js_impl_block in global_data
+        let impl_block_defs = global_data
             .impl_blocks
             .iter()
-            .filter(|jib| &jib.unique_id == impl_block_id)
-        {
+            .filter(|jib| &jib.index == impl_block_id);
+        for js_impl_block in impl_block_defs {
             let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
 
             for (_used, impl_item) in &js_impl_block.items {
@@ -989,11 +979,18 @@ pub fn handle_impl_item_fn(
 }
 
 pub fn handle_item_impl(
-    item_impl: &ItemImpl,
+    // item_impl: &ItemImpl,
+    index: usize,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> Vec<JsStmt> {
+    let rust_impl_block = match global_data.item_defs[index].clone() {
+        ItemV2::Impl(impl_block) => impl_block,
+        _ => todo!(),
+    };
+    let item_impl = rust_impl_block.syn.clone();
+
     let debug_self_type = match &*item_impl.self_ty {
         Type::Path(type_path) => format!("{:?}", type_path.path.segments),
         _ => format!("{:?}", item_impl.self_ty),
@@ -1005,20 +1002,21 @@ pub fn handle_item_impl(
     //     &item_impl.trait_, &item_impl.self_ty
     // ));
 
-    let unique_id = get_item_impl_unique_id(
-        current_module_path,
-        // &global_data.scope_id_as_option(),
-        &None,
-        item_impl,
-    );
-    let impl_blocks = global_data
-        .impl_blocks_simpl
-        .iter()
-        .filter(|ib| ib.unique_id == unique_id)
-        .cloned()
-        .collect::<Vec<_>>();
+    // let unique_id = get_item_impl_unique_id(
+    //     current_module_path,
+    //     // &global_data.scope_id_as_option(),
+    //     &None,
+    //     item_impl,
+    // );
 
-    let an_impl_block: RustImplBlockSimple = impl_blocks[0].clone();
+    // let impl_blocks = global_data
+    //     .impl_blocks_simpl
+    //     .iter()
+    //     .filter(|ib| ib.index == unique_id)
+    //     .cloned()
+    //     .collect::<Vec<_>>();
+
+    // let an_impl_block: RustImplBlockSimple = impl_blocks[0].clone();
 
     // TODO most/all of this should exist on the `RustImplBlockSimple` so this is unncessary duplication
     let impl_item_target_path = match &*item_impl.self_ty {
@@ -1031,7 +1029,7 @@ pub fn handle_item_impl(
         _ => todo!(),
     };
 
-    let rust_impl_block_generics = an_impl_block.generics;
+    let rust_impl_block_generics = rust_impl_block.generics;
 
     let target_type_param = match &*item_impl.self_ty {
         Type::Path(type_path) => {
@@ -1060,7 +1058,7 @@ pub fn handle_item_impl(
     //     );
     //     (module_path, scope_id, trait_def.name)
     // });
-    let trait_path_and_name = an_impl_block.trait_;
+    let trait_path_and_name = rust_impl_block.trait_;
 
     // if let Some(trait_) = &item_impl.trait_ {
     //     if trait_.1.segments.len() != 1 {
@@ -1127,7 +1125,7 @@ pub fn handle_item_impl(
     //             )
     //         }
     //     };
-    let target_rust_type = an_impl_block.target.into_rust_type2(global_data);
+    let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
     let is_target_type_param = match target_rust_type {
         RustType2::TypeParam(_) => true,
         _ => false,
@@ -1184,7 +1182,7 @@ pub fn handle_item_impl(
     //     }
     // }
 
-    let rust_impl_items = an_impl_block
+    let rust_impl_items = rust_impl_block
         .rust_items
         .into_iter()
         .map(|item| RustImplItemJs {
@@ -1220,7 +1218,7 @@ pub fn handle_item_impl(
         .collect::<Vec<_>>();
 
     let rust_impl_block = JsImplBlock2 {
-        unique_id: unique_id.clone(),
+        index,
         _generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
         target: target_rust_type.clone(),
@@ -1395,7 +1393,8 @@ pub fn handle_item_impl(
 
     // Push stmts like `Number.prototype.foo = bar.prototype.foo`
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
-        if prelude_item_def.impl_block_ids.contains(&unique_id) {
+        // If impl block matches the prelude type, push prototype assignments for each item in block
+        if prelude_item_def.impl_block_ids.contains(&index) {
             for (_is_used, item) in &rust_impl_block.items {
                 // TODO only add if `is_used == true`
                 let item_name = Ident::String(item.ident.clone());
@@ -1789,7 +1788,7 @@ pub fn handle_item_struct(
         for js_impl_block in global_data
             .impl_blocks
             .iter()
-            .filter(|jib| &jib.unique_id == impl_block_id)
+            .filter(|jib| &jib.index == impl_block_id)
         {
             let is_generic_impl = matches!(js_impl_block.target, RustType2::TypeParam(_));
 

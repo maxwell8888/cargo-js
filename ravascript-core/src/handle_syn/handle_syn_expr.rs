@@ -2536,7 +2536,7 @@ fn get_receiver_params_and_method_impl_item(
             //     todo!()
             // }
 
-            let string_def = &global_data.get_prelude_item_def("String");
+            let string_def = global_data.get_prelude_item_def("String");
 
             // dbg!(&string_def);
             // dbg!(&sub_path);
@@ -2545,7 +2545,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(string_def, sub_path)
+                    .lookup_impl_item_item2(&string_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2612,7 +2612,7 @@ fn get_receiver_params_and_method_impl_item(
             //     todo!()
             // }
 
-            let vec_def = &global_data.get_prelude_item_def("Vec");
+            let vec_def = global_data.get_prelude_item_def("Vec");
             // dbg!(&string_def);
             // dbg!(&sub_path);
             // dbg!(&global_data.impl_blocks_simpl);
@@ -2620,7 +2620,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(vec_def, sub_path)
+                    .lookup_impl_item_item2(&vec_def, sub_path)
                     .unwrap(),
             )
         }

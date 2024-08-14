@@ -251,9 +251,10 @@ pub enum RustImplItemItemJs {
 
 #[derive(Debug, Clone)]
 pub struct JsImplBlock2 {
-    pub unique_id: String,
+    // pub unique_id: String,
+    pub index: usize,
     pub _generics: Vec<RustGeneric>,
-    pub trait_: Option<(Vec<String>, Option<Vec<usize>>, String)>,
+    pub trait_: Option<(Vec<String>, String, usize)>,
     // Note this can a generic param
     pub target: RustType2,
     /// Vec<(TODO whether the method actually gets used (for some eg `impl<T> Foo for T {}` blocks that apply to everything, it is hard to work out for which items the methods are actually used, since the criteria is whether the impl'd trait ie Foo is in scope/accessible at the point that the method is called, so the easiest approach is to just add everything and then track which methods actually get called), JS method/field)>
@@ -270,7 +271,7 @@ enum VarItemFn {
 impl JsImplBlock2 {
     pub fn js_name(&self) -> Ident {
         let trait_name = match &self.trait_ {
-            Some((_module_path, _scope_id, name)) => name,
+            Some((_module_path, name, index)) => name,
             None => "no_trait",
         };
         fn rust_type_js_name(rust_type: &RustType2) -> String {
@@ -315,7 +316,7 @@ pub struct GlobalData {
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
     pub item_refs: Vec<ItemRef>,
-    pub item_refs_to_render: Vec<ItemRef>,
+    // pub item_refs_to_render: Vec<ItemRef>,
     pub item_defs: Vec<ItemV2>,
     pub scopes: Vec<GlobalDataScope>,
     // TODO combine this with impl_items
@@ -355,10 +356,10 @@ pub struct GlobalData {
     /// Scoped impls are a litte more complicated though, because in the same way we distinguish between different module level structs with the same name by taking into account their module path, for scoped structs we need to take into account the scope, ie a scoped `impl Foo { ... }` should only be applied to the first `Foo` that is found in parent scopes, else any module (of course taking into account the full module path used in `impl Foo { ... }`), because there might be another `Foo` in a higher scope with the same method impld, so we must not apply it there.
     /// We don't have to
     /// ((module path, scope id), rust impl block))
-    #[allow(clippy::type_complexity)]
-    _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
+    // #[allow(clippy::type_complexity)]
+    // _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
-    pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
+    // pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -477,7 +478,7 @@ impl GlobalData {
             // crates: vec![ravascript_prelude_crate],
             _crates: vec![],
             item_refs,
-            item_refs_to_render: Vec::new(),
+            // item_refs_to_render: Vec::new(),
             item_defs,
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
@@ -496,8 +497,8 @@ impl GlobalData {
             // impl_items_for_js: Vec::new(),
             transpiled_modules: Vec::new(),
             impl_blocks: Vec::new(),
-            _scoped_impl_blocks: Vec::new(),
-            impl_blocks_simpl: Vec::new(),
+            // _scoped_impl_blocks: Vec::new(),
+            // impl_blocks_simpl: Vec::new(),
             // scope_id: Vec::new(),
             // scope_count: vec![0],
             // at_module_top_level: false,
@@ -948,7 +949,9 @@ impl GlobalData {
         sub_path: &RustPathSegment2,
         _item_path_seg: &str,
         item_def: &ItemDefinition,
+        // item_def_index: usize,
         // ) -> Option<PartialRustType> {
+        // TODO why return Option?
     ) -> Option<RustType2> {
         // let impl_method = self.lookup_impl_item_item(
         //     item_generics,
@@ -1070,7 +1073,9 @@ impl GlobalData {
         // item_module_path: &Vec<String>,
         // item_scope_id: &Option<Vec<usize>>,
         item_def: &ItemDefinition,
+        // item_index: usize,
         sub_path: &RustPathSegment2,
+        // TODO why return Option?
     ) -> Option<RustImplItemNoJs> {
         // let module = self
         //     .modules
@@ -1079,32 +1084,34 @@ impl GlobalData {
         //     .find(|m| &m.path == item_module_path)
         //     .unwrap();
 
-        let impl_method = item_def.impl_block_ids.iter().find_map(|impl_block_id| {
-            // TODO also look for scoped impl blocks
-            // TODO take into account item type params for generic impls
+        // let impl_method = item_def.impl_block_ids.iter().find_map(|impl_block_id| {
+        //     // TODO also look for scoped impl blocks
+        //     // TODO take into account item type params for generic impls
 
-            // let module_impl_blocks = self.impl_blocks_simpl.iter();
-            // let scoped_impl_blocks = module
-            //     .scoped_various_definitions
-            //     .iter()
-            //     .map(|svd| &svd.2)
-            //     .flatten();
-            // module_impl_blocks
-            //     .chain(scoped_impl_blocks)
+        //     // let module_impl_blocks = self.impl_blocks_simpl.iter();
+        //     // let scoped_impl_blocks = module
+        //     //     .scoped_various_definitions
+        //     //     .iter()
+        //     //     .map(|svd| &svd.2)
+        //     //     .flatten();
+        //     // module_impl_blocks
+        //     //     .chain(scoped_impl_blocks)
 
-            // TODO should we be looking through multiple blocks here or should be deuplicate `impl_blocks_simpl` after it is created??
-            // I think we could dedupe (as long as we take into account scope) be it is impossible to have duplicate method names, however for impls like `impl<T> Foo for T` maybe we want to keep the impl blocks separate like they are in the original code??? Yes but we can still just dedupe the `RustImplBlockSimple` and keep the `JsImplBlock2` separate. It seems better to just look through multiple blocks here as that is easier than deduplicating and merging items.
-            self.impl_blocks_simpl
-                .iter()
-                .filter(|ibs| &ibs.unique_id == impl_block_id)
-                .find_map(|rust_impl_block_simple| {
-                    rust_impl_block_simple
-                        .rust_items
-                        .iter()
-                        .find(|rust_item| rust_item.ident == sub_path.ident)
-                        .cloned()
-                })
-        });
+        //     // TODO should we be looking through multiple blocks here or should be deuplicate `impl_blocks_simpl` after it is created??
+        //     // I think we could dedupe (as long as we take into account scope) be it is impossible to have duplicate method names, however for impls like `impl<T> Foo for T` maybe we want to keep the impl blocks separate like they are in the original code??? Yes but we can still just dedupe the `RustImplBlockSimple` and keep the `JsImplBlock2` separate. It seems better to just look through multiple blocks here as that is easier than deduplicating and merging items.
+
+        //     self.impl_blocks_simpl
+        //         .iter()
+        //         .filter(|ibs| &ibs.unique_id == impl_block_id)
+        //         .find_map(|rust_impl_block_simple| {
+        //             rust_impl_block_simple
+        //                 .rust_items
+        //                 .iter()
+        //                 .find(|rust_item| rust_item.ident == sub_path.ident)
+        //                 .cloned()
+        //         })
+        // });
+
         // dbg!(&impl_method);
         // dbg!(&item_def.ident);
         // dbg!(&sub_path.ident);
@@ -1120,7 +1127,25 @@ impl GlobalData {
         //     dbg!(&item_def);
         //     panic!()
         // };
-        impl_method
+
+        // impl_method
+
+        Some(
+            item_def
+                .impl_block_ids
+                .iter()
+                .find_map(|block_id| {
+                    let impl_block = match self.item_defs[*block_id].clone() {
+                        ItemV2::Impl(impl_block) => impl_block,
+                        _ => todo!(),
+                    };
+                    impl_block
+                        .rust_items
+                        .into_iter()
+                        .find(|rust_item| rust_item.ident == sub_path.ident)
+                })
+                .unwrap(),
+        )
     }
 
     // TODO method should just take a RustType rather than specifically an item/struct

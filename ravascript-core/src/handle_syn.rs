@@ -234,6 +234,6 @@ enum PartialRustType {
 
 #[derive(Debug, Clone)]
 pub struct RustPathSegment2 {
-    ident: String,
-    turbofish: Vec<RustType2>,
+    pub ident: String,
+    pub turbofish: Vec<RustType2>,
 }
