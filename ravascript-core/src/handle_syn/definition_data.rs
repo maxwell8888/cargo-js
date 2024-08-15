@@ -360,6 +360,7 @@ pub struct GlobalData {
     // _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     // pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
+    pub transpiled_modules_temp: Vec<JsModule>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -496,6 +497,7 @@ impl GlobalData {
             default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
             transpiled_modules: Vec::new(),
+            transpiled_modules_temp: Vec::new(),
             impl_blocks: Vec::new(),
             // _scoped_impl_blocks: Vec::new(),
             // impl_blocks_simpl: Vec::new(),

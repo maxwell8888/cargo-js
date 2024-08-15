@@ -39,7 +39,9 @@ pub fn js_stmts_from_syn_items(
     // Need to keep track of which module we are currently in, for constructing the boilerplate
     current_module: &[String],
     global_data: &mut GlobalData,
-) -> Vec<JsStmt> {
+    // ) -> Vec<JsStmt> {
+    // (stmts, sub modules)
+) -> (Vec<JsStmt>, Vec<JsModule>) {
     let span = debug_span!("js_stmts_from_syn_items", current_module = ?current_module);
     let _guard = span.enter();
 
@@ -60,6 +62,8 @@ pub fn js_stmts_from_syn_items(
     // dbg!("js_stmts_from_syn_items");
     // dbg!(&global_data.scope_id);
     let item_defs = global_data.item_defs.clone();
+    let mut temp_submodules = Vec::new();
+
     // for item in &global_data.item_refs_to_render.clone() {
     for item in module_item_refs {
         // handle_item(item, global_data, current_module, &mut js_stmts);
@@ -106,14 +110,15 @@ pub fn js_stmts_from_syn_items(
                 // NOTE in contrast to the other handlers here, handle_item_mod actually mutates `current_module_path` and appends a new JsModule to `global_data.transpiled_modules` instead of appending statements to `js_stmts`
                 // handle_item_mod(item_mod, global_data, current_module)
 
-                let stmts =
+                let (stmts, mut submodules) =
                     js_stmts_from_syn_items(&rust_mod.items, &rust_mod.module_path, global_data);
-                global_data.transpiled_modules.push(JsModule {
+                temp_submodules.push(JsModule {
                     public: true,
                     name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
                     module_path: rust_mod.module_path.clone(),
                     stmts,
                 });
+                temp_submodules.append(&mut submodules);
             }
             // ItemRef::Static(_) => todo!(),
             ItemRef::Trait(index) => {
@@ -132,7 +137,7 @@ pub fn js_stmts_from_syn_items(
         }
     }
 
-    js_stmts
+    (js_stmts, temp_submodules)
 }
 
 pub fn handle_item_fn(
@@ -146,7 +151,10 @@ pub fn handle_item_fn(
 ) -> JsStmt {
     let fn_info = match &global_data.item_defs[index] {
         ItemV2::Fn(fn_info) => fn_info.clone(),
-        _ => todo!(),
+        other => {
+            dbg!(other);
+            todo!()
+        }
     };
 
     let item_fn = match &fn_info.syn {

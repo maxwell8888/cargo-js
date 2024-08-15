@@ -3,7 +3,11 @@ use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 
-use handle_syn::{handle_stmt, js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
+use handle_syn::{
+    handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
+    handle_item_trait, handle_stmt, js_stmts_from_syn_items, GlobalData, RustImplItemItemJs,
+    RustType2,
+};
 use js_ast::{
     FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, LocalName, LocalType, PathIdent,
 };
@@ -34,6 +38,7 @@ mod make_item_definitions;
 mod update_item_definitions;
 use update_item_definitions::{
     ItemDefinition, ModuleData, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
+    StructOrEnumDefitionInfo,
 };
 
 pub use js_ast::JsStmt;
@@ -1030,7 +1035,8 @@ pub fn process_items(
     // global_data.impl_blocks_simpl = impl_blocks;
 
     let item_refs = global_data.item_refs.clone();
-    let modules = item_refs
+    // This is intentionally only extracting the crate and prelude modules, for now
+    let top_level_modules = item_refs
         .iter()
         .filter_map(|item_ref| match item_ref {
             ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
@@ -1043,9 +1049,63 @@ pub fn process_items(
 
     // We need/want to keep modules in tree for syn parsing to make it easy to lookup module submodules etc. However, we also want flattened modules to make it easy to iterate over them and render distinct modules
 
-    for rust_mod in modules {
+    // let mut transpiled_modules = Vec::new();
+
+    for rust_mod in top_level_modules {
         global_data.scopes.clear();
-        let mut stmts =
+
+        // let mut js_stmts = Vec::new();
+        // let current_module = &rust_mod.module_path;
+        // let item_defs = global_data.item_defs.clone();
+        // let gd = &mut global_data;
+        // let sub_modules = Vec::new();
+        // for item in &rust_mod.items {
+        //     match item {
+        //         ItemRef::Const(index) => {
+        //             let js_stmt = handle_item_const(*index, true, gd, current_module);
+        //             js_stmts.push(js_stmt);
+        //         }
+        //         ItemRef::StructOrEnum(index) => {
+        //             let item = &item_defs[*index];
+        //             match item {
+        //                 ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+        //                     StructOrEnumDefitionInfo::Struct(struct_def) => {
+        //                         let js_stmt = handle_item_struct(*index, true, gd, current_module);
+        //                         js_stmts.push(js_stmt);
+        //                     }
+        //                     StructOrEnumDefitionInfo::Enum(enum_def) => {
+        //                         let js_stmt = handle_item_enum(*index, true, gd, current_module);
+        //                         js_stmts.push(js_stmt);
+        //                     }
+        //                 },
+        //                 _ => todo!(),
+        //             }
+        //         }
+        //         ItemRef::Fn(index) => {
+        //             js_stmts.push(handle_item_fn(*index, true, gd, current_module));
+        //         }
+        //         ItemRef::Impl(index) => {
+        //             js_stmts.extend(handle_item_impl(*index, true, gd, current_module));
+        //         }
+        //         ItemRef::Mod(rust_mod) => {
+        //             let stmts = js_stmts_from_syn_items(&rust_mod.items, &rust_mod.module_path, gd);
+        //             transpiled_modules.push(JsModule {
+        //                 public: true,
+        //                 name: Ident::String(rust_mod.module_path.last().unwrap().clone()),
+        //                 module_path: rust_mod.module_path.clone(),
+        //                 stmts,
+        //             });
+        //         }
+        //         ItemRef::Trait(index) => {
+        //             handle_item_trait(*index, true, gd, current_module);
+        //             js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
+        //         }
+        //         ItemRef::Use(_item_use) => {}
+        //         _ => todo!(),
+        //     }
+        // }
+
+        let (mut stmts, mut submodules) =
             js_stmts_from_syn_items(&rust_mod.items, &rust_mod.module_path, &mut global_data);
 
         if with_rust_types && rust_mod.module_path == ["crate"] {
@@ -1073,6 +1133,7 @@ pub fn process_items(
                 stmts,
             },
         );
+        global_data.transpiled_modules.append(&mut submodules);
     }
 
     // global_data.transpiled_modules.push(JsModule {

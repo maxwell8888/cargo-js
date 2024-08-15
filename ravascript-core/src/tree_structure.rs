@@ -2668,6 +2668,41 @@ pub mod update_definitons {
                     // TODO
                     // scoped_items.last_mut().unwrap().push(item_ref.clone());
                 }
+
+                let fn_stmts = match &updated_item_defs[*index] {
+                    ItemV2::Impl(rust_impl_block) => {
+                        rust_impl_block
+                            .rust_items
+                            .iter()
+                            .map(|rust_impl_item_no_js| {
+                                match &rust_impl_item_no_js.item {
+                                    RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                                        // Item in fn body are scoped so create a new scope
+                                        fn_info.stmts.clone()
+                                    }
+                                    RustImplItemItemNoJs::Const => todo!(),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    _ => todo!(),
+                };
+                for stmts in fn_stmts {
+                    scoped_items.push(Vec::new());
+
+                    update_item_defs_recurisve_stmts(
+                        &stmts,
+                        item_refs_all,
+                        item_defs_no_types,
+                        current_module,
+                        updated_item_defs,
+                        scoped_items,
+                        true,
+                        duplicates,
+                    );
+
+                    scoped_items.pop();
+                }
             }
             ItemRef::Use(_) => {}
             ItemRef::Macro => todo!(),
