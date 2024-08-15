@@ -50,7 +50,6 @@ async fn destructure_struct() {
 
 #[tokio::test]
 async fn destructure_struct_nested() {
-    // setup_tracing();
     let actual = r2j_block!({
         struct Bar {
             baz: i32,

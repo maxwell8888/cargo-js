@@ -2500,7 +2500,7 @@ pub mod update_definitons {
         RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
 
-    use super::{expr_to_expr_ref, stmt_to_stmts_ref, ItemActual, ItemRef, StmtsRef};
+    use super::{expr_to_expr_ref, stmt_to_stmts_ref, ExprRef, ItemActual, ItemRef, StmtsRef};
 
     // This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
     // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
@@ -2518,23 +2518,25 @@ pub mod update_definitons {
         let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
         updated_item_defs.resize_with(item_defs_no_types.len(), || ItemV2::None);
 
-        update_item_defs_recurisve(
-            item_refs,
-            item_refs,
-            &mut item_defs_no_types,
-            current_module,
-            &mut updated_item_defs,
-            &mut scoped_items,
-            in_scope,
-            &duplicates,
-        );
+        for item_ref in item_refs {
+            update_item_defs_recurisve_individual_item(
+                item_ref,
+                item_refs,
+                &mut item_defs_no_types,
+                current_module,
+                &mut updated_item_defs,
+                &mut scoped_items,
+                in_scope,
+                &duplicates,
+            );
+        }
 
         updated_item_defs
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn update_item_defs_recurisve(
-        item_refs: &[ItemRef],
+    fn update_item_defs_recurisve_individual_item(
+        item_ref: &ItemRef,
         item_refs_all: &[ItemRef],
         item_defs_no_types: &mut [ItemActual],
         current_module: &[String],
@@ -2544,109 +2546,101 @@ pub mod update_definitons {
         in_scope: bool,
         duplicates: &[Duplicate],
     ) {
-        for item_ref in item_refs {
-            match item_ref {
-                ItemRef::StructOrEnum(index) => {
-                    // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place?
-                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                    let item = item_defs_no_types[*index].clone();
-                    updated_item_defs[*index] = update_item_def(
-                        item,
-                        current_module,
-                        item_refs_all,
-                        item_defs_no_types,
-                        scoped_items,
-                        in_scope,
-                        duplicates,
-                    );
+        match item_ref {
+            ItemRef::StructOrEnum(index) => {
+                // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place?
+                // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                let item = item_defs_no_types[*index].clone();
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    item_refs_all,
+                    item_defs_no_types,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
 
-                    if in_scope {
-                        scoped_items.last_mut().unwrap().push(item_ref.clone());
-                    }
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
                 }
-                ItemRef::Fn(index) => {
-                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                    let item = item_defs_no_types[*index].clone();
-                    updated_item_defs[*index] = update_item_def(
-                        item,
-                        current_module,
-                        item_refs_all,
-                        item_defs_no_types,
-                        scoped_items,
-                        in_scope,
-                        duplicates,
-                    );
+            }
+            ItemRef::Fn(index) => {
+                // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                let item = item_defs_no_types[*index].clone();
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    item_refs_all,
+                    item_defs_no_types,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
 
-                    if in_scope {
-                        scoped_items.last_mut().unwrap().push(item_ref.clone());
-                    }
-
-                    let fn_info = match &updated_item_defs[*index] {
-                        ItemV2::Fn(fn_info) => fn_info,
-                        _ => todo!(),
-                    };
-                    let fn_body_items = fn_info
-                        .stmts
-                        .iter()
-                        .filter_map(|stmt| match stmt {
-                            StmtsRef::Item(item_ref) => Some(item_ref.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-
-                    // Item in fn body are scoped so create a new scope
-                    scoped_items.push(Vec::new());
-
-                    update_item_defs_recurisve(
-                        &fn_body_items,
-                        item_refs_all,
-                        item_defs_no_types,
-                        current_module,
-                        updated_item_defs,
-                        scoped_items,
-                        true,
-                        duplicates,
-                    );
-
-                    scoped_items.pop();
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
                 }
-                ItemRef::Const(index) => {
-                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                    let item = item_defs_no_types[*index].clone();
-                    updated_item_defs[*index] = update_item_def(
-                        item,
-                        current_module,
-                        item_refs_all,
-                        item_defs_no_types,
-                        scoped_items,
-                        in_scope,
-                        duplicates,
-                    );
 
-                    if in_scope {
-                        scoped_items.last_mut().unwrap().push(item_ref.clone());
-                    }
-                }
-                ItemRef::Trait(index) => {
-                    // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-                    let item = item_defs_no_types[*index].clone();
-                    updated_item_defs[*index] = update_item_def(
-                        item,
-                        current_module,
-                        item_refs_all,
-                        item_defs_no_types,
-                        scoped_items,
-                        in_scope,
-                        duplicates,
-                    );
+                let fn_stmts = match &updated_item_defs[*index] {
+                    ItemV2::Fn(fn_info) => fn_info.stmts.clone(),
+                    _ => todo!(),
+                };
 
-                    if in_scope {
-                        scoped_items.last_mut().unwrap().push(item_ref.clone());
-                    }
+                // Item in fn body are scoped so create a new scope
+                scoped_items.push(Vec::new());
+
+                update_item_defs_recurisve_stmts(
+                    &fn_stmts,
+                    item_refs_all,
+                    item_defs_no_types,
+                    current_module,
+                    updated_item_defs,
+                    scoped_items,
+                    true,
+                    duplicates,
+                );
+
+                scoped_items.pop();
+            }
+            ItemRef::Const(index) => {
+                // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                let item = item_defs_no_types[*index].clone();
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    item_refs_all,
+                    item_defs_no_types,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
                 }
-                ItemRef::Mod(rust_mod) => {
-                    update_item_defs_recurisve(
-                        &rust_mod.items,
+            }
+            ItemRef::Trait(index) => {
+                // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
+                let item = item_defs_no_types[*index].clone();
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    item_refs_all,
+                    item_defs_no_types,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
+
+                if in_scope {
+                    scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
+            }
+            ItemRef::Mod(rust_mod) => {
+                for item_ref in &rust_mod.items {
+                    update_item_defs_recurisve_individual_item(
+                        item_ref,
                         item_refs_all,
                         item_defs_no_types,
                         &rust_mod.module_path,
@@ -2656,27 +2650,139 @@ pub mod update_definitons {
                         duplicates,
                     );
                 }
-                // TODO
-                ItemRef::Impl(index) => {
-                    let item = item_defs_no_types[*index].clone();
-                    updated_item_defs[*index] = update_item_def(
-                        item,
-                        current_module,
+            }
+            // TODO
+            ItemRef::Impl(index) => {
+                let item = item_defs_no_types[*index].clone();
+                updated_item_defs[*index] = update_item_def(
+                    item,
+                    current_module,
+                    item_refs_all,
+                    item_defs_no_types,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
+
+                if in_scope {
+                    // TODO
+                    // scoped_items.last_mut().unwrap().push(item_ref.clone());
+                }
+            }
+            ItemRef::Use(_) => {}
+            ItemRef::Macro => todo!(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update_item_defs_recurisve_stmts(
+        stmt_refs: &[StmtsRef],
+        item_refs_all: &[ItemRef],
+        item_defs_no_types: &mut [ItemActual],
+        current_module: &[String],
+        updated_item_defs: &mut [ItemV2],
+        // TODO use &ItemRef
+        scoped_items: &mut Vec<Vec<ItemRef>>,
+        in_scope: bool,
+        duplicates: &[Duplicate],
+    ) {
+        // TODO handle all cases
+        for stmt_ref in stmt_refs {
+            match stmt_ref {
+                StmtsRef::Local(_) => {}
+                StmtsRef::Item(item_ref) => {
+                    update_item_defs_recurisve_individual_item(
+                        item_ref,
                         item_refs_all,
                         item_defs_no_types,
+                        current_module,
+                        updated_item_defs,
                         scoped_items,
                         in_scope,
                         duplicates,
                     );
-
-                    if in_scope {
-                        // TODO
-                        // scoped_items.last_mut().unwrap().push(item_ref.clone());
-                    }
                 }
-                ItemRef::Use(_) => {}
-                ItemRef::Macro => todo!(),
+                StmtsRef::Expr(expr_ref, _) => {
+                    update_item_defs_recurisve_individual_expr(
+                        expr_ref,
+                        item_refs_all,
+                        item_defs_no_types,
+                        current_module,
+                        updated_item_defs,
+                        scoped_items,
+                        in_scope,
+                        duplicates,
+                    );
+                }
+                StmtsRef::Macro(_) => {}
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update_item_defs_recurisve_individual_expr(
+        expr_ref: &ExprRef,
+        item_refs_all: &[ItemRef],
+        item_defs_no_types: &mut [ItemActual],
+        current_module: &[String],
+        updated_item_defs: &mut [ItemV2],
+        // TODO use &ItemRef
+        scoped_items: &mut Vec<Vec<ItemRef>>,
+        in_scope: bool,
+        duplicates: &[Duplicate],
+    ) {
+        // TODO IMPORTANT handle all cases
+        match expr_ref {
+            ExprRef::Array(_) => {}
+            ExprRef::Assign(_) => {}
+            ExprRef::Async(_) => {}
+            ExprRef::Await(_) => {}
+            ExprRef::Binary(_) => {}
+            ExprRef::Block(rust_expr_block) => {
+                update_item_defs_recurisve_stmts(
+                    &rust_expr_block.stmts,
+                    item_refs_all,
+                    item_defs_no_types,
+                    current_module,
+                    updated_item_defs,
+                    scoped_items,
+                    in_scope,
+                    duplicates,
+                );
+            }
+            ExprRef::Break(_) => {}
+            ExprRef::Call(_) => {}
+            ExprRef::Cast(_) => {}
+            ExprRef::Closure(_) => {}
+            ExprRef::Const(_) => {}
+            ExprRef::Continue(_) => {}
+            ExprRef::Field(_) => {}
+            ExprRef::ForLoop(_) => {}
+            ExprRef::Group(_) => {}
+            ExprRef::If(_) => {}
+            ExprRef::Index(_) => {}
+            ExprRef::Infer(_) => {}
+            ExprRef::Let(_) => {}
+            ExprRef::Lit(_) => {}
+            ExprRef::Loop(_) => {}
+            ExprRef::Macro(_) => {}
+            ExprRef::Match(_) => {}
+            ExprRef::MethodCall(_) => {}
+            ExprRef::Paren(_) => {}
+            ExprRef::Path(_) => {}
+            ExprRef::Range(_) => {}
+            ExprRef::Reference(_) => {}
+            ExprRef::Repeat(_) => {}
+            ExprRef::Return(_) => {}
+            ExprRef::Struct(_) => {}
+            ExprRef::Try(_) => {}
+            ExprRef::TryBlock(_) => {}
+            ExprRef::Tuple(_) => {}
+            ExprRef::Unary(_) => {}
+            ExprRef::Unsafe(_) => {}
+            ExprRef::Verbatim(_) => {}
+            ExprRef::While(_) => {}
+            ExprRef::Yield(_) => {}
         }
     }
 
@@ -2749,6 +2855,7 @@ pub mod update_definitons {
                                     .map(|f| {
                                         (
                                             f.ident.as_ref().unwrap().to_string(),
+                                            // HERE IS THE PROBLEM
                                             parse_types_for_populate_item_definitions(
                                                 &f.ty,
                                                 &item_def.generics,

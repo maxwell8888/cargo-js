@@ -19,7 +19,7 @@ use crate::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
     make_item_definitions::FnInfoSyn,
-    tree_structure::{update_definitons::ItemV2, ItemRef},
+    tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
     update_item_definitions::{
         get_item_impl_unique_id, ConstDef, FnInfo, ItemDefinition, RustGeneric,
         RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition,
@@ -192,15 +192,34 @@ pub fn handle_item_fn(
     //     global_data.scopes.last_mut().unwrap().fns.push(fn_info);
     // }
 
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.items.push(index);
-    }
+    // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
+    let scoped_item_defs = fn_info
+        .stmts
+        .iter()
+        .filter_map(|stmt_ref| {
+            match stmt_ref {
+                StmtsRef::Item(item_ref) => {
+                    match item_ref {
+                        ItemRef::StructOrEnum(index) => Some(*index),
+                        ItemRef::Fn(index) => Some(*index),
+                        // TODO can consts be scoped or are they always global??
+                        ItemRef::Const(index) => Some(*index),
+                        ItemRef::Trait(index) => Some(*index),
+                        ItemRef::Mod(_) => todo!(),
+                        ItemRef::Use(_) => todo!(),
+                        ItemRef::Macro => todo!(),
+                        ItemRef::Impl(_) => None,
+                    }
+                }
+                _ => None,
+            }
+        })
+        .collect();
 
     // Create new scope for fn vars
     global_data.scopes.push(GlobalDataScope {
         variables: Vec::new(),
-        items: Vec::new(),
+        items: scoped_item_defs,
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
     });
@@ -392,10 +411,10 @@ pub fn handle_item_const(
     //     });
     // }
 
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.items.push(index);
-    }
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.items.push(index);
+    // }
 
     let const_def = match &global_data.item_defs[index] {
         ItemV2::Const(const_def) => const_def.clone(),
@@ -676,10 +695,10 @@ pub fn handle_item_enum(
     //     &mut static_fields,
     // );
 
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.items.push(index);
-    }
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.items.push(index);
+    // }
 
     let mut js_class = JsClass {
         public: match item_enum.vis {
@@ -1645,10 +1664,10 @@ pub fn handle_item_struct(
         Fields::Unit => todo!(),
     };
 
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.items.push(index);
-    }
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.items.push(index);
+    // }
 
     let mut js_class = JsClass {
         export: false,
@@ -1944,10 +1963,10 @@ pub fn handle_item_trait(
         _ => todo!(),
     };
 
-    if !at_module_top_level {
-        let scope = global_data.scopes.last_mut().unwrap();
-        scope.items.push(index);
-    }
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.items.push(index);
+    // }
 
     if trait_def.default_impls.len() > 0 {
         let methods = trait_def

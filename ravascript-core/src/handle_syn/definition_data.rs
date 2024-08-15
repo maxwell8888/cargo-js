@@ -1519,6 +1519,17 @@ pub fn resolve_path(
             .find(|v| single_element_path && is_parent_or_same_module && v.name == segs[0].ident);
         let scoped_item = s.items.iter().find(|index| {
             let item_def = &items_defs[**index];
+            let thing = items_defs
+                .iter()
+                .filter(|item_def| match item_def {
+                    ItemV2::StructOrEnum(_) => true,
+                    ItemV2::Fn(_) => true,
+                    ItemV2::Const(_) => true,
+                    ItemV2::Trait(_) => true,
+                    ItemV2::None => true,
+                    ItemV2::Impl(_) => false,
+                })
+                .collect::<Vec<_>>();
             is_parent_or_same_module && item_def.ident() == segs[0].ident
         });
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {

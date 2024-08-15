@@ -2819,9 +2819,37 @@ pub fn handle_expr_block(
     let span = debug_span!("handle_expr_block");
     let _guard = span.enter();
 
+    // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
+    let scoped_item_defs = expr_block
+        .stmts
+        .iter()
+        .filter_map(|stmt_ref| {
+            match stmt_ref {
+                StmtsRef::Item(item_ref) => {
+                    match item_ref {
+                        ItemRef::StructOrEnum(index) => Some(*index),
+                        ItemRef::Fn(index) => Some(*index),
+                        // TODO can consts be scoped or are they always global??
+                        ItemRef::Const(index) => Some(*index),
+                        ItemRef::Trait(index) => Some(*index),
+                        ItemRef::Mod(_) => todo!(),
+                        ItemRef::Use(_) => todo!(),
+                        ItemRef::Macro => todo!(),
+                        ItemRef::Impl(_) => None,
+                    }
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    // if !at_module_top_level {
+    //     let scope = global_data.scopes.last_mut().unwrap();
+    //     scope.items.push(index);
+    // }
+
     global_data.scopes.push(GlobalDataScope {
         variables: Vec::new(),
-        items: Vec::new(),
+        items: scoped_item_defs,
         _look_in_outer_scope: true,
         use_mappings: Vec::new(),
     });
