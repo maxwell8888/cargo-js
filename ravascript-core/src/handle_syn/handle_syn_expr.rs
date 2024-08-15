@@ -1349,7 +1349,7 @@ fn handle_expr_closure(
                 true
             } else {
                 let is_expr_with_no_semi = match stmts.last().unwrap() {
-                    StmtsRef::Expr(_, semi) => *semi,
+                    StmtsRef::Expr(_, semi) => !semi,
                     StmtsRef::Macro(_) => todo!(),
                     _ => false,
                 };
@@ -1522,7 +1522,7 @@ fn handle_expr_closure(
     }
 
     // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
-    let (body_stmts, return_type) = match &*expr_closure.body {
+    let (mut body_stmts, return_type) = match &*expr_closure.body {
         ExprRef::Block(expr_block) => parse_fn_body_stmts(
             true,
             false,
