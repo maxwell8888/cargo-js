@@ -1,9 +1,7 @@
 use heck::AsPascalCase;
 use std::fs;
 use syn::{
-    Fields, FnArg, GenericParam, ImplItemFn,
-    ItemMod, Meta, Pat, ReturnType, Type,
-    Visibility,
+    Fields, FnArg, GenericParam, ImplItemFn, ItemMod, Meta, Pat, ReturnType, Type, Visibility,
 };
 use tracing::{debug, debug_span, info};
 
@@ -19,10 +17,7 @@ use crate::{
     },
     make_item_definitions::FnInfoSyn,
     tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
-    update_item_definitions::{
-        RustImplItemItemNoJs, RustImplItemNoJs,
-        StructOrEnumDefitionInfo,
-    },
+    update_item_definitions::{RustImplItemItemNoJs, RustImplItemNoJs, StructOrEnumDefitionInfo},
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,
 };
@@ -74,7 +69,7 @@ pub fn js_stmts_from_syn_items(
                 let item = &item_defs[*index];
                 match item {
                     ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(struct_def) => {
+                        StructOrEnumDefitionInfo::Struct(_struct_def) => {
                             js_stmts.push(handle_item_struct(
                                 *index,
                                 true,
@@ -82,7 +77,7 @@ pub fn js_stmts_from_syn_items(
                                 current_module,
                             ));
                         }
-                        StructOrEnumDefitionInfo::Enum(enum_def) => {
+                        StructOrEnumDefitionInfo::Enum(_enum_def) => {
                             js_stmts.push(handle_item_enum(
                                 *index,
                                 true,
@@ -143,7 +138,7 @@ pub fn handle_item_fn(
     index: usize,
     // For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // Good also keep track using a field on global data, but for now seems less error prone to pass values to handle fns because it is always clear whether we are at the top level based on whether the item is being parsed within `handle_statments()`
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -372,7 +367,7 @@ pub fn handle_item_fn(
 
 pub fn handle_item_const(
     index: usize,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -440,7 +435,7 @@ pub fn handle_item_const(
 /// We must store separate <variant name>Id fields because otherwise we end up in a situation where a variable containing an enum variant only contains the data returned the the method with that name and then we can't do myVariantVar === MyEnum::Variant because the lhs is data and the rhs is a function.
 pub fn handle_item_enum(
     index: usize,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
@@ -732,14 +727,6 @@ pub fn handle_item_enum(
     dedup_impl_block_ids.sort();
     dedup_impl_block_ids.dedup();
     for impl_block_id in &dedup_impl_block_ids {
-        for js_impl_block in global_data
-            .impl_blocks
-            .iter()
-            .filter(|jib| &jib.index == impl_block_id)
-        {}
-
-        // let js_impl_block = &global_data.impl_blocks[*impl_block_id];
-
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
 
         let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
@@ -763,7 +750,7 @@ pub fn handle_item_enum(
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
-                    RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                    RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                         // TODO IMPORTANT reuse code from handle_item_fn
 
                         // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -787,7 +774,7 @@ pub fn handle_item_enum(
         // dbg!(&rust_impl_items);
 
         let js_impl_block = JsImplBlock2 {
-            index,
+            _index: index,
             _generics: rust_impl_block.generics,
             trait_: rust_impl_block.trait_,
             target: target_rust_type.clone(),
@@ -951,7 +938,7 @@ pub fn handle_impl_item_fn(
 
     // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
     let scoped_item_defs = match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(static_, fn_info) => {
+        RustImplItemItemNoJs::Fn(_static_, fn_info) => {
             fn_info
                 .stmts
                 .iter()
@@ -998,12 +985,7 @@ pub fn handle_impl_item_fn(
     // TODO need to look up whether path is eg `rust_std::RustBool`, not just the item name
     // TODO see commented out code below this fn for old eg RustInteger + add_assign mappings/updates
     let _n_stmts = impl_item_fn.block.stmts.len();
-    let body_stmts = impl_item_fn
-        .block
-        .stmts
-        .clone()
-        .into_iter()
-        .collect::<Vec<_>>();
+
     let returns_non_mut_ref_val = match &impl_item_fn.sig.output {
         ReturnType::Default => false,
         ReturnType::Type(_, type_) => matches!(&**type_, Type::Reference(_)),
@@ -1123,10 +1105,7 @@ pub fn handle_item_impl(
     let trait_path_and_name = rust_impl_block.trait_;
 
     let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
-    let is_target_type_param = match target_rust_type {
-        RustType2::TypeParam(_) => true,
-        _ => false,
-    };
+    let is_target_type_param = matches!(target_rust_type, RustType2::TypeParam(_));
 
     global_data
         .impl_block_target_type
@@ -1138,7 +1117,7 @@ pub fn handle_item_impl(
         .map(|item| RustImplItemJs {
             ident: item.ident.clone(),
             item: match &item.item {
-                RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                     // TODO IMPORTANT reuse code from handle_item_fn
 
                     // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -1161,7 +1140,7 @@ pub fn handle_item_impl(
         .collect::<Vec<_>>();
 
     let js_impl_block = JsImplBlock2 {
-        index,
+        _index: index,
         _generics: rust_impl_block_generics,
         trait_: trait_path_and_name,
         target: target_rust_type.clone(),
@@ -1453,14 +1432,14 @@ pub fn handle_item_impl(
 pub fn handle_item_struct(
     // item_def: &ItemDefinition,
     index: usize,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
     current_module_path: &[String],
 ) -> JsStmt {
     let item = &global_data.item_defs[index];
     let item_def = match item {
         ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
-            StructOrEnumDefitionInfo::Struct(struct_def) => {
+            StructOrEnumDefitionInfo::Struct(_struct_def) => {
                 // js_stmts.push(handle_item_struct(
                 //     actual,
                 //     true,
@@ -1469,7 +1448,7 @@ pub fn handle_item_struct(
                 // ));
                 actual.clone()
             }
-            StructOrEnumDefitionInfo::Enum(enum_def) => {
+            StructOrEnumDefitionInfo::Enum(_enum_def) => {
                 todo!()
             }
         },
@@ -1728,12 +1707,6 @@ pub fn handle_item_struct(
     dedup_impl_block_ids.sort();
     dedup_impl_block_ids.dedup();
     for impl_block_id in &dedup_impl_block_ids {
-        for js_impl_block in global_data
-            .impl_blocks
-            .iter()
-            .filter(|jib| &jib.index == impl_block_id)
-        {}
-
         // let js_impl_block = &global_data.impl_blocks[*impl_block_id];
 
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
@@ -1759,7 +1732,7 @@ pub fn handle_item_struct(
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
-                    RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                    RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                         // TODO IMPORTANT reuse code from handle_item_fn
 
                         // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -1783,7 +1756,7 @@ pub fn handle_item_struct(
         // dbg!(&rust_impl_items);
 
         let js_impl_block = JsImplBlock2 {
-            index,
+            _index: index,
             _generics: rust_impl_block.generics,
             trait_: rust_impl_block.trait_,
             target: target_rust_type.clone(),
@@ -1930,7 +1903,7 @@ pub fn _handle_item_mod(
         }
     }
 
-    let items = if let Some(content) = &item_mod.content {
+    let _items = if let Some(content) = &item_mod.content {
         // TODO how does `mod bar { mod foo; }` work?
         content.1.clone()
     } else if let Some(crate_path) = &global_data._crate_path {
@@ -1953,7 +1926,7 @@ pub fn _handle_item_mod(
     // In rust `mod foo` is largely redundant except for defining visibility and attributes https://stackoverflow.com/questions/32814653/why-is-there-a-mod-keyword-in-rust
 
     let current_module_path_copy = current_module_path.clone();
-    let js_stmt_submodule = JsModule {
+    let _js_stmt_submodule = JsModule {
         public: match item_mod.vis {
             Visibility::Public(_) => true,
             Visibility::Restricted(_) => todo!(),
@@ -1980,9 +1953,9 @@ pub fn _handle_item_mod(
 
 pub fn handle_item_trait(
     index: usize,
-    at_module_top_level: bool,
+    _at_module_top_level: bool,
     global_data: &mut GlobalData,
-    current_module_path: &[String],
+    _current_module_path: &[String],
 ) -> JsStmt {
     debug!("handle_item_trait");
 
@@ -2004,12 +1977,12 @@ pub fn handle_item_trait(
     //     scope.items.push(index);
     // }
 
-    if trait_def.default_impls.len() > 0 {
-        let methods = trait_def
+    if !trait_def.default_impls.is_empty() {
+        let _methods = trait_def
             .default_impls
             .iter()
             .map(|fn_info| {
-                let js_fn = JsFn {
+                let _js_fn = JsFn {
                     iife: false,
                     public: false,
                     export: false,
@@ -2056,7 +2029,6 @@ pub fn handle_item_trait(
     // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum JsImplItem {
     /// This means that `foo() {}` will be used in place of `function foo() {}`  
@@ -2068,7 +2040,6 @@ pub enum JsImplItem {
     ClassStatic(JsLocal),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ImplItemTemp {
     /// snake case

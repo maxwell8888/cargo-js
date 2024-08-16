@@ -1,6 +1,6 @@
 use syn::{
-    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStruct, ItemTrait, Signature, TraitItemFn,
+    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, Signature,
+    TraitItemFn,
 };
 use tracing::debug;
 
@@ -8,18 +8,6 @@ use crate::{
     tree_structure::{ExprRef, ItemActual, ItemRef, RustMod, StmtsRef},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
-
-#[derive(Debug, Clone)]
-pub struct StructDefinitionInfo {
-    // pub fields: StructFieldInfo,
-    pub syn_object: ItemStruct,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnumDefinitionInfo {
-    // pub members: Vec<EnumVariantInfo>,
-    pub syn_object: ItemEnum,
-}
 
 #[derive(Debug, Clone)]
 pub enum StructOrEnumDefitionInfo {
@@ -211,7 +199,7 @@ pub struct ModuleData {
     pub syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
 }
 impl ModuleData {
-    pub fn item_defined_in_module(&self, use_private: bool, item: &str) -> bool {
+    pub fn _item_defined_in_module(&self, use_private: bool, item: &str) -> bool {
         // let mut definitions = self.pub_definitions.iter();
         // if use_private {
         //     definitions
@@ -248,7 +236,7 @@ impl ModuleData {
             )
             .any(|name| name == item)
     }
-    pub fn path_starts_with_sub_module(&self, use_private: bool, item: &str) -> bool {
+    pub fn _path_starts_with_sub_module(&self, use_private: bool, item: &str) -> bool {
         let mut submodules = self.pub_submodules.iter();
         if use_private {
             submodules
@@ -290,7 +278,6 @@ pub struct FnInfo {
     pub stmts: Vec<StmtsRef>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FnInfoSyn {
     Standalone(ItemFn),
@@ -320,11 +307,10 @@ pub trait ModuleMethods {
         I::Item: AsRef<str>;
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
-    look_for_scoped_items: bool,
+    _look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
     item_refs: &[ItemRef],

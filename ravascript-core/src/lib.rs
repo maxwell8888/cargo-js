@@ -1,17 +1,16 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
+
 use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 
-use handle_syn::{
-    js_stmts_from_syn_items, GlobalData, RustImplItemItemJs,
-    RustType2,
-};
-use js_ast::{
-    Ident, JsClass, JsExpr, JsFn, JsModule, PathIdent,
-};
+use handle_syn::{js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
+use js_ast::{Ident, JsClass, JsExpr, JsFn, JsModule, PathIdent};
 use std::{fmt::Debug, fs, path::PathBuf};
-use syn::{ExprPath, ImplItem, Item, ItemTrait, UseTree};
+use syn::{ExprPath, ImplItem, Item, ItemTrait};
 use tracing::debug_span;
 use tree_structure::{
     extract_modules2,
@@ -30,7 +29,6 @@ mod duplicate_namespacing;
 use duplicate_namespacing::namespace_duplicates;
 
 mod extract_modules;
-use extract_modules::ModuleDataFirstPass;
 
 mod make_item_definitions;
 
@@ -57,7 +55,6 @@ struct CrateData {
     _modules: Vec<ModuleData>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ItemDefintionImpls {
     /// For impls like `impl<T> Foo for T {}` where multiple types use the same impl so we transpile the impl block itself into a class, and point to this classes methods using eg `getFoo = impl__Foo__for__T.prototype.getFoo` or whatever.
@@ -70,7 +67,6 @@ enum ItemDefintionImpls {
     ConcreteImpl(Vec<ImplItem>),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ItemDefinitions {
     Struct,
@@ -125,7 +121,7 @@ fn get_traits_implemented_for_item(
     loop {
         found_traits.clear();
 
-        for (index, item_impl) in item_impls {
+        for (_index, item_impl) in item_impls {
             // TODO this needs extending to handle matching any target type, rather than just user structs
             match &item_impl.target {
                 RustType::TypeParam(rust_type_param) => {
@@ -145,7 +141,7 @@ fn get_traits_implemented_for_item(
                         type_param_bounds.iter().all(|type_param_bound| {
                             found_traits
                                 .iter()
-                                .map(|(module_path, name, index)| *index)
+                                .map(|(_module_path, _name, index)| *index)
                                 .collect::<Vec<_>>()
                                 .contains(type_param_bound)
                         });
@@ -156,7 +152,7 @@ fn get_traits_implemented_for_item(
                 RustType::StructOrEnum(_, _, _, _) | RustType::I32 => {
                     if let Some(impl_trait) = &item_impl.trait_ {
                         let types_match = match &item_impl.target {
-                            RustType::StructOrEnum(_type_params, module_path, name, index) => {
+                            RustType::StructOrEnum(_type_params, module_path, name, _index) => {
                                 module_path == item_module_path && name == item_name
                             }
                             RustType::I32 => {
@@ -487,8 +483,8 @@ fn update_item_def_block_ids(
             // Concrete type target
             RustType::StructOrEnum(
                 _,
-                impl_target_module_path,
-                impl_target_name,
+                _impl_target_module_path,
+                _impl_target_name,
                 impl_tartget_index,
             ) => {
                 // The purpose of storing this info on the item_def is so that after the syn -> JS parsing parsing has happened and we have a parsed impl block and items, we can use this info to lookup this parsed impl block and copy it's methods/fields to the class.
@@ -522,7 +518,7 @@ fn update_item_def_block_ids(
                 let struct_impls_all_bounds = type_param_bounds.iter().all(|type_param_bound| {
                     traits_impld_for_class
                         .iter()
-                        .map(|(module_path, name, index)| *index)
+                        .map(|(_module_path, _name, index)| *index)
                         .collect::<Vec<_>>()
                         .contains(type_param_bound)
                 });
@@ -537,41 +533,6 @@ fn update_item_def_block_ids(
             _ => {}
         }
     }
-}
-
-// TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
-fn look_for_web_prelude(modules: &Vec<ModuleDataFirstPass>) -> bool {
-    let mut found_web_prelude = false;
-    for module in modules {
-        for item in &module.items {
-            match item {
-                Item::Const(_) => {}
-                Item::Enum(_) => {}
-                Item::ExternCrate(_) => {}
-                Item::Fn(_) => {}
-                Item::ForeignMod(_) => {}
-                Item::Impl(_) => {}
-                Item::Macro(_) => {}
-                Item::Mod(_) => {}
-                Item::Static(_) => {}
-                Item::Struct(_) => {}
-                Item::Trait(_) => {}
-                Item::TraitAlias(_) => {}
-                Item::Type(_) => {}
-                Item::Union(_) => {}
-                Item::Use(item_use) => match &item_use.tree {
-                    UseTree::Path(use_path) => found_web_prelude = use_path.ident == "web_prelude",
-                    UseTree::Name(use_name) => found_web_prelude = use_name.ident == "web_prelude",
-                    UseTree::Rename(_) => {}
-                    UseTree::Glob(_) => {}
-                    UseTree::Group(_) => {}
-                },
-                Item::Verbatim(_) => {}
-                _ => {}
-            }
-        }
-    }
-    found_web_prelude
 }
 
 fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
@@ -865,13 +826,13 @@ pub fn process_items(
         &mut item_defs,
     );
 
+    // TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
+    // TODO make this robust against user modules named "web_prelude" - we need to resolve the path/use_mapping to the crate. The web_prelude crate (or rustscript::web_prelude or whatever we end up using) is unique because crate names can't be shadowed (NOT TRUE - only on crates.io. It is possible for users to have a local crate named web_prelude or be using an alternative it crates.io?? But surely we can know this from the Cargo.toml because the dep table with have a path, or an alternative repository will be specified??).
     let include_web = crate_item_refs.iter().any(|item_ref| match item_ref {
-        ItemRef::Use(rust_use) => {
-            rust_use.use_mapping.iter().any(|use_mapping| {
-                // TODO make this robust against user modules or crates named "web_prelude" - only way to do this is checking Cargo.toml
-                use_mapping.1 == ["web_prelude"]
-            })
-        }
+        ItemRef::Use(rust_use) => rust_use
+            .use_mapping
+            .iter()
+            .any(|use_mapping| use_mapping.1 == ["web_prelude"]),
         _ => false,
     });
 
@@ -1422,7 +1383,6 @@ pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<
     }
 }
 
-#[allow(clippy::vec_init_then_push)]
 // pub fn from_block_old(code: &str, _with_rust_types: bool) -> Vec<JsStmt> {
 //     // TODO should have a check to disallow use of `use` statement for `from_block` given we have no knowledge of the directory structure so can't lookup modules/crates in other files. NO because a block can still have inline modules. Should web prelude be allowed?
 
@@ -1713,7 +1673,7 @@ fn _hardcoded_conversions(expr_path: &ExprPath, args: Vec<JsExpr>) -> Option<(Js
 // Take a path segs like foo::my_func(), and finds the absolute path to the item eg crate::bar::foo::my_func()
 // Actually it should find the path relative to the seed path ie current_module, which is why it is useful to use recursively and for resolving use paths???
 // What happens if the path is to a scoped item, or a variable (ie not an item definition)? We return the path of the item/var, which I believe in all cases must be a 0 length path/Vec<String>?
-#[allow(clippy::too_many_arguments)]
+
 // fn _get_path_old(
 //     look_for_scoped_vars: bool,
 //     use_private_items: bool,

@@ -1,12 +1,10 @@
-#![allow(dead_code)]
-
 use std::{fs, path::PathBuf};
 
 use proc_macro2::TokenStream;
 use syn::{
-    AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield, GenericParam, ImplItem,
-    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta, Pat, QSelf, RangeLimits, ReturnType, Stmt,
-    TraitItem, Type, UnOp, UseTree, Visibility,
+    AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield,
+    GenericParam, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta,
+    Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 use tracing::debug;
 use update_definitons::ItemV2;
@@ -2102,7 +2100,6 @@ fn look_for_module_in_items(
     None
 }
 
-#[allow(clippy::too_many_arguments)]
 /// -> (module path, item path, is scoped item, item index)
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
@@ -2472,7 +2469,6 @@ pub fn resolve_path(
 
 // Update definitions
 pub mod update_definitons {
-    
 
     use syn::{
         FnArg, GenericArgument, GenericParam, ImplItem, Item, ItemImpl, Pat, PathArguments,
@@ -2526,7 +2522,6 @@ pub mod update_definitons {
         updated_item_defs
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn update_item_defs_recurisve_individual_item(
         item_ref: &ItemRef,
         item_refs_all: &[ItemRef],
@@ -2702,7 +2697,6 @@ pub mod update_definitons {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn update_item_defs_recurisve_stmts(
         stmt_refs: &[StmtsRef],
         item_refs_all: &[ItemRef],
@@ -2747,7 +2741,6 @@ pub mod update_definitons {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn update_item_defs_recurisve_individual_expr(
         expr_ref: &ExprRef,
         item_refs_all: &[ItemRef],
@@ -3651,7 +3644,6 @@ pub mod update_definitons {
         }
     }
 
-    #[allow(dead_code)]
     trait GetModule {
         fn get_mut(&mut self, module_path: &[String]) -> &mut ModuleData;
     }
@@ -3676,7 +3668,6 @@ pub mod update_definitons {
     /// NOTE global data is required by get_path_without_namespacing which only uses pub_definitions etc, not `ItemDefintion`s
     ///
     /// IMPORTANT NOTE this fn is never used in the first pass where item definitions are being recorded, only in the second pass where info about dependant types is being add, so we can safely lookup Path -> ItemDefinition here
-    #[allow(unused_variables)]
     fn parse_types_for_populate_item_definitions(
         type_: &Type,
         // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
@@ -3877,7 +3868,6 @@ pub mod update_definitons {
                 // dbg!(seg_name_str);
 
                 // For impl blocks
-                #[allow(unreachable_code)]
                 match seg_name_str {
                     // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
                     "Option" => {
@@ -4099,7 +4089,6 @@ pub mod update_definitons {
     //     Fn(RustType),
     // }
 
-    #[allow(clippy::too_many_arguments)]
     /// -> (module path, item path, is scoped item, item index)
     pub fn resolve_path(
         // look_for_scoped_vars: bool,

@@ -1,6 +1,6 @@
 use syn::{
-    GenericArgument, GenericParam, Item, ItemConst, ItemEnum,
-    ItemImpl, ItemStruct, ItemTrait, Member, PathArguments, ReturnType, Type, TypeParamBound,
+    GenericArgument, GenericParam, Item, ItemConst, ItemEnum, ItemImpl, ItemStruct, ItemTrait,
+    Member, PathArguments, ReturnType, Type, TypeParamBound,
 };
 use tracing::debug;
 
@@ -705,7 +705,6 @@ pub enum StructFieldInfo {
     RegularStruct(Vec<(String, RustType)>),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StructDefinitionInfo {
     pub fields: StructFieldInfo,
@@ -728,7 +727,6 @@ pub struct EnumVariantInfo {
     pub inputs: Vec<EnumVariantInputsInfo>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EnumDefinitionInfo {
     pub members: Vec<EnumVariantInfo>,
@@ -796,7 +794,6 @@ impl ItemDefinition {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RustTraitDefinition {
     pub js_name: Ident,
@@ -937,7 +934,6 @@ pub enum RustTypeParamValue {
     RustType(Box<RustType>),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RustTypeImplTrait {
     SimpleTrait(usize),
@@ -953,7 +949,6 @@ pub struct RustImplItemNoJs {
     // syn_object: ImplItem,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RustImplItemItemNoJs {
     /// (static, fn info),
@@ -1048,7 +1043,6 @@ pub enum RustImplItemItemNoJs {
 // Also, for matching, Foo<i32> will need to match Foo<T>, etc so it is not as easy as doing `x == y`
 // NOTE we include specialised types like RustType::I32 for performance reasons to avoid needing to do a comparison like `module_path == [...]` everytime we want to check for an integer or string which is often given they are the most common types
 // NOTE we need ParentItem because we can use `Self` in expressions like `let foo = Self { foo: 5 };` etc, but we should avoid using it in definitions, only for syn parsing/expression code
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RustType {
     /// For cases/expressions we know cannot return a type, eg `break`
@@ -1246,7 +1240,6 @@ impl RustType {
 //     AssociatedFn(ItemDefinition, FnInfo),
 // }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RustTypeFnType {
     /// (fn name)
@@ -1351,7 +1344,6 @@ impl ModuleData {
     }
 }
 
-#[allow(dead_code)]
 trait GetModule {
     fn get_mut(&mut self, module_path: &[String]) -> &mut ModuleData;
 }
@@ -1369,7 +1361,6 @@ pub struct VariousDefintions {
     pub trait_definitons: Vec<RustTraitDefinition>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ConstDef {
     pub js_name: Ident,
@@ -1381,7 +1372,6 @@ pub struct ConstDef {
 }
 
 /// Not just for methods, can also be an enum variant with no inputs
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FnInfo {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
@@ -1666,7 +1656,6 @@ fn parse_types_for_populate_item_definitions(
             // dbg!(seg_name_str);
 
             // For impl blocks
-            #[allow(unreachable_code)]
             match seg_name_str {
                 // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
                 "Option" => {

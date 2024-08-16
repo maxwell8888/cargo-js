@@ -8,9 +8,8 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     tree_structure::{update_definitons::ItemV2, ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnInfo, ItemDefinition, RustGeneric,
-        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition, RustTypeParam,
-        RustTypeParamValue,
+        FnInfo, ItemDefinition, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTraitDefinition, RustTypeParam, RustTypeParamValue,
     },
     CrateData, PRELUDE_MODULE_PATH,
 };
@@ -46,7 +45,6 @@ pub enum RustTypeParamValue2 {
     RustType(Box<RustType2>),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RustType2 {
     /// For cases/expressions we know cannot return a type, eg `break`
@@ -183,7 +181,6 @@ impl RustType2 {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RustTypeImplTrait2 {
     SimpleTrait(RustTraitDefinition),
@@ -252,7 +249,7 @@ pub enum RustImplItemItemJs {
 #[derive(Debug, Clone)]
 pub struct JsImplBlock2 {
     // pub unique_id: String,
-    pub index: usize,
+    pub _index: usize,
     pub _generics: Vec<RustGeneric>,
     pub trait_: Option<(Vec<String>, String, usize)>,
     // Note this can a generic param
@@ -261,7 +258,6 @@ pub struct JsImplBlock2 {
     pub items: Vec<(bool, RustImplItemJs)>,
 }
 
-#[allow(dead_code)]
 enum VarItemFn {
     Var(ScopedVar),
     StructOrEnum(ItemDefinition),
@@ -271,7 +267,7 @@ enum VarItemFn {
 impl JsImplBlock2 {
     pub fn js_name(&self) -> Ident {
         let trait_name = match &self.trait_ {
-            Some((_module_path, name, index)) => name,
+            Some((_module_path, name, _index)) => name,
             None => "no_trait",
         };
         fn rust_type_js_name(rust_type: &RustType2) -> String {
@@ -338,7 +334,7 @@ pub struct GlobalData {
     // TODO should this just be a big struct rather than a vec so we don't have to do lookups?
     // rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
     /// (trait name, impl item)
-    pub default_trait_impls: Vec<(String, JsImplItem)>,
+    pub _default_trait_impls: Vec<(String, JsImplItem)>,
     /// Used for working out which `default_trait_impls` elements to add to which classes
     ///
     /// (class name, trait name)
@@ -360,7 +356,7 @@ pub struct GlobalData {
     // _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     // pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
-    pub transpiled_modules_temp: Vec<JsModule>,
+    pub _transpiled_modules_temp: Vec<JsModule>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -494,10 +490,10 @@ impl GlobalData {
             // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
             _default_trait_impls_class_mapping: Vec::new(),
-            default_trait_impls: Vec::new(),
+            _default_trait_impls: Vec::new(),
             // impl_items_for_js: Vec::new(),
             transpiled_modules: Vec::new(),
-            transpiled_modules_temp: Vec::new(),
+            _transpiled_modules_temp: Vec::new(),
             impl_blocks: Vec::new(),
             // _scoped_impl_blocks: Vec::new(),
             // impl_blocks_simpl: Vec::new(),
@@ -668,7 +664,7 @@ impl GlobalData {
             _ => todo!(),
         };
 
-        let (module_path, item_path, is_scoped, index) = resolve_path(
+        let (module_path, item_path, _is_scoped, index) = resolve_path(
             true,
             false,
             false,
@@ -866,12 +862,12 @@ impl GlobalData {
 
     /// NOTE to be used pre syn -> JS parsing, ie self.scopes won't have been populated
     // -> (module path, scope id (even if we are in a scope so `Some` scope id is provided, the item being looked up might still be module level. Of course if None scope id is provided it is impossible for a Some scope id to be returned), item definition)
-    fn lookup_item_definition_any_module_or_scope(
+    fn _lookup_item_definition_any_module_or_scope(
         &self,
         current_module_path: &[String],
         path: &[String],
     ) -> (Vec<String>, ItemDefinition, usize) {
-        let (item_module_path, item_path, is_scoped, index) = resolve_path(
+        let (item_module_path, _item_path, _is_scoped, index) = resolve_path(
             true,
             false,
             true,
@@ -906,7 +902,7 @@ impl GlobalData {
     //         .cloned()
     // }
 
-    fn lookup_trait_definition_any_module<I>(
+    fn _lookup_trait_definition_any_module<I>(
         &self,
         current_module_path: &[String],
         // current_scope_id: &Option<Vec<usize>>,
@@ -920,7 +916,7 @@ impl GlobalData {
         I::Item: AsRef<str>,
     {
         // dbg!("lookup_trait_definition_any_module");
-        let (item_module_path, item_path, is_scoped, index) = resolve_path(
+        let (item_module_path, _item_path, _is_scoped, index) = resolve_path(
             true,
             false,
             true,
@@ -1461,15 +1457,14 @@ fn look_for_module_in_items(
 /// TODO maybe should return Option<Vec<String>> for the module path to make it consistent with the rest of the codebase, but just returning a bool is cleaner
 ///
 /// TODO given eg `use MyEnum::{Variant1, Variant2};` we need to not only look for match `ItemDefintion`s but also matching enum variants
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_path(
     // For determining whether we have just been given a single length path and thus should also look for scoped items/vars.
     // NOTE we can't just rely on `current_mod == orig_mod` or `current_mod.len() == 1` because these will be incorrectly `true` in case like the second recursion of `self::foo` which is just `foo`.
     // TODO find better name
     orig_len_1: bool,
-    look_for_scoped_vars: bool,
+    _look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
-    look_for_scoped_items: bool,
+    _look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment2>,
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
@@ -1536,7 +1531,7 @@ pub fn resolve_path(
         } else if let Some(scoped_var) = scoped_var {
             Some(ScopedThing::Var(scoped_var.clone()))
         } else if let Some(scoped_item) = scoped_item {
-            Some(ScopedThing::Item(scoped_item.clone()))
+            Some(ScopedThing::Item(*scoped_item))
         } else {
             None
         }
@@ -1838,7 +1833,6 @@ pub fn resolve_path(
 }
 
 // Mutable/state data
-#[allow(dead_code)]
 #[derive(Default, Clone, Debug)]
 pub struct RustPreludeTypes {
     pub vec: bool,

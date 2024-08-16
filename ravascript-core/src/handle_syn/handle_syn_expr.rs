@@ -1,8 +1,5 @@
 use quote::quote;
-use syn::{
-    BinOp, Expr,
-    GenericArgument, Index, Lit, Member, Pat, UnOp,
-};
+use syn::{BinOp, Expr, GenericArgument, Index, Lit, Member, Pat, UnOp};
 use tracing::{debug, debug_span, warn};
 
 use super::{
@@ -28,8 +25,8 @@ use crate::{
         RustExprMethodCall, RustExprOrStmtMacro, RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
+        EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
+        RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
     },
     ItemDefinition, RustType, PRELUDE_MODULE_PATH,
 };
@@ -790,7 +787,6 @@ pub fn handle_expr(
         }
         ExprRef::Group(_) => todo!(),
         ExprRef::If(expr_if) => {
-            #[allow(clippy::all)]
             match &*expr_if.cond {
                 ExprRef::Let(_) => todo!(),
                 _ => {}
@@ -955,7 +951,7 @@ pub fn handle_expr(
             RustType2::Never,
         ),
         ExprRef::Macro(expr_macro) => {
-            handle_expr_and_stmt_macro(&expr_macro, global_data, current_module)
+            handle_expr_and_stmt_macro(expr_macro, global_data, current_module)
         }
         ExprRef::Match(expr_match) => {
             handle_expr_match(expr_match, false, global_data, current_module)
@@ -1125,7 +1121,6 @@ pub fn handle_expr(
                         _ => todo!(),
                     };
                     let rust_type = RustType2::StructOrEnum(type_params, item_def.clone());
-                    #[allow(clippy::all)]
                     let args = expr_struct
                         .fields
                         .iter()
@@ -1326,7 +1321,6 @@ pub fn handle_expr(
             RustType2::Unit,
         ),
         ExprRef::Yield(_) => todo!(),
-        _ => todo!(),
     }
 }
 
@@ -1447,7 +1441,6 @@ fn handle_expr_closure(
             // Could in theory return Uknown and resolve the type later, but even Rust will often error with:
             // `type must be known at this point. consider giving this closure parameter an explicit type.`
             // So need think more about which cases need type annotations and which don't, so just assume type annotations for now.
-            #[allow(unreachable_code)]
             RustType2::Unknown
         };
 
@@ -1893,7 +1886,6 @@ fn handle_expr_method_call(
         ExprRef::Verbatim(_) => todo!(),
         ExprRef::While(_) => todo!(),
         ExprRef::Yield(_) => todo!(),
-        _ => todo!(),
     };
     let mut method_name = expr_method_call.method.to_string();
 
@@ -1942,7 +1934,7 @@ fn handle_expr_method_call(
             .map(|generic_arg| match generic_arg {
                 GenericArgument::Lifetime(_) => todo!(),
                 GenericArgument::Type(type_) => {
-                    let (type_params, module_path, name, index) =
+                    let (_type_params, _module_path, _name, index) =
                         global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
                     let item = &global_data.item_defs[index];
                     let item_def = match item {
@@ -2029,11 +2021,7 @@ fn handle_expr_method_call(
             .args
             .iter()
             .zip(resolved_input_types_slice)
-            .enumerate()
-            .map(|(_i, (arg, resolved_input_type))| {
-                // dbg!(i);
-                // dbg!(&arg);
-                // dbg!(&resolved_input_type);
+            .map(|(arg, resolved_input_type)| {
                 match arg {
                     ExprRef::Closure(expr_closure) => {
                         // This particular method input is a closure
@@ -2237,7 +2225,6 @@ fn handle_expr_method_call(
     }
 
     if let JsExpr::Path(path) = &receiver {
-        #[allow(clippy::all)]
         if path.len() == 2 {
             match path {
                 PathIdent::PathTwo(path) => {
@@ -2742,7 +2729,7 @@ fn _resolve_generics_for_return_type(
                 resolved_type_params,
                 module_path.clone(),
                 scope_id.clone(),
-                name.clone(),
+                name,
             )
         }
         RustType::Vec(_) => todo!(),
@@ -3312,8 +3299,6 @@ fn handle_expr_path_inner(
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
-    let module = global_data.get_module(current_module);
-
     // TODO I think a lot of this messing around with CamelCase and being hard to fix is because we should be storing the namespaced item names as Vecs intead of foo__Bar, until they are rendered to JS
 
     // IMPORTANT TODO
@@ -3583,7 +3568,7 @@ fn handle_expr_path_inner(
                 &None,
                 sub_path,
                 &item_path_seg.ident,
-                &item_def,
+                item_def,
             );
             // dbg!(&impl_method);
             let impl_method =
@@ -4434,7 +4419,6 @@ pub fn handle_expr_match(
 /// TODO This seems to be specifically for handling the case that `if segs_copy_item_path.len() == 1`. This fn and that branch that calls it needs cleaning up.
 /// Assumes that exactly 1 of var, func, or item_def is Some() and the rest are None
 /// -> (partial, is_mut)
-#[allow(clippy::too_many_arguments)]
 fn found_item_to_partial_rust_type(
     item_path: &RustPathSegment2,
     var: Option<&ScopedVar>,

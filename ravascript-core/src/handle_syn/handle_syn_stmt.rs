@@ -1,4 +1,3 @@
-
 use syn::Pat;
 
 use super::{
@@ -279,7 +278,6 @@ fn handle_local(
         ExprRef::Path(expr_path) => handle_should_add_copy_expr_path(expr_path),
         ExprRef::Range(_) => todo!(),
         ExprRef::Reference(expr_reference) => {
-            #[allow(clippy::all)]
             if expr_reference.mutability {
                 match &expr_reference.expr {
                     // Expr::Path(expr_path) => {
@@ -817,7 +815,7 @@ pub fn handle_stmt(
                     let item = &item_defs.clone()[*index];
                     match item {
                         ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
-                            StructOrEnumDefitionInfo::Struct(struct_def) => {
+                            StructOrEnumDefitionInfo::Struct(_struct_def) => {
                                 vec![(
                                     handle_item_struct(
                                         *index,
@@ -828,7 +826,7 @@ pub fn handle_stmt(
                                     RustType2::Unit,
                                 )]
                             }
-                            StructOrEnumDefitionInfo::Enum(enum_def) => {
+                            StructOrEnumDefitionInfo::Enum(_enum_def) => {
                                 vec![(
                                     handle_item_enum(
                                         *index,
@@ -866,8 +864,8 @@ pub fn handle_stmt(
                         .map(|stmt| (stmt, RustType2::Unit))
                         .collect()
                 }
-                ItemRef::Mod(rust_mod) => todo!(),
-                ItemRef::Use(rust_use) => {
+                ItemRef::Mod(_rust_mod) => todo!(),
+                ItemRef::Use(_rust_use) => {
                     // TODO surely need to handle scoped use statements as they could shadow other item idents?
                     // let scope = global_data.scopes.last_mut().unwrap();
                     // handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
@@ -897,7 +895,7 @@ pub fn handle_stmt(
         StmtsRef::Macro(stmt_macro) => {
             vec![(
                 JsStmt::Expr(
-                    handle_expr_and_stmt_macro(&stmt_macro, global_data, current_module_path).0,
+                    handle_expr_and_stmt_macro(stmt_macro, global_data, current_module_path).0,
                     stmt_macro.semi_token,
                 ),
                 RustType2::Unit,
