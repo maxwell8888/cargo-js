@@ -1778,6 +1778,14 @@ pub fn resolve_path(
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
             // (vec!["prelude_special_case".to_string()], segs, None)
+            // dbg!(&segs);
+
+            // TODO clean up this hack
+            let new_ident = if seg.ident == "Some" || seg.ident == "None" {
+                "Option"
+            } else {
+                &seg.ident
+            };
             let item_index = module_items
                 .iter()
                 .find_map(|item_ref| match item_ref {
@@ -1789,19 +1797,19 @@ pub fn resolve_path(
                                 .find_map(|item_ref| match item_ref {
                                     ItemRef::StructOrEnum(index) => {
                                         let item = &items_defs[*index];
-                                        (item.ident() == seg.ident).then_some(*index)
+                                        (item.ident() == new_ident).then_some(*index)
                                     }
                                     ItemRef::Fn(index) => {
                                         let item = &items_defs[*index];
-                                        (item.ident() == seg.ident).then_some(*index)
+                                        (item.ident() == new_ident).then_some(*index)
                                     }
                                     ItemRef::Const(index) => {
                                         let item = &items_defs[*index];
-                                        (item.ident() == seg.ident).then_some(*index)
+                                        (item.ident() == new_ident).then_some(*index)
                                     }
                                     ItemRef::Trait(index) => {
                                         let item = &items_defs[*index];
-                                        (item.ident() == seg.ident).then_some(*index)
+                                        (item.ident() == new_ident).then_some(*index)
                                     }
                                     _ => None,
                                 })
@@ -1810,6 +1818,8 @@ pub fn resolve_path(
                     _ => None,
                 })
                 .unwrap();
+
+            // TODO length 1 `Some` and `None` paths should be converted to `Option::Some` and `Option::None`?
             (
                 vec![PRELUDE_MODULE_PATH.to_string()],
                 segs,
