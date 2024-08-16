@@ -1,17 +1,15 @@
 use syn::{
-    FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn,
-    ItemImpl, ItemStruct, ItemTrait, Member, Pat, PathArguments, ReturnType, Type, TypeParamBound,
-    Visibility,
+    GenericArgument, GenericParam, Item, ItemConst, ItemEnum,
+    ItemImpl, ItemStruct, ItemTrait, Member, PathArguments, ReturnType, Type, TypeParamBound,
 };
-use tracing::{debug, debug_span};
+use tracing::debug;
 
 use crate::{
-    duplicate_namespacing::Duplicate,
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
-    make_item_definitions::{self, FnInfoSyn, ModuleMethods},
+    make_item_definitions::{self, FnInfoSyn},
     tree_structure::{ExprRef, ItemActual, ItemRef, StmtsRef},
-    RustPathSegment, PRELUDE_MODULE_PATH,
+    RustPathSegment,
 };
 
 // pub fn update_item_definitions(

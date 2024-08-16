@@ -1,8 +1,8 @@
 use heck::AsPascalCase;
 use std::fs;
 use syn::{
-    Fields, FnArg, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemMod, ItemStruct, ItemTrait, Meta, Pat, ReturnType, TraitItem, Type, TypeParamBound,
+    Fields, FnArg, GenericParam, ImplItemFn,
+    ItemMod, Meta, Pat, ReturnType, Type,
     Visibility,
 };
 use tracing::{debug, debug_span, info};
@@ -10,8 +10,7 @@ use tracing::{debug, debug_span, info};
 use super::{
     definition_data::{GlobalDataScope, JsImplBlock2, RustImplItemJs, ScopedVar},
     handle_syn_expr::handle_expr,
-    handle_syn_stmt::{handle_stmt, parse_fn_body_stmts},
-    RustTypeParam2, RustTypeParamValue2,
+    handle_syn_stmt::parse_fn_body_stmts,
 };
 
 use crate::{
@@ -21,8 +20,7 @@ use crate::{
     make_item_definitions::FnInfoSyn,
     tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
     update_item_definitions::{
-        get_item_impl_unique_id, ConstDef, FnInfo, ItemDefinition, RustGeneric,
-        RustImplBlockSimple, RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition,
+        RustImplItemItemNoJs, RustImplItemNoJs,
         StructOrEnumDefitionInfo,
     },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,

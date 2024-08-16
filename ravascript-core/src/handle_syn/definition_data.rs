@@ -8,11 +8,11 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     tree_structure::{update_definitons::ItemV2, ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        ConstDef, FnInfo, ItemDefinition, ModuleData, RustGeneric, RustImplBlockSimple,
-        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition, RustType, RustTypeParam,
+        FnInfo, ItemDefinition, RustGeneric,
+        RustImplItemItemNoJs, RustImplItemNoJs, RustTraitDefinition, RustTypeParam,
         RustTypeParamValue,
     },
-    CrateData, RustPathSegment, PRELUDE_MODULE_PATH,
+    CrateData, PRELUDE_MODULE_PATH,
 };
 
 use super::handle_syn_item::JsImplItem;

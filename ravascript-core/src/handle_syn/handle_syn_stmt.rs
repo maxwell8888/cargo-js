@@ -1,7 +1,5 @@
-use quote::quote;
 
-use syn::{Expr, ExprPath, Item, Local, Pat, Stmt};
-use tracing::debug_span;
+use syn::Pat;
 
 use super::{
     handle_pat,
@@ -18,7 +16,6 @@ use super::{
 
 use super::definition_data::{RustType2, ScopedVar};
 use crate::{
-    extract_modules::{handle_item_use, ItemUseModuleOrScope},
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
     tree_structure::{
         update_definitons::ItemV2, ExprRef, ItemRef, LocalRef, RustExprPath, StmtsRef,

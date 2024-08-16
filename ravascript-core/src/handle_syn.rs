@@ -3,7 +3,6 @@ mod handle_syn_expr;
 mod handle_syn_item;
 mod handle_syn_stmt;
 
-pub use handle_syn_item::*;
 
 use definition_data::{resolve_path, ScopedVar};
 pub use definition_data::{
@@ -11,17 +10,13 @@ pub use definition_data::{
     RustTypeParamValue2,
 };
 pub use handle_syn_item::js_stmts_from_syn_items;
-pub use handle_syn_stmt::handle_stmt;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
-    make_item_definitions,
-    tree_structure::{update_definitons::ItemV2, ItemActual, ItemRef},
-    update_item_definitions::{ItemDefinition, RustType, RustTypeParam, RustTypeParamValue},
-    RustPathSegment,
+    tree_structure::update_definitons::ItemV2,
+    update_item_definitions::{ItemDefinition, RustTypeParam, RustTypeParamValue},
 };
-use quote::quote;
 use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
 
 /// Converts a syn pat to our own similar type. Also adds vars to the current scope, we do this here because we might need to add multiple vars eg for Pat::Struct. We could potentially just go through the resultant LocalName afterwards to add the vars, but it seems more concise to to it here where we are going through the tree anyway.

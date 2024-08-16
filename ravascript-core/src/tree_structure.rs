@@ -4,14 +4,8 @@ use std::{fs, path::PathBuf};
 
 use proc_macro2::TokenStream;
 use syn::{
-    AngleBracketedGenericArguments, Arm, Attribute, BinOp, Block, BoundLifetimes, Expr, ExprArray,
-    ExprAssign, ExprAsync, ExprAwait, ExprBinary, ExprBlock, ExprBreak, ExprCall, ExprCast,
-    ExprClosure, ExprConst, ExprContinue, ExprField, ExprForLoop, ExprGroup, ExprIf, ExprIndex,
-    ExprInfer, ExprLet, ExprLit, ExprLoop, ExprMacro, ExprMatch, ExprMethodCall, ExprParen,
-    ExprPath, ExprRange, ExprReference, ExprRepeat, ExprReturn, ExprStruct, ExprTry, ExprTryBlock,
-    ExprTuple, ExprUnary, ExprUnsafe, ExprWhile, ExprYield, FieldValue, GenericParam, ImplItem,
-    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Local, LocalInit, Macro, Member, Meta, Pat,
-    PatConst, PatLit, PatMacro, PatPath, PatRange, QSelf, RangeLimits, ReturnType, Stmt, StmtMacro,
+    AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield, GenericParam, ImplItem,
+    Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta, Pat, QSelf, RangeLimits, ReturnType, Stmt,
     TraitItem, Type, UnOp, UseTree, Visibility,
 };
 use tracing::debug;
@@ -22,7 +16,6 @@ use crate::{
     make_item_definitions::{
         ConstDef, FnInfo, FnInfoSyn, ItemDefinition, RustTraitDefinition, StructOrEnumDefitionInfo,
     },
-    update_item_definitions::{RustImplBlockSimple, RustType},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };
 
@@ -2479,7 +2472,7 @@ pub fn resolve_path(
 
 // Update definitions
 pub mod update_definitons {
-    use std::mem;
+    
 
     use syn::{
         FnArg, GenericArgument, GenericParam, ImplItem, Item, ItemImpl, Pat, PathArguments,
@@ -2489,7 +2482,6 @@ pub mod update_definitons {
 
     use crate::{
         duplicate_namespacing::Duplicate,
-        handle_syn::RustPathSegment2,
         js_ast::Ident,
         make_item_definitions::{self, FnInfoSyn},
         tree_structure::look_for_module_in_items,
@@ -2500,7 +2492,7 @@ pub mod update_definitons {
         RustImplBlockSimple, RustPathSegment, PRELUDE_MODULE_PATH,
     };
 
-    use super::{expr_to_expr_ref, stmt_to_stmts_ref, ExprRef, ItemActual, ItemRef, StmtsRef};
+    use super::{ExprRef, ItemActual, ItemRef, StmtsRef};
 
     // This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
     // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.

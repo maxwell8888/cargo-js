@@ -1,7 +1,7 @@
 use quote::quote;
 use syn::{
-    BinOp, Expr, ExprAssign, ExprBlock, ExprCall, ExprClosure, ExprMatch, ExprMethodCall, ExprPath,
-    GenericArgument, Index, Lit, Macro, Member, Pat, Stmt, UnOp,
+    BinOp, Expr,
+    GenericArgument, Index, Lit, Member, Pat, UnOp,
 };
 use tracing::{debug, debug_span, warn};
 
@@ -28,7 +28,7 @@ use crate::{
         RustExprMethodCall, RustExprOrStmtMacro, RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        ConstDef, EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
+        EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
     },
     ItemDefinition, RustType, PRELUDE_MODULE_PATH,
@@ -1522,7 +1522,7 @@ fn handle_expr_closure(
     }
 
     // Need to handle different Expr's separately because Expr::Match needs passing an arg that it is being returned. Not sure the other cases are necessary
-    let (mut body_stmts, return_type) = match &*expr_closure.body {
+    let (body_stmts, return_type) = match &*expr_closure.body {
         ExprRef::Block(expr_block) => parse_fn_body_stmts(
             true,
             false,

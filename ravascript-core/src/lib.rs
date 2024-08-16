@@ -4,15 +4,14 @@ use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 
 use handle_syn::{
-    handle_item_const, handle_item_enum, handle_item_fn, handle_item_impl, handle_item_struct,
-    handle_item_trait, handle_stmt, js_stmts_from_syn_items, GlobalData, RustImplItemItemJs,
+    js_stmts_from_syn_items, GlobalData, RustImplItemItemJs,
     RustType2,
 };
 use js_ast::{
-    FmtExtensions, Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, LocalName, LocalType, PathIdent,
+    Ident, JsClass, JsExpr, JsFn, JsModule, PathIdent,
 };
 use std::{fmt::Debug, fs, path::PathBuf};
-use syn::{ExprPath, ImplItem, Item, ItemFn, ItemMod, ItemTrait, UseTree};
+use syn::{ExprPath, ImplItem, Item, ItemTrait, UseTree};
 use tracing::debug_span;
 use tree_structure::{
     extract_modules2,
@@ -31,14 +30,13 @@ mod duplicate_namespacing;
 use duplicate_namespacing::namespace_duplicates;
 
 mod extract_modules;
-use extract_modules::{extract_modules, ModuleDataFirstPass};
+use extract_modules::ModuleDataFirstPass;
 
 mod make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
     ItemDefinition, ModuleData, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
-    StructOrEnumDefitionInfo,
 };
 
 pub use js_ast::JsStmt;

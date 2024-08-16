@@ -1,11 +1,10 @@
 use syn::{
-    Expr, GenericParam, ImplItem, ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStruct, ItemTrait, Meta, Signature, Stmt, TraitItemFn, Type, Visibility,
+    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
+    ItemStruct, ItemTrait, Signature, TraitItemFn,
 };
-use tracing::{debug, debug_span};
+use tracing::debug;
 
 use crate::{
-    extract_modules::ModuleDataFirstPass,
     tree_structure::{ExprRef, ItemActual, ItemRef, RustMod, StmtsRef},
     RustPathSegment, PRELUDE_MODULE_PATH,
 };

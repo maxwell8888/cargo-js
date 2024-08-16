@@ -63,7 +63,7 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
             .count()
             > 1
         {
-            let mut dup = Duplicate {
+            let dup = Duplicate {
                 namespace: Vec::new(),
                 module_path: name.0.clone(),
                 name: name.1.to_string(),
