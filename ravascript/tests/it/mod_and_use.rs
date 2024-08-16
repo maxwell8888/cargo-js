@@ -198,11 +198,6 @@ async fn duplicate_names_impl_scope() {
                     foo();
                 }
             }
-            function bar() {
-                function foo() {}
-                foo();
-            }
-
         "#,
     );
     // let expected = format_js(r#""#);

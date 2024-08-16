@@ -4420,14 +4420,13 @@ pub mod update_definitons {
                     .find_map(|item_ref| match item_ref {
                         ItemRef::Mod(rust_mod) => {
                             if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
-                                dbg!("got prelude 2");
                                 rust_mod.items.iter().find_map(|item_ref| match item_ref {
                                     ItemRef::StructOrEnum(index) => {
                                         let item = &items_defs[*index];
                                         match item {
                                             ItemActual::StructOrEnum(def) => {
-                                                dbg!(&seg_new);
-                                                dbg!(&def.ident);
+                                                // dbg!(&seg_new);
+                                                // dbg!(&def.ident);
                                                 (def.ident == seg_new).then_some(*index)
                                             }
                                             _ => todo!(),
