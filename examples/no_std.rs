@@ -1,4 +1,4 @@
-use ravascript::{a, prelude::*};
+use ravascript::prelude::*;
 
 // cloning
 // JSON.stringify() works for all objects except html elements, recursive objects
@@ -9,7 +9,7 @@ fn main() {
     let mut arr = [1, 2, 3];
     arr.push(4);
     // let a = a![1, 2, 3];
-    let ss = "hi".to_upper_case();
+    // let ss = "hi".to_upper_case();
 
     let woop = [1, 2, 3];
     let nice = woop.iter().map(|x| x + 1);
