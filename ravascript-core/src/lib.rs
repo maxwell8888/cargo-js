@@ -867,6 +867,16 @@ pub fn process_items(
         &mut item_defs,
     );
 
+    let include_web = crate_item_refs.iter().any(|item_ref| match item_ref {
+        ItemRef::Use(rust_use) => {
+            rust_use.use_mapping.iter().any(|use_mapping| {
+                // TODO make this robust against user modules or crates named "web_prelude" - only way to do this is checking Cargo.toml
+                use_mapping.1 == ["web_prelude"]
+            })
+        }
+        _ => false,
+    });
+
     let mut crate_item_refs = vec![ItemRef::Mod(RustMod {
         pub_: true,
         items: crate_item_refs,
@@ -893,9 +903,6 @@ pub fn process_items(
     // TODO make this correct. Whilst it would be easier to identify web_prelude usage if `make_use_mappings_absolute()` (or whatever) was implemented, it is still impossible to know whether web_prelude is being used until we parse the entire syntax in `js_stmts_from_syn_items()` since we can have cases like:
     // `let div = web_prelude::document::create_element("div");`
     // So better to just rely on Cargo.toml dependencies, and not support web_prelude and other crates in blocks/formats without a Cargo.toml?
-
-    // let include_web = look_for_web_prelude(&modules);
-    let include_web = false;
 
     if include_web {
         let web_prelude_crate_path = "../web-prelude";

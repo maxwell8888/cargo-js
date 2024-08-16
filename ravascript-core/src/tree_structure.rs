@@ -463,7 +463,7 @@ impl RustMod {
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
             ItemRef::Use(_) => None,
-            ItemRef::Macro => todo!(),
+            ItemRef::Macro => None,
         })
     }
     pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
@@ -2705,7 +2705,8 @@ pub mod update_definitons {
                 }
             }
             ItemRef::Use(_) => {}
-            ItemRef::Macro => todo!(),
+            // TODO
+            ItemRef::Macro => {}
         }
     }
 
