@@ -185,22 +185,27 @@ async fn duplicate_names_impl_scope() {
             }
         }
     );
-    // let expected = format_js(
-    //     r#"
-    //         // crate
-    //         function crate__foo() {}
+    let expected = format_js(
+        r#"
+            // crate
+            function crate__foo() {}
 
-    //         // bar
-    //         function bar__foo() {}
-    //         stru
-    //         function bar() {
-    //             function foo() {}
-    //             foo();
-    //         }
+            // bar
+            function bar__foo() {}
+            class Green {
+                static bar() {
+                    function foo() {}
+                    foo();
+                }
+            }
+            function bar() {
+                function foo() {}
+                foo();
+            }
 
-    //     "#,
-    // );
-    let expected = format_js(r#""#);
+        "#,
+    );
+    // let expected = format_js(r#""#);
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
@@ -353,11 +358,11 @@ async fn use_paths() {
     let expected = format_js(
         r#"
             // crate
-            function duplicate() {
+            function crate__duplicate() {
                 return 0;
             }
             function main() {
-                console.assert(duplicate() === 0);
+                console.assert(crate__duplicate() === 0);
                 console.assert(one__duplicate() === 1);
                 console.assert(three__duplicate() === 3);
                 console.assert(four__duplicate() === 4);

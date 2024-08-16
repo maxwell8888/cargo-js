@@ -310,9 +310,9 @@ async fn const_duplicate_name() {
     let expected = format_js(
         r#"
             // crate
-            const FOO = 1;
+            const crate__FOO = 1;
             function main() {
-                console.assert(FOO === 1);
+                console.assert(crate__FOO === 1);
                 console.assert(foo__FOO === 2);
             }
 
@@ -351,23 +351,23 @@ async fn enum_duplicate_name() {
     let expected = format_js(
         r#"
             // crate
-            class Foo {
+            class crate__Foo {
                 static BarId = "Bar";
-                static Bar = new Foo("Bar", null);
+                static Bar = new crate__Foo("Bar", null);
                 constructor(id, data) {
                     this.id = id;
                     this.data = data;
                 }
             }
             function main() {
-                let foo = Foo.Bar;
+                let foo = crate__Foo.Bar;
                 let foo2 = foo__Foo.Bar;
             }
 
             // foo
             class foo__Foo {
                 static BarId = "Bar";
-                static Bar = new Foo("Bar", null);
+                static Bar = new foo__Foo("Bar", null);
                 constructor(id, data) {
                     this.id = id;
                     this.data = data;

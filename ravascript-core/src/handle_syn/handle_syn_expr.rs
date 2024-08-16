@@ -3241,12 +3241,19 @@ fn handle_expr_call(
             //     }
             // }
             match partial_rust_type {
-                PartialRustType::StructIdent(_, _) => {
-                    let js_path = match expr {
-                        JsExpr::Path(path) => path,
-                        _ => todo!(),
-                    };
-                    (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
+                PartialRustType::StructIdent(_, item_def) => {
+                    // let js_path = match expr {
+                    //     JsExpr::Path(path) => path,
+                    //     _ => todo!(),
+                    // };
+                    // (JsExpr::New(js_path, args_js_expr.clone()), rust_type)
+                    (
+                        JsExpr::New(
+                            PathIdent::Single(item_def.js_name.clone()),
+                            args_js_expr.clone(),
+                        ),
+                        rust_type,
+                    )
                 }
                 PartialRustType::RustType(RustType2::FnVanish, _, _) => {
                     // TODO for now we are assuming we are dealing with Box::new() so the args must be len=1
@@ -3336,6 +3343,7 @@ fn handle_expr_path_inner(
     // dbg!(&global_data.item_defs);
     let (segs_copy_module_path, segs_copy_item_path, segs_copy_is_scoped, segs_copy_index) =
         resolve_path(
+            true,
             // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
             true,
             true,

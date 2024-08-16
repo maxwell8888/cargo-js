@@ -248,6 +248,7 @@ fn parse_fn_input_or_field(
                             //     .lookup_trait_definition_any_module(current_module, trait_name);
                             let (trait_module_path, trait_item_path, trait_item_scope, item_index) =
                                 resolve_path(
+                                    true,
                                     false,
                                     true,
                                     true,
@@ -389,6 +390,7 @@ fn parse_fn_input_or_field(
                         //     );
                         let (item_definition_module_path, item_path, _is_scoped, item_index) =
                             resolve_path(
+                                true,
                                 false,
                                 true,
                                 true,

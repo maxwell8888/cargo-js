@@ -601,7 +601,8 @@ pub fn handle_item_enum(
                         AsPascalCase(variant.ident.to_string()).to_string(),
                     )),
                     value: JsExpr::New(
-                        item_enum.ident.clone().into(),
+                        // item_enum.ident.clone().into(),
+                        PathIdent::Single(item_def.js_name.clone()),
                         vec![JsExpr::LitStr(variant.ident.to_string()), JsExpr::Null],
                     ),
                     // Box::new(JsExpr::LitStr(variant.ident.to_string())),

@@ -669,6 +669,7 @@ impl GlobalData {
         };
 
         let (module_path, item_path, is_scoped, index) = resolve_path(
+            true,
             false,
             false,
             true,
@@ -871,6 +872,7 @@ impl GlobalData {
         path: &[String],
     ) -> (Vec<String>, ItemDefinition, usize) {
         let (item_module_path, item_path, is_scoped, index) = resolve_path(
+            true,
             false,
             true,
             true,
@@ -919,6 +921,7 @@ impl GlobalData {
     {
         // dbg!("lookup_trait_definition_any_module");
         let (item_module_path, item_path, is_scoped, index) = resolve_path(
+            true,
             false,
             true,
             true,
@@ -1460,6 +1463,10 @@ fn look_for_module_in_items(
 /// TODO given eg `use MyEnum::{Variant1, Variant2};` we need to not only look for match `ItemDefintion`s but also matching enum variants
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_path(
+    // For determining whether we have just been given a single length path and thus should also look for scoped items/vars.
+    // NOTE we can't just rely on `current_mod == orig_mod` or `current_mod.len() == 1` because these will be incorrectly `true` in case like the second recursion of `self::foo` which is just `foo`.
+    // TODO find better name
+    orig_len_1: bool,
     look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
     look_for_scoped_items: bool,
@@ -1484,7 +1491,7 @@ pub fn resolve_path(
 
     let module = look_for_module_in_items(module_items, items_defs, current_mod).unwrap();
 
-    let is_parent_or_same_module = if orig_mod.len() >= current_mod.len() {
+    let is_parent_or_orig_module = if orig_mod.len() >= current_mod.len() {
         current_mod
             .iter()
             .enumerate()
@@ -1492,14 +1499,15 @@ pub fn resolve_path(
     } else {
         false
     };
+
     let single_element_path = segs.len() == 1;
 
-    let use_private = use_private_items || is_parent_or_same_module;
+    let use_private = use_private_items || is_parent_or_orig_module;
     let item_defined_in_module =
         module.item_defined_in_module2(items_defs, use_private, &segs[0].ident);
 
     let path_starts_with_sub_module = module.path_starts_with_sub_module(
-        use_private_items || is_parent_or_same_module,
+        use_private_items || is_parent_or_orig_module,
         &segs[0].ident,
     );
 
@@ -1518,21 +1526,10 @@ pub fn resolve_path(
         let scoped_var = s
             .variables
             .iter()
-            .find(|v| single_element_path && is_parent_or_same_module && v.name == segs[0].ident);
+            .find(|v| single_element_path && orig_len_1 && v.name == segs[0].ident);
         let scoped_item = s.items.iter().find(|index| {
             let item_def = &items_defs[**index];
-            let thing = items_defs
-                .iter()
-                .filter(|item_def| match item_def {
-                    ItemV2::StructOrEnum(_) => true,
-                    ItemV2::Fn(_) => true,
-                    ItemV2::Const(_) => true,
-                    ItemV2::Trait(_) => true,
-                    ItemV2::None => true,
-                    ItemV2::Impl(_) => false,
-                })
-                .collect::<Vec<_>>();
-            is_parent_or_same_module && item_def.ident() == segs[0].ident
+            orig_len_1 && item_def.ident() == segs[0].ident
         });
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
@@ -1602,10 +1599,6 @@ pub fn resolve_path(
         // (current_mod.clone(), segs, is_scoped_static)
         (current_mod.to_vec(), segs, true, None)
     } else if let Some(ScopedThing::Item(index)) = scoped_thing {
-        dbg!(index);
-        dbg!(current_mod);
-        dbg!(orig_mod);
-        dbg!(&segs);
         assert!(current_mod == orig_mod);
         (current_mod.to_vec(), segs, true, Some(index))
     } else if item_defined_in_module.is_some() {
@@ -1618,6 +1611,7 @@ pub fn resolve_path(
         current_module.pop();
 
         resolve_path(
+            false,
             false,
             false,
             true,
@@ -1633,6 +1627,7 @@ pub fn resolve_path(
         segs.remove(0);
 
         resolve_path(
+            false,
             false,
             false,
             true,
@@ -1651,6 +1646,7 @@ pub fn resolve_path(
         resolve_path(
             false,
             false,
+            false,
             true,
             segs,
             module_items,
@@ -1667,6 +1663,7 @@ pub fn resolve_path(
         segs.remove(0);
 
         resolve_path(
+            false,
             false,
             false,
             false,
@@ -1717,6 +1714,7 @@ pub fn resolve_path(
         resolve_path(
             false,
             false,
+            false,
             true,
             use_segs,
             module_items,
@@ -1738,6 +1736,7 @@ pub fn resolve_path(
         let current_module = [crate_name.ident].to_vec();
 
         resolve_path(
+            false,
             false,
             false,
             true,

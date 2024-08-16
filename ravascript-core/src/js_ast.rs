@@ -104,6 +104,7 @@ pub enum JsExpr {
     /// TODO assumes receiver is single var
     MethodCall(Box<JsExpr>, Ident, Vec<JsExpr>),
     Minus(Box<JsExpr>),
+    // TODO why PathIdent, not Ident??
     /// (Class path, args)
     New(PathIdent, Vec<JsExpr>),
     Null,
