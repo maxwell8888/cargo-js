@@ -950,6 +950,35 @@ pub fn handle_impl_item_fn(
         RustImplItemItemNoJs::Const => todo!(),
     }
 
+    // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
+    let scoped_item_defs = match &rust_impl_item.item {
+        RustImplItemItemNoJs::Fn(static_, fn_info) => {
+            fn_info
+                .stmts
+                .iter()
+                .filter_map(|stmt_ref| {
+                    match stmt_ref {
+                        StmtsRef::Item(item_ref) => {
+                            match item_ref {
+                                ItemRef::StructOrEnum(index) => Some(*index),
+                                ItemRef::Fn(index) => Some(*index),
+                                // TODO can consts be scoped or are they always global??
+                                ItemRef::Const(index) => Some(*index),
+                                ItemRef::Trait(index) => Some(*index),
+                                ItemRef::Mod(_) => todo!(),
+                                ItemRef::Use(_) => todo!(),
+                                ItemRef::Macro => todo!(),
+                                ItemRef::Impl(_) => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+                .collect()
+        }
+        RustImplItemItemNoJs::Const => todo!(),
+    };
+
     // Create scope for impl method/fn body
     info!("handle_item_impl new scope");
 
@@ -963,7 +992,7 @@ pub fn handle_impl_item_fn(
         // trait_definitons: Vec::new(),
         // consts: Vec::new(),
         use_mappings: Vec::new(),
-        items: Vec::new(),
+        items: scoped_item_defs,
     });
 
     // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name

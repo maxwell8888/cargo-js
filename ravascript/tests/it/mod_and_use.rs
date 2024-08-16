@@ -60,7 +60,7 @@ async fn it_transpiles_crate_directory() {
   
             // colors
             const DOG_ACTIVITY = 5;
-            function colors__duplicateName() {
+            function crate__colors__duplicateName() {
                 return 6;
             }
             function stuffFunction() {
@@ -88,7 +88,7 @@ async fn it_transpiles_crate_directory() {
                     console.assert(crate__duplicateName() === 10);
                     console.assert(sayHello() === 8);
                     console.assert(green__duplicateName() === 3);
-                    console.assert(colors__duplicateName() === 6);
+                    console.assert(crate__colors__duplicateName() === 6);
                     console.assert(utils__colors__duplicateName() === 7);
                     console.assert(DOG_ACTIVITY === 5);
                     console.assert(stuffFunction() === 4);
@@ -163,6 +163,44 @@ async fn simple_module() {
             function green() {}
         "#,
     );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn duplicate_names_impl_scope() {
+    // let actual = r2j_file_unchecked!(
+    // TODO I think I would actually prefer to have an explicit `mod wrapper { }` in cases like this. Whilst it is more verbose, it makes it much clearer what `self` if referring to.
+    let actual = r2j_file!(
+        fn foo() {}
+        mod bar {
+            fn foo() {}
+
+            struct Green {}
+            impl Green {
+                pub fn bar() {
+                    fn foo() {}
+                    foo();
+                }
+            }
+        }
+    );
+    // let expected = format_js(
+    //     r#"
+    //         // crate
+    //         function crate__foo() {}
+
+    //         // bar
+    //         function bar__foo() {}
+    //         stru
+    //         function bar() {
+    //             function foo() {}
+    //             foo();
+    //         }
+
+    //     "#,
+    // );
+    let expected = format_js(r#""#);
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }

@@ -22,10 +22,8 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
     // NOTE I think it is impossible to do this without creating a new Vec because we need to be able to sort the Vec
     // NOTE would need to take into account scoped item names if we hoisted scoped items to module level
     // (module path, item name)
-    let mut names_to_dedup = Vec::new();
-    let scoped_names_to_dedup = Vec::new();
 
-    fn recurse<'a>(
+    fn recurse(
         rust_mods: &[&RustMod],
         item_defs: &[ItemActual],
         names_to_dedup: &mut Vec<(Vec<String>, String)>,
@@ -49,14 +47,18 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
             _ => None,
         })
         .collect::<Vec<_>>();
+
+    // Simply gets module path and name of all module level (non scoped) items
+    let mut names_to_dedup = Vec::new();
+    // let scoped_names_to_dedup = Vec::new();
     recurse(&rust_mods, item_defs, &mut names_to_dedup);
 
     let mut duplicates = Vec::new();
+    // push `Duplicate` for name that has is duplicated
     for name in &names_to_dedup {
         if names_to_dedup
             .iter()
-            // NOTE given we are also taking into account scoped names here, `duplicates` might have entries that are actually unique (ie only duplicated in different scopes? Doesn't make much sense, do we mean a single module level name that is only duplicated by scoped items?), but we still want them namespaced (why?), so this needs to be taken into account in `update_dup_names`
-            .chain(scoped_names_to_dedup.iter())
+            // .chain(scoped_names_to_dedup.iter())
             .filter(|(_module_path, name2)| &name.1 == name2)
             .count()
             > 1
@@ -69,10 +71,10 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
             };
 
             // To start off, add a single path segment to names that are duplicated by scoped items
-            let is_scoped_name = scoped_names_to_dedup.iter().any(|s| dup.name == s.1);
-            if is_scoped_name {
-                dup.namespace.insert(0, dup.module_path.pop().unwrap())
-            }
+            // let is_scoped_name = scoped_names_to_dedup.iter().any(|s| dup.name == s.1);
+            // if is_scoped_name {
+            //     dup.namespace.insert(0, dup.module_path.pop().unwrap())
+            // }
 
             duplicates.push(dup);
         }
@@ -104,15 +106,17 @@ fn update_dup_names(duplicates: &mut [Duplicate]) -> bool {
     // [green__Bar] and [blue__Bar])
     let dups_copy = duplicates.to_vec();
     for dup in duplicates.iter_mut() {
+        // TODO why not use .any() ??
         if dups_copy
             .iter()
-            .filter(|dup_copy| dup.name == dup_copy.name && dup.namespace == dup_copy.namespace)
+            .filter(|dup_copy| dup_copy.name == dup.name && dup_copy.namespace == dup.namespace)
             .count()
             > 1
         {
-            if dup.module_path != vec!["crate"] {
-                dup.namespace.insert(0, dup.module_path.pop().unwrap())
-            }
+            // if dup.module_path != vec!["crate"] {
+            //     dup.namespace.insert(0, dup.module_path.pop().unwrap())
+            // }
+            dup.namespace.insert(0, dup.module_path.pop().unwrap());
             found_duplicate = true;
         }
     }

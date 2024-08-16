@@ -1602,6 +1602,10 @@ pub fn resolve_path(
         // (current_mod.clone(), segs, is_scoped_static)
         (current_mod.to_vec(), segs, true, None)
     } else if let Some(ScopedThing::Item(index)) = scoped_thing {
+        dbg!(index);
+        dbg!(current_mod);
+        dbg!(orig_mod);
+        dbg!(&segs);
         assert!(current_mod == orig_mod);
         (current_mod.to_vec(), segs, true, Some(index))
     } else if item_defined_in_module.is_some() {
