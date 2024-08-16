@@ -567,14 +567,14 @@ async fn module_level_shadowing_of_struct_name() {
     let expected = format_js(
         r#"
             // crate
-            class Foo {
+            class crate__Foo {
                 getNum() {
                     return 4;
                 }
             }
 
             function main() {
-                let foo1 = new Foo();
+                let foo1 = new crate__Foo();
                 console.assert(foo1.getNum() === 4);
                 let foo2 = new bar__Foo();
                 console.assert(foo2.getNum() === 5);
