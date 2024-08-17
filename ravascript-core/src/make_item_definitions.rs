@@ -1,7 +1,4 @@
-use syn::{
-    ImplItemFn, Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, Signature,
-    TraitItemFn,
-};
+use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
 
 use crate::{
@@ -57,204 +54,6 @@ pub struct RustTraitDefinition {
 //     generics: Vec<RustTypeParam>,
 //     syn_object: StructOrEnumSynObject,
 // }
-impl ItemDefinition {
-    // /// Update generics based on types of args
-    // ///
-    // /// For all the generics of the struct/enum...
-    // /// ...for enum check if any of the arguments to any of the variants are the generic type...
-    // /// ...(if) we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-    // fn attempt_to_resolve_generics(
-    //     &self,
-    //     field_or_variant_name: &String,
-    //     args: &Vec<(JsExpr, RustType)>,
-    // ) -> Vec<RustTypeParam> {
-    //     let mut possibly_resolved_generics = Vec::new();
-    //     for generic in &self.generics {
-    //         match &self.struct_or_enum_info {
-    //             StructOrEnumDefitionInfo::Struct(_) => todo!(),
-    //             StructOrEnumDefitionInfo::Enum(enum_def_info) => {
-    //                 let item_enum = &enum_def_info.syn_object;
-    //                 // ...for enum check if any of the arguments to any of the variants are the generic type...
-    //                 for v in &item_enum.variants {
-    //                     if v.ident == field_or_variant_name {
-    //                         match &v.fields {
-    //                             Fields::Named(fields_named) => {
-    //                                 for (i, field) in fields_named.named.iter().enumerate() {
-    //                                     match &field.ty {
-    //                                         Type::Path(type_path) => {
-    //                                             if type_path.path.segments.first().unwrap().ident
-    //                                                 == generic
-    //                                             {
-    //                                                 // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-    //                                                 let (_js_expr, rust_type) = args[i].clone();
-    //                                                 possibly_resolved_generics.push(
-    //                                                     RustTypeParam {
-    //                                                         name: generic.clone(),
-    //                                                         type_: RustTypeParamValue::RustType(
-    //                                                             Box::new(rust_type),
-    //                                                         ),
-    //                                                     },
-    //                                                 );
-    //                                                 continue;
-    //                                             }
-    //                                         }
-    //                                         Type::Verbatim(_) => todo!(),
-    //                                         _ => todo!(),
-    //                                     }
-    //                                 }
-    //                             }
-    //                             Fields::Unnamed(fields_unnamed) => {
-    //                                 for (i, field) in fields_unnamed.unnamed.iter().enumerate() {
-    //                                     match &field.ty {
-    //                                         Type::Path(type_path) => {
-    //                                             if type_path.path.segments.first().unwrap().ident
-    //                                                 == generic
-    //                                             {
-    //                                                 // ...we found a generic so now we need to find the type of the argument being passed and we will have the full `MyEnum<FoundGeneric>` type
-    //                                                 let (_js_expr, rust_type) = args[i].clone();
-    //                                                 possibly_resolved_generics.push(
-    //                                                     RustTypeParam {
-    //                                                         name: generic.clone(),
-    //                                                         type_: RustTypeParamValue::RustType(
-    //                                                             Box::new(rust_type),
-    //                                                         ),
-    //                                                     },
-    //                                                 );
-    //                                                 continue;
-    //                                             }
-    //                                         }
-    //                                         Type::Verbatim(_) => todo!(),
-    //                                         _ => todo!(),
-    //                                     }
-    //                                 }
-    //                             }
-    //                             Fields::Unit => todo!(),
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         possibly_resolved_generics.push(RustTypeParam {
-    //             name: generic.clone(),
-    //             type_: RustTypeParamValue::Unresolved,
-    //         });
-    //     }
-    //     possibly_resolved_generics
-    // }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModuleData {
-    pub name: String,
-    // parent_name: Option<String>,
-    /// NOTE the path includes the name of the module, eg the path to the crate module is ["crate"] not [].
-    pub path: Vec<String>,
-    // pub_definitions: Vec<String>,
-    // private_definitions: Vec<String>,
-    pub pub_submodules: Vec<String>,
-    pub private_submodules: Vec<String>,
-    /// (snake case item name, snake case use path)
-    pub pub_use_mappings: Vec<(String, Vec<String>)>,
-    pub private_use_mappings: Vec<(String, Vec<String>)>,
-    /// Same format as use mapping but has absolute module path
-    /// (snake case item name, snake case absolute module path)
-    pub resolved_mappings: Vec<(String, Vec<String>)>,
-    /// For recording information about the return type of fns
-    ///
-    /// TODO what if the fn is just imported from another module?
-    ///
-    /// We need:
-    ///
-    /// 1. A list of mappings from fn name to crate-global identifiers for all the fns available in the module (including imported ones), eg their absolute path or it's deduplicated name
-    ///
-    /// 2. A list of *all* fns in the crate
-    ///
-    /// Not easy to know which fns are available in module since some might be called like some_module::my_func() so we have to look at all Expr::Path in the code, not just use statements
-    ///
-    /// For now only lookup fns which are defined in module (including scopes)
-    ///
-    /// Should bear in mind how this might support generic associated fns eg T::default() - should be easy to store the extra info needed about the fn, or just store the whole ItemFn
-    ///
-    /// Module paths work as a unique key for top level items, but for fns in scopes need to just store them by name in a stack. The stack will need to be dynamic and follow the scopes, and pop stuff, so needs to happen during parsing, whereas top level fns get stored in the first pass ie extract_data()
-    ///
-    ///
-    /// Top-level defined fns (possibly from other modules) available in this module, including cases like `use some_module; some_module::some_fn()`
-    ///
-    /// (<name>, <module path>)
-    // // fn_info: Vec<(String, Vec<String>)>,
-    // pub fn_info: Vec<FnInfo>,
-    // pub item_definitons: Vec<ItemDefinition>,
-    // /// (name, type, syn const)
-    // pub consts: Vec<ConstDef>,
-    // pub trait_definitons: Vec<RustTraitDefinition>,
-    pub various_definitions: VariousDefintions,
-
-    // We need this for extract_data_populate_item_definitions which happens after the modules ModuleData has been created by extract_data, but is populating the `ItemDefiitions` etc, and needs access to the original items in the module for this
-    pub items: Vec<Item>,
-
-    // (scope number, definitions)
-    // scope number is eg [3,4,2] where this is the 3rd scope that appears within the module (not nested inside another scope, eg if the first 3 items are fns, this would be the body block of the 3rd fn, regardless of how many nested scoped there are in the first two fns), the 4th scope within that scope (same rules as before), and then finally the second scope within that scope
-    // scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions, Vec<RustImplBlockSimple>)>,
-    pub scoped_various_definitions: Vec<(Vec<usize>, VariousDefintions)>,
-    pub syn_impl_items: Vec<(Vec<usize>, ItemImpl)>,
-}
-impl ModuleData {
-    pub fn _item_defined_in_module(&self, use_private: bool, item: &str) -> bool {
-        // let mut definitions = self.pub_definitions.iter();
-        // if use_private {
-        //     definitions
-        //         .chain(self.private_definitions.iter())
-        //         .any(|definition| definition == item)
-        // } else {
-        //     definitions.any(|definition| definition == item)
-        // }
-        self.various_definitions
-            .item_definitons
-            .iter()
-            .filter_map(|item_def| (use_private || item_def.is_pub).then_some(&item_def.ident))
-            .chain(
-                self.various_definitions
-                    .fn_info
-                    .iter()
-                    .filter_map(|fn_info| {
-                        (use_private || fn_info.is_pub).then_some(&fn_info.ident)
-                    }),
-            )
-            .chain(
-                self.various_definitions
-                    .trait_definitons
-                    .iter()
-                    .filter_map(|trait_def| {
-                        (use_private || trait_def.is_pub).then_some(&trait_def.name)
-                    }),
-            )
-            .chain(
-                self.various_definitions
-                    .consts
-                    .iter()
-                    .filter_map(|const_| (use_private || const_.is_pub).then_some(&const_.name)),
-            )
-            .any(|name| name == item)
-    }
-    pub fn _path_starts_with_sub_module(&self, use_private: bool, item: &str) -> bool {
-        let mut submodules = self.pub_submodules.iter();
-        if use_private {
-            submodules
-                .chain(self.private_submodules.iter())
-                .any(|submodule_name| submodule_name == item)
-        } else {
-            submodules.any(|submodule_name| submodule_name == item)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct VariousDefintions {
-    pub fn_info: Vec<FnInfo>,
-    pub item_definitons: Vec<ItemDefinition>,
-    pub consts: Vec<ConstDef>,
-    pub trait_definitons: Vec<RustTraitDefinition>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ConstDef {
@@ -282,17 +81,12 @@ pub struct FnInfo {
 pub enum FnInfoSyn {
     Standalone(ItemFn),
     Impl(ImplItemFn),
+    #[allow(dead_code)]
     Trait(TraitItemFn),
 }
 
+#[allow(dead_code)]
 pub trait ModuleMethods {
-    fn lookup_item_definition_any_module_or_scope(
-        &self,
-        current_module_path: &[String],
-        scope_id: &Option<Vec<usize>>,
-        path: &[String],
-    ) -> (Vec<String>, Option<Vec<usize>>, ItemDefinition);
-
     fn lookup_trait_definition_any_module<I>(
         &self,
         current_module_path: &[String],
@@ -307,6 +101,7 @@ pub trait ModuleMethods {
         I::Item: AsRef<str>;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
@@ -356,21 +151,6 @@ pub fn resolve_path(
         &segs[0].ident,
     );
 
-    // TODO only look through transparent scopes
-    // let scoped_use_mapping = scopes
-    //     .iter()
-    //     .rev()
-    //     .find_map(|s| s.use_mappings.iter().find(|u| u.0 == segs[0].ident));
-
-    // let mut use_mappings = module.pub_use_mappings.iter();
-    // let matched_use_mapping = if use_private_items || is_parent_or_same_module {
-    //     use_mappings
-    //         .chain(module.private_use_mappings.iter())
-    //         .find(|use_mapping| use_mapping.0 == segs[0].ident)
-    // } else {
-    //     use_mappings.find(|use_mapping| use_mapping.0 == segs[0].ident)
-    // };
-    // dbg!(matched_use_mapping);
     let matched_use_mapping = module.items.iter().find_map(|item| match item {
         ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))

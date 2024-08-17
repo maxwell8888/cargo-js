@@ -11,10 +11,10 @@ use crate::{
         FnInfo, ItemDefinition, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTraitDefinition, RustTypeParam, RustTypeParamValue,
     },
-    CrateData, PRELUDE_MODULE_PATH,
+    PRELUDE_MODULE_PATH,
 };
 
-use super::handle_syn_item::JsImplItem;
+// use super::handle_syn_item::JsImplItem;
 
 #[derive(Debug, Clone)]
 pub struct ScopedVar {
@@ -258,12 +258,6 @@ pub struct JsImplBlock2 {
     pub items: Vec<(bool, RustImplItemJs)>,
 }
 
-enum VarItemFn {
-    Var(ScopedVar),
-    StructOrEnum(ItemDefinition),
-    Fn(FnInfo),
-}
-
 impl JsImplBlock2 {
     pub fn js_name(&self) -> Ident {
         let trait_name = match &self.trait_ {
@@ -306,7 +300,6 @@ impl JsImplBlock2 {
 pub struct GlobalData {
     pub _crate_path: Option<PathBuf>,
     // modules: Vec<ModuleData>,
-    _crates: Vec<CrateData>,
     // TODO doesn't handle capturing scopes which needs rules to mimic how a closure decides to take &, &mut, or ownership
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
@@ -328,17 +321,6 @@ pub struct GlobalData {
     // TODO handle closures - which don't have explicitly specified return type, need to infer it from return value
     // scoped_fns: Vec<ItemFn>,
     pub rust_prelude_types: RustPreludeTypes,
-    // TODO why have this seprate to module.item_def? Because they aren't defined anywhere and are available in all modules so don't really belong to a module?
-    // (rust name, js primative type name, item definition)
-    // TODO why store rust name when it is in ItemDefinition???
-    // TODO should this just be a big struct rather than a vec so we don't have to do lookups?
-    // rust_prelude_definitions: Vec<(String, String, ItemDefinition)>,
-    /// (trait name, impl item)
-    pub _default_trait_impls: Vec<(String, JsImplItem)>,
-    /// Used for working out which `default_trait_impls` elements to add to which classes
-    ///
-    /// (class name, trait name)
-    _default_trait_impls_class_mapping: Vec<(String, String)>,
     /// For temporary storage of JS methods prior to adding to JS classes
     /// TODO doesn't seem like we are actually populating this even though it has been used for a while?
     // impl_items_for_js: Vec<ImplItemTemp>,
@@ -356,7 +338,6 @@ pub struct GlobalData {
     // _scoped_impl_blocks: Vec<((Vec<String>, Vec<usize>), JsImplBlock2)>,
     /// Testing: for the purpose of populating `item_definition.impl_items` see if we can store less info about impl blocks. We need the "signature" to be parsed so that we can easily determine whether the target is a type param or concrete type (or mixture - TODO), and also id's for the traits involved, ie the bounds on generics and the trait being impl.
     // pub impl_blocks_simpl: Vec<RustImplBlockSimple>,
-    pub _transpiled_modules_temp: Vec<JsModule>,
     pub transpiled_modules: Vec<JsModule>,
     // /// For keeping track of whether we are parsing items at the module level or in a fn scope, so that we know whether we need to add the items to `.scopes` or not.
     // at_module_top_level: bool,
@@ -471,11 +452,7 @@ impl GlobalData {
 
         GlobalData {
             _crate_path: crate_path,
-            // modules: Vec::new(),
-            // crates: vec![ravascript_prelude_crate],
-            _crates: vec![],
             item_refs,
-            // item_refs_to_render: Vec::new(),
             item_defs,
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
@@ -484,22 +461,11 @@ impl GlobalData {
                 _look_in_outer_scope: false,
                 use_mappings: Vec::new(),
             }],
-            // struct_or_enum_methods: Vec::new(),
             impl_block_target_type: Vec::new(),
             _impl_block_type_params: Vec::new(),
-            // scoped_fns: vec![],
             rust_prelude_types: RustPreludeTypes::default(),
-            _default_trait_impls_class_mapping: Vec::new(),
-            _default_trait_impls: Vec::new(),
-            // impl_items_for_js: Vec::new(),
             transpiled_modules: Vec::new(),
-            _transpiled_modules_temp: Vec::new(),
             impl_blocks: Vec::new(),
-            // _scoped_impl_blocks: Vec::new(),
-            // impl_blocks_simpl: Vec::new(),
-            // scope_id: Vec::new(),
-            // scope_count: vec![0],
-            // at_module_top_level: false,
         }
     }
 
@@ -524,114 +490,6 @@ impl GlobalData {
             _ => todo!(),
         }
     }
-
-    // handling paths:
-    // A path could be:
-    // a var (path.len()=1)
-    // an item (ie a struct, enum, or fn)
-    // a module (only if path.len()>1 and the final element cannot be a module)
-    // We can't just look up the item name in global_data, because multiple modules might have the same item name. So the first thing we want to do is determine the module path. eg resolve self/super/crate, follow any use stmts etc given the path might a single element specificying an item name but that item is actually used from a differnt module. If there is no module path, ie the first element is not self/super/crate/some module, and the item has not been use'd into scope, then look up through the scopes to find it (could be a var (if path.len=1 and only in certain postitions like assignments and args, not eg the type of an input) or a scoped item). I believe we don't have to worry about scoped modules because we look for them during the first pass so they should be included in global_data???
-    // Can actually just look up scoped vars/items first??
-    //
-    // remember we want two thing when lookup up paths:
-    // 1. In all cases (I think?), to find the type of whatever it points to
-    // 2. In cases where we need to transpile the path, to determine what the transpiled path should be, eg what is the namespaced JS ident for the item.
-
-    /// Needs to be extended to also lookup module level items (and also return namespaced JS path?)
-    // fn lookup_scoped_var_or_item_definiton(&self, path: &Vec<String>) -> Option<ItemDefinition> {
-    // Need to know eg if a var is mut, so can't just return RustType(??) could mut be added as a RustType??
-    // fn lookup_scoped_var_or_item_definiton(&self, path: &Vec<String>) -> Option<RustType> {
-    // fn lookup_scoped_var_or_item_definiton(&self, path: &Vec<String>) -> Option<VarItemFn> {
-    //     self.scopes.iter().rev().find_map(|scope| {
-    //         // Note variables, and items definitions can't shadow each other in the same scope, so don't need to worry about the order in which each var and item definition was defined in the scope, ie vars and item definitions don't need to be together sorted in one big list, can't just look through the list of vars *then* look through the list of item definitions.
-    //         let first = &path[0];
-    //         let var = scope.variables.iter().find(|v| &v.name == first);
-    //         let func = scope.fns.iter().find(|f| &f.ident == first);
-    //         let se = scope.item_definitons.iter().find(|se| &se.ident == first);
-    //         if path.len() == 1 {
-    //             if let Some(var) = var {
-    //                 return Some(VarItemFn::Var(var.clone()));
-    //             } else if let Some(func) = func {
-    //                 return Some(VarItemFn::Fn(func.clone()));
-    //             } else if let Some(se) = se {
-    //                 return Some(VarItemFn::StructOrEnum(se.clone()));
-    //             } else {
-    //                 return None;
-    //             }
-    //         } else if path.len() == 2 {
-    //             // if let Some(var) = var {
-    //             //     return Some(VarItemFn::Var(var.clone()));
-    //             // } else if let Some(func) = func {
-    //             //     return Some(VarItemFn::Fn(func.clone()));
-    //             // } else if let Some(se) = se {
-    //             //     return Some(VarItemFn::StructOrEnum(se.clone()));
-    //             // } else {
-    //             //     return None;
-    //             // }
-    //             todo!()
-    //         } else {
-    //             todo!()
-    //         }
-    //     })
-    // }
-
-    // fn lookup_fn_definition_known_module(
-    //     &self,
-    //     name: String,
-    //     module_path: &Option<Vec<String>>,
-    // ) -> FnInfo {
-    //     if let Some(module_path) = module_path {
-    //         let module = self
-    //             .modules
-    //             .iter()
-    //             .find(|m| &m.path == module_path)
-    //             .unwrap();
-    //         module
-    //             .fn_info
-    //             .iter()
-    //             .cloned()
-    //             .find(|se| se.ident == name)
-    //             .unwrap()
-    //     } else {
-    //         self.scopes
-    //             .iter()
-    //             .rev()
-    //             .find_map(|s| s.fns.iter().rev().cloned().find(|se| se.ident == name))
-    //             .unwrap()
-    //     }
-    // }
-
-    // fn lookup_item_definition_known_module(
-    //     &self,
-    //     name: &String,
-    //     module_path: &Option<Vec<String>>,
-    // ) -> ItemDefinition {
-    //     if let Some(module_path) = module_path {
-    //         let module = self
-    //             .modules
-    //             .iter()
-    //             .find(|m| &m.path == module_path)
-    //             .unwrap();
-    //         module
-    //             .item_definitons
-    //             .iter()
-    //             .cloned()
-    //             .find(|se| &se.ident == name)
-    //             .unwrap()
-    //     } else {
-    //         self.scopes
-    //             .iter()
-    //             .rev()
-    //             .find_map(|s| {
-    //                 s.item_definitons
-    //                     .iter()
-    //                     .rev()
-    //                     .cloned()
-    //                     .find(|se| &se.ident == name)
-    //             })
-    //             .unwrap()
-    //     }
-    // }
 
     pub fn syn_type_to_rust_type_struct_or_enum(
         &self,
@@ -698,45 +556,6 @@ impl GlobalData {
         )
     }
 
-    // fn lookup_item_def_known_module_assert_not_func(
-    //     &self,
-    //     module_path: &Option<Vec<String>>,
-    //     name: &String,
-    // ) -> ItemDefinition {
-    //     if let Some(module_path) = module_path {
-    //         let module = self
-    //             .modules
-    //             .iter()
-    //             .find(|m| &m.path == module_path)
-    //             .unwrap();
-
-    //         let func = module.fn_info.iter().find(|se| &se.ident == name);
-    //         assert!(func.is_none());
-
-    //         module
-    //             .item_definitons
-    //             .iter()
-    //             .find(|se| &se.ident == name)
-    //             .unwrap()
-    //             .clone()
-    //     } else {
-    //         // Look for scoped items
-    //         // dbg!(&self.scopes);
-    //         self.scopes
-    //             .iter()
-    //             .rev()
-    //             .find_map(|scope| {
-    //                 let var = scope.variables.iter().find(|v| &v.name == name);
-    //                 let func = scope.fns.iter().find(|f| &f.ident == name);
-    //                 assert!(var.is_none() && func.is_none());
-
-    //                 scope.item_definitons.iter().find(|f| &f.ident == name)
-    //             })
-    //             .unwrap()
-    //             .clone()
-    //     }
-    // }
-
     pub fn get_prelude_item_def(&self, name: &str) -> ItemDefinition {
         let prelude_module = self.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
         prelude_module
@@ -775,171 +594,6 @@ impl GlobalData {
         get_module_from_refs(&self.item_refs, module_path).unwrap()
     }
 
-    // NOTE don't need this because we are already resolving paths with get_path()??
-    // This looks up *any ident/Path in a module*, so the item might not actually be defined in the current module and has been use'd. We also need to return the module path of the item, which of course might not be the current module, because this item definition will go into a rust type which will need to look up the item definition
-    // Alternatively could just make sure we store all items that are either defined *or* use'd in a module. This should work because module level item names must still be unique even if they are just use'd rather than defined, and currently we aren't yet acutally populating modules.item_definition with anything anyway. TODO come back to this once codebase has been cleaned up and simplified and just handle single module cases for now.
-    /// returns None if no item is found
-    ///
-    /// Option<moule path> will be None for scoped items
-    ///
-    ///  -> Option<(Option<moule path>, item definition)>
-    ///
-    /// Used for looking up types eg `fn my_fun(my_arg: some::path::to::a::Type) {}`, not vars
-    // fn lookup_item_definition_any_module(
-    //     &self,
-    //     current_module_path: &Vec<String>,
-    //     path: &Vec<String>,
-    //     // current_module: &Vec<String>,
-    // ) -> Option<(Option<Vec<String>>, ItemDefinition)> {
-    //     let first = &path[0];
-    //     // TODO should just use get_path to look for scoped items?
-    //     if let Some(item_def) = self.lookup_scoped_item_definiton(first) {
-    //         return Some((None, item_def));
-    //     } else {
-    //         // dbg!(path);
-    //         // dbg!(current_module_path);
-    //         let (item_module_path, item_path, _is_scoped) = get_path(
-    //             false,
-    //             false,
-    //             true,
-    //             path.iter()
-    //                 .map(|seg| RustPathSegment {
-    //                     ident: seg.clone(),
-    //                     turbofish: Vec::new(),
-    //                 })
-    //                 .collect::<Vec<_>>(),
-    //             self,
-    //             current_module_path,
-    //             current_module_path,
-    //             &None,
-    //         );
-    //         // dbg!(&item_module_path);
-    //         // dbg!(&item_path);
-
-    //         if item_module_path == vec!["prelude_special_case".to_string()] {
-    //             // Get prelude item definitions
-    //             let (_name, def) = self
-    //                 .rust_prelude_definitions
-    //                 .iter()
-    //                 .find(|(name, def)| name == &item_path[0].ident)
-    //                 .unwrap();
-    //             return Some((Some(item_module_path), def.clone()));
-    //         }
-
-    //         let item_module = self
-    //             .modules
-    //             .iter()
-    //             .find(|m| &m.path == &item_module_path)
-    //             .unwrap();
-    //         // dbg!(&item_module);
-    //         // dbg!(&item_path[0].ident);
-
-    //         // TODO if the path is eg an associated fn, should we return the item or the fn? ie se or RustType?
-    //         let item_def = item_module
-    //             .item_definitons
-    //             .iter()
-    //             .find(|se| se.ident == item_path[0].ident);
-
-    //         if let Some(item_def) = item_def {
-    //             return Some((Some(item_module_path), item_def.clone()));
-    //         } else {
-    //             todo!()
-    //         }
-
-    //         // let item_definition = self.
-    //         // let module_item_definition = current_module.item_definitons.iter().find(|se| &se.ident == path);
-    //         // if let Some(item_def) = scoped_item_definition {
-    //         //     // todo!();
-    //         //     Some((None, item_def.clone()))
-    //         // } else if let Some(item_def) = module_item_definition {
-    //         //     // todo!();
-    //         //     Some((Some(current_module), item_def.clone()))
-    //         // } else {
-    //         //     None
-    //         // }
-    //     }
-    // }
-
-    /// NOTE to be used pre syn -> JS parsing, ie self.scopes won't have been populated
-    // -> (module path, scope id (even if we are in a scope so `Some` scope id is provided, the item being looked up might still be module level. Of course if None scope id is provided it is impossible for a Some scope id to be returned), item definition)
-    fn _lookup_item_definition_any_module_or_scope(
-        &self,
-        current_module_path: &[String],
-        path: &[String],
-    ) -> (Vec<String>, ItemDefinition, usize) {
-        let (item_module_path, _item_path, _is_scoped, index) = resolve_path(
-            true,
-            false,
-            true,
-            true,
-            path.iter()
-                .map(|seg| RustPathSegment2 {
-                    ident: seg.clone(),
-                    turbofish: Vec::new(),
-                })
-                .collect::<Vec<_>>(),
-            &self.item_refs,
-            &self.item_defs,
-            current_module_path,
-            current_module_path,
-            &self.scopes,
-        );
-
-        // TODO if the path is eg an associated fn, should we return the item or the fn? ie se or RustType?
-        let item_def = match &self.item_defs[index.unwrap()] {
-            ItemV2::StructOrEnum(item_def) => item_def.clone(),
-            _ => todo!(),
-        };
-        (item_module_path, item_def, index.unwrap())
-    }
-
-    // TODO should also look up fns?
-    // fn lookup_scoped_item_definiton(&self, name: &String) -> Option<ItemDefinition> {
-    //     self.scopes
-    //         .iter()
-    //         .rev()
-    //         .find_map(|s| s.item_definitons.iter().rev().find(|se| &se.ident == name))
-    //         .cloned()
-    // }
-
-    fn _lookup_trait_definition_any_module<I>(
-        &self,
-        current_module_path: &[String],
-        // current_scope_id: &Option<Vec<usize>>,
-        // path: &Vec<String>,
-        path: I,
-        // current_module: &Vec<String>,
-    ) -> (Vec<String>, RustTraitDefinition)
-    where
-        // I: IntoIterator<Item = String>,
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-    {
-        // dbg!("lookup_trait_definition_any_module");
-        let (item_module_path, _item_path, _is_scoped, index) = resolve_path(
-            true,
-            false,
-            true,
-            true,
-            path.into_iter()
-                .map(|seg| RustPathSegment2 {
-                    ident: seg.as_ref().to_string(),
-                    turbofish: Vec::new(),
-                })
-                .collect::<Vec<_>>(),
-            &self.item_refs,
-            &self.item_defs,
-            current_module_path,
-            current_module_path,
-            &self.scopes,
-        );
-        let trait_def = match &self.item_defs[index.unwrap()] {
-            ItemV2::Trait(item_def) => item_def.clone(),
-            _ => todo!(),
-        };
-        (item_module_path, trait_def)
-    }
-
     // This Doesn't/shouldn't look up methods as far as I can tell (methods are always handled directly in handle_expr_method_call) so rename
     // fn lookup_method_or_associated_fn(
     pub fn lookup_associated_fn(
@@ -954,67 +608,7 @@ impl GlobalData {
         // ) -> Option<PartialRustType> {
         // TODO why return Option?
     ) -> Option<RustType2> {
-        // let impl_method = self.lookup_impl_item_item(
-        //     item_generics,
-        //     item_module_path,
-        //     item_scope_id,
-        //     sub_path,
-        //     item_path_seg,
-        //     item_def,
-        // );
-
         let impl_method = self.lookup_impl_item_item2(item_def, sub_path);
-
-        // let impl_method = if let Some((used, impl_method)) = impl_method {
-        //     match impl_method.item {
-        //         RustImplItemItem::Fn(private, static_, fn_info, js_fn) => {
-        //             // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
-        //             let fn_generics = if sub_path.turbofish.len() > 0 {
-        //                 sub_path
-        //                     .turbofish
-        //                     .iter()
-        //                     .enumerate()
-        //                     .map(|(i, g)| RustTypeParam {
-        //                         name: fn_info.generics[i].clone(),
-        //                         type_: RustTypeParamValue::RustType(Box::new(g.clone())),
-        //                     })
-        //                     .collect::<Vec<_>>()
-        //             } else {
-        //                 // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-        //                 assert!(fn_info.generics.len() == 0);
-        //                 fn_info
-        //                     .generics
-        //                     .iter()
-        //                     .map(|g| RustTypeParam {
-        //                         name: g.clone(),
-        //                         type_: RustTypeParamValue::Unresolved,
-        //                     })
-        //                     .collect::<Vec<_>>()
-        //             };
-
-        //             // Some(PartialRustType::RustType(RustType::Fn(
-        //             //     Some(item_generics.clone()),
-        //             //     fn_generics,
-        //             //     item_module_path.clone(),
-        //             //     RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
-        //             // )))
-        //             Some(RustType::Fn(
-        //                 Some(item_generics.clone()),
-        //                 fn_generics,
-        //                 item_module_path.clone(),
-        //                 item_scope_id.clone(),
-        //                 RustTypeFnType::AssociatedFn(
-        //                     item_def.ident.clone(),
-        //                     sub_path.ident.clone(),
-        //                 ),
-        //             ))
-        //         }
-        //         RustImplItemItem::Const(_) => todo!(),
-        //     }
-        // } else {
-        //     None
-        // };
-        // impl_method
 
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
@@ -1043,19 +637,9 @@ impl GlobalData {
                             .collect::<Vec<_>>()
                     };
 
-                    // Some(PartialRustType::RustType(RustType::Fn(
-                    //     Some(item_generics.clone()),
-                    //     fn_generics,
-                    //     item_module_path.clone(),
-                    //     RustTypeFnType::AssociatedFn(item_def.ident, sub_path.ident),
-                    // )))
                     Some(RustType2::Fn(
                         Some(item_generics.to_vec()),
                         fn_generics,
-                        // RustTypeFnType::AssociatedFn(
-                        //     item_def.ident.clone(),
-                        //     sub_path.ident.clone(),
-                        // ),
                         Box::new(fn_info),
                     ))
                 }
@@ -1070,70 +654,10 @@ impl GlobalData {
     // TODO what if the impl item is not defined on a struct/enum?
     pub fn lookup_impl_item_item2(
         &self,
-        // item_generics: &Vec<RustTypeParam>,
-        // item_module_path: &Vec<String>,
-        // item_scope_id: &Option<Vec<usize>>,
         item_def: &ItemDefinition,
-        // item_index: usize,
         sub_path: &RustPathSegment2,
         // TODO why return Option?
     ) -> Option<RustImplItemNoJs> {
-        // let module = self
-        //     .modules
-        //     .iter()
-        //     // .find(|m| &m.path == current_module)
-        //     .find(|m| &m.path == item_module_path)
-        //     .unwrap();
-
-        // let impl_method = item_def.impl_block_ids.iter().find_map(|impl_block_id| {
-        //     // TODO also look for scoped impl blocks
-        //     // TODO take into account item type params for generic impls
-
-        //     // let module_impl_blocks = self.impl_blocks_simpl.iter();
-        //     // let scoped_impl_blocks = module
-        //     //     .scoped_various_definitions
-        //     //     .iter()
-        //     //     .map(|svd| &svd.2)
-        //     //     .flatten();
-        //     // module_impl_blocks
-        //     //     .chain(scoped_impl_blocks)
-
-        //     // TODO should we be looking through multiple blocks here or should be deuplicate `impl_blocks_simpl` after it is created??
-        //     // I think we could dedupe (as long as we take into account scope) be it is impossible to have duplicate method names, however for impls like `impl<T> Foo for T` maybe we want to keep the impl blocks separate like they are in the original code??? Yes but we can still just dedupe the `RustImplBlockSimple` and keep the `JsImplBlock2` separate. It seems better to just look through multiple blocks here as that is easier than deduplicating and merging items.
-
-        //     self.impl_blocks_simpl
-        //         .iter()
-        //         .filter(|ibs| &ibs.unique_id == impl_block_id)
-        //         .find_map(|rust_impl_block_simple| {
-        //             rust_impl_block_simple
-        //                 .rust_items
-        //                 .iter()
-        //                 .find(|rust_item| rust_item.ident == sub_path.ident)
-        //                 .cloned()
-        //         })
-        // });
-
-        // dbg!(&impl_method);
-        // dbg!(&item_def.ident);
-        // dbg!(&sub_path.ident);
-        // let impl_method = if let Some(impl_method) = impl_method {
-        //     impl_method
-        // } else {
-        //     // dbg!(&global_data.scopes);
-        //     dbg!(&item_generics);
-        //     dbg!(&item_module_path);
-        //     dbg!(&item_scope_id);
-        //     dbg!(&sub_path);
-        //     // dbg!(&item_name);
-        //     dbg!(&item_def);
-        //     panic!()
-        // };
-
-        // impl_method
-
-        // dbg!(&item_def.ident);
-        // dbg!(&item_def.impl_block_ids);
-        // dbg!(&sub_path.ident);
         item_def.impl_block_ids.iter().find_map(|block_id| {
             let impl_block = match self.item_defs[*block_id].clone() {
                 ItemV2::Impl(impl_block) => impl_block,
@@ -1145,256 +669,6 @@ impl GlobalData {
                 .find(|rust_item| rust_item.ident == sub_path.ident)
         })
     }
-
-    // TODO method should just take a RustType rather than specifically an item/struct
-    // Looks up the `RustImplItem` eg method for a given item
-    // TODO IMPORTANT not handling scoped impls for now for simplicity
-    // fn lookup_impl_item_item(
-    //     &self,
-    //     item_generics: &Vec<RustTypeParam>,
-    //     item_module_path: &Vec<String>,
-    //     item_scope_id: &Option<Vec<usize>>,
-    //     sub_path: &RustPathSegment,
-    //     item_name: &String,
-    //     item_def: &ItemDefinition,
-    //     // ) -> Option<PartialRustType> {
-    //     // ) -> Option<(bool, RustImplItem)> {
-    // ) -> Option<RustImplItemNoJs> {
-    //     // For now focus on supporting explicit gnerics ie turbofish etc so don't have to worry about unresolved types, and module level items so I don't have too much about complex scope shadowing behaviours.
-
-    //     // Look for associated fn of item (struct or enum)
-
-    //     // Look through all impl blocks which match item to find impl item which matches subpath name
-
-    //     // First look for method in direct (non-trait) impls
-    //     // TODO for generic structs we need to know the concrete types to know if we should match eg Foo<i32>
-    //     // let scoped_impls = self.scopes.iter().map(|s| s.impl_blocks.iter()).flatten();
-
-    //     let module = self
-    //         .modules
-    //         .iter()
-    //         .find(|m| &m.path == item_module_path)
-    //         .unwrap();
-    //     // let scoped_impls = module.scoped_various_definitions.iter().find_map(|svd| {
-    //     //     if let Some(scope_id) = &item_scope_id {
-    //     //         if &svd.0 == scope_id {
-    //     //             Some(svd.2)
-    //     //         } else {
-    //     //             None
-    //     //         }
-    //     //     } else {
-    //     //         None
-    //     //     }
-    //     // });
-    //     // let scoped_impls = if let Some(scoped_impls) = scoped_impls {
-    //     //     scoped_impls
-    //     // } else {
-    //     //     Vec::new()
-    //     // };
-    //     // let scoped_non_trait_impl_method = self
-    //     //     .impl_blocks
-    //     //     .iter()
-    //     //     // .chain(scoped_impls.iter())
-    //     //     .find_map(|impl_block| {
-    //     //         let types_match = struct_or_enum_types_match(
-    //     //             &impl_block.target,
-    //     //             &item_generics,
-    //     //             &item_module_path,
-    //     //             &item_scope_id,
-    //     //             &item_def.ident,
-    //     //         );
-
-    //     //         // If we have a matching, non-trait impl block, look to see if it contains the method
-    //     //         if types_match && impl_block.trait_.is_none() {
-    //     //             impl_block
-    //     //                 .items
-    //     //                 .iter()
-    //     //                 .find(|impl_item| impl_item.ident == sub_path.ident)
-    //     //                 .cloned()
-    //     //         } else {
-    //     //             None
-    //     //         }
-    //     //     });
-
-    //     // Now look for the method in trait impls
-    //     // NOTE that while we are looking up a method for a particular `item_def`, we are matching on both concrete impls like `impl<T> Foo for Bar`, and generic impls like `impl<T> Foo for T` or `impl<T: Bar> Foo for T` in which case we need to check if our concrete `item_def` meets the trait bounds of `T`.
-    //     // Say we have an impl block like `impl<T> Foo for T`, then we know our item/struct impls Foo and we can add the `impl<T> Foo for T` impl block to the list of impl blocks in which to look for the method.
-    //     // However, for an impl block like `impl<T: Bar> Foo for T`, then we first need to determine whether our item/struct implements Bar.
-    //     // So the first thing we do is find *all* the traits our item/struct implements
-    //     // Note that this is a recursive process, ie once we have found that impl Foo via `impl<T: Bar> Foo for T`, we then assuming that `impl<T: Foo> Baz for T` appears before `impl<T: Bar> Foo for T` in the list of impl blocks, we would need to do another pass of the impl blocks to match it, now that we know we impl Foo. And we should repeatedly do another pass every time we match a new trait impl, until no new trait impls were matched.
-
-    //     // Also note it isn't possible to calculate this out upfront eg in the first pass in `process_items`, because for generic structs it can depend on the concrete types of the generics so will need calculating individually on demand at the point we know the concrete type. For non-generic structs however I think we could calculate up front which will be worth doing at some point for better performance.
-
-    //     // Only need to look in the same or child scopes of the item definition since an impl on an item cannot be in a parent scope
-    //     // let possible_scopes = self.scopes.iter().rev().take_while(|s| {
-    //     //     s.item_definitons
-    //     //         .iter()
-    //     //         .any(|item_def| &item_def.ident == item_name)
-    //     // });
-    //     let possible_scopes = if let Some(item_scope_id) = item_scope_id {
-    //         let mut temp_scope_id = item_scope_id.clone();
-    //         let mut scopes = Vec::new();
-    //         while !temp_scope_id.is_empty() {
-    //             let scope = module
-    //                 .scoped_various_definitions
-    //                 .iter()
-    //                 .find(|svd| svd.0 == temp_scope_id)
-    //                 .unwrap();
-    //             scopes.push(scope.2.clone());
-    //             temp_scope_id.pop();
-    //         }
-    //         scopes.into_iter().flatten().collect::<Vec<_>>()
-    //     } else {
-    //         Vec::new()
-    //     };
-    //     let mut all_impl_blocks = possible_scopes;
-    //     all_impl_blocks.extend(self.impl_blocks_simpl.clone().into_iter());
-    //     // let all_impl_blocks = self.impl_blocks.clone();
-    //     dbg!(&all_impl_blocks);
-
-    //     let found_traits = get_traits_implemented_for_item(
-    //         &all_impl_blocks,
-    //         item_module_path,
-    //         item_scope_id,
-    //         item_name,
-    //     );
-
-    //     // Now we know all the traits the item/struct impls, we can go through all the impl blocks and find the one (if any)
-    //     let trait_impl_method = all_impl_blocks
-    //         .iter()
-    //         .find_map(|impl_block| {
-    //             // TODO this needs extending to handle matching any target type, rather than just user structs
-    //             match &impl_block.target {
-    //                 RustType::TypeParam(rust_type_param) => {
-    //                     // TODO should we be looking for/matching on found_traits in the `Foo` or `Bar` of `impl<T: Foo> Bar for T`??? I don't think it actually matter since we seem to be duplicating some work we already did in creating found_traits. NOTE but we must ensure we are matching the correct block, eg Bar might be in found_traits, but doesn't mean we should match because Foo might not be and we might actually get Bar from `impl<T: Baz> Bar for T`, so it is the trait bounds that we must match on.
-
-    //                     // Get bounds on type param
-    //                     let type_param_bounds = &impl_block
-    //                         .generics
-    //                         .iter()
-    //                         .find(|generic| generic.ident == rust_type_param.name)
-    //                         .unwrap()
-    //                         .trait_bounds;
-
-    //                     // If there are no trait bounds ie `impl<T> Foo for T` we always match
-    //                     // Does our struct impl all of these traits?
-    //                     let struct_impls_all_bounds = type_param_bounds
-    //                         .iter()
-    //                         .all(|type_param_bound| found_traits.contains(type_param_bound));
-
-    //                     // If so then look for method in impl block
-    //                     if struct_impls_all_bounds {
-    //                         impl_block
-    //                             // .items
-    //                             .rust_items
-    //                             .iter()
-    //                             // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
-    //                             .find(|impl_item| impl_item.ident == sub_path.ident)
-    //                     } else {
-    //                         None
-    //                     }
-    //                 }
-    //                 RustType::StructOrEnum(
-    //                     struct_type_params,
-    //                     struct_module_path,
-    //                     struct_scope_id,
-    //                     struct_name,
-    //                 ) => {
-    //                     if let Some(impl_trait) = &impl_block.trait_ {
-    //                         let types_match = struct_or_enum_types_match(
-    //                             &impl_block.target,
-    //                             &item_generics,
-    //                             &item_module_path,
-    //                             item_scope_id,
-    //                             &item_def.ident,
-    //                         );
-
-    //                         // If types match then look for method in impl block
-    //                         if types_match {
-    //                             impl_block
-    //                                 // .items
-    //                                 .rust_items
-    //                                 .iter()
-    //                                 // .find(|(used, impl_item)| impl_item.ident == sub_path.ident)
-    //                                 .find(|impl_item| impl_item.ident == sub_path.ident)
-    //                         } else {
-    //                             None
-    //                         }
-    //                         // TODO Trying to get the concrete params at this point doesn't make senese because quite often it is the argument(s) to the associated fn which will determine the concrete params
-    //                     } else {
-    //                         None
-    //                     }
-    //                 }
-    //                 RustType::MutRef(_) => todo!(),
-    //                 RustType::Ref(_) => todo!(),
-    //                 _ => todo!(),
-    //             }
-    //         })
-    //         .cloned();
-
-    //     dbg!(&trait_impl_method);
-
-    //     // Now we have all the impl blocks, we can look for the method in said impl blocks
-    //     // We also need to check the traits themselves incase the method is a default implementation
-    //     // let scoped_traits = self
-    //     //     .scopes
-    //     //     .iter()
-    //     //     .rev()
-    //     //     .map(|s| {
-    //     //         s.trait_definitons
-    //     //             .iter()
-    //     //             .filter(|trait_def| found_traits.contains(&(None, trait_def.name.clone())))
-    //     //     })
-    //     //     .flatten();
-    //     let module_level_traits = self
-    //         .modules
-    //         .iter()
-    //         .map(|module| {
-    //             module.trait_definitons.iter().filter(|trait_def| {
-    //                 found_traits.contains(&(module.path.clone(), None, trait_def.name.clone()))
-    //             })
-    //         })
-    //         .flatten();
-    //     // TODO add default impl items to traits
-    //     // let default_trait_method = scoped_traits
-    //     //     .chain(module_level_traits)
-    //     //     .find_map(|trait_def| {
-    //     //         trait_def
-    //     //             .items
-    //     //             .iter()
-    //     //             .find(|impl_item| impl_item.ident == sub_path.ident)
-    //     //             .cloned()
-    //     //     });
-
-    //     // It is not possible to have impls with the same method name, so we should at most match 1 impl item/method
-    //     // dbg!(&matched_trait_impl_blocks);
-    //     // assert!(
-    //     //     matched_trait_impl_blocks
-    //     //         .iter()
-    //     //         .filter_map(|impl_block| {
-    //     //             impl_block
-    //     //                 .items
-    //     //                 .iter()
-    //     //                 .find(|impl_item| impl_item.ident == sub_path.ident)
-    //     //         })
-    //     //         .count()
-    //     //         <= 1
-    //     // );
-    //     // let module_level_impl_method = matched_trait_impl_blocks
-    //     //     .iter()
-    //     //     .find_map(|impl_block| {
-    //     //         impl_block
-    //     //             .items
-    //     //             .iter()
-    //     //             .find(|impl_item| impl_item.ident == sub_path.ident)
-    //     //     })
-    //     //     .cloned();
-
-    //     // Use xor because we should not have both a scoped and module level impl method, only either or
-    //     // let impl_method = scoped_non_trait_impl_method.xor(trait_impl_method);
-    //     let impl_method = trait_impl_method;
-    //     impl_method
-    // }
 }
 
 fn look_for_module_in_items(

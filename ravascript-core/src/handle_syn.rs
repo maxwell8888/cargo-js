@@ -3,7 +3,6 @@ mod handle_syn_expr;
 mod handle_syn_item;
 mod handle_syn_stmt;
 
-
 use definition_data::{resolve_path, ScopedVar};
 pub use definition_data::{
     GlobalData, GlobalDataScope, RustImplItemItemJs, RustType2, RustTypeImplTrait2, RustTypeParam2,

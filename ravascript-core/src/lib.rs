@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
-#![allow(unused_variables)]
-#![allow(dead_code)]
+// #![allow(unused_variables)]
+// #![allow(dead_code)]
 
 use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
@@ -10,7 +10,7 @@ use biome_js_syntax::JsFileSource;
 use handle_syn::{js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
 use js_ast::{Ident, JsClass, JsExpr, JsFn, JsModule, PathIdent};
 use std::{fmt::Debug, fs, path::PathBuf};
-use syn::{ExprPath, ImplItem, Item, ItemTrait};
+use syn::{ExprPath, Item, ItemTrait};
 use tracing::debug_span;
 use tree_structure::{
     extract_modules2,
@@ -34,7 +34,7 @@ mod make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    ItemDefinition, ModuleData, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
+    ItemDefinition, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
 };
 
 pub use js_ast::JsStmt;
@@ -44,35 +44,6 @@ const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
 // TODO consider how to get RA/cargo check to analyze rust inputs in `testing/`
-
-// Third party crates
-#[derive(Debug, Clone)]
-struct CrateData {
-    _name: String,
-    // Ideally we would just store the data like this, but we need to be able to resolve third party crate use statements, which might chain use statements, using `get_path_without_namespacing` just like any other module, so we need to maintain the same data structure? Yes we need to parse the third party crate anyway since we need to include it's source the JS output so will already have all it's ModuleData. Although in theory we could just do a one off calculation of all it's crate level pub module paths/items and only look for those when resolving paths in the main crate, which would reduce work, for now we will just resolve the paths just like any other module
-    // (name, module path, definition)
-    // items: Vec<(String, Vec<String>, ItemDefinition)>,
-    _modules: Vec<ModuleData>,
-}
-
-#[derive(Debug, Clone)]
-enum ItemDefintionImpls {
-    /// For impls like `impl<T> Foo for T {}` where multiple types use the same impl so we transpile the impl block itself into a class, and point to this classes methods using eg `getFoo = impl__Foo__for__T.prototype.getFoo` or whatever.
-    ///
-    /// (module path, unique identifier/js_name?, method name)
-    // GenericImpl(Option<Vec<String>>, String, String),
-    /// I think we don't need a module path because we don't care what module the impl is in, as long as the target matches, we want to implement it
-    /// (unique identifier/js_name?, method name)
-    GenericImpl(String, String),
-    ConcreteImpl(Vec<ImplItem>),
-}
-
-#[derive(Debug, Clone)]
-enum ItemDefinitions {
-    Struct,
-    Enum,
-    Fn,
-}
 
 // TODO I think we want to add *usertype* impls and *impl trait for usertype* (in both cases where the usertype is not generic) as methods to the type's class, but for all other cases, eg *impl trait for T* impls we want to keep the trait impl as an object of fns/class with methods and then still add equivalent methods to the type classes but rather than include the fn body, just point to these fns/methods in the impl block object. This avoids eg potentially duplicating fn bodys on *all* type classes if eg we have `impl<T> MyTrait for T` {}. Though the cost of duplicating the fn bodys should be irrelevant with compression... so the best reason to do this is probably to avoid noise when reading the transpiled JS, and to make the code feel more idiomatic/familiar to the Rust dev.
 // What about somthing like `impl MyTrait for Foo<Bar> { ... }` and `impl MyTrait for Foo<Baz> { ... }`. The methods should live on the Foo class, but the bodies/impls are different depending on the generic eg `let foo = Foo(Bar()).some_trait_method();` vs `let foo = Foo(Baz()).some_trait_method();`
