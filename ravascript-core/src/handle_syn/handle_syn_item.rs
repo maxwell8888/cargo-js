@@ -17,10 +17,10 @@ use crate::{
     },
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
-        ItemV2, RustImplItemItemNoJs, RustImplItemNoJs, StructOrEnumDefitionInfo2,
+        ItemV2, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
+        StructOrEnumDefitionInfo2,
     },
-    GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
-    PRELUDE_MODULE_PATH,
+    GlobalData, RustImplItemItemJs, RustType2, PRELUDE_MODULE_PATH,
 };
 
 // TODO remove this as it is unnecessary redirection

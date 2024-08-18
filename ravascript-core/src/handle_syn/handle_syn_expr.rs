@@ -25,10 +25,11 @@ use crate::{
         RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnInfo, ItemV2, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo2,
+        EnumVariantInputsInfo, FnInfo, ItemDefinition, ItemV2, RustImplItemItemNoJs,
+        RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructFieldInfo,
+        StructOrEnumDefitionInfo2,
     },
-    ItemDefinition, RustType, PRELUDE_MODULE_PATH,
+    RustType, PRELUDE_MODULE_PATH,
 };
 
 fn handle_expr_assign(
