@@ -9,16 +9,10 @@ use biome_js_syntax::JsFileSource;
 
 use handle_syn::{js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
 use js_ast::{Ident, JsClass, JsExpr, JsFn, JsModule, PathIdent};
+use make_item_definitions::{extract_modules2, ItemActual, ItemRef, RustMod, StmtsRef};
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{ExprPath, Item, ItemTrait};
 use tracing::debug_span;
-use tree_structure::{
-    extract_modules2,
-    update_definitons::{update_item_definitions2, ItemV2},
-    ItemActual, ItemRef, RustMod, StmtsRef,
-};
-
-mod tree_structure;
 
 mod handle_syn;
 mod js_ast;
@@ -34,7 +28,8 @@ mod make_item_definitions;
 
 mod update_item_definitions;
 use update_item_definitions::{
-    ItemDefinition, RustImplBlockSimple, RustType, RustTypeParam, RustTypeParamValue,
+    update_item_definitions2, ItemDefinition, ItemV2, RustImplBlockSimple, RustType, RustTypeParam,
+    RustTypeParamValue,
 };
 
 pub use js_ast::JsStmt;

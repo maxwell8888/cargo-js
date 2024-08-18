@@ -19,14 +19,14 @@ use crate::{
         DestructureObject, DestructureValue, Ident, JsExpr, JsFn, JsIf, JsLocal, JsOp, JsStmt,
         LocalName, LocalType, PathIdent,
     },
-    tree_structure::{
-        expr_to_expr_ref, stmt_to_stmts_ref, update_definitons::ItemV2, ExprRef, ItemRef,
-        RustExprAssign, RustExprBlock, RustExprCall, RustExprClosure, RustExprMatch,
-        RustExprMethodCall, RustExprOrStmtMacro, RustExprPath, StmtsRef,
+    make_item_definitions::{
+        expr_to_expr_ref, stmt_to_stmts_ref, ExprRef, ItemRef, RustExprAssign, RustExprBlock,
+        RustExprCall, RustExprClosure, RustExprMatch, RustExprMethodCall, RustExprOrStmtMacro,
+        RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnInfo, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
-        RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo,
+        EnumVariantInputsInfo, FnInfo, ItemV2, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, RustTypeParamValue, StructFieldInfo, StructOrEnumDefitionInfo2,
     },
     ItemDefinition, RustType, PRELUDE_MODULE_PATH,
 };
@@ -636,7 +636,7 @@ pub fn handle_expr(
                         match base_type {
                             RustType2::StructOrEnum(_type_params, item_definition) => {
                                 match item_definition.struct_or_enum_info {
-                                    StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                    StructOrEnumDefitionInfo2::Struct(struct_def_info) => {
                                         match struct_def_info.fields {
                                             StructFieldInfo::UnitStruct => todo!(),
                                             StructFieldInfo::TupleStruct(_) => todo!(),
@@ -653,7 +653,7 @@ pub fn handle_expr(
                                                 .clone(),
                                         }
                                     }
-                                    StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                                    StructOrEnumDefitionInfo2::Enum(_) => todo!(),
                                 }
                             }
                             RustType2::MutRef(inner_type) => {
@@ -683,7 +683,7 @@ pub fn handle_expr(
                             }
                             RustType2::StructOrEnum(_type_params, item_definition) => {
                                 match item_definition.struct_or_enum_info {
-                                    StructOrEnumDefitionInfo::Struct(struct_def_info) => {
+                                    StructOrEnumDefitionInfo2::Struct(struct_def_info) => {
                                         match struct_def_info.fields {
                                             StructFieldInfo::UnitStruct => todo!(),
                                             StructFieldInfo::TupleStruct(fields) => fields
@@ -693,7 +693,7 @@ pub fn handle_expr(
                                             StructFieldInfo::RegularStruct(_) => todo!(),
                                         }
                                     }
-                                    StructOrEnumDefitionInfo::Enum(_) => todo!(),
+                                    StructOrEnumDefitionInfo2::Enum(_) => todo!(),
                                 }
                             }
                             _ => {
@@ -1110,8 +1110,8 @@ pub fn handle_expr(
             match rust_partial_type {
                 PartialRustType::StructIdent(type_params, item_def) => {
                     let struct_def_info = match &item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(struct_def_info) => struct_def_info,
-                        StructOrEnumDefitionInfo::Enum(_) => panic!(),
+                        StructOrEnumDefitionInfo2::Struct(struct_def_info) => struct_def_info,
+                        StructOrEnumDefitionInfo2::Enum(_) => panic!(),
                     };
                     let js_deduped_path = match js_path_expr.clone() {
                         JsExpr::Path(path) => {
@@ -2999,8 +2999,8 @@ fn handle_expr_call(
                 // If a struct or enum variant is called, it must be a tuple strut of enum variant
                 PartialRustType::StructIdent(type_params, item_def) => {
                     let struct_def = match &item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(struct_def) => struct_def,
-                        StructOrEnumDefitionInfo::Enum(_) => panic!(),
+                        StructOrEnumDefitionInfo2::Struct(struct_def) => struct_def,
+                        StructOrEnumDefitionInfo2::Enum(_) => panic!(),
                     };
 
                     // Do any of the args to the tuple struct constructor resolve any of it's generics?
@@ -3039,8 +3039,8 @@ fn handle_expr_call(
                 }
                 PartialRustType::EnumVariantIdent(type_params, item_def, variant_name) => {
                     let enum_def = match &item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(_) => panic!(),
-                        StructOrEnumDefitionInfo::Enum(enum_def) => enum_def,
+                        StructOrEnumDefitionInfo2::Struct(_) => panic!(),
+                        StructOrEnumDefitionInfo2::Enum(enum_def) => enum_def,
                     };
                     let enum_variant = enum_def
                         .members
@@ -3425,8 +3425,8 @@ fn handle_expr_path_inner(
                         let item_def = global_data.get_prelude_item_def("Option");
                         assert_eq!(item_def.generics.len(), 1);
                         let rust_type_type_param = match &item_def.struct_or_enum_info {
-                            StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                            StructOrEnumDefitionInfo::Enum(enum_def_info) => {
+                            StructOrEnumDefitionInfo2::Struct(_) => todo!(),
+                            StructOrEnumDefitionInfo2::Enum(enum_def_info) => {
                                 // Some member has a RustType::TypeParam input which is what we want
                                 // TODO yes but surely it will always be RustType::TypeParam(T)??? Is this simply for getting the name of the generic? Maybe we should assert this?
                                 let some_member = enum_def_info
@@ -3576,8 +3576,8 @@ fn handle_expr_path_inner(
 
             let enum_variant = match &item_def.struct_or_enum_info {
                 // Item is struct so we need to look up associated fn
-                StructOrEnumDefitionInfo::Struct(_struct_definition_info) => None,
-                StructOrEnumDefitionInfo::Enum(enum_definition_info) => {
+                StructOrEnumDefitionInfo2::Struct(_struct_definition_info) => None,
+                StructOrEnumDefitionInfo2::Enum(enum_definition_info) => {
                     // Check if we have a variant of the enum
                     let enum_variant = enum_definition_info
                         .members
@@ -3850,8 +3850,8 @@ fn handle_match_pat(
             let enum_def_info = match match_condition_type {
                 RustType2::StructOrEnum(_type_params, item_def) => {
                     match &item_def.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                        StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
+                        StructOrEnumDefitionInfo2::Struct(_) => todo!(),
+                        StructOrEnumDefitionInfo2::Enum(enum_def_info) => enum_def_info,
                     }
                 }
                 _ => {
@@ -3951,8 +3951,8 @@ fn handle_match_pat(
             let (item_def, is_option) =
                 get_item_def_from_rust_type(match_condition_type, global_data);
             let enum_def_info = match item_def.struct_or_enum_info {
-                StructOrEnumDefitionInfo::Struct(_) => todo!(),
-                StructOrEnumDefitionInfo::Enum(enum_def_info) => enum_def_info,
+                StructOrEnumDefitionInfo2::Struct(_) => todo!(),
+                StructOrEnumDefitionInfo2::Enum(enum_def_info) => enum_def_info,
             };
             let variant_def = enum_def_info
                 .members
@@ -4460,14 +4460,14 @@ fn found_item_to_partial_rust_type(
                         .collect::<Vec<_>>()
                 };
                 match &item_def.struct_or_enum_info {
-                    StructOrEnumDefitionInfo::Struct(_struct_definition_info) => {
+                    StructOrEnumDefitionInfo2::Struct(_struct_definition_info) => {
                         // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
                         (
                             PartialRustType::StructIdent(item_generics, item_def.clone()),
                             item_def.js_name.clone(),
                         )
                     }
-                    StructOrEnumDefitionInfo::Enum(_enum_definition_info) => {
+                    StructOrEnumDefitionInfo2::Enum(_enum_definition_info) => {
                         // So we are assuming you can't have a path where the final segment is an enum ident
                         panic!()
                     }

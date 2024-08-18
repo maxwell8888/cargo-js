@@ -1,4 +1,4 @@
-use crate::tree_structure::{ItemActual, ItemRef, RustMod};
+use crate::make_item_definitions::{ItemActual, ItemRef, RustMod};
 
 #[derive(Debug, Clone)]
 pub struct Duplicate {

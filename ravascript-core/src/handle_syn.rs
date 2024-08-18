@@ -13,8 +13,7 @@ use tracing::info;
 
 use crate::{
     js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
-    tree_structure::update_definitons::ItemV2,
-    update_item_definitions::{ItemDefinition, RustTypeParam, RustTypeParamValue},
+    update_item_definitions::{ItemDefinition, ItemV2, RustTypeParam, RustTypeParamValue},
 };
 use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
 

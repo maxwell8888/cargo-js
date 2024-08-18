@@ -15,9 +15,10 @@ use crate::{
     js_ast::{
         Ident, JsClass, JsExpr, JsFn, JsLocal, JsModule, JsStmt, LocalName, LocalType, PathIdent,
     },
-    make_item_definitions::FnInfoSyn,
-    tree_structure::{update_definitons::ItemV2, ItemRef, StmtsRef},
-    update_item_definitions::{RustImplItemItemNoJs, RustImplItemNoJs, StructOrEnumDefitionInfo},
+    make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
+    update_item_definitions::{
+        ItemV2, RustImplItemItemNoJs, RustImplItemNoJs, StructOrEnumDefitionInfo2,
+    },
     GlobalData, RustImplItemItemJs, RustType2, RustTypeParam, RustTypeParamValue,
     PRELUDE_MODULE_PATH,
 };
@@ -69,7 +70,7 @@ pub fn js_stmts_from_syn_items(
                 let item = &item_defs[*index];
                 match item {
                     ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
-                        StructOrEnumDefitionInfo::Struct(_struct_def) => {
+                        StructOrEnumDefitionInfo2::Struct(_struct_def) => {
                             js_stmts.push(handle_item_struct(
                                 *index,
                                 true,
@@ -77,7 +78,7 @@ pub fn js_stmts_from_syn_items(
                                 current_module,
                             ));
                         }
-                        StructOrEnumDefitionInfo::Enum(_enum_def) => {
+                        StructOrEnumDefitionInfo2::Enum(_enum_def) => {
                             js_stmts.push(handle_item_enum(
                                 *index,
                                 true,
@@ -403,8 +404,8 @@ pub fn handle_item_enum(
     };
 
     let item_enum = match &item_def.struct_or_enum_info {
-        StructOrEnumDefitionInfo::Struct(_) => todo!(),
-        StructOrEnumDefitionInfo::Enum(enum_def_info) => &enum_def_info.syn_object,
+        StructOrEnumDefitionInfo2::Struct(_) => todo!(),
+        StructOrEnumDefitionInfo2::Enum(enum_def_info) => &enum_def_info.syn_object,
     };
 
     let enum_name = item_enum.ident.to_string();
@@ -1160,8 +1161,8 @@ pub fn handle_item_struct(
     let item = &global_data.item_defs[index];
     let item_def = match item {
         ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
-            StructOrEnumDefitionInfo::Struct(_struct_def) => actual.clone(),
-            StructOrEnumDefitionInfo::Enum(_enum_def) => {
+            StructOrEnumDefitionInfo2::Struct(_struct_def) => actual.clone(),
+            StructOrEnumDefitionInfo2::Enum(_enum_def) => {
                 todo!()
             }
         },
@@ -1169,8 +1170,8 @@ pub fn handle_item_struct(
     };
 
     let item_struct = match &item_def.struct_or_enum_info {
-        StructOrEnumDefitionInfo::Struct(struct_def_info) => &struct_def_info.syn_object,
-        StructOrEnumDefitionInfo::Enum(_) => todo!(),
+        StructOrEnumDefitionInfo2::Struct(struct_def_info) => &struct_def_info.syn_object,
+        StructOrEnumDefitionInfo2::Enum(_) => todo!(),
     };
     let name = item_struct.ident.to_string();
     // dbg!(&global_data.scopes);

@@ -1,10 +1,1395 @@
 use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
 
-use crate::{
-    tree_structure::{ExprRef, ItemActual, ItemRef, RustMod, StmtsRef},
-    RustPathSegment, PRELUDE_MODULE_PATH,
+use crate::{update_item_definitions::ItemV2, RustPathSegment, PRELUDE_MODULE_PATH};
+
+use std::{fs, path::PathBuf};
+
+use proc_macro2::TokenStream;
+use syn::{
+    AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield,
+    GenericParam, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta,
+    Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
+
+use crate::extract_modules::tree_parsing_for_boilerplate;
+
+/// Populates module pub/private and scoped `.use_mappings`s
+pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
+    let pub_ = matches!(item_use.vis, Visibility::Public(_));
+
+    let item_paths = match &item_use.tree {
+        UseTree::Path(use_path) => {
+            let _root_module_or_crate = use_path.ident.to_string();
+
+            let mut item_paths = Vec::new();
+            let mut relative_path = vec![use_path.ident.to_string()];
+            tree_parsing_for_boilerplate(&use_path.tree, &mut relative_path, &mut item_paths);
+            item_paths
+        }
+        // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+        UseTree::Name(_use_name) => todo!(),
+        _ => panic!("root of use trees are always a path or name"),
+    };
+
+    RustUse {
+        pub_,
+        use_mapping: item_paths,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ImplItemExprStmtRefs {
+    Fn(Vec<StmtsRef>),
+    Const,
+}
+
+// Actual definitions (only use at top level)
+#[derive(Debug, Clone)]
+pub enum ItemActual {
+    StructOrEnum(ItemDefinition),
+    Fn(FnInfo),
+    Const(ConstDef),
+    Trait(RustTraitDefinition),
+    // TODO replace these with proper type to be more consistent with othe variants?
+    Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
+    // Should never be handled, only used for empty initialisation
+    // TODO replace use with Option?
+    None,
+    // Mod(RustMod),
+    // Impl(RustMod),
+    // Use(RustUse),
+}
+impl ItemActual {
+    pub fn ident(&self) -> &str {
+        match self {
+            ItemActual::StructOrEnum(def) => &def.ident,
+            ItemActual::Fn(def) => &def.ident,
+            ItemActual::Const(def) => &def.name,
+            ItemActual::Trait(def) => &def.name,
+            // ItemActual::Impl(_) => panic!(),
+            ItemActual::Impl(_, _) => panic!(),
+            ItemActual::None => panic!(),
+        }
+    }
+}
+
+// References to top level deifinitions (used inside Mod's, Fn bodies)
+#[derive(Debug, Clone)]
+pub enum ItemRef {
+    StructOrEnum(usize),
+    Fn(usize),
+    Const(usize),
+    Trait(usize),
+    Impl(usize),
+    Mod(RustMod),
+    Use(RustUse),
+    Macro,
+}
+impl ItemRef {
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            ItemRef::StructOrEnum(index) => Some(*index),
+            ItemRef::Fn(index) => Some(*index),
+            ItemRef::Const(index) => Some(*index),
+            ItemRef::Trait(index) => Some(*index),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprRef {
+    Array(RustExprArray),
+    Assign(RustExprAssign),
+    Async(RustExprAsync),
+    Await(RustExprAwait),
+    Binary(RustExprBinary),
+    Block(RustExprBlock),
+    Break(RustExprBreak),
+    Call(RustExprCall),
+    Cast(RustExprCast),
+    Closure(RustExprClosure),
+    Const(RustExprConst),
+    Continue(RustExprContinue),
+    Field(RustExprField),
+    ForLoop(RustExprForLoop),
+    Group(RustExprGroup),
+    If(RustExprIf),
+    Index(RustExprIndex),
+    Infer(RustExprInfer),
+    Let(RustExprLet),
+    Lit(RustExprLit),
+    Loop(RustExprLoop),
+    // Macro(RustExprMacro),
+    Macro(RustExprOrStmtMacro),
+    Match(RustExprMatch),
+    MethodCall(RustExprMethodCall),
+    Paren(RustExprParen),
+    Path(RustExprPath),
+    Range(RustExprRange),
+    Reference(RustExprReference),
+    Repeat(RustExprRepeat),
+    Return(RustExprReturn),
+    Struct(RustExprStruct),
+    Try(RustExprTry),
+    TryBlock(RustExprTryBlock),
+    Tuple(RustExprTuple),
+    Unary(RustExprUnary),
+    Unsafe(RustExprUnsafe),
+    Verbatim(RustTokenStream),
+    While(RustExprWhile),
+    Yield(RustExprYield),
+}
+
+#[derive(Debug, Clone)]
+pub struct RustExprArray {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAssign {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAsync {
+    pub attrs: Vec<Attribute>,
+    pub capture: bool,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAwait {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBinary {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub op: BinOp,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBlock {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBreak {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCall {
+    pub attrs: Vec<Attribute>,
+    pub func: Box<ExprRef>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCast {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub ty: Box<Type>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprClosure {
+    pub attrs: Vec<Attribute>,
+    pub lifetimes: Option<BoundLifetimes>,
+    pub constness: bool,
+    pub movability: bool,
+    pub asyncness: bool,
+    pub capture: bool,
+    pub inputs: Vec<Pat>,
+    pub output: ReturnType,
+    pub body: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprConst {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprContinue {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprField {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+    pub member: Member,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprForLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprGroup {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIf {
+    pub attrs: Vec<Attribute>,
+    pub cond: Box<ExprRef>,
+    pub then_branch: Vec<StmtsRef>,
+    pub else_branch: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIndex {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub index: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprInfer {
+    pub attrs: Vec<Attribute>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLet {
+    pub attrs: Vec<Attribute>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLit {
+    pub attrs: Vec<Attribute>,
+    pub lit: Lit,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub body: Vec<StmtsRef>,
+}
+// #[derive(Debug, Clone)]
+// pub struct RustExprMacro {
+//     pub attrs: Vec<Attribute>,
+//     pub mac: Macro,
+// }
+#[derive(Debug, Clone)]
+pub struct RustExprMatch {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub arms: Vec<RustArm>,
+}
+#[derive(Debug, Clone)]
+pub struct RustArm {
+    pub attrs: Vec<Attribute>,
+    // TODO Pat can contain an expression and thus an item - need to check whether items can really be defined *anywhere*
+    pub pat: Pat,
+    pub guard: Option<Box<ExprRef>>,
+    pub body: Box<ExprRef>,
+    pub comma: bool,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprMethodCall {
+    pub attrs: Vec<Attribute>,
+    pub receiver: Box<ExprRef>,
+    pub method: syn::Ident,
+    pub turbofish: Option<AngleBracketedGenericArguments>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprParen {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+// TODO this type is unnecessary, can just use ExprPath directly
+#[derive(Debug, Clone)]
+pub struct RustExprPath {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRange {
+    pub attrs: Vec<Attribute>,
+    pub start: Option<Box<ExprRef>>,
+    pub limits: RangeLimits,
+    pub end: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReference {
+    pub attrs: Vec<Attribute>,
+    pub mutability: bool,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRepeat {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub len: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReturn {
+    pub attrs: Vec<Attribute>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprStruct {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+    pub fields: Vec<RustFieldValue>,
+    pub dot2_token: bool,
+    pub rest: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustFieldValue {
+    pub attrs: Vec<Attribute>,
+    pub member: Member,
+    pub colon_token: bool,
+    pub expr: ExprRef,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTry {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTryBlock {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTuple {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnary {
+    pub attrs: Vec<Attribute>,
+    pub op: UnOp,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnsafe {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustTokenStream {
+    syn: TokenStream,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprWhile {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub cond: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprYield {
+    syn: ExprYield,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustUse {
+    pub pub_: bool,
+    // pub item_name: String,
+    // pub usepath: Vec<String>,
+    pub use_mapping: Vec<(String, Vec<String>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustMod {
+    pub pub_: bool,
+    pub module_path: Vec<String>,
+    // pub pub_use_mappings: Vec<(String, Vec<String>)>,
+    // pub private_use_mappings: Vec<(String, Vec<String>)>,
+    pub items: Vec<ItemRef>,
+}
+impl RustMod {
+    pub fn item_defined_in_module(
+        &self,
+        items: &[ItemActual],
+        use_private: bool,
+        name: &str,
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Const(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
+            ItemRef::Macro => None,
+        })
+    }
+    pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
+        self.items.iter().any(|item| match item {
+            ItemRef::Mod(rust_mod) => {
+                rust_mod.module_path[rust_mod.module_path.len() - 1] == ident
+                    && (use_private || rust_mod.pub_)
+            }
+            _ => false,
+        })
+    }
+
+    pub fn item_defined_in_module2(
+        &self,
+        items: &[ItemV2],
+        use_private: bool,
+        name: &str,
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Const(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
+            ItemRef::Macro => todo!(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RustImplV1 {
+    pub syn: ItemImpl,
+    pub items: Vec<ImplItemV1>,
+}
+#[derive(Debug, Clone)]
+enum ImplItemV1 {
+    Fn(FnInfo),
+    Const(ConstDef),
+}
+
+fn item_to_item_ref(
+    item: Item,
+    actual_item_defs: &mut Vec<ItemActual>,
+    crate_path: &Option<PathBuf>,
+    current_path: &mut Vec<String>,
+) -> ItemRef {
+    match item {
+        Item::Const(item_const) => {
+            let const_name = item_const.ident.to_string();
+
+            let is_pub = match item_const.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+
+            let const_def = ConstDef {
+                name: const_name,
+                is_pub,
+                syn_object: item_const.clone(),
+                expr: expr_to_expr_ref(
+                    *item_const.expr,
+                    actual_item_defs,
+                    crate_path,
+                    current_path,
+                ),
+            };
+            actual_item_defs.push(ItemActual::Const(const_def));
+            ItemRef::Const(actual_item_defs.len() - 1)
+        }
+        Item::Enum(item_enum) => {
+            let enum_name = item_enum.ident.to_string();
+
+            // Make ItemDefinition
+            let generics = item_enum
+                .generics
+                .params
+                .iter()
+                .map(|p| match p {
+                    GenericParam::Lifetime(_) => todo!(),
+                    GenericParam::Type(type_param) => type_param.ident.to_string(),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
+            let is_copy = item_enum.attrs.iter().any(|attr| match &attr.meta {
+                Meta::Path(_) => todo!(),
+                Meta::List(meta_list) => {
+                    let segs = &meta_list.path.segments;
+                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                        let tokens = format!("({})", meta_list.tokens);
+                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                        trait_tuple.elems.iter().any(|elem| match elem {
+                            Type::Path(type_path) => {
+                                let segs = &type_path.path.segments;
+                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                            }
+                            _ => todo!(),
+                        })
+                    } else {
+                        false
+                    }
+                }
+                Meta::NameValue(_) => todo!(),
+            });
+
+            let is_pub = match item_enum.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
+                ident: enum_name,
+                is_copy,
+                is_pub,
+                generics,
+                struct_or_enum_info: StructOrEnumDefitionInfo::Enum(item_enum.clone()),
+                // impl_block_ids: Vec::new(),
+            }));
+            ItemRef::StructOrEnum(actual_item_defs.len() - 1)
+        }
+        Item::ExternCrate(_) => todo!(),
+        Item::Fn(item_fn) => {
+            let generics = item_fn
+                .sig
+                .generics
+                .params
+                .iter()
+                .filter_map(|g| match g {
+                    GenericParam::Lifetime(_) => None,
+                    GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
+            let is_pub = match item_fn.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+
+            let rust_stmts = item_fn
+                .block
+                .stmts
+                .clone()
+                .into_iter()
+                .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                .collect();
+
+            actual_item_defs.push(ItemActual::Fn(FnInfo {
+                ident: item_fn.sig.ident.to_string(),
+                is_pub,
+                generics,
+                signature: item_fn.sig.clone(),
+                // syn: FnInfoSyn::Standalone(item_fn.clone()),
+                stmts: rust_stmts,
+                syn: FnInfoSyn::Standalone(item_fn.clone()),
+            }));
+            ItemRef::Fn(actual_item_defs.len() - 1)
+        }
+        Item::ForeignMod(_) => todo!(),
+        Item::Impl(item_impl) => {
+            // Extract modules from impl blocks
+
+            // let mut rust_impl_items = Vec::new();
+            // for item in &item_impl.items {
+            //     match item {
+            //         ImplItem::Const(_) => todo!(),
+            //         ImplItem::Fn(impl_item_fn) => {
+            //             // TODO dedupe with Item::Fn
+            //             let generics = impl_item_fn
+            //                 .sig
+            //                 .generics
+            //                 .params
+            //                 .iter()
+            //                 .filter_map(|g| match g {
+            //                     GenericParam::Lifetime(_) => None,
+            //                     GenericParam::Type(type_param) => {
+            //                         Some(type_param.ident.to_string())
+            //                     }
+            //                     GenericParam::Const(_) => todo!(),
+            //                 })
+            //                 .collect::<Vec<_>>();
+
+            //             let is_pub = match impl_item_fn.vis {
+            //                 Visibility::Public(_) => true,
+            //                 Visibility::Restricted(_) => todo!(),
+            //                 Visibility::Inherited => false,
+            //             };
+
+            //             let stmts = impl_item_fn
+            //                 .block
+            //                 .stmts
+            //                 .clone()
+            //                 .into_iter()
+            //                 .map(|stmt| {
+            //                     stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path)
+            //                 })
+            //                 .collect();
+
+            //             rust_impl_items.push(ImplItemV1::Fn(FnInfo {
+            //                 ident: impl_item_fn.sig.ident.to_string(),
+            //                 is_pub,
+            //                 generics,
+            //                 signature: impl_item_fn.sig.clone(),
+            //                 stmts,
+            //                 syn: FnInfoSyn::Impl(impl_item_fn.clone()),
+            //             }))
+            //         }
+            //         ImplItem::Type(_) => todo!(),
+            //         ImplItem::Macro(_) => todo!(),
+            //         ImplItem::Verbatim(_) => todo!(),
+            //         _ => todo!(),
+            //     }
+            // }
+
+            let item_actual = ItemActual::Impl(
+                item_impl.clone(),
+                item_impl
+                    .items
+                    .into_iter()
+                    .map(|impl_item| match impl_item {
+                        ImplItem::Const(_) => ImplItemExprStmtRefs::Const,
+                        ImplItem::Fn(impl_item_fn) => ImplItemExprStmtRefs::Fn(
+                            impl_item_fn
+                                .block
+                                .stmts
+                                .into_iter()
+                                .map(|stmt| {
+                                    stmt_to_stmts_ref(
+                                        stmt,
+                                        actual_item_defs,
+                                        crate_path,
+                                        current_path,
+                                    )
+                                })
+                                .collect(),
+                        ),
+                        ImplItem::Type(_) => todo!(),
+                        ImplItem::Macro(_) => todo!(),
+                        ImplItem::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    })
+                    .collect(),
+            );
+            actual_item_defs.push(item_actual);
+            ItemRef::Impl(actual_item_defs.len() - 1)
+        }
+        Item::Macro(_) => {
+            //
+            ItemRef::Macro
+        }
+        // We have already split up the modules in individual `ModuleData`s (which we are currently iterating through) so should ignore `Item::Mod`s
+        Item::Mod(item_mod) => {
+            let pub_ = match item_mod.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+
+            // let module_data = modules.get_mut(current_path);
+            // match item_mod.vis {
+            //     Visibility::Public(_) => {
+            //         module_data.pub_submodules.push(item_mod.ident.to_string())
+            //     }
+            //     Visibility::Restricted(_) => todo!(),
+            //     Visibility::Inherited => module_data
+            //         .private_submodules
+            //         .push(item_mod.ident.to_string()),
+            // }
+
+            let _parent_name = current_path.last().cloned();
+            current_path.push(item_mod.ident.to_string());
+
+            let mut rust_mod = RustMod {
+                pub_,
+                module_path: current_path.clone(),
+                items: Vec::new(),
+            };
+
+            // let mut partial_module_data = ModuleDataFirstPass::new(
+            //     item_mod.ident.to_string(),
+            //     // parent_name,
+            //     current_path.clone(),
+            // );
+
+            // NOTE we do the `modules.push(ModuleData { ...` below because we need to get the module items from the different content/no content branches
+            if let Some(content) = &item_mod.content {
+                // partial_module_data.items.clone_from(&content.1);
+                // modules.push(partial_module_data);
+
+                // TODO how does `mod bar { mod foo; }` work?
+                rust_mod.items =
+                    extract_modules2(true, &content.1, crate_path, current_path, actual_item_defs);
+            } else if let Some(crate_path2) = crate_path {
+                let mut file_path = crate_path2.clone();
+                file_path.push("src");
+                // IMPORTANT TODO need to check for "crate" *and* "my_external_crate", and also use the corrent `crate_path`
+                if *current_path == ["crate"] {
+                    file_path.push("main.rs");
+                } else {
+                    let mut module_path_copy = current_path.clone();
+                    // remove "crate"
+                    module_path_copy.remove(0);
+                    let last = module_path_copy.last_mut().unwrap();
+                    last.push_str(".rs");
+                    file_path.extend(module_path_copy);
+                }
+
+                let code = fs::read_to_string(&file_path).unwrap();
+                let file = syn::parse_file(&code).unwrap();
+
+                // partial_module_data.items.clone_from(&file.items);
+                // modules.push(partial_module_data);
+                rust_mod.items = extract_modules2(
+                    true,
+                    &file.items,
+                    crate_path,
+                    current_path,
+                    actual_item_defs,
+                );
+            } else {
+                panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
+            }
+            current_path.pop();
+
+            ItemRef::Mod(rust_mod)
+        }
+        Item::Static(_) => todo!(),
+        Item::Struct(item_struct) => {
+            let generics = item_struct
+                .generics
+                .params
+                .iter()
+                .filter_map(|p| match p {
+                    GenericParam::Lifetime(_) => None,
+                    GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
+            let is_copy = item_struct.attrs.iter().any(|attr| match &attr.meta {
+                Meta::Path(_) => todo!(),
+                Meta::List(meta_list) => {
+                    let segs = &meta_list.path.segments;
+                    if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
+                        let tokens = format!("({},)", meta_list.tokens);
+                        // NOTE can't parse as syn::TypeTuple because eg (Default) is not a tuple, only len > 1 like (Default, Debug)
+                        let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
+                        trait_tuple.elems.iter().any(|elem| match elem {
+                            Type::Path(type_path) => {
+                                let segs = &type_path.path.segments;
+                                // TODO `Copy` could have been shadowed to need to do a proper lookup for trait with name `Copy` to check whether it is std::Copy or not.
+                                segs.len() == 1 && segs.first().unwrap().ident == "Copy"
+                            }
+                            _ => todo!(),
+                        })
+                    } else {
+                        false
+                    }
+                }
+                Meta::NameValue(_) => todo!(),
+            });
+
+            let is_pub = match item_struct.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
+                ident: item_struct.ident.to_string(),
+                is_pub,
+                is_copy,
+                generics,
+                struct_or_enum_info: StructOrEnumDefitionInfo::Struct(item_struct.clone()),
+                // impl_block_ids: Vec::new(),
+            }));
+            ItemRef::StructOrEnum(actual_item_defs.len() - 1)
+        }
+        Item::Trait(item_trait) => {
+            let is_pub = match item_trait.vis {
+                Visibility::Public(_) => true,
+                Visibility::Restricted(_) => todo!(),
+                Visibility::Inherited => false,
+            };
+            let default_impls = item_trait
+                .items
+                .iter()
+                .filter_map(|item| {
+                    match item {
+                        TraitItem::Const(_) => todo!(),
+                        TraitItem::Fn(item_fn) => {
+                            if let Some(block) = &item_fn.default {
+                                let generics = item_fn
+                                    .sig
+                                    .generics
+                                    .params
+                                    .iter()
+                                    .filter_map(|g| match g {
+                                        GenericParam::Lifetime(_) => None,
+                                        GenericParam::Type(type_param) => {
+                                            Some(type_param.ident.to_string())
+                                        }
+                                        GenericParam::Const(_) => todo!(),
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let rust_stmts = block
+                                    .stmts
+                                    .clone()
+                                    .into_iter()
+                                    .map(|stmt| {
+                                        stmt_to_stmts_ref(
+                                            stmt,
+                                            actual_item_defs,
+                                            crate_path,
+                                            current_path,
+                                        )
+                                    })
+                                    .collect();
+
+                                Some(FnInfo {
+                                    ident: item_fn.sig.ident.to_string(),
+                                    is_pub,
+                                    generics,
+                                    signature: item_fn.sig.clone(),
+                                    // syn: FnInfoSyn::Standalone(item_fn.clone()),
+                                    stmts: rust_stmts,
+                                    syn: FnInfoSyn::Trait(item_fn.clone()),
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        TraitItem::Type(_) => todo!(),
+                        TraitItem::Macro(_) => todo!(),
+                        TraitItem::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    }
+                })
+                .collect();
+            actual_item_defs.push(ItemActual::Trait(RustTraitDefinition {
+                name: item_trait.ident.to_string(),
+                is_pub,
+                syn: item_trait.clone(),
+                default_impls,
+            }));
+            ItemRef::Trait(actual_item_defs.len() - 1)
+        }
+        Item::TraitAlias(_) => todo!(),
+        Item::Type(_) => todo!(),
+        Item::Union(_) => todo!(),
+        Item::Use(item_use) => {
+            // TODO we are adding all use stmts the the module use mappings rather than accounting for when we are not at the top level so the stmts should be added to the scope? Also does `resolve_path()` account for the difference?
+            // let module = modules.get_mut(current_path);
+
+            ItemRef::Use(handle_item_use2(&item_use))
+        }
+        Item::Verbatim(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
+// Returns a Vec of item (struct/enum/trait/const) defs, and a nested/AST of `ItemV1`s where a ItemV1 struct/enum/trait/const is simply an index into the Vec.
+// NOTE because a FnInfo item itself can contain other items, including mods etc, it is not possible to keep struct/enum/trait/const's in a Vec, and the other items in a tree with indexes into the Vec
+// I think the only option is to either keep the tree and the indexes must instead be a Vec of indexes (requiring allocation and keeping track of the indexes of parents), of keep everything in a flat structure. This means we need to be able to identify the crate level items somehow, eg by putting them in a RustMod
+
+// When called for a top level module like a crate, the returned ItemRef's are the top level Items of the crate
+// NOTE when extract_modules is called at the top level (eg crate items) we obviously want it to return Vec<ItemActual> since Vec<ItemRef> would not make sense as the refs wouldn't have anything to point to. However, when extract_modules is called for a submodule, we need to Vec<ItemRef> so the items can be stored in the RustMod, and for the actual items to be pushed directly to the top level Vec, to ensure we can record the correct index.
+pub fn extract_modules2(
+    _module_level_items: bool,
+    items: &Vec<Item>,
+    // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
+    // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
+    crate_path: &Option<PathBuf>,
+    current_path: &mut Vec<String>,
+    actual_item_defs: &mut Vec<ItemActual>,
+    // modules: &mut Vec<ModuleDataFirstPass>,
+) -> Vec<ItemRef> {
+    // let mut module_path_with_crate = vec!["crate".to_string()];
+    // module_path_with_crate.extend(module_path.clone());
+    // let current_module_data = modules
+    //     .iter_mut()
+    //     .find(|module| module.path == *module_path)
+    //     .unwrap();
+    // let defined_names = &mut current_module_data.defined_names;
+
+    // dbg!(&module_path);
+
+    let mut item_refs = Vec::new();
+    // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
+    for item in items {
+        item_refs.push(item_to_item_ref(
+            item.clone(),
+            actual_item_defs,
+            crate_path,
+            current_path,
+        ));
+    }
+
+    // if crate_path.is_some() {
+    //     vec![ItemRef::Mod(RustMod {
+    //         pub_: false,
+    //         module_path: current_path.clone(),
+    //         items: module_itemrefs,
+    //     })]
+    // } else {
+    //     module_itemrefs
+    // }
+    item_refs
+}
+
+pub fn stmt_to_stmts_ref(
+    stmt: Stmt,
+    actual_item_defs: &mut Vec<ItemActual>,
+    crate_path: &Option<PathBuf>,
+    current_path: &mut Vec<String>,
+) -> StmtsRef {
+    match stmt {
+        Stmt::Local(local) => StmtsRef::Local(LocalRef {
+            attrs: local.attrs,
+            pat: local.pat,
+            init: local.init.map(|local_init| LocalInitRef {
+                expr: Box::new(expr_to_expr_ref(
+                    *local_init.expr,
+                    actual_item_defs,
+                    crate_path,
+                    current_path,
+                )),
+                diverge: local_init.diverge.map(|(_, diverge)| {
+                    Box::new(expr_to_expr_ref(
+                        *diverge,
+                        actual_item_defs,
+                        crate_path,
+                        current_path,
+                    ))
+                }),
+            }),
+        }),
+        Stmt::Item(item) => StmtsRef::Item(item_to_item_ref(
+            item,
+            actual_item_defs,
+            crate_path,
+            current_path,
+        )),
+        Stmt::Expr(expr, semi) => StmtsRef::Expr(
+            expr_to_expr_ref(expr, actual_item_defs, crate_path, current_path),
+            semi.is_some(),
+        ),
+        Stmt::Macro(stmt_macro) => StmtsRef::Macro(RustExprOrStmtMacro {
+            attrs: stmt_macro.attrs,
+            mac: stmt_macro.mac,
+            semi_token: stmt_macro.semi_token.is_some(),
+        }),
+    }
+}
+
+pub fn expr_to_expr_ref(
+    expr: Expr,
+    actual_item_defs: &mut Vec<ItemActual>,
+    crate_path: &Option<PathBuf>,
+    current_path: &mut Vec<String>,
+) -> ExprRef {
+    match expr {
+        Expr::Array(expr_array) => ExprRef::Array(RustExprArray {
+            attrs: expr_array.attrs,
+            elems: expr_array
+                .elems
+                .into_iter()
+                .map(|expr| expr_to_expr_ref(expr, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Assign(expr_assign) => ExprRef::Assign(RustExprAssign {
+            attrs: expr_assign.attrs,
+            left: Box::new(expr_to_expr_ref(
+                *expr_assign.left,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            right: Box::new(expr_to_expr_ref(
+                *expr_assign.right,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Async(expr_async) => ExprRef::Async(RustExprAsync {
+            attrs: expr_async.attrs,
+            capture: expr_async.capture.is_some(),
+            stmts: expr_async
+                .block
+                .stmts
+                .into_iter()
+                .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Await(expr_await) => ExprRef::Await(RustExprAwait {
+            attrs: expr_await.attrs,
+            base: Box::new(expr_to_expr_ref(
+                *expr_await.base,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Binary(expr_binary) => ExprRef::Binary(RustExprBinary {
+            attrs: expr_binary.attrs,
+            left: Box::new(expr_to_expr_ref(
+                *expr_binary.left,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            op: expr_binary.op,
+            right: Box::new(expr_to_expr_ref(
+                *expr_binary.right,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Block(expr_block) => ExprRef::Block(RustExprBlock {
+            attrs: expr_block.attrs,
+            label: expr_block.label,
+            stmts: expr_block
+                .block
+                .stmts
+                .into_iter()
+                .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Break(_) => todo!(),
+        Expr::Call(expr_call) => ExprRef::Call(RustExprCall {
+            attrs: expr_call.attrs,
+            func: Box::new(expr_to_expr_ref(
+                *expr_call.func,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            args: expr_call
+                .args
+                .into_iter()
+                .map(|expr| expr_to_expr_ref(expr, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Cast(_) => todo!(),
+        Expr::Closure(expr_closure) => ExprRef::Closure(RustExprClosure {
+            attrs: expr_closure.attrs,
+            lifetimes: expr_closure.lifetimes,
+            constness: expr_closure.constness.is_some(),
+            movability: expr_closure.movability.is_some(),
+            asyncness: expr_closure.asyncness.is_some(),
+            capture: expr_closure.capture.is_some(),
+            inputs: expr_closure.inputs.into_iter().collect(),
+            output: expr_closure.output,
+            body: Box::new(expr_to_expr_ref(
+                *expr_closure.body,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Const(_) => todo!(),
+        Expr::Continue(_) => todo!(),
+        Expr::Field(expr_field) => ExprRef::Field(RustExprField {
+            attrs: expr_field.attrs,
+            base: Box::new(expr_to_expr_ref(
+                *expr_field.base,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            member: expr_field.member,
+        }),
+        Expr::ForLoop(expr_for_loop) => ExprRef::ForLoop(RustExprForLoop {
+            attrs: expr_for_loop.attrs,
+            label: expr_for_loop.label,
+            pat: expr_for_loop.pat,
+            expr: Box::new(expr_to_expr_ref(
+                *expr_for_loop.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            body: expr_for_loop
+                .body
+                .stmts
+                .into_iter()
+                .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Group(_) => todo!(),
+        Expr::If(expr_if) => ExprRef::If(RustExprIf {
+            attrs: expr_if.attrs,
+            cond: Box::new(expr_to_expr_ref(
+                *expr_if.cond,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            then_branch: expr_if
+                .then_branch
+                .stmts
+                .into_iter()
+                .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                .collect(),
+            else_branch: expr_if.else_branch.map(|(_, expr)| {
+                Box::new(expr_to_expr_ref(
+                    *expr,
+                    actual_item_defs,
+                    crate_path,
+                    current_path,
+                ))
+            }),
+        }),
+        Expr::Index(expr_index) => ExprRef::Index(RustExprIndex {
+            attrs: expr_index.attrs,
+            expr: Box::new(expr_to_expr_ref(
+                *expr_index.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            index: Box::new(expr_to_expr_ref(
+                *expr_index.index,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Infer(_) => todo!(),
+        Expr::Let(expr_let) => ExprRef::Let(RustExprLet {
+            attrs: expr_let.attrs,
+            pat: expr_let.pat,
+            expr: Box::new(expr_to_expr_ref(
+                *expr_let.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Lit(expr_lit) => ExprRef::Lit(RustExprLit {
+            attrs: expr_lit.attrs,
+            lit: expr_lit.lit,
+        }),
+        Expr::Loop(_) => todo!(),
+        Expr::Macro(expr_macro) => ExprRef::Macro(RustExprOrStmtMacro {
+            attrs: expr_macro.attrs,
+            mac: expr_macro.mac,
+            semi_token: false,
+        }),
+        Expr::Match(expr_match) => ExprRef::Match(RustExprMatch {
+            attrs: expr_match.attrs,
+            expr: Box::new(expr_to_expr_ref(
+                *expr_match.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            arms: expr_match
+                .arms
+                .into_iter()
+                .map(|arm| RustArm {
+                    attrs: arm.attrs,
+                    pat: arm.pat,
+                    guard: arm.guard.map(|(_, expr)| {
+                        Box::new(expr_to_expr_ref(
+                            *expr,
+                            actual_item_defs,
+                            crate_path,
+                            current_path,
+                        ))
+                    }),
+                    body: Box::new(expr_to_expr_ref(
+                        *arm.body,
+                        actual_item_defs,
+                        crate_path,
+                        current_path,
+                    )),
+                    comma: arm.comma.is_some(),
+                })
+                .collect(),
+        }),
+        Expr::MethodCall(expr_method_call) => ExprRef::MethodCall(RustExprMethodCall {
+            attrs: expr_method_call.attrs,
+            receiver: Box::new(expr_to_expr_ref(
+                *expr_method_call.receiver,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+            method: expr_method_call.method,
+            turbofish: expr_method_call.turbofish,
+            args: expr_method_call
+                .args
+                .into_iter()
+                .map(|expr| expr_to_expr_ref(expr, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Paren(_) => todo!(),
+        Expr::Path(expr_path) => ExprRef::Path(RustExprPath {
+            attrs: expr_path.attrs,
+            qself: expr_path.qself,
+            path: expr_path.path,
+        }),
+        Expr::Range(_) => todo!(),
+        Expr::Reference(expr_reference) => ExprRef::Reference(RustExprReference {
+            attrs: expr_reference.attrs,
+            mutability: expr_reference.mutability.is_some(),
+            expr: Box::new(expr_to_expr_ref(
+                *expr_reference.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Repeat(_) => todo!(),
+        Expr::Return(expr_return) => ExprRef::Return(RustExprReturn {
+            attrs: expr_return.attrs,
+            expr: expr_return.expr.map(|expr| {
+                Box::new(expr_to_expr_ref(
+                    *expr,
+                    actual_item_defs,
+                    crate_path,
+                    current_path,
+                ))
+            }),
+        }),
+        Expr::Struct(expr_struct) => ExprRef::Struct(RustExprStruct {
+            attrs: expr_struct.attrs,
+            qself: expr_struct.qself,
+            path: expr_struct.path,
+            fields: expr_struct
+                .fields
+                .into_iter()
+                .map(|field| RustFieldValue {
+                    attrs: field.attrs,
+                    member: field.member,
+                    colon_token: field.colon_token.is_some(),
+                    expr: expr_to_expr_ref(field.expr, actual_item_defs, crate_path, current_path),
+                })
+                .collect(),
+            dot2_token: expr_struct.dot2_token.is_some(),
+            rest: expr_struct.rest.map(|expr| {
+                Box::new(expr_to_expr_ref(
+                    *expr,
+                    actual_item_defs,
+                    crate_path,
+                    current_path,
+                ))
+            }),
+        }),
+        Expr::Try(_) => todo!(),
+        Expr::TryBlock(_) => todo!(),
+        Expr::Tuple(expr_tuple) => ExprRef::Tuple(RustExprTuple {
+            attrs: expr_tuple.attrs,
+            elems: expr_tuple
+                .elems
+                .into_iter()
+                .map(|expr| expr_to_expr_ref(expr, actual_item_defs, crate_path, current_path))
+                .collect(),
+        }),
+        Expr::Unary(expr_unary) => ExprRef::Unary(RustExprUnary {
+            attrs: expr_unary.attrs,
+            op: expr_unary.op,
+            expr: Box::new(expr_to_expr_ref(
+                *expr_unary.expr,
+                actual_item_defs,
+                crate_path,
+                current_path,
+            )),
+        }),
+        Expr::Unsafe(_) => todo!(),
+        Expr::Verbatim(_) => todo!(),
+        Expr::While(_) => todo!(),
+        Expr::Yield(_) => todo!(),
+        _ => todo!(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StmtsRef {
+    Local(LocalRef),
+    Item(ItemRef),
+    Expr(ExprRef, bool),
+    Macro(RustExprOrStmtMacro),
+}
+#[derive(Debug, Clone)]
+pub struct RustExprOrStmtMacro {
+    pub attrs: Vec<Attribute>,
+    pub mac: Macro,
+    pub semi_token: bool,
+}
+#[derive(Debug, Clone)]
+pub struct LocalRef {
+    pub attrs: Vec<Attribute>,
+    pub pat: Pat,
+    pub init: Option<LocalInitRef>,
+}
+#[derive(Debug, Clone)]
+pub struct LocalInitRef {
+    pub expr: Box<ExprRef>,
+    pub diverge: Option<Box<ExprRef>>,
+}
 
 #[derive(Debug, Clone)]
 pub enum StructOrEnumDefitionInfo {
@@ -462,7 +1847,60 @@ pub fn resolve_path(
     }
 }
 
-fn look_for_module_in_items(
+pub fn look_for_module_in_items(
+    items: &[ItemRef],
+    item_defs: &[ItemActual],
+    module_path: &[String],
+) -> Option<RustMod> {
+    for item in items {
+        match item {
+            ItemRef::Fn(index) => {
+                let item = &item_defs[*index];
+                let fn_info = match item {
+                    ItemActual::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+
+                let fn_body_items = fn_info
+                    .stmts
+                    .clone()
+                    .into_iter()
+                    .filter_map(|stmt| {
+                        match stmt {
+                            StmtsRef::Item(item) => Some(item),
+                            // TODO
+                            // StmtsV1::Expr(_, _) => todo!(),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let found_rust_mod =
+                    look_for_module_in_items(&fn_body_items, item_defs, module_path);
+                if found_rust_mod.is_some() {
+                    return found_rust_mod;
+                }
+            }
+            ItemRef::Mod(rust_mod) => {
+                if rust_mod.module_path == module_path {
+                    return Some(rust_mod.clone());
+                }
+                let found_rust_mod =
+                    look_for_module_in_items(&rust_mod.items, item_defs, module_path);
+                if found_rust_mod.is_some() {
+                    return found_rust_mod;
+                }
+            }
+            // TODO
+            // ItemV1::Impl(_) => {}
+            // ItemV1::Use(_) => {}
+            _ => {}
+        }
+    }
+    None
+}
+
+fn look_for_module_in_items2(
     items: &[ItemRef],
     item_defs: &[ItemActual],
     module_path: &[String],

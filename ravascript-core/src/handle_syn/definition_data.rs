@@ -6,9 +6,9 @@ use tracing::debug;
 use crate::{
     handle_syn::RustPathSegment2,
     js_ast::{Ident, JsFn, JsLocal, JsModule},
-    tree_structure::{update_definitons::ItemV2, ItemRef, RustMod, StmtsRef},
+    make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnInfo, ItemDefinition, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        FnInfo, ItemDefinition, ItemV2, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTraitDefinition, RustTypeParam, RustTypeParamValue,
     },
     PRELUDE_MODULE_PATH,
