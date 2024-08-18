@@ -1,8 +1,3 @@
-use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
-use tracing::debug;
-
-use crate::{update_item_definitions::ItemV2, RustPathSegment, PRELUDE_MODULE_PATH};
-
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::{fs, path::PathBuf};
@@ -11,6 +6,10 @@ use syn::{
     GenericParam, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta,
     Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
+use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
+use tracing::debug;
+
+use crate::{update_item_definitions::ItemV2, RustPathSegment, PRELUDE_MODULE_PATH};
 
 // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
 // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths

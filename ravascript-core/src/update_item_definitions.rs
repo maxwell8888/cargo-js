@@ -1,6 +1,15 @@
+use syn::{
+    FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, Type,
+    TypeParamBound, Visibility,
+};
 use syn::{ItemEnum, ItemImpl, ItemStruct, ItemTrait, Member};
 use tracing::debug;
 
+use crate::{
+    duplicate_namespacing::Duplicate,
+    make_item_definitions::{self},
+    RustPathSegment, PRELUDE_MODULE_PATH,
+};
 use crate::{
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
@@ -9,26 +18,14 @@ use crate::{
         StructOrEnumDefitionInfo,
     },
 };
-
-use syn::{
-    FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, Type,
-    TypeParamBound, Visibility,
-};
-
-use crate::{
-    duplicate_namespacing::Duplicate,
-    make_item_definitions::{self},
-    RustPathSegment, PRELUDE_MODULE_PATH,
-};
-
-use super::{ItemRef, StmtsRef};
+use crate::{ItemRef, StmtsRef};
 
 // This simply coverts the list/Vec of item defs to a list/Vec of item defs with the type fields populated (references to other items in the list/Vec) while presevering the order (because we actually get the index from the input Vec, even though we will use it to point to items in the output Vec).
 // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
 // IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
-pub fn update_item_definitions2(
+pub fn update_item_defs(
     item_refs: &[ItemRef],
-    mut item_defs_no_types: Vec<ItemActual>,
+    item_defs_no_types: Vec<ItemActual>,
     current_module: &[String],
     in_scope: bool,
     duplicates: Vec<Duplicate>,
@@ -43,7 +40,7 @@ pub fn update_item_definitions2(
         update_item_defs_recurisve_individual_item(
             item_ref,
             item_refs,
-            &mut item_defs_no_types,
+            &item_defs_no_types,
             current_module,
             &mut updated_item_defs,
             &mut scoped_items,
@@ -58,7 +55,7 @@ pub fn update_item_definitions2(
 fn update_item_defs_recurisve_individual_item(
     item_ref: &ItemRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &mut [ItemActual],
+    item_defs_no_types: &[ItemActual],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef
@@ -68,7 +65,7 @@ fn update_item_defs_recurisve_individual_item(
 ) {
     match item_ref {
         ItemRef::StructOrEnum(index) => {
-            // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place?
+            // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place? Or could in theory first look in the old list and if we only find `None` then look in the new list instead? Might get a bit messy with recursive types since the old definition will have been removed but the new one not pushed yet.
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
             let item = item_defs_no_types[*index].clone();
             updated_item_defs[*index] = update_item_def(
@@ -233,7 +230,7 @@ fn update_item_defs_recurisve_individual_item(
 fn update_item_defs_recurisve_stmts(
     stmt_refs: &[StmtsRef],
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &mut [ItemActual],
+    item_defs_no_types: &[ItemActual],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef
@@ -277,7 +274,7 @@ fn update_item_defs_recurisve_stmts(
 fn update_item_defs_recurisve_individual_expr(
     expr_ref: &ExprRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &mut [ItemActual],
+    item_defs_no_types: &[ItemActual],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef

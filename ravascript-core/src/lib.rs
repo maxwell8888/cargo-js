@@ -30,7 +30,7 @@ mod make_item_definitions;
 use make_item_definitions::{make_item_defs, ItemActual, ItemRef, RustMod, StmtsRef};
 
 mod update_item_definitions;
-use update_item_definitions::{update_item_definitions2, RustType};
+use update_item_definitions::{update_item_defs, RustType};
 
 const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 
@@ -209,7 +209,7 @@ pub fn process_items(
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
     // let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
 
-    let mut item_defs = update_item_definitions2(
+    let mut item_defs = update_item_defs(
         &crate_item_refs,
         item_defs,
         &["crate".to_string()],
