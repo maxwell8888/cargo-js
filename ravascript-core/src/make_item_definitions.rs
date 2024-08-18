@@ -17,561 +17,53 @@ use syn::{
 // IMPORTANT TODO need to check for "crate" *and* "my_external_crate", and also use the corrent `crate_path`
 // TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
 
-/// We want each of used items to return the name of the item, and the path relative to the root module, eg:
-/// eg `use mod::sub_mod::{item1, item2, another_mod::item3}` -> [mod/sub_mod/item1, mod/sub_mod/item2, mod/sub_mod/another_mod/item3]
-///
-/// `relative_path` (snake) is a temporary var for building the relative path that gets copied into `items`
-///
-/// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
-///
-pub fn tree_parsing_for_boilerplate(
-    use_tree: &UseTree,
-    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt
-    relative_path: &mut Vec<String>,
-    items: &mut Vec<(String, Vec<String>)>,
-) {
-    match use_tree {
-        UseTree::Path(use_path) => {
-            relative_path.push(use_path.ident.to_string());
-            tree_parsing_for_boilerplate(&use_path.tree, relative_path, items);
-        }
-        // NOTE a `syn::UseName` can the the ident for an item *or* a submodule that is being `use`d??
-        UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
-        UseTree::Rename(_) => todo!(),
-        UseTree::Glob(_) => {
-            println!("here");
-            dbg!(relative_path);
-            dbg!(items);
-            println!("{}", quote! { #use_tree });
-            todo!()
-        }
-        UseTree::Group(use_group) => {
-            for item in &use_group.items {
-                match item {
-                    UseTree::Path(use_path) => {
-                        // Create separate `relative_path`s for each "fork" created by the `UseGroup`
-                        let mut new_relative_path = relative_path.clone();
-                        new_relative_path.push(use_path.ident.to_string());
-                        tree_parsing_for_boilerplate(&use_path.tree, &mut new_relative_path, items);
-                    }
-                    UseTree::Name(use_name) => {
-                        items.push((use_name.ident.to_string(), relative_path.clone()));
-                    }
-                    UseTree::Rename(_) => todo!(),
-                    UseTree::Glob(_) => todo!(),
-                    UseTree::Group(_) => todo!(),
-                }
-            }
-        }
-    };
-}
+// Returns a Vec of item (struct/enum/trait/const) defs, and a nested/AST of `ItemV1`s where a ItemV1 struct/enum/trait/const is simply an index into the Vec.
+// NOTE because a FnInfo item itself can contain other items, including mods etc, it is not possible to keep struct/enum/trait/const's in a Vec, and the other items in a tree with indexes into the Vec
+// I think the only option is to either keep the tree and the indexes must instead be a Vec of indexes (requiring allocation and keeping track of the indexes of parents), of keep everything in a flat structure. This means we need to be able to identify the crate level items somehow, eg by putting them in a RustMod
 
-/// Populates module pub/private and scoped `.use_mappings`s
-pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
-    let pub_ = matches!(item_use.vis, Visibility::Public(_));
+// When called for a top level module like a crate, the returned ItemRef's are the top level Items of the crate
+// NOTE when extract_modules is called at the top level (eg crate items) we obviously want it to return Vec<ItemActual> since Vec<ItemRef> would not make sense as the refs wouldn't have anything to point to. However, when extract_modules is called for a submodule, we need to Vec<ItemRef> so the items can be stored in the RustMod, and for the actual items to be pushed directly to the top level Vec, to ensure we can record the correct index.
+pub fn make_item_defs(
+    items: Vec<Item>,
+    // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
+    // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
+    // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
+    crate_path: &Option<PathBuf>,
+    current_path: &mut Vec<String>,
+    actual_item_defs: &mut Vec<ItemActual>,
+    // modules: &mut Vec<ModuleDataFirstPass>,
+) -> Vec<ItemRef> {
+    // let mut module_path_with_crate = vec!["crate".to_string()];
+    // module_path_with_crate.extend(module_path.clone());
+    // let current_module_data = modules
+    //     .iter_mut()
+    //     .find(|module| module.path == *module_path)
+    //     .unwrap();
+    // let defined_names = &mut current_module_data.defined_names;
 
-    let item_paths = match &item_use.tree {
-        UseTree::Path(use_path) => {
-            let _root_module_or_crate = use_path.ident.to_string();
+    // dbg!(&module_path);
 
-            let mut item_paths = Vec::new();
-            let mut relative_path = vec![use_path.ident.to_string()];
-            tree_parsing_for_boilerplate(&use_path.tree, &mut relative_path, &mut item_paths);
-            item_paths
-        }
-        // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
-        UseTree::Name(_use_name) => todo!(),
-        _ => panic!("root of use trees are always a path or name"),
-    };
-
-    RustUse {
-        pub_,
-        use_mapping: item_paths,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ImplItemExprStmtRefs {
-    Fn(Vec<StmtsRef>),
-    Const,
-}
-
-// Actual definitions (only use at top level)
-#[derive(Debug, Clone)]
-pub enum ItemActual {
-    StructOrEnum(ItemDefinition),
-    Fn(FnInfo),
-    Const(ConstDef),
-    Trait(RustTraitDefinition),
-    // TODO replace these with proper type to be more consistent with othe variants?
-    Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
-    // Should never be handled, only used for empty initialisation
-    // TODO replace use with Option?
-    None,
-    // Mod(RustMod),
-    // Impl(RustMod),
-    // Use(RustUse),
-}
-impl ItemActual {
-    pub fn ident(&self) -> &str {
-        match self {
-            ItemActual::StructOrEnum(def) => &def.ident,
-            ItemActual::Fn(def) => &def.ident,
-            ItemActual::Const(def) => &def.name,
-            ItemActual::Trait(def) => &def.name,
-            // ItemActual::Impl(_) => panic!(),
-            ItemActual::Impl(_, _) => panic!(),
-            ItemActual::None => panic!(),
-        }
-    }
-}
-
-// References to top level deifinitions (used inside Mod's, Fn bodies)
-#[derive(Debug, Clone)]
-pub enum ItemRef {
-    StructOrEnum(usize),
-    Fn(usize),
-    Const(usize),
-    Trait(usize),
-    Impl(usize),
-    Mod(RustMod),
-    Use(RustUse),
-    Macro,
-}
-impl ItemRef {
-    pub fn index(&self) -> Option<usize> {
-        match self {
-            ItemRef::StructOrEnum(index) => Some(*index),
-            ItemRef::Fn(index) => Some(*index),
-            ItemRef::Const(index) => Some(*index),
-            ItemRef::Trait(index) => Some(*index),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ExprRef {
-    Array(RustExprArray),
-    Assign(RustExprAssign),
-    Async(RustExprAsync),
-    Await(RustExprAwait),
-    Binary(RustExprBinary),
-    Block(RustExprBlock),
-    Break(RustExprBreak),
-    Call(RustExprCall),
-    Cast(RustExprCast),
-    Closure(RustExprClosure),
-    Const(RustExprConst),
-    Continue(RustExprContinue),
-    Field(RustExprField),
-    ForLoop(RustExprForLoop),
-    Group(RustExprGroup),
-    If(RustExprIf),
-    Index(RustExprIndex),
-    Infer(RustExprInfer),
-    Let(RustExprLet),
-    Lit(RustExprLit),
-    Loop(RustExprLoop),
-    // Macro(RustExprMacro),
-    Macro(RustExprOrStmtMacro),
-    Match(RustExprMatch),
-    MethodCall(RustExprMethodCall),
-    Paren(RustExprParen),
-    Path(RustExprPath),
-    Range(RustExprRange),
-    Reference(RustExprReference),
-    Repeat(RustExprRepeat),
-    Return(RustExprReturn),
-    Struct(RustExprStruct),
-    Try(RustExprTry),
-    TryBlock(RustExprTryBlock),
-    Tuple(RustExprTuple),
-    Unary(RustExprUnary),
-    Unsafe(RustExprUnsafe),
-    Verbatim(RustTokenStream),
-    While(RustExprWhile),
-    Yield(RustExprYield),
-}
-
-#[derive(Debug, Clone)]
-pub struct RustExprArray {
-    pub attrs: Vec<Attribute>,
-    pub elems: Vec<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprAssign {
-    pub attrs: Vec<Attribute>,
-    pub left: Box<ExprRef>,
-    pub right: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprAsync {
-    pub attrs: Vec<Attribute>,
-    pub capture: bool,
-    pub stmts: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprAwait {
-    pub attrs: Vec<Attribute>,
-    pub base: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprBinary {
-    pub attrs: Vec<Attribute>,
-    pub left: Box<ExprRef>,
-    pub op: BinOp,
-    pub right: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprBlock {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Label>,
-    pub stmts: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprBreak {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Lifetime>,
-    pub expr: Option<Box<ExprRef>>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprCall {
-    pub attrs: Vec<Attribute>,
-    pub func: Box<ExprRef>,
-    pub args: Vec<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprCast {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-    pub ty: Box<Type>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprClosure {
-    pub attrs: Vec<Attribute>,
-    pub lifetimes: Option<BoundLifetimes>,
-    pub constness: bool,
-    pub movability: bool,
-    pub asyncness: bool,
-    pub capture: bool,
-    pub inputs: Vec<Pat>,
-    pub output: ReturnType,
-    pub body: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprConst {
-    pub attrs: Vec<Attribute>,
-    pub block: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprContinue {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Lifetime>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprField {
-    pub attrs: Vec<Attribute>,
-    pub base: Box<ExprRef>,
-    pub member: Member,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprForLoop {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Label>,
-    pub pat: Box<Pat>,
-    pub expr: Box<ExprRef>,
-    pub body: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprGroup {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprIf {
-    pub attrs: Vec<Attribute>,
-    pub cond: Box<ExprRef>,
-    pub then_branch: Vec<StmtsRef>,
-    pub else_branch: Option<Box<ExprRef>>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprIndex {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-    pub index: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprInfer {
-    pub attrs: Vec<Attribute>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprLet {
-    pub attrs: Vec<Attribute>,
-    pub pat: Box<Pat>,
-    pub expr: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprLit {
-    pub attrs: Vec<Attribute>,
-    pub lit: Lit,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprLoop {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Label>,
-    pub body: Vec<StmtsRef>,
-}
-// #[derive(Debug, Clone)]
-// pub struct RustExprMacro {
-//     pub attrs: Vec<Attribute>,
-//     pub mac: Macro,
-// }
-#[derive(Debug, Clone)]
-pub struct RustExprMatch {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-    pub arms: Vec<RustArm>,
-}
-#[derive(Debug, Clone)]
-pub struct RustArm {
-    pub attrs: Vec<Attribute>,
-    // TODO Pat can contain an expression and thus an item - need to check whether items can really be defined *anywhere*
-    pub pat: Pat,
-    pub guard: Option<Box<ExprRef>>,
-    pub body: Box<ExprRef>,
-    pub comma: bool,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprMethodCall {
-    pub attrs: Vec<Attribute>,
-    pub receiver: Box<ExprRef>,
-    pub method: syn::Ident,
-    pub turbofish: Option<AngleBracketedGenericArguments>,
-    pub args: Vec<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprParen {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-}
-// TODO this type is unnecessary, can just use ExprPath directly
-#[derive(Debug, Clone)]
-pub struct RustExprPath {
-    pub attrs: Vec<Attribute>,
-    pub qself: Option<QSelf>,
-    pub path: syn::Path,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprRange {
-    pub attrs: Vec<Attribute>,
-    pub start: Option<Box<ExprRef>>,
-    pub limits: RangeLimits,
-    pub end: Option<Box<ExprRef>>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprReference {
-    pub attrs: Vec<Attribute>,
-    pub mutability: bool,
-    pub expr: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprRepeat {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-    pub len: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprReturn {
-    pub attrs: Vec<Attribute>,
-    pub expr: Option<Box<ExprRef>>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprStruct {
-    pub attrs: Vec<Attribute>,
-    pub qself: Option<QSelf>,
-    pub path: syn::Path,
-    pub fields: Vec<RustFieldValue>,
-    pub dot2_token: bool,
-    pub rest: Option<Box<ExprRef>>,
-}
-#[derive(Debug, Clone)]
-pub struct RustFieldValue {
-    pub attrs: Vec<Attribute>,
-    pub member: Member,
-    pub colon_token: bool,
-    pub expr: ExprRef,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprTry {
-    pub attrs: Vec<Attribute>,
-    pub expr: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprTryBlock {
-    pub attrs: Vec<Attribute>,
-    pub block: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprTuple {
-    pub attrs: Vec<Attribute>,
-    pub elems: Vec<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprUnary {
-    pub attrs: Vec<Attribute>,
-    pub op: UnOp,
-    pub expr: Box<ExprRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprUnsafe {
-    pub attrs: Vec<Attribute>,
-    pub block: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustTokenStream {
-    syn: TokenStream,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprWhile {
-    pub attrs: Vec<Attribute>,
-    pub label: Option<Label>,
-    pub cond: Box<ExprRef>,
-    pub body: Vec<StmtsRef>,
-}
-#[derive(Debug, Clone)]
-pub struct RustExprYield {
-    syn: ExprYield,
-}
-
-#[derive(Debug, Clone)]
-pub struct RustUse {
-    pub pub_: bool,
-    // pub item_name: String,
-    // pub usepath: Vec<String>,
-    pub use_mapping: Vec<(String, Vec<String>)>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RustMod {
-    pub pub_: bool,
-    pub module_path: Vec<String>,
-    // pub pub_use_mappings: Vec<(String, Vec<String>)>,
-    // pub private_use_mappings: Vec<(String, Vec<String>)>,
-    pub items: Vec<ItemRef>,
-}
-impl RustMod {
-    pub fn item_defined_in_module(
-        &self,
-        items: &[ItemActual],
-        use_private: bool,
-        name: &str,
-    ) -> Option<usize> {
-        self.items.iter().find_map(|item| match item {
-            ItemRef::StructOrEnum(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemActual::StructOrEnum(def) => def,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Fn(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Const(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemActual::Const(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Trait(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemActual::Trait(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Mod(_) => None,
-            ItemRef::Impl(_) => None,
-            ItemRef::Use(_) => None,
-            ItemRef::Macro => None,
-        })
-    }
-    pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
-        self.items.iter().any(|item| match item {
-            ItemRef::Mod(rust_mod) => {
-                rust_mod.module_path[rust_mod.module_path.len() - 1] == ident
-                    && (use_private || rust_mod.pub_)
-            }
-            _ => false,
-        })
+    let mut item_refs = Vec::new();
+    // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
+    for item in items {
+        item_refs.push(item_to_item_ref(
+            item.clone(),
+            actual_item_defs,
+            crate_path,
+            current_path,
+        ));
     }
 
-    pub fn item_defined_in_module2(
-        &self,
-        items: &[ItemV2],
-        use_private: bool,
-        name: &str,
-    ) -> Option<usize> {
-        self.items.iter().find_map(|item| match item {
-            ItemRef::StructOrEnum(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemV2::StructOrEnum(def) => def,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Fn(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemV2::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Const(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemV2::Const(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Trait(index) => {
-                let item = &items[*index];
-                let def = match item {
-                    ItemV2::Trait(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
-            }
-            ItemRef::Mod(_) => None,
-            ItemRef::Impl(_) => None,
-            ItemRef::Use(_) => None,
-            ItemRef::Macro => todo!(),
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RustImplV1 {
-    pub syn: ItemImpl,
-    pub items: Vec<ImplItemV1>,
-}
-#[derive(Debug, Clone)]
-enum ImplItemV1 {
-    Fn(FnInfo),
-    Const(ConstDef),
+    // if crate_path.is_some() {
+    //     vec![ItemRef::Mod(RustMod {
+    //         pub_: false,
+    //         module_path: current_path.clone(),
+    //         items: module_itemrefs,
+    //     })]
+    // } else {
+    //     module_itemrefs
+    // }
+    item_refs
 }
 
 fn item_to_item_ref(
@@ -822,13 +314,13 @@ fn item_to_item_ref(
             // );
 
             // NOTE we do the `modules.push(ModuleData { ...` below because we need to get the module items from the different content/no content branches
-            if let Some(content) = &item_mod.content {
+            if let Some(content) = item_mod.content {
                 // partial_module_data.items.clone_from(&content.1);
                 // modules.push(partial_module_data);
 
                 // TODO how does `mod bar { mod foo; }` work?
                 rust_mod.items =
-                    extract_modules2(true, &content.1, crate_path, current_path, actual_item_defs);
+                    make_item_defs(content.1, crate_path, current_path, actual_item_defs);
             } else if let Some(crate_path2) = crate_path {
                 let mut file_path = crate_path2.clone();
                 file_path.push("src");
@@ -849,13 +341,8 @@ fn item_to_item_ref(
 
                 // partial_module_data.items.clone_from(&file.items);
                 // modules.push(partial_module_data);
-                rust_mod.items = extract_modules2(
-                    true,
-                    &file.items,
-                    crate_path,
-                    current_path,
-                    actual_item_defs,
-                );
+                rust_mod.items =
+                    make_item_defs(file.items, crate_path, current_path, actual_item_defs);
             } else {
                 panic!("`mod foo` is not allowed in files/modules/snippets, only crates")
             }
@@ -996,56 +483,6 @@ fn item_to_item_ref(
         Item::Verbatim(_) => todo!(),
         _ => todo!(),
     }
-}
-
-// Returns a Vec of item (struct/enum/trait/const) defs, and a nested/AST of `ItemV1`s where a ItemV1 struct/enum/trait/const is simply an index into the Vec.
-// NOTE because a FnInfo item itself can contain other items, including mods etc, it is not possible to keep struct/enum/trait/const's in a Vec, and the other items in a tree with indexes into the Vec
-// I think the only option is to either keep the tree and the indexes must instead be a Vec of indexes (requiring allocation and keeping track of the indexes of parents), of keep everything in a flat structure. This means we need to be able to identify the crate level items somehow, eg by putting them in a RustMod
-
-// When called for a top level module like a crate, the returned ItemRef's are the top level Items of the crate
-// NOTE when extract_modules is called at the top level (eg crate items) we obviously want it to return Vec<ItemActual> since Vec<ItemRef> would not make sense as the refs wouldn't have anything to point to. However, when extract_modules is called for a submodule, we need to Vec<ItemRef> so the items can be stored in the RustMod, and for the actual items to be pushed directly to the top level Vec, to ensure we can record the correct index.
-pub fn extract_modules2(
-    _module_level_items: bool,
-    items: &Vec<Item>,
-    // Same as `global_data.crate_path`, used for prepending module filepaths, except we don't have a `GlobalData` yet so we pass it in directly
-    // None if we are extracting data for a single file or snippet, rather than an actual crate (so no `mod foo` allowed)
-    // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
-    crate_path: &Option<PathBuf>,
-    current_path: &mut Vec<String>,
-    actual_item_defs: &mut Vec<ItemActual>,
-    // modules: &mut Vec<ModuleDataFirstPass>,
-) -> Vec<ItemRef> {
-    // let mut module_path_with_crate = vec!["crate".to_string()];
-    // module_path_with_crate.extend(module_path.clone());
-    // let current_module_data = modules
-    //     .iter_mut()
-    //     .find(|module| module.path == *module_path)
-    //     .unwrap();
-    // let defined_names = &mut current_module_data.defined_names;
-
-    // dbg!(&module_path);
-
-    let mut item_refs = Vec::new();
-    // TODO the code for eg module.item_definitions.push(...) is a duplicated also for scope.item_definitons.push(...). Remove this duplication.
-    for item in items {
-        item_refs.push(item_to_item_ref(
-            item.clone(),
-            actual_item_defs,
-            crate_path,
-            current_path,
-        ));
-    }
-
-    // if crate_path.is_some() {
-    //     vec![ItemRef::Mod(RustMod {
-    //         pub_: false,
-    //         module_path: current_path.clone(),
-    //         items: module_itemrefs,
-    //     })]
-    // } else {
-    //     module_itemrefs
-    // }
-    item_refs
 }
 
 pub fn stmt_to_stmts_ref(
@@ -1415,6 +852,258 @@ pub fn expr_to_expr_ref(
         Expr::While(_) => todo!(),
         Expr::Yield(_) => todo!(),
         _ => todo!(),
+    }
+}
+
+/// We want each of used items to return the name of the item, and the path relative to the root module, eg:
+/// eg `use mod::sub_mod::{item1, item2, another_mod::item3}` -> [mod/sub_mod/item1, mod/sub_mod/item2, mod/sub_mod/another_mod/item3]
+///
+/// `relative_path` (snake) is a temporary var for building the relative path that gets copied into `items`
+///
+/// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
+///
+pub fn tree_parsing_for_boilerplate(
+    use_tree: &UseTree,
+    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt
+    relative_path: &mut Vec<String>,
+    items: &mut Vec<(String, Vec<String>)>,
+) {
+    match use_tree {
+        UseTree::Path(use_path) => {
+            relative_path.push(use_path.ident.to_string());
+            tree_parsing_for_boilerplate(&use_path.tree, relative_path, items);
+        }
+        // NOTE a `syn::UseName` can the the ident for an item *or* a submodule that is being `use`d??
+        UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
+        UseTree::Rename(_) => todo!(),
+        UseTree::Glob(_) => {
+            println!("here");
+            dbg!(relative_path);
+            dbg!(items);
+            println!("{}", quote! { #use_tree });
+            todo!()
+        }
+        UseTree::Group(use_group) => {
+            for item in &use_group.items {
+                match item {
+                    UseTree::Path(use_path) => {
+                        // Create separate `relative_path`s for each "fork" created by the `UseGroup`
+                        let mut new_relative_path = relative_path.clone();
+                        new_relative_path.push(use_path.ident.to_string());
+                        tree_parsing_for_boilerplate(&use_path.tree, &mut new_relative_path, items);
+                    }
+                    UseTree::Name(use_name) => {
+                        items.push((use_name.ident.to_string(), relative_path.clone()));
+                    }
+                    UseTree::Rename(_) => todo!(),
+                    UseTree::Glob(_) => todo!(),
+                    UseTree::Group(_) => todo!(),
+                }
+            }
+        }
+    };
+}
+
+/// Populates module pub/private and scoped `.use_mappings`s
+pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
+    let pub_ = matches!(item_use.vis, Visibility::Public(_));
+
+    let item_paths = match &item_use.tree {
+        UseTree::Path(use_path) => {
+            let _root_module_or_crate = use_path.ident.to_string();
+
+            let mut item_paths = Vec::new();
+            let mut relative_path = vec![use_path.ident.to_string()];
+            tree_parsing_for_boilerplate(&use_path.tree, &mut relative_path, &mut item_paths);
+            item_paths
+        }
+        // TODO need to consider what a simple `use foo` means, since for modules this would be preceeded by `mod foo` which has the same effect?
+        UseTree::Name(_use_name) => todo!(),
+        _ => panic!("root of use trees are always a path or name"),
+    };
+
+    RustUse {
+        pub_,
+        use_mapping: item_paths,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ImplItemExprStmtRefs {
+    Fn(Vec<StmtsRef>),
+    Const,
+}
+
+// Actual definitions (only use at top level)
+#[derive(Debug, Clone)]
+pub enum ItemActual {
+    StructOrEnum(ItemDefinition),
+    Fn(FnInfo),
+    Const(ConstDef),
+    Trait(RustTraitDefinition),
+    // TODO replace these with proper type to be more consistent with othe variants?
+    Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
+    // Should never be handled, only used for empty initialisation
+    // TODO replace use with Option?
+    None,
+    // Mod(RustMod),
+    // Impl(RustMod),
+    // Use(RustUse),
+}
+impl ItemActual {
+    pub fn ident(&self) -> &str {
+        match self {
+            ItemActual::StructOrEnum(def) => &def.ident,
+            ItemActual::Fn(def) => &def.ident,
+            ItemActual::Const(def) => &def.name,
+            ItemActual::Trait(def) => &def.name,
+            // ItemActual::Impl(_) => panic!(),
+            ItemActual::Impl(_, _) => panic!(),
+            ItemActual::None => panic!(),
+        }
+    }
+}
+
+// References to top level deifinitions (used inside Mod's, Fn bodies)
+#[derive(Debug, Clone)]
+pub enum ItemRef {
+    StructOrEnum(usize),
+    Fn(usize),
+    Const(usize),
+    Trait(usize),
+    Impl(usize),
+    Mod(RustMod),
+    Use(RustUse),
+    Macro,
+}
+impl ItemRef {
+    pub fn index(&self) -> Option<usize> {
+        match self {
+            ItemRef::StructOrEnum(index) => Some(*index),
+            ItemRef::Fn(index) => Some(*index),
+            ItemRef::Const(index) => Some(*index),
+            ItemRef::Trait(index) => Some(*index),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RustUse {
+    pub pub_: bool,
+    // pub item_name: String,
+    // pub usepath: Vec<String>,
+    pub use_mapping: Vec<(String, Vec<String>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RustMod {
+    pub pub_: bool,
+    pub module_path: Vec<String>,
+    // pub pub_use_mappings: Vec<(String, Vec<String>)>,
+    // pub private_use_mappings: Vec<(String, Vec<String>)>,
+    pub items: Vec<ItemRef>,
+}
+impl RustMod {
+    pub fn item_defined_in_module(
+        &self,
+        items: &[ItemActual],
+        use_private: bool,
+        name: &str,
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Const(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemActual::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
+            ItemRef::Macro => None,
+        })
+    }
+    pub fn path_starts_with_sub_module(&self, use_private: bool, ident: &str) -> bool {
+        self.items.iter().any(|item| match item {
+            ItemRef::Mod(rust_mod) => {
+                rust_mod.module_path[rust_mod.module_path.len() - 1] == ident
+                    && (use_private || rust_mod.pub_)
+            }
+            _ => false,
+        })
+    }
+
+    pub fn item_defined_in_module2(
+        &self,
+        items: &[ItemV2],
+        use_private: bool,
+        name: &str,
+    ) -> Option<usize> {
+        self.items.iter().find_map(|item| match item {
+            ItemRef::StructOrEnum(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::StructOrEnum(def) => def,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Fn(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Fn(fn_info) => fn_info,
+                    _ => todo!(),
+                };
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Const(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Const(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Trait(index) => {
+                let item = &items[*index];
+                let def = match item {
+                    ItemV2::Trait(def) => def,
+                    _ => todo!(),
+                };
+                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+            }
+            ItemRef::Mod(_) => None,
+            ItemRef::Impl(_) => None,
+            ItemRef::Use(_) => None,
+            ItemRef::Macro => todo!(),
+        })
     }
 }
 
@@ -2003,4 +1692,299 @@ fn look_for_module_in_items2(
         }
     }
     None
+}
+
+// TODO put in expr_ref module
+#[derive(Debug, Clone)]
+pub enum ExprRef {
+    Array(RustExprArray),
+    Assign(RustExprAssign),
+    Async(RustExprAsync),
+    Await(RustExprAwait),
+    Binary(RustExprBinary),
+    Block(RustExprBlock),
+    Break(RustExprBreak),
+    Call(RustExprCall),
+    Cast(RustExprCast),
+    Closure(RustExprClosure),
+    Const(RustExprConst),
+    Continue(RustExprContinue),
+    Field(RustExprField),
+    ForLoop(RustExprForLoop),
+    Group(RustExprGroup),
+    If(RustExprIf),
+    Index(RustExprIndex),
+    Infer(RustExprInfer),
+    Let(RustExprLet),
+    Lit(RustExprLit),
+    Loop(RustExprLoop),
+    // Macro(RustExprMacro),
+    Macro(RustExprOrStmtMacro),
+    Match(RustExprMatch),
+    MethodCall(RustExprMethodCall),
+    Paren(RustExprParen),
+    Path(RustExprPath),
+    Range(RustExprRange),
+    Reference(RustExprReference),
+    Repeat(RustExprRepeat),
+    Return(RustExprReturn),
+    Struct(RustExprStruct),
+    Try(RustExprTry),
+    TryBlock(RustExprTryBlock),
+    Tuple(RustExprTuple),
+    Unary(RustExprUnary),
+    Unsafe(RustExprUnsafe),
+    Verbatim(RustTokenStream),
+    While(RustExprWhile),
+    Yield(RustExprYield),
+}
+
+#[derive(Debug, Clone)]
+pub struct RustExprArray {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAssign {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAsync {
+    pub attrs: Vec<Attribute>,
+    pub capture: bool,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprAwait {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBinary {
+    pub attrs: Vec<Attribute>,
+    pub left: Box<ExprRef>,
+    pub op: BinOp,
+    pub right: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBlock {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprBreak {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCall {
+    pub attrs: Vec<Attribute>,
+    pub func: Box<ExprRef>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprCast {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub ty: Box<Type>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprClosure {
+    pub attrs: Vec<Attribute>,
+    pub lifetimes: Option<BoundLifetimes>,
+    pub constness: bool,
+    pub movability: bool,
+    pub asyncness: bool,
+    pub capture: bool,
+    pub inputs: Vec<Pat>,
+    pub output: ReturnType,
+    pub body: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprConst {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprContinue {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Lifetime>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprField {
+    pub attrs: Vec<Attribute>,
+    pub base: Box<ExprRef>,
+    pub member: Member,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprForLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprGroup {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIf {
+    pub attrs: Vec<Attribute>,
+    pub cond: Box<ExprRef>,
+    pub then_branch: Vec<StmtsRef>,
+    pub else_branch: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprIndex {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub index: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprInfer {
+    pub attrs: Vec<Attribute>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLet {
+    pub attrs: Vec<Attribute>,
+    pub pat: Box<Pat>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLit {
+    pub attrs: Vec<Attribute>,
+    pub lit: Lit,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprLoop {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub body: Vec<StmtsRef>,
+}
+// #[derive(Debug, Clone)]
+// pub struct RustExprMacro {
+//     pub attrs: Vec<Attribute>,
+//     pub mac: Macro,
+// }
+#[derive(Debug, Clone)]
+pub struct RustExprMatch {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub arms: Vec<RustArm>,
+}
+#[derive(Debug, Clone)]
+pub struct RustArm {
+    pub attrs: Vec<Attribute>,
+    // TODO Pat can contain an expression and thus an item - need to check whether items can really be defined *anywhere*
+    pub pat: Pat,
+    pub guard: Option<Box<ExprRef>>,
+    pub body: Box<ExprRef>,
+    pub comma: bool,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprMethodCall {
+    pub attrs: Vec<Attribute>,
+    pub receiver: Box<ExprRef>,
+    pub method: syn::Ident,
+    pub turbofish: Option<AngleBracketedGenericArguments>,
+    pub args: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprParen {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+// TODO this type is unnecessary, can just use ExprPath directly
+#[derive(Debug, Clone)]
+pub struct RustExprPath {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRange {
+    pub attrs: Vec<Attribute>,
+    pub start: Option<Box<ExprRef>>,
+    pub limits: RangeLimits,
+    pub end: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReference {
+    pub attrs: Vec<Attribute>,
+    pub mutability: bool,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprRepeat {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+    pub len: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprReturn {
+    pub attrs: Vec<Attribute>,
+    pub expr: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprStruct {
+    pub attrs: Vec<Attribute>,
+    pub qself: Option<QSelf>,
+    pub path: syn::Path,
+    pub fields: Vec<RustFieldValue>,
+    pub dot2_token: bool,
+    pub rest: Option<Box<ExprRef>>,
+}
+#[derive(Debug, Clone)]
+pub struct RustFieldValue {
+    pub attrs: Vec<Attribute>,
+    pub member: Member,
+    pub colon_token: bool,
+    pub expr: ExprRef,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTry {
+    pub attrs: Vec<Attribute>,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTryBlock {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprTuple {
+    pub attrs: Vec<Attribute>,
+    pub elems: Vec<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnary {
+    pub attrs: Vec<Attribute>,
+    pub op: UnOp,
+    pub expr: Box<ExprRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprUnsafe {
+    pub attrs: Vec<Attribute>,
+    pub block: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustTokenStream {
+    syn: TokenStream,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprWhile {
+    pub attrs: Vec<Attribute>,
+    pub label: Option<Label>,
+    pub cond: Box<ExprRef>,
+    pub body: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct RustExprYield {
+    syn: ExprYield,
 }
