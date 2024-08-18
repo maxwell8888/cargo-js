@@ -1276,6 +1276,7 @@ pub fn resolve_path(
         &segs[0].ident,
     );
 
+    // TODO only look through transparent scopes
     let matched_use_mapping = module.items.iter().find_map(|item| match item {
         ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
@@ -1510,6 +1511,7 @@ pub fn resolve_path(
             || seg.ident == "Copy"
             || seg.ident == "Vec"
         {
+            // TODO shouldn't need this
             fn prelude_item_def_name_to_js(item_def_name: &str) -> &str {
                 match item_def_name {
                     "bool" => "Bool",
