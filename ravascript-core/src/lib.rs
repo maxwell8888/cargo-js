@@ -22,8 +22,6 @@ pub mod rust_prelude;
 mod duplicate_namespacing;
 use duplicate_namespacing::namespace_duplicates;
 
-mod extract_modules;
-
 mod make_item_definitions;
 
 mod update_item_definitions;

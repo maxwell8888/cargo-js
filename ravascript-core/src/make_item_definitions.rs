@@ -3,16 +3,68 @@ use tracing::debug;
 
 use crate::{update_item_definitions::ItemV2, RustPathSegment, PRELUDE_MODULE_PATH};
 
-use std::{fs, path::PathBuf};
-
 use proc_macro2::TokenStream;
+use quote::quote;
+use std::{fs, path::PathBuf};
 use syn::{
     AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield,
     GenericParam, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta,
     Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 
-use crate::extract_modules::tree_parsing_for_boilerplate;
+// Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
+// TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
+// IMPORTANT TODO need to check for "crate" *and* "my_external_crate", and also use the corrent `crate_path`
+// TODO I believe the `pub` keyword for scoped `use` statements is irrelevant/redundant given that idents from scoped `use` statements aren't visible outside the scope. The only time the are relevant is if there is also a *scoped* module inside the same scope, but this seems pretty niche so we will not handle this case for now.
+
+/// We want each of used items to return the name of the item, and the path relative to the root module, eg:
+/// eg `use mod::sub_mod::{item1, item2, another_mod::item3}` -> [mod/sub_mod/item1, mod/sub_mod/item2, mod/sub_mod/another_mod/item3]
+///
+/// `relative_path` (snake) is a temporary var for building the relative path that gets copied into `items`
+///
+/// items is what gets stored in global_data  Vec<(item name (snake), relative path (snake))>
+///
+pub fn tree_parsing_for_boilerplate(
+    use_tree: &UseTree,
+    // We push to `relative_path` to build up a path for each of the items/modules "imported"/`use`d by the use stmt
+    relative_path: &mut Vec<String>,
+    items: &mut Vec<(String, Vec<String>)>,
+) {
+    match use_tree {
+        UseTree::Path(use_path) => {
+            relative_path.push(use_path.ident.to_string());
+            tree_parsing_for_boilerplate(&use_path.tree, relative_path, items);
+        }
+        // NOTE a `syn::UseName` can the the ident for an item *or* a submodule that is being `use`d??
+        UseTree::Name(use_name) => items.push((use_name.ident.to_string(), relative_path.clone())),
+        UseTree::Rename(_) => todo!(),
+        UseTree::Glob(_) => {
+            println!("here");
+            dbg!(relative_path);
+            dbg!(items);
+            println!("{}", quote! { #use_tree });
+            todo!()
+        }
+        UseTree::Group(use_group) => {
+            for item in &use_group.items {
+                match item {
+                    UseTree::Path(use_path) => {
+                        // Create separate `relative_path`s for each "fork" created by the `UseGroup`
+                        let mut new_relative_path = relative_path.clone();
+                        new_relative_path.push(use_path.ident.to_string());
+                        tree_parsing_for_boilerplate(&use_path.tree, &mut new_relative_path, items);
+                    }
+                    UseTree::Name(use_name) => {
+                        items.push((use_name.ident.to_string(), relative_path.clone()));
+                    }
+                    UseTree::Rename(_) => todo!(),
+                    UseTree::Glob(_) => todo!(),
+                    UseTree::Group(_) => todo!(),
+                }
+            }
+        }
+    };
+}
 
 /// Populates module pub/private and scoped `.use_mappings`s
 pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
