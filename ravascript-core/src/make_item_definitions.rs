@@ -1642,59 +1642,6 @@ pub fn look_for_module_in_items(
     None
 }
 
-fn look_for_module_in_items2(
-    items: &[ItemRef],
-    item_defs: &[ItemActual],
-    module_path: &[String],
-) -> Option<RustMod> {
-    for item in items {
-        match item {
-            ItemRef::Fn(index) => {
-                let item = &item_defs[*index];
-                let fn_info = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-
-                let fn_body_items = fn_info
-                    .stmts
-                    .clone()
-                    .into_iter()
-                    .filter_map(|stmt| {
-                        match stmt {
-                            StmtsRef::Item(item) => Some(item),
-                            // TODO
-                            // StmtsV1::Expr(_, _) => todo!(),
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                let found_rust_mod =
-                    look_for_module_in_items(&fn_body_items, item_defs, module_path);
-                if found_rust_mod.is_some() {
-                    return found_rust_mod;
-                }
-            }
-            ItemRef::Mod(rust_mod) => {
-                if rust_mod.module_path == module_path {
-                    return Some(rust_mod.clone());
-                }
-                let found_rust_mod =
-                    look_for_module_in_items(&rust_mod.items, item_defs, module_path);
-                if found_rust_mod.is_some() {
-                    return found_rust_mod;
-                }
-            }
-            // TODO
-            // ItemV1::Impl(_) => {}
-            // ItemV1::Use(_) => {}
-            _ => {}
-        }
-    }
-    None
-}
-
 // TODO put in expr_ref module
 #[derive(Debug, Clone)]
 pub enum ExprRef {
