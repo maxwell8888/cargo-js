@@ -67,6 +67,10 @@ fn update_item_defs_recurisve_individual_item(
     match item_ref {
         ItemRef::StructOrEnum(index) => {
             // TODO moving the def means we no longer have a complete list of items to lookup eg Type::Path names in. Solution is to have optional fields on the def and update it in place? Or could in theory first look in the old list and if we only find `None` then look in the new list instead? Might get a bit messy with recursive types since the old definition will have been removed but the new one not pushed yet.
+            // Could store a pre/post ItemDef enum and then just switch from pre to post as we iterate through the Vec. The problem is that we will want a mutable ref to the element at the same time as an immutable ref to the whole Vec. Same problem with storing different fields as `Option`al.
+            // Need three variants: Pre, Post, None, so that we can take out the pre, mutate it, the put it back. This could/would cause problems for recursive types. I think is all we really need is the item ident and pub, which are Copy so could just store them on None also??
+            // We could just have update_item_def() return the "new bits" and *then* update the item def element after we are no longer using the immutable ref to the whole Vec. Would need another type/wrapper for this though since fn/struct/etc will all return different "bits"... no that still doesn't work because we would need to take out the element first in order to create the "bits" from it... NO I think we only need to take out/copy the ident when creating the bits, then we can move the rest after `update_item_def()`. Nope we need stuff like the syn fields.
+            // I think the solution is actually to move all the bits we need out first, only leaving the ident (ie a None variant that only contains the ident).
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
             let item = item_defs_no_types[*index].clone();
             updated_item_defs[*index] = update_item_def(
@@ -463,18 +467,18 @@ fn update_item_def(
             };
 
             let js_name = if in_scope {
-                Ident::String(item_def.ident.clone())
+                Ident::Syn(item_def.ident.clone())
             } else if let Some(dup) = duplicates
                 .iter()
                 .find(|dup| item_def.ident == dup.name && dup.original_module_path == module_path)
             {
                 Ident::Deduped(dup.namespace.clone())
             } else {
-                Ident::String(item_def.ident.clone())
+                Ident::Syn(item_def.ident.clone())
             };
 
             ItemV2::StructOrEnum(ItemDefinition {
-                ident: item_def.ident.clone(),
+                ident: item_def.ident.to_string(),
                 js_name,
                 is_copy: item_def.is_copy,
                 is_pub: item_def.is_pub,
@@ -547,7 +551,7 @@ fn update_item_def(
             };
 
             ItemV2::Fn(FnInfo {
-                ident: fn_info.ident.clone(),
+                ident: fn_info.ident.to_string(),
                 js_name,
                 is_pub: fn_info.is_pub,
                 inputs_types,
@@ -568,18 +572,18 @@ fn update_item_def(
             );
 
             let js_name = if in_scope {
-                Ident::String(const_def.name.clone())
+                Ident::Syn(const_def.name.clone())
             } else if let Some(dup) = duplicates
                 .iter()
                 .find(|dup| const_def.name == dup.name && dup.original_module_path == module_path)
             {
                 Ident::Deduped(dup.namespace.clone())
             } else {
-                Ident::String(const_def.name.clone())
+                Ident::Syn(const_def.name.clone())
             };
 
             ItemV2::Const(ConstDef {
-                name: const_def.name.clone(),
+                name: const_def.name.to_string(),
                 js_name,
                 is_pub: const_def.is_pub,
                 type_: rust_type,
@@ -590,7 +594,7 @@ fn update_item_def(
             // Currently trait defs don't store any info other than the name, so we don't need to do anything
 
             let js_name = if in_scope {
-                Ident::String(trait_def.name.clone())
+                Ident::Syn(trait_def.name.clone())
             } else {
                 let in_module_level_duplicates = duplicates.iter().find(|dup| {
                     trait_def.name == dup.name && dup.original_module_path == module_path
@@ -599,11 +603,11 @@ fn update_item_def(
                 if let Some(dup) = in_module_level_duplicates {
                     Ident::Deduped(dup.namespace.clone())
                 } else {
-                    Ident::String(trait_def.name.clone())
+                    Ident::Syn(trait_def.name.clone())
                 }
             };
             ItemV2::Trait(RustTraitDefinition {
-                name: trait_def.name.clone(),
+                name: trait_def.name.to_string(),
                 js_name,
                 is_pub: trait_def.is_pub,
                 syn: trait_def.syn,
@@ -672,7 +676,7 @@ fn update_item_def(
                         };
 
                         FnInfo {
-                            ident: fn_info.ident.clone(),
+                            ident: fn_info.ident.to_string(),
                             js_name,
                             is_pub: fn_info.is_pub,
                             inputs_types,

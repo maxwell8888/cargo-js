@@ -154,25 +154,28 @@ pub fn process_items(
         &mut item_defs,
     );
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
+    let trait_syn = syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap();
     item_defs.push(ItemActual::Trait(
         make_item_definitions::RustTraitDefinition {
-            name: "FnOnce".to_string(),
+            name: trait_syn.ident.clone(),
             is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap(),
+            syn: trait_syn,
             default_impls: Vec::new(),
         },
     ));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
-    item_defs.push(ItemActual::Trait(
-        make_item_definitions::RustTraitDefinition {
-            name: "Copy".to_string(),
-            is_pub: true,
-            syn: syn::parse_str::<ItemTrait>("trait Copy {}").unwrap(),
-            default_impls: Vec::new(),
-        },
-    ));
 
+    let trait_syn = syn::parse_str::<ItemTrait>("trait Copy {}").unwrap();
+    item_defs.push(ItemActual::Trait(
+        make_item_definitions::RustTraitDefinition {
+            name: trait_syn.ident.clone(),
+            is_pub: true,
+            syn: trait_syn,
+            default_impls: Vec::new(),
+        },
+    ));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
+
     crate_item_refs.insert(
         0,
         ItemRef::Mod(RustMod {

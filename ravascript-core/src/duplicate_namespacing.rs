@@ -34,7 +34,7 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
                     recurse(&[rust_mod2], item_defs, names_to_dedup);
                 } else if let Some(index) = item.index() {
                     let actual = &item_defs[index];
-                    names_to_dedup.push((rust_mod.module_path.clone(), actual.ident().to_owned()));
+                    names_to_dedup.push((rust_mod.module_path.clone(), actual.ident().to_string()));
                 }
             }
         }

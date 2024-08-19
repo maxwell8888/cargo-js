@@ -3,8 +3,8 @@ use quote::quote;
 use std::{fs, path::PathBuf};
 use syn::{
     AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield,
-    GenericParam, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member, Meta,
-    Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    GenericParam, Ident, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member,
+    Meta, Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
 };
 use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
@@ -82,7 +82,7 @@ fn item_to_item_ref(
             };
 
             let const_def = ConstDef {
-                name: const_name,
+                name: item_const.ident.clone(),
                 is_pub,
                 syn_object: item_const.clone(),
                 expr: expr_to_expr_ref(
@@ -138,7 +138,7 @@ fn item_to_item_ref(
                 Visibility::Inherited => false,
             };
             actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
-                ident: enum_name,
+                ident: item_enum.ident.clone(),
                 is_copy,
                 is_pub,
                 generics,
@@ -176,7 +176,7 @@ fn item_to_item_ref(
                 .collect();
 
             actual_item_defs.push(ItemActual::Fn(FnInfo {
-                ident: item_fn.sig.ident.to_string(),
+                ident: item_fn.sig.ident.clone(),
                 is_pub,
                 generics,
                 signature: item_fn.sig.clone(),
@@ -391,7 +391,7 @@ fn item_to_item_ref(
                 Visibility::Inherited => false,
             };
             actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
-                ident: item_struct.ident.to_string(),
+                ident: item_struct.ident.clone(),
                 is_pub,
                 is_copy,
                 generics,
@@ -443,7 +443,7 @@ fn item_to_item_ref(
                                     .collect();
 
                                 Some(FnInfo {
-                                    ident: item_fn.sig.ident.to_string(),
+                                    ident: item_fn.sig.ident.clone(),
                                     is_pub,
                                     generics,
                                     signature: item_fn.sig.clone(),
@@ -463,7 +463,7 @@ fn item_to_item_ref(
                 })
                 .collect();
             actual_item_defs.push(ItemActual::Trait(RustTraitDefinition {
-                name: item_trait.ident.to_string(),
+                name: item_trait.ident.clone(),
                 is_pub,
                 syn: item_trait.clone(),
                 default_impls,
@@ -950,7 +950,7 @@ pub enum ItemActual {
     // Use(RustUse),
 }
 impl ItemActual {
-    pub fn ident(&self) -> &str {
+    pub fn ident(&self) -> &syn::Ident {
         match self {
             ItemActual::StructOrEnum(def) => &def.ident,
             ItemActual::Fn(def) => &def.ident,
@@ -1141,7 +1141,7 @@ pub enum StructOrEnumDefitionInfo {
 /// Just structs and enums or should we include functions?
 #[derive(Debug, Clone)]
 pub struct ItemDefinition {
-    pub ident: String,
+    pub ident: Ident,
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
     // module_path: Option<Vec<String>>,
     pub is_copy: bool,
@@ -1155,7 +1155,7 @@ pub struct ItemDefinition {
 
 #[derive(Debug, Clone)]
 pub struct RustTraitDefinition {
-    pub name: String,
+    pub name: Ident,
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
@@ -1182,7 +1182,7 @@ pub struct RustTraitDefinition {
 
 #[derive(Debug, Clone)]
 pub struct ConstDef {
-    pub name: String,
+    pub name: Ident,
     pub is_pub: bool,
     pub syn_object: ItemConst,
     pub expr: ExprRef,
@@ -1191,7 +1191,7 @@ pub struct ConstDef {
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 pub struct FnInfo {
-    pub ident: String,
+    pub ident: Ident,
     pub is_pub: bool,
     pub generics: Vec<String>,
     // TODO remove this, just legacy thing we need for now because it gets used in the JS parsing (I think)
