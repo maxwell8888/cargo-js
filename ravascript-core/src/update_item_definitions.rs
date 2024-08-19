@@ -1,3 +1,5 @@
+use std::mem;
+
 use syn::{
     FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, Type,
     TypeParamBound, Visibility,
@@ -5,7 +7,7 @@ use syn::{
 use syn::{ItemEnum, ItemImpl, ItemStruct, ItemTrait, Member};
 use tracing::debug;
 
-use crate::make_item_definitions::resolve_path;
+use crate::make_item_definitions::{resolve_path, ItemActualWrapper};
 use crate::{
     duplicate_namespacing::Duplicate,
     make_item_definitions::{self},
@@ -26,7 +28,7 @@ use crate::{ItemRef, StmtsRef};
 // IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
 pub fn update_item_defs(
     item_refs: &[ItemRef],
-    item_defs_no_types: Vec<ItemActual>,
+    mut item_defs_no_types: Vec<ItemActualWrapper>,
     current_module: &[String],
     in_scope: bool,
     duplicates: Vec<Duplicate>,
@@ -41,7 +43,7 @@ pub fn update_item_defs(
         update_item_defs_recurisve_individual_item(
             item_ref,
             item_refs,
-            &item_defs_no_types,
+            &mut item_defs_no_types,
             current_module,
             &mut updated_item_defs,
             &mut scoped_items,
@@ -56,7 +58,7 @@ pub fn update_item_defs(
 fn update_item_defs_recurisve_individual_item(
     item_ref: &ItemRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &mut [ItemActualWrapper],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef
@@ -71,8 +73,15 @@ fn update_item_defs_recurisve_individual_item(
             // Need three variants: Pre, Post, None, so that we can take out the pre, mutate it, the put it back. This could/would cause problems for recursive types. I think is all we really need is the item ident and pub, which are Copy so could just store them on None also??
             // We could just have update_item_def() return the "new bits" and *then* update the item def element after we are no longer using the immutable ref to the whole Vec. Would need another type/wrapper for this though since fn/struct/etc will all return different "bits"... no that still doesn't work because we would need to take out the element first in order to create the "bits" from it... NO I think we only need to take out/copy the ident when creating the bits, then we can move the rest after `update_item_def()`. Nope we need stuff like the syn fields.
             // I think the solution is actually to move all the bits we need out first, only leaving the ident (ie a None variant that only contains the ident).
-            // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-            let item = item_defs_no_types[*index].clone();
+            let ident = item_defs_no_types[*index].ident().clone();
+            let item_wrapper = mem::replace(
+                &mut item_defs_no_types[*index],
+                ItemActualWrapper::Name(ident),
+            );
+            let item = match item_wrapper {
+                ItemActualWrapper::Full(item_def) => item_def,
+                ItemActualWrapper::Name(_) => panic!(),
+            };
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
@@ -89,7 +98,16 @@ fn update_item_defs_recurisve_individual_item(
         }
         ItemRef::Fn(index) => {
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-            let item = item_defs_no_types[*index].clone();
+            // let item = item_defs_no_types[*index].clone();
+            let ident = item_defs_no_types[*index].ident().clone();
+            let item_wrapper = mem::replace(
+                &mut item_defs_no_types[*index],
+                ItemActualWrapper::Name(ident),
+            );
+            let item = match item_wrapper {
+                ItemActualWrapper::Full(item_def) => item_def,
+                ItemActualWrapper::Name(_) => panic!(),
+            };
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
@@ -127,7 +145,16 @@ fn update_item_defs_recurisve_individual_item(
         }
         ItemRef::Const(index) => {
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-            let item = item_defs_no_types[*index].clone();
+            // let item = item_defs_no_types[*index].clone();
+            let ident = item_defs_no_types[*index].ident().clone();
+            let item_wrapper = mem::replace(
+                &mut item_defs_no_types[*index],
+                ItemActualWrapper::Name(ident),
+            );
+            let item = match item_wrapper {
+                ItemActualWrapper::Full(item_def) => item_def,
+                ItemActualWrapper::Name(_) => panic!(),
+            };
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
@@ -144,7 +171,16 @@ fn update_item_defs_recurisve_individual_item(
         }
         ItemRef::Trait(index) => {
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
-            let item = item_defs_no_types[*index].clone();
+            // let item = item_defs_no_types[*index].clone();
+            let ident = item_defs_no_types[*index].ident().clone();
+            let item_wrapper = mem::replace(
+                &mut item_defs_no_types[*index],
+                ItemActualWrapper::Name(ident),
+            );
+            let item = match item_wrapper {
+                ItemActualWrapper::Full(item_def) => item_def,
+                ItemActualWrapper::Name(_) => panic!(),
+            };
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
@@ -175,7 +211,16 @@ fn update_item_defs_recurisve_individual_item(
         }
         // TODO
         ItemRef::Impl(index) => {
-            let item = item_defs_no_types[*index].clone();
+            // let item = item_defs_no_types[*index].clone();
+            let ident = item_defs_no_types[*index].ident().clone();
+            let item_wrapper = mem::replace(
+                &mut item_defs_no_types[*index],
+                ItemActualWrapper::Name(ident),
+            );
+            let item = match item_wrapper {
+                ItemActualWrapper::Full(item_def) => item_def,
+                ItemActualWrapper::Name(_) => panic!(),
+            };
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
@@ -235,7 +280,7 @@ fn update_item_defs_recurisve_individual_item(
 fn update_item_defs_recurisve_stmts(
     stmt_refs: &[StmtsRef],
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &mut [ItemActualWrapper],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef
@@ -279,7 +324,7 @@ fn update_item_defs_recurisve_stmts(
 fn update_item_defs_recurisve_individual_expr(
     expr_ref: &ExprRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &mut [ItemActualWrapper],
     current_module: &[String],
     updated_item_defs: &mut [ItemV2],
     // TODO use &ItemRef
@@ -368,7 +413,7 @@ fn update_item_def(
     item: ItemActual,
     module_path: &[String],
     item_refs: &[ItemRef],
-    item_actual_defs_copy: &[ItemActual],
+    item_actual_defs_copy: &mut [ItemActualWrapper],
     scoped_items: &[Vec<ItemRef>],
     in_scope: bool,
     duplicates: &[Duplicate],
@@ -1073,7 +1118,7 @@ fn parse_types_for_populate_item_definitions(
     current_module: &[String],
     // global_data: &make_item_definitions::GlobalData,
     item_refs: &[ItemRef],
-    item_defs: &[ItemActual],
+    item_defs: &[ItemActualWrapper],
     scoped_items: &[Vec<ItemRef>],
 ) -> RustType {
     match type_ {

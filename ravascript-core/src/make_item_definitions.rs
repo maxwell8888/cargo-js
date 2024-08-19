@@ -29,7 +29,7 @@ pub fn make_item_defs(
     // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemActualWrapper>,
     // modules: &mut Vec<ModuleDataFirstPass>,
 ) -> Vec<ItemRef> {
     // let mut module_path_with_crate = vec!["crate".to_string()];
@@ -67,7 +67,7 @@ pub fn make_item_defs(
 
 fn item_to_item_ref(
     item: Item,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemActualWrapper>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> ItemRef {
@@ -92,7 +92,7 @@ fn item_to_item_ref(
                     current_path,
                 ),
             };
-            actual_item_defs.push(ItemActual::Const(const_def));
+            actual_item_defs.push(ItemActualWrapper::Full(ItemActual::Const(const_def)));
             ItemRef::Const(actual_item_defs.len() - 1)
         }
         Item::Enum(item_enum) => {
@@ -137,14 +137,16 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
-                ident: item_enum.ident.clone(),
-                is_copy,
-                is_pub,
-                generics,
-                struct_or_enum_info: StructOrEnumDefitionInfo::Enum(item_enum.clone()),
-                // impl_block_ids: Vec::new(),
-            }));
+            actual_item_defs.push(ItemActualWrapper::Full(ItemActual::StructOrEnum(
+                ItemDefinition {
+                    ident: item_enum.ident.clone(),
+                    is_copy,
+                    is_pub,
+                    generics,
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Enum(item_enum.clone()),
+                    // impl_block_ids: Vec::new(),
+                },
+            )));
             ItemRef::StructOrEnum(actual_item_defs.len() - 1)
         }
         Item::ExternCrate(_) => todo!(),
@@ -175,7 +177,7 @@ fn item_to_item_ref(
                 .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
                 .collect();
 
-            actual_item_defs.push(ItemActual::Fn(FnInfo {
+            actual_item_defs.push(ItemActualWrapper::Full(ItemActual::Fn(FnInfo {
                 ident: item_fn.sig.ident.clone(),
                 is_pub,
                 generics,
@@ -183,7 +185,7 @@ fn item_to_item_ref(
                 // syn: FnInfoSyn::Standalone(item_fn.clone()),
                 stmts: rust_stmts,
                 syn: FnInfoSyn::Standalone(item_fn.clone()),
-            }));
+            })));
             ItemRef::Fn(actual_item_defs.len() - 1)
         }
         Item::ForeignMod(_) => todo!(),
@@ -271,7 +273,7 @@ fn item_to_item_ref(
                     })
                     .collect(),
             );
-            actual_item_defs.push(item_actual);
+            actual_item_defs.push(ItemActualWrapper::Full(item_actual));
             ItemRef::Impl(actual_item_defs.len() - 1)
         }
         Item::Macro(_) => {
@@ -390,14 +392,16 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
-                ident: item_struct.ident.clone(),
-                is_pub,
-                is_copy,
-                generics,
-                struct_or_enum_info: StructOrEnumDefitionInfo::Struct(item_struct.clone()),
-                // impl_block_ids: Vec::new(),
-            }));
+            actual_item_defs.push(ItemActualWrapper::Full(ItemActual::StructOrEnum(
+                ItemDefinition {
+                    ident: item_struct.ident.clone(),
+                    is_pub,
+                    is_copy,
+                    generics,
+                    struct_or_enum_info: StructOrEnumDefitionInfo::Struct(item_struct.clone()),
+                    // impl_block_ids: Vec::new(),
+                },
+            )));
             ItemRef::StructOrEnum(actual_item_defs.len() - 1)
         }
         Item::Trait(item_trait) => {
@@ -462,12 +466,14 @@ fn item_to_item_ref(
                     }
                 })
                 .collect();
-            actual_item_defs.push(ItemActual::Trait(RustTraitDefinition {
-                name: item_trait.ident.clone(),
-                is_pub,
-                syn: item_trait.clone(),
-                default_impls,
-            }));
+            actual_item_defs.push(ItemActualWrapper::Full(ItemActual::Trait(
+                RustTraitDefinition {
+                    name: item_trait.ident.clone(),
+                    is_pub,
+                    syn: item_trait.clone(),
+                    default_impls,
+                },
+            )));
             ItemRef::Trait(actual_item_defs.len() - 1)
         }
         Item::TraitAlias(_) => todo!(),
@@ -486,7 +492,7 @@ fn item_to_item_ref(
 
 pub fn stmt_to_stmts_ref(
     stmt: Stmt,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemActualWrapper>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> StmtsRef {
@@ -531,7 +537,7 @@ pub fn stmt_to_stmts_ref(
 
 pub fn expr_to_expr_ref(
     expr: Expr,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemActualWrapper>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> ExprRef {
@@ -933,6 +939,26 @@ pub enum ImplItemExprStmtRefs {
     Const,
 }
 
+#[derive(Debug, Clone)]
+pub enum ItemActualWrapper {
+    Full(ItemActual),
+    Name { ident: syn::Ident, is_pub: bool },
+}
+impl ItemActualWrapper {
+    pub fn ident(&self) -> &syn::Ident {
+        match self {
+            ItemActualWrapper::Full(item_def) => item_def.ident(),
+            ItemActualWrapper::Name { ident, .. } => ident,
+        }
+    }
+    pub fn is_pub(&self) -> bool {
+        match self {
+            ItemActualWrapper::Full(item_def) => item_def.is_pub(),
+            ItemActualWrapper::Name { is_pub, .. } => *is_pub,
+        }
+    }
+}
+
 // Actual definitions (only use at top level)
 #[derive(Debug, Clone)]
 pub enum ItemActual {
@@ -959,6 +985,16 @@ impl ItemActual {
             // ItemActual::Impl(_) => panic!(),
             ItemActual::Impl(_, _) => panic!(),
             ItemActual::None => panic!(),
+        }
+    }
+    pub fn is_pub(&self) -> bool {
+        match self {
+            ItemActual::StructOrEnum(def) => def.is_pub,
+            ItemActual::Fn(def) => def.is_pub,
+            ItemActual::Const(def) => def.is_pub,
+            ItemActual::Trait(def) => def.is_pub,
+            ItemActual::Impl(_, _) => todo!(),
+            ItemActual::None => todo!(),
         }
     }
 }
@@ -1006,42 +1042,26 @@ pub struct RustMod {
 impl RustMod {
     pub fn item_defined_in_module(
         &self,
-        items: &[ItemActual],
+        items: &[ItemActualWrapper],
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
         self.items.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
-                let def = match item {
-                    ItemActual::StructOrEnum(def) => def,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (item.ident() == name && (use_private || item.is_pub())).then_some(*index)
             }
             ItemRef::Fn(index) => {
                 let item = &items[*index];
-                let def = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (item.ident() == name && (use_private || item.is_pub())).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
-                let def = match item {
-                    ItemActual::Const(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (item.ident() == name && (use_private || item.is_pub())).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
-                let def = match item {
-                    ItemActual::Trait(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (item.ident() == name && (use_private || item.is_pub())).then_some(*index)
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
@@ -1236,7 +1256,7 @@ pub fn resolve_path(
     item_refs: &[ItemRef],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
-    items_defs: &[ItemActual],
+    items_defs: &[ItemActualWrapper],
     // scopes: &[GlobalDataScope],
     current_mod: &[String],
     // Only used to determine if current module is the original module
@@ -1295,35 +1315,19 @@ pub fn resolve_path(
         s.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items_defs[*index];
-                let def = match item {
-                    ItemActual::StructOrEnum(def) => def,
-                    _ => todo!(),
-                };
-                (def.ident == segs[0].ident).then_some(*index)
+                (item.ident().to_string() == segs[0].ident).then_some(*index)
             }
             ItemRef::Fn(index) => {
                 let item = &items_defs[*index];
-                let def = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
-                    _ => todo!(),
-                };
-                (def.ident == segs[0].ident).then_some(*index)
+                (item.ident().to_string() == segs[0].ident).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items_defs[*index];
-                let def = match item {
-                    ItemActual::Const(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == segs[0].ident).then_some(*index)
+                (item.ident().to_string() == segs[0].ident).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items_defs[*index];
-                let def = match item {
-                    ItemActual::Trait(def) => def,
-                    _ => todo!(),
-                };
-                (def.name == segs[0].ident).then_some(*index)
+                (item.ident().to_string() == segs[0].ident).then_some(*index)
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
@@ -1529,39 +1533,19 @@ pub fn resolve_path(
                             rust_mod.items.iter().find_map(|item_ref| match item_ref {
                                 ItemRef::StructOrEnum(index) => {
                                     let item = &items_defs[*index];
-                                    match item {
-                                        ItemActual::StructOrEnum(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
-                                    }
+                                    (item.ident() == seg_new).then_some(*index)
                                 }
                                 ItemRef::Fn(index) => {
                                     let item = &items_defs[*index];
-                                    match item {
-                                        ItemActual::Fn(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
-                                    }
+                                    (item.ident() == seg_new).then_some(*index)
                                 }
                                 ItemRef::Const(index) => {
                                     let item = &items_defs[*index];
-                                    match item {
-                                        ItemActual::Const(def) => {
-                                            (def.name == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
-                                    }
+                                    (item.ident() == seg_new).then_some(*index)
                                 }
                                 ItemRef::Trait(index) => {
                                     let item = &items_defs[*index];
-                                    match item {
-                                        ItemActual::Trait(def) => {
-                                            (def.name == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
-                                    }
+                                    (item.ident() == seg_new).then_some(*index)
                                 }
                                 _ => None,
                             })
@@ -1591,7 +1575,7 @@ pub fn resolve_path(
 
 pub fn look_for_module_in_items(
     items: &[ItemRef],
-    item_defs: &[ItemActual],
+    item_defs: &[ItemActualWrapper],
     module_path: &[String],
 ) -> Option<RustMod> {
     for item in items {

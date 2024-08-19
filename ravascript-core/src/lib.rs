@@ -27,7 +27,9 @@ mod duplicate_namespacing;
 use duplicate_namespacing::namespace_duplicates;
 
 mod make_item_definitions;
-use make_item_definitions::{make_item_defs, ItemActual, ItemRef, RustMod, StmtsRef};
+use make_item_definitions::{
+    make_item_defs, ItemActual, ItemActualWrapper, ItemRef, RustMod, StmtsRef,
+};
 
 mod update_item_definitions;
 use update_item_definitions::{update_item_defs, RustType};
@@ -155,25 +157,25 @@ pub fn process_items(
     );
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
     let trait_syn = syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap();
-    item_defs.push(ItemActual::Trait(
+    item_defs.push(ItemActualWrapper::Full(ItemActual::Trait(
         make_item_definitions::RustTraitDefinition {
             name: trait_syn.ident.clone(),
             is_pub: true,
             syn: trait_syn,
             default_impls: Vec::new(),
         },
-    ));
+    )));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     let trait_syn = syn::parse_str::<ItemTrait>("trait Copy {}").unwrap();
-    item_defs.push(ItemActual::Trait(
+    item_defs.push(ItemActualWrapper::Full(ItemActual::Trait(
         make_item_definitions::RustTraitDefinition {
             name: trait_syn.ident.clone(),
             is_pub: true,
             syn: trait_syn,
             default_impls: Vec::new(),
         },
-    ));
+    )));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     crate_item_refs.insert(

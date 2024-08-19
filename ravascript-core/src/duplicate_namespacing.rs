@@ -1,4 +1,4 @@
-use crate::make_item_definitions::{ItemActual, ItemRef, RustMod};
+use crate::make_item_definitions::{ItemActual, ItemActualWrapper, ItemRef, RustMod};
 
 #[derive(Debug, Clone)]
 pub struct Duplicate {
@@ -8,7 +8,10 @@ pub struct Duplicate {
     pub original_module_path: Vec<String>,
 }
 
-pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> Vec<Duplicate> {
+pub fn namespace_duplicates(
+    item_refs: &[ItemRef],
+    item_defs: &[ItemActualWrapper],
+) -> Vec<Duplicate> {
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
 
@@ -25,7 +28,7 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemActual]) -> 
 
     fn recurse(
         rust_mods: &[&RustMod],
-        item_defs: &[ItemActual],
+        item_defs: &[ItemActualWrapper],
         names_to_dedup: &mut Vec<(Vec<String>, String)>,
     ) {
         for rust_mod in rust_mods {
