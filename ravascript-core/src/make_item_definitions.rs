@@ -9,7 +9,7 @@ use syn::{
 use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
 
-use crate::{update_item_definitions::ItemV2, RustPathSegment, PRELUDE_MODULE_PATH};
+use crate::{update_item_definitions::ItemDef, RustPathSegment, PRELUDE_MODULE_PATH};
 
 // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
 // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
@@ -29,7 +29,7 @@ pub fn make_item_defs(
     // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemDefNoTypes>,
     // modules: &mut Vec<ModuleDataFirstPass>,
 ) -> Vec<ItemRef> {
     // let mut module_path_with_crate = vec!["crate".to_string()];
@@ -67,7 +67,7 @@ pub fn make_item_defs(
 
 fn item_to_item_ref(
     item: Item,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemDefNoTypes>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> ItemRef {
@@ -82,7 +82,7 @@ fn item_to_item_ref(
             };
 
             let const_def = ConstDef {
-                name: item_const.ident.clone(),
+                ident: item_const.ident.clone(),
                 is_pub,
                 syn_object: item_const.clone(),
                 expr: expr_to_expr_ref(
@@ -92,7 +92,7 @@ fn item_to_item_ref(
                     current_path,
                 ),
             };
-            actual_item_defs.push(ItemActual::Const(const_def));
+            actual_item_defs.push(ItemDefNoTypes::Const(const_def));
             ItemRef::Const(actual_item_defs.len() - 1)
         }
         Item::Enum(item_enum) => {
@@ -137,7 +137,7 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
+            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDef {
                 ident: item_enum.ident.clone(),
                 is_copy,
                 is_pub,
@@ -175,7 +175,7 @@ fn item_to_item_ref(
                 .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
                 .collect();
 
-            actual_item_defs.push(ItemActual::Fn(FnInfo {
+            actual_item_defs.push(ItemDefNoTypes::Fn(FnDef {
                 ident: item_fn.sig.ident.clone(),
                 is_pub,
                 generics,
@@ -242,7 +242,7 @@ fn item_to_item_ref(
             //     }
             // }
 
-            let item_actual = ItemActual::Impl(
+            let item_actual = ItemDefNoTypes::Impl(
                 item_impl.clone(),
                 item_impl
                     .items
@@ -390,7 +390,7 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemActual::StructOrEnum(ItemDefinition {
+            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDef {
                 ident: item_struct.ident.clone(),
                 is_pub,
                 is_copy,
@@ -442,7 +442,7 @@ fn item_to_item_ref(
                                     })
                                     .collect();
 
-                                Some(FnInfo {
+                                Some(FnDef {
                                     ident: item_fn.sig.ident.clone(),
                                     is_pub,
                                     generics,
@@ -462,8 +462,8 @@ fn item_to_item_ref(
                     }
                 })
                 .collect();
-            actual_item_defs.push(ItemActual::Trait(RustTraitDefinition {
-                name: item_trait.ident.clone(),
+            actual_item_defs.push(ItemDefNoTypes::Trait(TraitDef {
+                ident: item_trait.ident.clone(),
                 is_pub,
                 syn: item_trait.clone(),
                 default_impls,
@@ -486,7 +486,7 @@ fn item_to_item_ref(
 
 pub fn stmt_to_stmts_ref(
     stmt: Stmt,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemDefNoTypes>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> StmtsRef {
@@ -531,7 +531,7 @@ pub fn stmt_to_stmts_ref(
 
 pub fn expr_to_expr_ref(
     expr: Expr,
-    actual_item_defs: &mut Vec<ItemActual>,
+    actual_item_defs: &mut Vec<ItemDefNoTypes>,
     crate_path: &Option<PathBuf>,
     current_path: &mut Vec<String>,
 ) -> ExprRef {
@@ -935,11 +935,11 @@ pub enum ImplItemExprStmtRefs {
 
 // Actual definitions (only use at top level)
 #[derive(Debug, Clone)]
-pub enum ItemActual {
-    StructOrEnum(ItemDefinition),
-    Fn(FnInfo),
+pub enum ItemDefNoTypes {
+    StructEnum(StructEnumDef),
+    Fn(FnDef),
     Const(ConstDef),
-    Trait(RustTraitDefinition),
+    Trait(TraitDef),
     // TODO replace these with proper type to be more consistent with othe variants?
     Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
     // Should never be handled, only used for empty initialisation
@@ -949,16 +949,16 @@ pub enum ItemActual {
     // Impl(RustMod),
     // Use(RustUse),
 }
-impl ItemActual {
+impl ItemDefNoTypes {
     pub fn ident(&self) -> &syn::Ident {
         match self {
-            ItemActual::StructOrEnum(def) => &def.ident,
-            ItemActual::Fn(def) => &def.ident,
-            ItemActual::Const(def) => &def.name,
-            ItemActual::Trait(def) => &def.name,
+            ItemDefNoTypes::StructEnum(def) => &def.ident,
+            ItemDefNoTypes::Fn(def) => &def.ident,
+            ItemDefNoTypes::Const(def) => &def.ident,
+            ItemDefNoTypes::Trait(def) => &def.ident,
             // ItemActual::Impl(_) => panic!(),
-            ItemActual::Impl(_, _) => panic!(),
-            ItemActual::None => panic!(),
+            ItemDefNoTypes::Impl(_, _) => panic!(),
+            ItemDefNoTypes::None => panic!(),
         }
     }
 }
@@ -1006,7 +1006,7 @@ pub struct RustMod {
 impl RustMod {
     pub fn item_defined_in_module(
         &self,
-        items: &[ItemActual],
+        items: &[ItemDefNoTypes],
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
@@ -1014,7 +1014,7 @@ impl RustMod {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemActual::StructOrEnum(def) => def,
+                    ItemDefNoTypes::StructEnum(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1022,7 +1022,7 @@ impl RustMod {
             ItemRef::Fn(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
+                    ItemDefNoTypes::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1030,18 +1030,18 @@ impl RustMod {
             ItemRef::Const(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemActual::Const(def) => def,
+                    ItemDefNoTypes::Const(def) => def,
                     _ => todo!(),
                 };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemActual::Trait(def) => def,
+                    ItemDefNoTypes::Trait(def) => def,
                     _ => todo!(),
                 };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
@@ -1061,7 +1061,7 @@ impl RustMod {
 
     pub fn item_defined_in_module2(
         &self,
-        items: &[ItemV2],
+        items: &[ItemDef],
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
@@ -1069,7 +1069,7 @@ impl RustMod {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemV2::StructOrEnum(def) => def,
+                    ItemDef::StructEnum(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1077,7 +1077,7 @@ impl RustMod {
             ItemRef::Fn(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemV2::Fn(fn_info) => fn_info,
+                    ItemDef::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1085,18 +1085,18 @@ impl RustMod {
             ItemRef::Const(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemV2::Const(def) => def,
+                    ItemDef::Const(def) => def,
                     _ => todo!(),
                 };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemV2::Trait(def) => def,
+                    ItemDef::Trait(def) => def,
                     _ => todo!(),
                 };
-                (def.name == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
@@ -1140,7 +1140,7 @@ pub enum StructOrEnumDefitionInfo {
 /// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
 /// Just structs and enums or should we include functions?
 #[derive(Debug, Clone)]
-pub struct ItemDefinition {
+pub struct StructEnumDef {
     pub ident: Ident,
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
     // module_path: Option<Vec<String>>,
@@ -1154,12 +1154,12 @@ pub struct ItemDefinition {
 }
 
 #[derive(Debug, Clone)]
-pub struct RustTraitDefinition {
-    pub name: Ident,
+pub struct TraitDef {
+    pub ident: Ident,
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
-    pub default_impls: Vec<FnInfo>,
+    pub default_impls: Vec<FnDef>,
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
@@ -1182,7 +1182,7 @@ pub struct RustTraitDefinition {
 
 #[derive(Debug, Clone)]
 pub struct ConstDef {
-    pub name: Ident,
+    pub ident: Ident,
     pub is_pub: bool,
     pub syn_object: ItemConst,
     pub expr: ExprRef,
@@ -1190,7 +1190,7 @@ pub struct ConstDef {
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
-pub struct FnInfo {
+pub struct FnDef {
     pub ident: Ident,
     pub is_pub: bool,
     pub generics: Vec<String>,
@@ -1219,7 +1219,7 @@ pub trait ModuleMethods {
         // path: &Vec<String>,
         path: I,
         // current_module: &Vec<String>,
-    ) -> (Vec<String>, Option<Vec<usize>>, RustTraitDefinition)
+    ) -> (Vec<String>, Option<Vec<usize>>, TraitDef)
     where
         // I: IntoIterator<Item = String>,
         I: IntoIterator,
@@ -1236,7 +1236,7 @@ pub fn resolve_path(
     item_refs: &[ItemRef],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
-    items_defs: &[ItemActual],
+    items_defs: &[ItemDefNoTypes],
     // scopes: &[GlobalDataScope],
     current_mod: &[String],
     // Only used to determine if current module is the original module
@@ -1296,7 +1296,7 @@ pub fn resolve_path(
             ItemRef::StructOrEnum(index) => {
                 let item = &items_defs[*index];
                 let def = match item {
-                    ItemActual::StructOrEnum(def) => def,
+                    ItemDefNoTypes::StructEnum(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == segs[0].ident).then_some(*index)
@@ -1304,7 +1304,7 @@ pub fn resolve_path(
             ItemRef::Fn(index) => {
                 let item = &items_defs[*index];
                 let def = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
+                    ItemDefNoTypes::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
                 (def.ident == segs[0].ident).then_some(*index)
@@ -1312,18 +1312,18 @@ pub fn resolve_path(
             ItemRef::Const(index) => {
                 let item = &items_defs[*index];
                 let def = match item {
-                    ItemActual::Const(def) => def,
+                    ItemDefNoTypes::Const(def) => def,
                     _ => todo!(),
                 };
-                (def.name == segs[0].ident).then_some(*index)
+                (def.ident == segs[0].ident).then_some(*index)
             }
             ItemRef::Trait(index) => {
                 let item = &items_defs[*index];
                 let def = match item {
-                    ItemActual::Trait(def) => def,
+                    ItemDefNoTypes::Trait(def) => def,
                     _ => todo!(),
                 };
-                (def.name == segs[0].ident).then_some(*index)
+                (def.ident == segs[0].ident).then_some(*index)
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,
@@ -1530,7 +1530,7 @@ pub fn resolve_path(
                                 ItemRef::StructOrEnum(index) => {
                                     let item = &items_defs[*index];
                                     match item {
-                                        ItemActual::StructOrEnum(def) => {
+                                        ItemDefNoTypes::StructEnum(def) => {
                                             (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
@@ -1539,7 +1539,7 @@ pub fn resolve_path(
                                 ItemRef::Fn(index) => {
                                     let item = &items_defs[*index];
                                     match item {
-                                        ItemActual::Fn(def) => {
+                                        ItemDefNoTypes::Fn(def) => {
                                             (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
@@ -1548,8 +1548,8 @@ pub fn resolve_path(
                                 ItemRef::Const(index) => {
                                     let item = &items_defs[*index];
                                     match item {
-                                        ItemActual::Const(def) => {
-                                            (def.name == seg_new).then_some(*index)
+                                        ItemDefNoTypes::Const(def) => {
+                                            (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }
@@ -1557,8 +1557,8 @@ pub fn resolve_path(
                                 ItemRef::Trait(index) => {
                                     let item = &items_defs[*index];
                                     match item {
-                                        ItemActual::Trait(def) => {
-                                            (def.name == seg_new).then_some(*index)
+                                        ItemDefNoTypes::Trait(def) => {
+                                            (def.ident == seg_new).then_some(*index)
                                         }
                                         _ => todo!(),
                                     }
@@ -1591,7 +1591,7 @@ pub fn resolve_path(
 
 pub fn look_for_module_in_items(
     items: &[ItemRef],
-    item_defs: &[ItemActual],
+    item_defs: &[ItemDefNoTypes],
     module_path: &[String],
 ) -> Option<RustMod> {
     for item in items {
@@ -1599,7 +1599,7 @@ pub fn look_for_module_in_items(
             ItemRef::Fn(index) => {
                 let item = &item_defs[*index];
                 let fn_info = match item {
-                    ItemActual::Fn(fn_info) => fn_info,
+                    ItemDefNoTypes::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
 

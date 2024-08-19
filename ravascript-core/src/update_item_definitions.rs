@@ -15,7 +15,7 @@ use crate::{
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
     make_item_definitions::{
-        look_for_module_in_items, ExprRef, FnInfoSyn, ImplItemExprStmtRefs, ItemActual,
+        look_for_module_in_items, ExprRef, FnInfoSyn, ImplItemExprStmtRefs, ItemDefNoTypes,
         StructOrEnumDefitionInfo,
     },
 };
@@ -26,16 +26,16 @@ use crate::{ItemRef, StmtsRef};
 // IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
 pub fn update_item_defs(
     item_refs: &[ItemRef],
-    item_defs_no_types: Vec<ItemActual>,
+    item_defs_no_types: Vec<ItemDefNoTypes>,
     current_module: &[String],
     in_scope: bool,
     duplicates: Vec<Duplicate>,
-) -> Vec<ItemV2> {
+) -> Vec<ItemDef> {
     // (Vec<ModuleData>, Vec<RustImplBlockSimple>)
 
     let mut scoped_items = Vec::new();
     let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
-    updated_item_defs.resize_with(item_defs_no_types.len(), || ItemV2::None);
+    updated_item_defs.resize_with(item_defs_no_types.len(), || ItemDef::None);
 
     for item_ref in item_refs {
         update_item_defs_recurisve_individual_item(
@@ -56,9 +56,9 @@ pub fn update_item_defs(
 fn update_item_defs_recurisve_individual_item(
     item_ref: &ItemRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
-    updated_item_defs: &mut [ItemV2],
+    updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
     in_scope: bool,
@@ -107,7 +107,7 @@ fn update_item_defs_recurisve_individual_item(
             }
 
             let fn_stmts = match &updated_item_defs[*index] {
-                ItemV2::Fn(fn_info) => fn_info.stmts.clone(),
+                ItemDef::Fn(fn_info) => fn_info.stmts.clone(),
                 _ => todo!(),
             };
 
@@ -194,7 +194,7 @@ fn update_item_defs_recurisve_individual_item(
             }
 
             let fn_stmts = match &updated_item_defs[*index] {
-                ItemV2::Impl(rust_impl_block) => {
+                ItemDef::Impl(rust_impl_block) => {
                     rust_impl_block
                         .rust_items
                         .iter()
@@ -237,9 +237,9 @@ fn update_item_defs_recurisve_individual_item(
 fn update_item_defs_recurisve_stmts(
     stmt_refs: &[StmtsRef],
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
-    updated_item_defs: &mut [ItemV2],
+    updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
     in_scope: bool,
@@ -281,9 +281,9 @@ fn update_item_defs_recurisve_stmts(
 fn update_item_defs_recurisve_individual_expr(
     expr_ref: &ExprRef,
     item_refs_all: &[ItemRef],
-    item_defs_no_types: &[ItemActual],
+    item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
-    updated_item_defs: &mut [ItemV2],
+    updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
     in_scope: bool,
@@ -345,38 +345,38 @@ fn update_item_defs_recurisve_individual_expr(
 }
 
 #[derive(Debug, Clone)]
-pub enum ItemV2 {
-    StructOrEnum(ItemDefinition),
-    Fn(FnInfo),
+pub enum ItemDef {
+    StructEnum(StructEnumDef),
+    Fn(FnDef),
     Const(ConstDef),
-    Trait(RustTraitDefinition),
-    Impl(RustImplBlockSimple),
+    Trait(TraitDef),
+    Impl(ImplBlockDef),
     None,
 }
-impl ItemV2 {
+impl ItemDef {
     pub fn ident(&self) -> &str {
         match self {
-            ItemV2::StructOrEnum(def) => &def.ident,
-            ItemV2::Fn(def) => &def.ident,
-            ItemV2::Const(def) => &def.name,
-            ItemV2::Trait(def) => &def.name,
-            ItemV2::Impl(_) => panic!(),
-            ItemV2::None => panic!(),
+            ItemDef::StructEnum(def) => &def.ident,
+            ItemDef::Fn(def) => &def.ident,
+            ItemDef::Const(def) => &def.ident,
+            ItemDef::Trait(def) => &def.ident,
+            ItemDef::Impl(_) => panic!(),
+            ItemDef::None => panic!(),
         }
     }
 }
 
 fn update_item_def(
-    item: ItemActual,
+    item: ItemDefNoTypes,
     module_path: &[String],
     item_refs: &[ItemRef],
-    item_actual_defs_copy: &[ItemActual],
+    item_actual_defs_copy: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
     in_scope: bool,
     duplicates: &[Duplicate],
-) -> ItemV2 {
+) -> ItemDef {
     match item {
-        ItemActual::StructOrEnum(item_def) => {
+        ItemDefNoTypes::StructEnum(item_def) => {
             let _new_struct_or_enum_info = match item_def.struct_or_enum_info {
                 StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                     let fields = if struct_def_info.fields.is_empty() {
@@ -479,7 +479,7 @@ fn update_item_def(
                 Ident::Syn(item_def.ident.clone())
             };
 
-            ItemV2::StructOrEnum(ItemDefinition {
+            ItemDef::StructEnum(StructEnumDef {
                 ident: item_def.ident.to_string(),
                 js_name,
                 is_copy: item_def.is_copy,
@@ -489,7 +489,7 @@ fn update_item_def(
                 impl_block_ids: Vec::new(),
             })
         }
-        ItemActual::Fn(fn_info) => {
+        ItemDefNoTypes::Fn(fn_info) => {
             // let item_fn = match &fn_info.syn {
             //     make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
             //     make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
@@ -552,7 +552,7 @@ fn update_item_def(
                 }
             };
 
-            ItemV2::Fn(FnInfo {
+            ItemDef::Fn(FnDef {
                 ident: fn_info.ident.to_string(),
                 js_name,
                 is_pub: fn_info.is_pub,
@@ -563,7 +563,7 @@ fn update_item_def(
                 syn: fn_info.syn,
             })
         }
-        ItemActual::Const(const_def) => {
+        ItemDefNoTypes::Const(const_def) => {
             let rust_type = parse_types_for_populate_item_definitions(
                 &const_def.syn_object.ty,
                 &Vec::new(),
@@ -574,42 +574,42 @@ fn update_item_def(
             );
 
             let js_name = if in_scope {
-                Ident::Syn(const_def.name.clone())
+                Ident::Syn(const_def.ident.clone())
             } else if let Some(dup) = duplicates
                 .iter()
-                .find(|dup| const_def.name == dup.name && dup.original_module_path == module_path)
+                .find(|dup| const_def.ident == dup.name && dup.original_module_path == module_path)
             {
                 Ident::Deduped(dup.namespace.clone())
             } else {
-                Ident::Syn(const_def.name.clone())
+                Ident::Syn(const_def.ident.clone())
             };
 
-            ItemV2::Const(ConstDef {
-                name: const_def.name.to_string(),
+            ItemDef::Const(ConstDef {
+                ident: const_def.ident.to_string(),
                 js_name,
                 is_pub: const_def.is_pub,
                 type_: rust_type,
                 expr: const_def.expr,
             })
         }
-        ItemActual::Trait(trait_def) => {
+        ItemDefNoTypes::Trait(trait_def) => {
             // Currently trait defs don't store any info other than the name, so we don't need to do anything
 
             let js_name = if in_scope {
-                Ident::Syn(trait_def.name.clone())
+                Ident::Syn(trait_def.ident.clone())
             } else {
                 let in_module_level_duplicates = duplicates.iter().find(|dup| {
-                    trait_def.name == dup.name && dup.original_module_path == module_path
+                    trait_def.ident == dup.name && dup.original_module_path == module_path
                 });
 
                 if let Some(dup) = in_module_level_duplicates {
                     Ident::Deduped(dup.namespace.clone())
                 } else {
-                    Ident::Syn(trait_def.name.clone())
+                    Ident::Syn(trait_def.ident.clone())
                 }
             };
-            ItemV2::Trait(RustTraitDefinition {
-                name: trait_def.name.to_string(),
+            ItemDef::Trait(TraitDef {
+                ident: trait_def.ident.to_string(),
                 js_name,
                 is_pub: trait_def.is_pub,
                 syn: trait_def.syn,
@@ -677,7 +677,7 @@ fn update_item_def(
                             }
                         };
 
-                        FnInfo {
+                        FnDef {
                             ident: fn_info.ident.to_string(),
                             js_name,
                             is_pub: fn_info.is_pub,
@@ -691,7 +691,7 @@ fn update_item_def(
                     .collect(),
             })
         }
-        ItemActual::Impl(item_impl, impl_items_refs) => {
+        ItemDefNoTypes::Impl(item_impl, impl_items_refs) => {
             let impl_item_target_path = match &*item_impl.self_ty {
                 Type::Path(type_path) => type_path
                     .path
@@ -1010,7 +1010,7 @@ fn update_item_def(
                                         false
                                     }
                                 },
-                                FnInfo {
+                                FnDef {
                                     js_name,
                                     ident: item_name.clone(),
                                     is_pub,
@@ -1048,7 +1048,7 @@ fn update_item_def(
             //     Ident::String(item_def.ident.clone())
             // };
 
-            ItemV2::Impl(RustImplBlockSimple {
+            ItemDef::Impl(ImplBlockDef {
                 generics: rust_impl_block_generics,
                 trait_: trait_index,
                 target: target_rust_type.clone(),
@@ -1056,7 +1056,7 @@ fn update_item_def(
                 syn: item_impl.clone(),
             })
         }
-        ItemActual::None => panic!(),
+        ItemDefNoTypes::None => panic!(),
     }
 }
 
@@ -1075,7 +1075,7 @@ fn parse_types_for_populate_item_definitions(
     current_module: &[String],
     // global_data: &make_item_definitions::GlobalData,
     item_refs: &[ItemRef],
-    item_defs: &[ItemActual],
+    item_defs: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
 ) -> RustType {
     match type_ {
@@ -1519,7 +1519,7 @@ pub enum StructOrEnumDefitionInfo2 {
 /// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
 /// Just structs and enums or should we include functions?
 #[derive(Debug, Clone)]
-pub struct ItemDefinition {
+pub struct StructEnumDef {
     pub js_name: Ident,
     pub ident: String,
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
@@ -1547,7 +1547,7 @@ pub struct ItemDefinition {
     // TODO use reference instead of id?
     pub impl_block_ids: Vec<usize>,
 }
-impl ItemDefinition {
+impl StructEnumDef {
     pub fn get_type(&self, field_member: &Member, global_data: &GlobalData) -> RustType2 {
         match &self.struct_or_enum_info {
             StructOrEnumDefitionInfo2::Struct(struct_def_info) => match &struct_def_info.fields {
@@ -1572,13 +1572,13 @@ impl ItemDefinition {
 }
 
 #[derive(Debug, Clone)]
-pub struct RustTraitDefinition {
+pub struct TraitDef {
     pub js_name: Ident,
-    pub name: String,
+    pub ident: String,
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
-    pub default_impls: Vec<FnInfo>,
+    pub default_impls: Vec<FnDef>,
 }
 
 // Do we want to also store the trait bounds of each type param? This way if we have an unresolved type param that calls some function, we will know what trait to look up to find it. In some cases this might also remove the need for looking forward to resolve type params, if all we need to do with the type param/value/intance/type is call a method on it.
@@ -1626,7 +1626,7 @@ pub struct RustImplItemNoJs {
 #[derive(Debug, Clone)]
 pub enum RustImplItemItemNoJs {
     /// (static, fn info),
-    Fn(bool, FnInfo),
+    Fn(bool, FnDef),
     Const,
 }
 
@@ -1875,7 +1875,7 @@ pub enum RustTypeFnType {
 #[derive(Debug, Clone)]
 pub struct ConstDef {
     pub js_name: Ident,
-    pub name: String,
+    pub ident: String,
     pub is_pub: bool,
     pub type_: RustType,
     pub expr: ExprRef,
@@ -1883,7 +1883,7 @@ pub struct ConstDef {
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
-pub struct FnInfo {
+pub struct FnDef {
     // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
     pub js_name: Ident,
     pub ident: String,
@@ -1903,7 +1903,7 @@ pub struct FnInfo {
     pub stmts: Vec<StmtsRef>,
 }
 
-impl FnInfo {
+impl FnDef {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
         args: &[RustType2],
@@ -1948,7 +1948,7 @@ pub struct RustGeneric {
 }
 
 #[derive(Debug, Clone)]
-pub struct RustImplBlockSimple {
+pub struct ImplBlockDef {
     // pub unique_id: String,
     // TODO Should this include generics that are defined on the target type, or just new generics introduced for the impl Trait or used in the methods/items? For now just assume it is everything.
     pub generics: Vec<RustGeneric>,

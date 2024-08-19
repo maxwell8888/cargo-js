@@ -17,7 +17,7 @@ use crate::{
     },
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
-        ItemV2, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
+        ItemDef, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
         StructOrEnumDefitionInfo2,
     },
     GlobalData, RustImplItemItemJs, RustType2, PRELUDE_MODULE_PATH,
@@ -69,7 +69,7 @@ pub fn js_stmts_from_syn_items(
             ItemRef::StructOrEnum(index) => {
                 let item = &item_defs[*index];
                 match item {
-                    ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+                    ItemDef::StructEnum(actual) => match &actual.struct_or_enum_info {
                         StructOrEnumDefitionInfo2::Struct(_struct_def) => {
                             js_stmts.push(handle_item_struct(
                                 *index,
@@ -144,7 +144,7 @@ pub fn handle_item_fn(
     current_module: &[String],
 ) -> JsStmt {
     let fn_info = match &global_data.item_defs[index] {
-        ItemV2::Fn(fn_info) => fn_info.clone(),
+        ItemDef::Fn(fn_info) => fn_info.clone(),
         other => {
             dbg!(other);
             todo!()
@@ -376,7 +376,7 @@ pub fn handle_item_const(
     // debug!(name = ?name, "handle_item_const");
 
     let const_def = match &global_data.item_defs[index] {
-        ItemV2::Const(const_def) => const_def.clone(),
+        ItemDef::Const(const_def) => const_def.clone(),
         _ => todo!(),
     };
 
@@ -399,7 +399,7 @@ pub fn handle_item_enum(
 ) -> JsStmt {
     let item = global_data.item_defs[index].clone();
     let item_def = match item {
-        ItemV2::StructOrEnum(item_def) => item_def,
+        ItemDef::StructEnum(item_def) => item_def,
         _ => todo!(),
     };
 
@@ -619,7 +619,7 @@ pub fn handle_item_enum(
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
 
         let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
-            ItemV2::Impl(impl_block) => impl_block,
+            ItemDef::Impl(impl_block) => impl_block,
             other => {
                 dbg!(index);
                 dbg!(other);
@@ -960,7 +960,7 @@ pub fn handle_item_impl(
     current_module_path: &[String],
 ) -> Vec<JsStmt> {
     let rust_impl_block = match global_data.item_defs[index].clone() {
-        ItemV2::Impl(impl_block) => impl_block,
+        ItemDef::Impl(impl_block) => impl_block,
         other => {
             dbg!(index);
             dbg!(other);
@@ -1093,7 +1093,7 @@ pub fn handle_item_impl(
             ItemRef::StructOrEnum(index) => {
                 let item = &global_data.item_defs[*index];
                 let item_def = match item {
-                    ItemV2::StructOrEnum(item_def) => item_def,
+                    ItemDef::StructEnum(item_def) => item_def,
                     _ => todo!(),
                 };
                 let new_name = prelude_item_def_name_to_js(&item_def.ident);
@@ -1160,7 +1160,7 @@ pub fn handle_item_struct(
 ) -> JsStmt {
     let item = &global_data.item_defs[index];
     let item_def = match item {
-        ItemV2::StructOrEnum(actual) => match &actual.struct_or_enum_info {
+        ItemDef::StructEnum(actual) => match &actual.struct_or_enum_info {
             StructOrEnumDefitionInfo2::Struct(_struct_def) => actual.clone(),
             StructOrEnumDefitionInfo2::Enum(_enum_def) => {
                 todo!()
@@ -1320,7 +1320,7 @@ pub fn handle_item_struct(
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
 
         let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
-            ItemV2::Impl(impl_block) => impl_block,
+            ItemDef::Impl(impl_block) => impl_block,
             other => {
                 dbg!(index);
                 dbg!(other);
@@ -1495,7 +1495,7 @@ pub fn handle_item_trait(
     debug!("handle_item_trait");
 
     let trait_def = match &global_data.item_defs[index] {
-        ItemV2::Trait(trait_def) => trait_def,
+        ItemDef::Trait(trait_def) => trait_def,
         _ => todo!(),
     };
 

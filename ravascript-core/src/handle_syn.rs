@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::{
     js_ast::{DestructureObject, DestructureValue, Ident, LocalName},
-    update_item_definitions::{ItemDefinition, ItemV2, RustTypeParam, RustTypeParamValue},
+    update_item_definitions::{StructEnumDef, ItemDef, RustTypeParam, RustTypeParamValue},
 };
 use syn::{GenericArgument, Member, Pat, PathArguments, Type, TypeParamBound};
 
@@ -264,7 +264,7 @@ fn parse_fn_input_or_field(
                             assert!(trait_item_path.len() == 1);
                             let trait_def = match global_data.item_defs[item_index.unwrap()].clone()
                             {
-                                ItemV2::Trait(trait_def) => trait_def,
+                                ItemDef::Trait(trait_def) => trait_def,
                                 _ => todo!(),
                             };
 
@@ -401,7 +401,7 @@ fn parse_fn_input_or_field(
                         assert!(item_path.len() == 1);
                         let item_definition =
                             match global_data.item_defs[item_index.unwrap()].clone() {
-                                ItemV2::StructOrEnum(trait_def) => trait_def,
+                                ItemDef::StructEnum(trait_def) => trait_def,
                                 _ => todo!(),
                             };
 
@@ -548,14 +548,14 @@ enum PartialRustType {
     /// So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct
     ///
     /// (type params, module path, name) module path is None for scoped structs
-    StructIdent(Vec<RustTypeParam2>, ItemDefinition),
+    StructIdent(Vec<RustTypeParam2>, StructEnumDef),
     /// This is only used for instantiation of enum variants with args which are parsed as an ExprCall, since normal enum variant instantiation are simply evaluated directly to an enum instance.
     /// Note we need to record type params because we might be parsing something like the `MyGenericEnum::<i32>::MyVariant` portion of `MyGenericEnum::<i32>::MyVariant("hi")` where the *enum definition* has had generics resolved
     ///
     /// (type params, module path, scope id, enum name, variant name) module path is None for scoped structs
     ///
     /// IMPORTANT NOTE this variant should only be used for tuple and struct variants, normal path variants should be a PartialRustType::RustType
-    EnumVariantIdent(Vec<RustTypeParam2>, ItemDefinition, String),
+    EnumVariantIdent(Vec<RustTypeParam2>, StructEnumDef, String),
     // TODO why no type params?
     /// (rust type, is mut, is var)
     RustType(RustType2, bool, bool),

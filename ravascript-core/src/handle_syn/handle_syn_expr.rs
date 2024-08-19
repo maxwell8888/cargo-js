@@ -25,7 +25,7 @@ use crate::{
         RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnInfo, ItemDefinition, ItemV2, RustImplItemItemNoJs,
+        EnumVariantInputsInfo, FnDef, StructEnumDef, ItemDef, RustImplItemItemNoJs,
         RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructFieldInfo,
         StructOrEnumDefitionInfo2,
     },
@@ -1939,7 +1939,7 @@ fn handle_expr_method_call(
                         global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
                     let item = &global_data.item_defs[index];
                     let item_def = match item {
-                        ItemV2::StructOrEnum(item_def) => item_def.clone(),
+                        ItemDef::StructEnum(item_def) => item_def.clone(),
                         _ => todo!(),
                     };
 
@@ -2660,7 +2660,7 @@ fn get_receiver_params_and_method_impl_item(
 fn _resolve_generics_for_return_type(
     return_type: RustType,
     item_type_params: &Vec<RustTypeParam>,
-    fn_info: &FnInfo,
+    fn_info: &FnDef,
     method_turbofish_rust_types: &Option<Vec<RustType>>,
     args_rust_types: &Vec<RustType>,
 ) -> RustType {
@@ -2756,7 +2756,7 @@ fn _resolve_generics_for_return_type(
 fn _method_return_type_generic_resolve_to_rust_type(
     item_type_params: &[RustTypeParam],
     return_type_param: &RustTypeParam,
-    fn_info: &FnInfo,
+    fn_info: &FnDef,
     method_turbofish_rust_types: &Option<Vec<RustType>>,
     args_rust_types: &[RustType],
 ) -> RustType {
@@ -3532,7 +3532,7 @@ fn handle_expr_path_inner(
 
             let item = &global_data.item_defs[segs_copy_index.unwrap()];
             let item_def = match item {
-                ItemV2::StructOrEnum(item_def) => item_def,
+                ItemDef::StructEnum(item_def) => item_def,
                 _ => todo!(),
             };
 
@@ -3939,7 +3939,7 @@ fn handle_match_pat(
             fn get_item_def_from_rust_type(
                 match_condition_type: &RustType2,
                 global_data: &GlobalData,
-            ) -> (ItemDefinition, bool) {
+            ) -> (StructEnumDef, bool) {
                 match match_condition_type {
                     RustType2::StructOrEnum(_type_params, item_def) => (item_def.clone(), false),
                     RustType2::Option(_) => (global_data.get_prelude_item_def("Option"), true),
@@ -4423,7 +4423,7 @@ pub fn handle_expr_match(
 fn found_item_to_partial_rust_type(
     item_path: &RustPathSegment2,
     var: Option<&ScopedVar>,
-    item_def: Option<&ItemV2>,
+    item_def: Option<&ItemDef>,
     global_data: &GlobalData,
 ) -> (PartialRustType, Ident) {
     // debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
@@ -4438,7 +4438,7 @@ fn found_item_to_partial_rust_type(
         )
     } else if let Some(def) = item_def {
         match def {
-            ItemV2::StructOrEnum(item_def) => {
+            ItemDef::StructEnum(item_def) => {
                 // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the item definition
                 let item_generics = if !item_path.turbofish.is_empty() {
                     item_path
@@ -4474,7 +4474,7 @@ fn found_item_to_partial_rust_type(
                     }
                 }
             }
-            ItemV2::Fn(fn_info) => {
+            ItemDef::Fn(fn_info) => {
                 // If turbofish exists on item path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                 let fn_generics = if !item_path.turbofish.is_empty() {
                     item_path
@@ -4506,7 +4506,7 @@ fn found_item_to_partial_rust_type(
                     fn_info.js_name.clone(),
                 )
             }
-            ItemV2::Const(const_def) => (
+            ItemDef::Const(const_def) => (
                 PartialRustType::RustType(
                     const_def.type_.clone().into_rust_type2(global_data),
                     false,

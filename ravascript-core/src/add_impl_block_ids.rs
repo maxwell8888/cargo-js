@@ -2,12 +2,12 @@ use tracing::debug_span;
 
 use crate::{
     make_item_definitions::{ItemRef, StmtsRef},
-    update_item_definitions::{ItemDefinition, ItemV2, RustImplBlockSimple, RustType},
+    update_item_definitions::{StructEnumDef, ItemDef, ImplBlockDef, RustType},
     PRELUDE_MODULE_PATH,
 };
 
 fn get_traits_implemented_for_item(
-    item_impls: &[(usize, RustImplBlockSimple)],
+    item_impls: &[(usize, ImplBlockDef)],
     item_module_path: &[String],
     item_name: &str,
     // TODO change to Vec<usize>
@@ -92,14 +92,14 @@ fn get_traits_implemented_for_item(
 
 fn extract_impl_blocks(
     item_refs: &[ItemRef],
-    item_defs: &[ItemV2],
-    impl_blocks: &mut Vec<(usize, RustImplBlockSimple)>,
+    item_defs: &[ItemDef],
+    impl_blocks: &mut Vec<(usize, ImplBlockDef)>,
 ) {
     for item_ref in item_refs {
         match item_ref {
             ItemRef::Impl(index) => {
                 let impl_def = match item_defs[*index].clone() {
-                    ItemV2::Impl(impl_def) => impl_def,
+                    ItemDef::Impl(impl_def) => impl_def,
                     _ => todo!(),
                 };
                 impl_blocks.push((*index, impl_def))
@@ -108,7 +108,7 @@ fn extract_impl_blocks(
                 extract_impl_blocks(&rust_mod.items, item_defs, impl_blocks);
             }
             ItemRef::Fn(index) => match item_defs[*index].clone() {
-                ItemV2::Fn(fn_info) => {
+                ItemDef::Fn(fn_info) => {
                     let item_refs = fn_info
                         .clone()
                         .stmts
@@ -130,7 +130,7 @@ fn extract_impl_blocks(
 /// Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
 pub fn populate_item_def_impl_blocks(
     item_refs: &[ItemRef],
-    item_defs: &mut [ItemV2],
+    item_defs: &mut [ItemDef],
     // impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
     // IMPORTANT TODO all this needs improving, especially to ensure we are only trying to match scoped impls that can actually reach the item. Need unit tests.
@@ -167,16 +167,16 @@ pub fn populate_item_def_impl_blocks(
 
 fn update_all_structs_enums(
     item_refs: &[ItemRef],
-    item_defs: &mut [ItemV2],
+    item_defs: &mut [ItemDef],
     current_module: Vec<String>,
-    impl_blocks: &[(usize, RustImplBlockSimple)],
+    impl_blocks: &[(usize, ImplBlockDef)],
 ) {
     for item_ref in item_refs {
         match item_ref {
             ItemRef::StructOrEnum(index) => {
                 let actual = item_defs.get_mut(*index).unwrap();
                 let item_def = match actual {
-                    ItemV2::StructOrEnum(def) => def,
+                    ItemDef::StructEnum(def) => def,
                     _ => todo!(),
                 };
                 update_item_def_block_ids(
@@ -196,7 +196,7 @@ fn update_all_structs_enums(
                 );
             }
             ItemRef::Fn(index) => match item_defs[*index].clone() {
-                ItemV2::Fn(fn_info) => {
+                ItemDef::Fn(fn_info) => {
                     let item_refs = fn_info
                         .clone()
                         .stmts
@@ -222,11 +222,11 @@ fn update_all_structs_enums(
 
 fn update_item_def_block_ids(
     item_index: usize,
-    item_def: &mut ItemDefinition,
+    item_def: &mut StructEnumDef,
     // item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
     // global_data: &GlobalData,
-    impl_blocks: &[(usize, RustImplBlockSimple)],
+    impl_blocks: &[(usize, ImplBlockDef)],
 ) {
     let traits_impld_for_class =
         get_traits_implemented_for_item(impl_blocks, module_path, &item_def.ident);
