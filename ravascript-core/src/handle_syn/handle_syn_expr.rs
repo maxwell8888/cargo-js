@@ -2337,7 +2337,23 @@ fn handle_expr_method_call(
         RustType2::Never => todo!(),
         RustType2::ImplTrait(_) => todo!(),
         RustType2::TypeParam(_) => todo!(),
-        RustType2::StructOrEnum(_, _) => {}
+        RustType2::StructOrEnum(_, struct_enum_def) =>
+        {
+            #[allow(clippy::collapsible_if)]
+            if struct_enum_def.ident == "Document" {
+                if expr_method_call.method == "create_element_div" {
+                    assert!(args_js_exprs.is_empty());
+                    return (
+                        JsExpr::MethodCall(
+                            Box::new(receiver),
+                            Ident::Str("create_element"),
+                            vec![JsExpr::LitStr("div".to_string())],
+                        ),
+                        method_return_type,
+                    );
+                }
+            }
+        }
         RustType2::Tuple(_) => todo!(),
         RustType2::UserType(_, _) => todo!(),
         RustType2::Fn(_, _, fn_def) => {}
