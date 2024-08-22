@@ -182,6 +182,27 @@ impl RustType2 {
         }
     }
 }
+impl PartialEq for RustType2 {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ImplTrait(l0), Self::ImplTrait(r0)) => todo!(),
+            (Self::TypeParam(l0), Self::TypeParam(r0)) => todo!(),
+            (Self::Option(l0), Self::Option(r0)) => todo!(),
+            (Self::Result(l0), Self::Result(r0)) => todo!(),
+            (Self::StructOrEnum(l0, l1), Self::StructOrEnum(r0, r1)) => todo!(),
+            (Self::Vec(l0), Self::Vec(r0)) => l0 == r0,
+            (Self::Array(l0), Self::Array(r0)) => l0 == r0,
+            (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
+            (Self::Box(l0), Self::Box(r0)) => l0 == r0,
+            (Self::UserType(l0, l1), Self::UserType(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::MutRef(l0), Self::MutRef(r0)) => l0 == r0,
+            (Self::Ref(l0), Self::Ref(r0)) => l0 == r0,
+            (Self::Fn(l0, l1, l2), Self::Fn(r0, r1, r2)) => todo!(),
+            (Self::Closure(l0, l1), Self::Closure(r0, r1)) => l0 == r0 && l1 == r1,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum RustTypeImplTrait2 {

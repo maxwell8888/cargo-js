@@ -2138,101 +2138,6 @@ fn handle_expr_method_call(
     //     RustImplItemItemNoJs::Const => todo!(),
     // };
 
-    // let receiver_is_mut_var = match &*expr_method_call.receiver {
-    //     Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-    //         // IMPORTANT TODO limit to transparent scopes
-    //         global_data.scopes.iter().rev().any(|s| {
-    //             s.variables
-    //                 .iter()
-    //                 .any(|v| expr_path.path.segments[0].ident == v.name && v.mut_)
-    //         })
-    //     }
-    //     _ => false,
-    // };
-
-    // let method_is_mut_self =
-    //     fn_info
-    //         .inputs_types
-    //         .first()
-    //         .is_some_and(|(is_self, is_mut, _name, type_)| {
-    //             *is_self && (*is_mut || matches!(type_, RustType::MutRef(_)))
-    //         });
-    // if receiver_is_mut_var && method_is_mut_self {
-    //     return (
-    //         JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
-    //         method_return_type,
-    //     );
-    // }
-
-    // TODO IMPORTANT can't assume that `.to_string()` etc called on are string are the std lib impls, since they might have been overwritten/shadowed by local trait impls, so need to first check for local impls.
-    if let RustType2::String = &receiver_type {
-        if method_name == "to_string" || method_name == "clone" {
-            // NOTE ASSUMPTION if the receiver a type RustType::String and also has a RustString wrapper (and this needs `.inner` calling) then it the receiver *must* be a `mut` var. Whilst receivers other than a `mut` var can have a RustString wrapper and call `.to_string()`, `.clone()`, etc, all those receivers *must* be a RustType::MutRef(RustType::String), which is handled below.
-            // If receiver var has a RustString wrapper ie is `mut`, then take the inner
-            if receiver_is_mut_var {
-                return (
-                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
-                    RustType2::String,
-                );
-            } else {
-                return (receiver.clone(), RustType2::String);
-            }
-        } else if method_name == "push_str" {
-            assert_eq!(args_js_exprs.len(), 1);
-            if receiver_is_mut_var {
-                return (
-                    JsExpr::Binary(
-                        Box::new(JsExpr::Field(
-                            Box::new(receiver.clone()),
-                            Ident::Str("inner"),
-                        )),
-                        JsOp::AddAssign,
-                        Box::new(args_js_exprs[0].clone()),
-                    ),
-                    RustType2::String,
-                );
-            } else {
-                panic!("can't call push_str on a var which is not mutable")
-            }
-        } else {
-            todo!()
-        }
-    }
-    if let RustType2::MutRef(inner) = &receiver_type {
-        if let RustType2::String = **inner {
-            if method_name == "to_string" || method_name == "clone" {
-                // Receiver is &mut so has a RustString wrapper so take the inner
-                return (
-                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
-                    RustType2::String,
-                );
-            } else if method_name == "push_str" {
-                assert_eq!(args_js_exprs.len(), 1);
-                return (
-                    JsExpr::Binary(
-                        Box::new(receiver.clone()),
-                        JsOp::AddAssign,
-                        Box::new(args_js_exprs[0].clone()),
-                    ),
-                    RustType2::String,
-                );
-            } else {
-                todo!()
-            }
-        }
-    }
-
-    if let RustType2::Array(_) = receiver_type {
-        if method_name == "iter" || method_name == "collect" {
-            return (receiver, method_return_type);
-        }
-    }
-    if let RustType2::Vec(_) = receiver_type {
-        if method_name == "iter" || method_name == "collect" {
-            return (receiver, method_return_type);
-        }
-    }
-
     if let JsExpr::Path(path) = &receiver {
         if path.len() == 2 {
             match path {
@@ -2266,69 +2171,102 @@ fn handle_expr_method_call(
             }
         }
     }
-    // if method_name == "iter" {
-    //     return (receiver, RustType::Todo);
-    // }
-    // if method_name == "collect" {
-    //     return (receiver, RustType::Todo);
-    // }
+
     if method_name.len() > 3 && &method_name[0..3] == "js_" {
         method_name = method_name[3..].to_string();
     }
-    // if method_name == "is_some" {
-    //     return JsExpr::Binary(Box::new(receiver), JsOp::NotEq, Box::new(JsExpr::Null));
-    // }
-    // if method_name == "slice1" || method_name == "slice2" {
-    //     method_name = "slice".to_string();
-    // }
+
     if let Some(last_char) = method_name.chars().last() {
         if last_char.is_ascii_digit() {
             method_name.pop().unwrap();
             // method_name = method_name[..method_name.len() - 1].to_string();
         }
     }
-    if method_name == "add_event_listener_async" {
-        method_name = "add_event_listener".to_string();
-    }
-    if method_name == "length" {
-        return (
-            JsExpr::Field(Box::new(receiver), Ident::Str("length")),
-            RustType2::I32,
-        );
-    }
 
+    // Waiting for this to be able to match on boxed variants: https://github.com/rust-lang/rust/issues/87121
     match &receiver_type {
-        RustType2::I32 => {}
-        RustType2::F32 => {}
-        RustType2::Bool => {}
-        RustType2::String => {}
-        RustType2::Option(_) => {
-            if fn_info.ident == "is_some_and" {
-                global_data.rust_prelude_types.option_is_some_and = true;
-                let mut args = vec![receiver];
-                args.extend(args_js_exprs);
-                return (
-                    JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
-                    method_return_type,
-                );
-            }
-            if fn_info.ident == "unwrap" {
-                global_data.rust_prelude_types.option_unwrap = true;
-                return (
-                    JsExpr::FnCall(
-                        Box::new(JsExpr::Var("optionUnwrap".to_string())),
-                        vec![receiver],
-                    ),
-                    method_return_type,
-                );
+        // RustType2::I32 => {}
+        // RustType2::F32 => {}
+        // RustType2::Bool => {}
+        RustType2::String if method_name == "to_string" || method_name == "clone" => {
+            // NOTE ASSUMPTION if the receiver a type RustType::String and also has a RustString wrapper (and this needs `.inner` calling) then it the receiver *must* be a `mut` var. Whilst receivers other than a `mut` var can have a RustString wrapper and call `.to_string()`, `.clone()`, etc, all those receivers *must* be a RustType::MutRef(RustType::String), which is handled below.
+            // If receiver var has a RustString wrapper ie is `mut`, then take the inner
+            if receiver_is_mut_var {
+                (
+                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
+                    RustType2::String,
+                )
+            } else {
+                (receiver.clone(), RustType2::String)
             }
         }
-        RustType2::Result(_) => {}
-        RustType2::Vec(_) => {}
-        RustType2::Array(_) => {}
-        RustType2::Box(_) => {}
-        RustType2::MutRef(_) => {}
-        RustType2::Ref(_) => {}
+        RustType2::String if method_name == "push_str" => {
+            assert_eq!(args_js_exprs.len(), 1);
+            if receiver_is_mut_var {
+                (
+                    JsExpr::Binary(
+                        Box::new(JsExpr::Field(
+                            Box::new(receiver.clone()),
+                            Ident::Str("inner"),
+                        )),
+                        JsOp::AddAssign,
+                        Box::new(args_js_exprs[0].clone()),
+                    ),
+                    RustType2::String,
+                )
+            } else {
+                panic!("can't call push_str on a var which is not mutable")
+            }
+        }
+        RustType2::Option(_) if fn_info.ident == "is_some_and" => {
+            global_data.rust_prelude_types.option_is_some_and = true;
+            let mut args = vec![receiver];
+            args.extend(args_js_exprs);
+            (
+                JsExpr::FnCall(Box::new(JsExpr::Var("optionIsSomeAnd".to_string())), args),
+                method_return_type,
+            )
+        }
+        RustType2::Option(_) if fn_info.ident == "unwrap" => {
+            global_data.rust_prelude_types.option_unwrap = true;
+            (
+                JsExpr::FnCall(
+                    Box::new(JsExpr::Var("optionUnwrap".to_string())),
+                    vec![receiver],
+                ),
+                method_return_type,
+            )
+        }
+        // RustType2::Result(_) => {}
+        RustType2::Vec(_) if method_name == "iter" || method_name == "collect" => {
+            (receiver, method_return_type)
+        }
+        RustType2::Array(_) if method_name == "iter" || method_name == "collect" => {
+            (receiver, method_return_type)
+        }
+        // RustType2::Box(_) => {}
+        RustType2::MutRef(inner) if **inner == RustType2::String => {
+            if method_name == "to_string" || method_name == "clone" {
+                // Receiver is &mut so has a RustString wrapper so take the inner
+                (
+                    JsExpr::Field(Box::new(receiver.clone()), Ident::Str("inner")),
+                    RustType2::String,
+                )
+            } else if method_name == "push_str" {
+                assert_eq!(args_js_exprs.len(), 1);
+                (
+                    JsExpr::Binary(
+                        Box::new(receiver.clone()),
+                        JsOp::AddAssign,
+                        Box::new(args_js_exprs[0].clone()),
+                    ),
+                    RustType2::String,
+                )
+            } else {
+                todo!()
+            }
+        }
+        // RustType2::Ref(_) => {}
         RustType2::NotAllowed => todo!(),
         RustType2::Unknown => todo!(),
         RustType2::Todo => todo!(),
@@ -2337,46 +2275,45 @@ fn handle_expr_method_call(
         RustType2::Never => todo!(),
         RustType2::ImplTrait(_) => todo!(),
         RustType2::TypeParam(_) => todo!(),
-        RustType2::StructOrEnum(_, struct_enum_def) =>
+        RustType2::StructOrEnum(_, struct_enum_def)
+            if struct_enum_def.ident == "Document"
+                && expr_method_call.method == "create_element_div" =>
         {
-            #[allow(clippy::collapsible_if)]
-            if struct_enum_def.ident == "Document" {
-                if expr_method_call.method == "create_element_div" {
-                    assert!(args_js_exprs.is_empty());
-                    return (
-                        JsExpr::MethodCall(
-                            Box::new(receiver),
-                            Ident::Str("create_element"),
-                            vec![JsExpr::LitStr("div".to_string())],
-                        ),
-                        method_return_type,
-                    );
-                }
-            }
+            assert!(args_js_exprs.is_empty());
+            (
+                JsExpr::MethodCall(
+                    Box::new(receiver),
+                    Ident::Str("create_element"),
+                    vec![JsExpr::LitStr("div".to_string())],
+                ),
+                method_return_type,
+            )
         }
         RustType2::Tuple(_) => todo!(),
         RustType2::UserType(_, _) => todo!(),
-        RustType2::Fn(_, _, fn_def) => {}
+        // RustType2::Fn(_, _, fn_def) => {}
         RustType2::FnVanish => todo!(),
         RustType2::Closure(_, _) => todo!(),
-    }
+        _ => {
+            if receiver_is_mut_var && receiver_type.is_js_primative() && !method_takes_mut_ref_self
+            {
+                receiver = JsExpr::Field(Box::new(receiver), Ident::Str("inner"));
+            }
 
-    // println!("{}", quote! { #expr_method_call });
-    if receiver_is_mut_var && receiver_type.is_js_primative() && !method_takes_mut_ref_self {
-        receiver = JsExpr::Field(Box::new(receiver), Ident::Str("inner"));
-    }
+            if receiver_needs_parens {
+                receiver = JsExpr::Paren(Box::new(receiver));
+            }
 
-    if receiver_needs_parens {
-        receiver = JsExpr::Paren(Box::new(receiver));
+            (
+                JsExpr::MethodCall(
+                    Box::new(receiver),
+                    Ident::Syn(expr_method_call.method.clone()),
+                    args_js_exprs,
+                ),
+                method_return_type,
+            )
+        }
     }
-    (
-        JsExpr::MethodCall(
-            Box::new(receiver),
-            Ident::Syn(expr_method_call.method.clone()),
-            args_js_exprs,
-        ),
-        method_return_type,
-    )
 }
 
 /// When handling a method call, after we have looked up the method input types, which may contain type params, we call this function to update any type params with resolved type params from the reciever or method turbofish
