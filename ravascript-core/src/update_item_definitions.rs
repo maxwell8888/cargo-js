@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use syn::{
     FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, Type,
     TypeParamBound, Visibility,
@@ -345,6 +347,28 @@ fn update_item_defs_recurisve_individual_expr(
 }
 
 #[derive(Debug, Clone)]
+pub enum ItemDefRc {
+    StructEnum(Rc<StructEnumDef>),
+    Fn(Rc<FnDef>),
+    Const(Rc<ConstDef>),
+    Trait(Rc<TraitDef>),
+    Impl(Rc<ImplBlockDef>),
+    None,
+}
+impl ItemDefRc {
+    pub fn ident(&self) -> &str {
+        match self {
+            ItemDefRc::StructEnum(def) => &def.ident,
+            ItemDefRc::Fn(def) => &def.ident,
+            ItemDefRc::Const(def) => &def.ident,
+            ItemDefRc::Trait(def) => &def.ident,
+            ItemDefRc::Impl(_) => panic!(),
+            ItemDefRc::None => panic!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ItemDef {
     StructEnum(StructEnumDef),
     Fn(FnDef),
@@ -427,7 +451,7 @@ fn update_item_def(
                                 .collect::<Vec<_>>(),
                         )
                     };
-                    StructOrEnumDefitionInfo2::Struct(StructDefinitionInfo {
+                    StructEnumUniqueInfo2::Struct(StructDefUniqueInfo {
                         fields,
                         syn_object: struct_def_info,
                     })
@@ -461,7 +485,7 @@ fn update_item_def(
                                 .collect::<Vec<_>>(),
                         })
                         .collect::<Vec<_>>();
-                    StructOrEnumDefitionInfo2::Enum(EnumDefinitionInfo {
+                    StructEnumUniqueInfo2::Enum(EnumDefUniqueInfo {
                         members: members_for_scope,
                         syn_object: enum_def_info,
                     })
@@ -609,95 +633,94 @@ fn update_item_def(
                     Ident::Syn(trait_def.ident.clone())
                 }
             };
-            ItemDef::Trait(TraitDef {
-                ident: trait_def.ident.to_string(),
-                js_name,
-                is_pub: trait_def.is_pub,
-                syn: trait_def.syn,
-                default_impls: trait_def
-                    .default_impls
-                    .into_iter()
-                    .map(|fn_info| {
-                        let inputs_types = fn_info
-                            .signature
-                            .inputs
-                            .iter()
-                            .map(|input| match input {
-                                FnArg::Receiver(receiver) => {
-                                    // For `self`, `&self`, `&mut self` receiver.ty will be `Self`, `&Self`, `&mut Self`
-                                    // For a default impl we can't know what self/Self will be and while for the fn body we only need to know about the trait methods, if &Self etc is returned then we do need to know the actual concrete type. Given this we need to use RustType::Self.
-                                    // TODO This means we need to ensure we don't attempt to resolve RustType::Self during the default impl fn and instead treat it as `impl Trait`, but once it has been returned from the trait fn call, we can coerce it to a concrete type. This will be complicated in cases like returning from a default trait fn within another trait fn. I think the solution is to look at the receiver - if it is a concrete type then when can coerce, otherwise not.
-                                    // Surely this is the same for `impl Foo for T {}` trait impls? Kind of, it will be an unresolved RustType::TypeParam.
-                                    (
-                                        true,
-                                        receiver.mutability.is_some(),
-                                        "self".to_string(),
-                                        RustType::Self_,
-                                    )
-                                }
-                                FnArg::Typed(pat_type) => (
-                                    false,
-                                    match &*pat_type.pat {
-                                        Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
-                                        _ => todo!(),
-                                    },
-                                    match &*pat_type.pat {
-                                        Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                                        _ => todo!(),
-                                    },
-                                    parse_types_for_populate_item_definitions(
-                                        &pat_type.ty,
-                                        &fn_info.generics,
-                                        module_path,
-                                        item_refs,
-                                        item_actual_defs_copy,
-                                        scoped_items,
-                                    ),
-                                ),
-                            })
-                            .collect::<Vec<_>>();
-
-                        let return_type = match &fn_info.signature.output {
-                            ReturnType::Default => RustType::Unit,
-                            ReturnType::Type(_, type_) => {
+            let default_impls = trait_def
+                .default_impls
+                .into_iter()
+                .map(|fn_info| {
+                    let inputs_types = fn_info
+                        .signature
+                        .inputs
+                        .iter()
+                        .map(|input| match input {
+                            FnArg::Receiver(receiver) => {
+                                // For `self`, `&self`, `&mut self` receiver.ty will be `Self`, `&Self`, `&mut Self`
+                                // For a default impl we can't know what self/Self will be and while for the fn body we only need to know about the trait methods, if &Self etc is returned then we do need to know the actual concrete type. Given this we need to use RustType::Self.
+                                // TODO This means we need to ensure we don't attempt to resolve RustType::Self during the default impl fn and instead treat it as `impl Trait`, but once it has been returned from the trait fn call, we can coerce it to a concrete type. This will be complicated in cases like returning from a default trait fn within another trait fn. I think the solution is to look at the receiver - if it is a concrete type then when can coerce, otherwise not.
+                                // Surely this is the same for `impl Foo for T {}` trait impls? Kind of, it will be an unresolved RustType::TypeParam.
+                                (
+                                    true,
+                                    receiver.mutability.is_some(),
+                                    "self".to_string(),
+                                    RustType::Self_,
+                                )
+                            }
+                            FnArg::Typed(pat_type) => (
+                                false,
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                                    _ => todo!(),
+                                },
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                    _ => todo!(),
+                                },
                                 parse_types_for_populate_item_definitions(
-                                    type_,
+                                    &pat_type.ty,
                                     &fn_info.generics,
                                     module_path,
                                     item_refs,
                                     item_actual_defs_copy,
                                     scoped_items,
-                                )
-                            }
-                        };
+                                ),
+                            ),
+                        })
+                        .collect::<Vec<_>>();
 
-                        let js_name = if in_scope {
-                            Ident::Syn(fn_info.signature.ident.clone())
+                    let return_type = match &fn_info.signature.output {
+                        ReturnType::Default => RustType::Unit,
+                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                            type_,
+                            &fn_info.generics,
+                            module_path,
+                            item_refs,
+                            item_actual_defs_copy,
+                            scoped_items,
+                        ),
+                    };
+
+                    let js_name = if in_scope {
+                        Ident::Syn(fn_info.signature.ident.clone())
+                    } else {
+                        let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                            fn_info.signature.ident == dup.name
+                                && dup.original_module_path == module_path
+                        });
+
+                        if let Some(dup) = in_module_level_duplicates {
+                            Ident::Deduped(dup.namespace.clone())
                         } else {
-                            let in_module_level_duplicates = duplicates.iter().find(|dup| {
-                                fn_info.signature.ident == dup.name
-                                    && dup.original_module_path == module_path
-                            });
-
-                            if let Some(dup) = in_module_level_duplicates {
-                                Ident::Deduped(dup.namespace.clone())
-                            } else {
-                                Ident::Syn(fn_info.signature.ident.clone())
-                            }
-                        };
-
-                        FnDef {
-                            ident: fn_info.ident.to_string(),
-                            js_name,
-                            is_pub: fn_info.is_pub,
-                            inputs_types,
-                            generics: fn_info.generics,
-                            return_type,
-                            stmts: fn_info.stmts,
-                            syn: fn_info.syn,
+                            Ident::Syn(fn_info.signature.ident.clone())
                         }
-                    })
-                    .collect(),
+                    };
+
+                    FnDef {
+                        ident: fn_info.ident.to_string(),
+                        js_name,
+                        is_pub: fn_info.is_pub,
+                        inputs_types,
+                        generics: fn_info.generics,
+                        return_type,
+                        stmts: fn_info.stmts,
+                        syn: fn_info.syn,
+                    }
+                })
+                .collect();
+            ItemDef::Trait(TraitDef {
+                ident: trait_def.ident.to_string(),
+                js_name,
+                is_pub: trait_def.is_pub,
+                syn: trait_def.syn,
+                default_impls,
             })
         }
         ItemDefNoTypes::Impl(item_impl, impl_items_refs) => {
@@ -1492,7 +1515,7 @@ pub enum StructFieldInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct StructDefinitionInfo {
+pub struct StructDefUniqueInfo {
     pub fields: StructFieldInfo,
     pub syn_object: ItemStruct,
 }
@@ -1514,15 +1537,15 @@ pub struct EnumVariantInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct EnumDefinitionInfo {
+pub struct EnumDefUniqueInfo {
     pub members: Vec<EnumVariantInfo>,
     pub syn_object: ItemEnum,
 }
 
 #[derive(Debug, Clone)]
-pub enum StructOrEnumDefitionInfo2 {
-    Struct(StructDefinitionInfo),
-    Enum(EnumDefinitionInfo),
+pub enum StructEnumUniqueInfo2 {
+    Struct(StructDefUniqueInfo),
+    Enum(EnumDefUniqueInfo),
 }
 
 /// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
@@ -1541,7 +1564,7 @@ pub struct StructEnumDef {
     // TODO do we need to know eg bounds for each generic?
     pub generics: Vec<String>,
     // syn_object: StructOrEnumSynObject,
-    pub struct_or_enum_info: StructOrEnumDefitionInfo2,
+    pub struct_or_enum_info: StructEnumUniqueInfo2,
     // impl_blocks: Vec<ItemDefintionImpls>,
     /// Should be used for matching only inherent impls to the target type, which is always be a struct or enum (or type alias of a struct or enum)? but trait impls also currently are added
     ///
@@ -1559,7 +1582,7 @@ pub struct StructEnumDef {
 impl StructEnumDef {
     pub fn get_type(&self, field_member: &Member, global_data: &GlobalData) -> RustType2 {
         match &self.struct_or_enum_info {
-            StructOrEnumDefitionInfo2::Struct(struct_def_info) => match &struct_def_info.fields {
+            StructEnumUniqueInfo2::Struct(struct_def_info) => match &struct_def_info.fields {
                 StructFieldInfo::UnitStruct => todo!(),
                 StructFieldInfo::TupleStruct(_) => todo!(),
                 StructFieldInfo::RegularStruct(fields2) => fields2
@@ -1575,7 +1598,7 @@ impl StructEnumDef {
                     .unwrap()
                     .clone(),
             },
-            StructOrEnumDefitionInfo2::Enum(_) => todo!(),
+            StructEnumUniqueInfo2::Enum(_) => todo!(),
         }
     }
 }
@@ -1860,7 +1883,8 @@ impl RustType {
                         .into_iter()
                         .map(|tp| tp.into_rust_type_param2(global_data))
                         .collect(),
-                    Box::new(fn_info),
+                    // Impl block fns are not stored simply as Rc fns in the item defs Vec, there are only store within the impl, yet here we are trying to represent them as a RustType2::Fn
+                    fn_info,
                 )
             }
             RustType::FnVanish => RustType2::FnVanish,

@@ -7,6 +7,7 @@ use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 
+use std::rc::Rc;
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{Item, ItemTrait};
 
@@ -30,7 +31,7 @@ mod make_item_definitions;
 use make_item_definitions::{make_item_defs, ItemDefNoTypes, ItemRef, RustMod, StmtsRef};
 
 mod update_item_definitions;
-use update_item_definitions::{update_item_defs, RustType};
+use update_item_definitions::{update_item_defs, ItemDef, ItemDefRc, RustType};
 
 const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 
@@ -155,25 +156,21 @@ pub fn process_items(
     );
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
     let trait_syn = syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap();
-    item_defs.push(ItemDefNoTypes::Trait(
-        make_item_definitions::TraitDef {
-            ident: trait_syn.ident.clone(),
-            is_pub: true,
-            syn: trait_syn,
-            default_impls: Vec::new(),
-        },
-    ));
+    item_defs.push(ItemDefNoTypes::Trait(make_item_definitions::TraitDef {
+        ident: trait_syn.ident.clone(),
+        is_pub: true,
+        syn: trait_syn,
+        default_impls: Vec::new(),
+    }));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     let trait_syn = syn::parse_str::<ItemTrait>("trait Copy {}").unwrap();
-    item_defs.push(ItemDefNoTypes::Trait(
-        make_item_definitions::TraitDef {
-            ident: trait_syn.ident.clone(),
-            is_pub: true,
-            syn: trait_syn,
-            default_impls: Vec::new(),
-        },
-    ));
+    item_defs.push(ItemDefNoTypes::Trait(make_item_definitions::TraitDef {
+        ident: trait_syn.ident.clone(),
+        is_pub: true,
+        syn: trait_syn,
+        default_impls: Vec::new(),
+    }));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     crate_item_refs.insert(
@@ -251,6 +248,17 @@ pub fn process_items(
         bar.get_foo();
     }
 
+    let item_defs = item_defs
+        .into_iter()
+        .map(|item_def| match item_def {
+            ItemDef::StructEnum(def) => ItemDefRc::StructEnum(Rc::new(def)),
+            ItemDef::Fn(def) => ItemDefRc::Fn(Rc::new(def)),
+            ItemDef::Const(def) => ItemDefRc::Const(Rc::new(def)),
+            ItemDef::Trait(def) => ItemDefRc::Trait(Rc::new(def)),
+            ItemDef::Impl(def) => ItemDefRc::Impl(Rc::new(def)),
+            ItemDef::None => todo!(),
+        })
+        .collect();
     let mut global_data = GlobalData::new(crate_path, crate_item_refs, item_defs);
     // global_data.modules = new_modules;
     // global_data.impl_blocks_simpl = impl_blocks;

@@ -17,8 +17,8 @@ use crate::{
     },
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
-        ItemDef, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
-        StructOrEnumDefitionInfo2,
+        ItemDef, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
+        RustTypeParamValue, StructEnumUniqueInfo2,
     },
     GlobalData, RustImplItemItemJs, RustType2, PRELUDE_MODULE_PATH,
 };
@@ -69,8 +69,8 @@ pub fn js_stmts_from_syn_items(
             ItemRef::StructOrEnum(index) => {
                 let item = &item_defs[*index];
                 match item {
-                    ItemDef::StructEnum(actual) => match &actual.struct_or_enum_info {
-                        StructOrEnumDefitionInfo2::Struct(_struct_def) => {
+                    ItemDefRc::StructEnum(actual) => match &actual.struct_or_enum_info {
+                        StructEnumUniqueInfo2::Struct(_struct_def) => {
                             js_stmts.push(handle_item_struct(
                                 *index,
                                 true,
@@ -78,7 +78,7 @@ pub fn js_stmts_from_syn_items(
                                 current_module,
                             ));
                         }
-                        StructOrEnumDefitionInfo2::Enum(_enum_def) => {
+                        StructEnumUniqueInfo2::Enum(_enum_def) => {
                             js_stmts.push(handle_item_enum(
                                 *index,
                                 true,
@@ -144,7 +144,7 @@ pub fn handle_item_fn(
     current_module: &[String],
 ) -> JsStmt {
     let fn_info = match &global_data.item_defs[index] {
-        ItemDef::Fn(fn_info) => fn_info.clone(),
+        ItemDefRc::Fn(fn_info) => fn_info.clone(),
         other => {
             dbg!(other);
             todo!()
@@ -377,7 +377,7 @@ pub fn handle_item_const(
     // debug!(name = ?name, "handle_item_const");
 
     let const_def = match &global_data.item_defs[index] {
-        ItemDef::Const(const_def) => const_def.clone(),
+        ItemDefRc::Const(const_def) => const_def.clone(),
         _ => todo!(),
     };
 
@@ -400,13 +400,13 @@ pub fn handle_item_enum(
 ) -> JsStmt {
     let item = global_data.item_defs[index].clone();
     let item_def = match item {
-        ItemDef::StructEnum(item_def) => item_def,
+        ItemDefRc::StructEnum(item_def) => item_def,
         _ => todo!(),
     };
 
     let item_enum = match &item_def.struct_or_enum_info {
-        StructOrEnumDefitionInfo2::Struct(_) => todo!(),
-        StructOrEnumDefitionInfo2::Enum(enum_def_info) => &enum_def_info.syn_object,
+        StructEnumUniqueInfo2::Struct(_) => todo!(),
+        StructEnumUniqueInfo2::Enum(enum_def_info) => &enum_def_info.syn_object,
     };
 
     let enum_name = item_enum.ident.to_string();
@@ -620,7 +620,7 @@ pub fn handle_item_enum(
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
 
         let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
-            ItemDef::Impl(impl_block) => impl_block,
+            ItemDefRc::Impl(impl_block) => impl_block,
             other => {
                 dbg!(index);
                 dbg!(other);
@@ -628,7 +628,7 @@ pub fn handle_item_enum(
             }
         };
 
-        let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
+        let target_rust_type = rust_impl_block.target.clone().into_rust_type2(global_data);
 
         global_data
             .impl_block_target_type
@@ -636,7 +636,7 @@ pub fn handle_item_enum(
 
         let rust_impl_items = rust_impl_block
             .rust_items
-            .into_iter()
+            .iter()
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
@@ -664,8 +664,8 @@ pub fn handle_item_enum(
 
         let js_impl_block = JsImplBlock2 {
             _index: index,
-            _generics: rust_impl_block.generics,
-            trait_: rust_impl_block.trait_,
+            _generics: rust_impl_block.generics.clone(),
+            trait_: rust_impl_block.trait_.clone(),
             target: target_rust_type.clone(),
             items: rust_impl_items
                 .into_iter()
@@ -961,7 +961,7 @@ pub fn handle_item_impl(
     current_module_path: &[String],
 ) -> Vec<JsStmt> {
     let rust_impl_block = match global_data.item_defs[index].clone() {
-        ItemDef::Impl(impl_block) => impl_block,
+        ItemDefRc::Impl(impl_block) => impl_block,
         other => {
             dbg!(index);
             dbg!(other);
@@ -977,11 +977,7 @@ pub fn handle_item_impl(
     let span = debug_span!("handle_item_impl", debug_self_type = ?debug_self_type);
     let _guard = span.enter();
 
-    let rust_impl_block_generics = rust_impl_block.generics;
-
-    let trait_path_and_name = rust_impl_block.trait_;
-
-    let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
+    let target_rust_type = rust_impl_block.target.clone().into_rust_type2(global_data);
     let is_target_type_param = matches!(target_rust_type, RustType2::TypeParam(_));
 
     global_data
@@ -990,7 +986,7 @@ pub fn handle_item_impl(
 
     let rust_impl_items = rust_impl_block
         .rust_items
-        .into_iter()
+        .iter()
         .map(|item| RustImplItemJs {
             ident: item.ident.clone(),
             item: match &item.item {
@@ -1018,8 +1014,8 @@ pub fn handle_item_impl(
 
     let js_impl_block = JsImplBlock2 {
         _index: index,
-        _generics: rust_impl_block_generics,
-        trait_: trait_path_and_name,
+        _generics: rust_impl_block.generics.clone(),
+        trait_: rust_impl_block.trait_.clone(),
         target: target_rust_type.clone(),
         items: rust_impl_items
             .into_iter()
@@ -1094,7 +1090,7 @@ pub fn handle_item_impl(
             ItemRef::StructOrEnum(index) => {
                 let item = &global_data.item_defs[*index];
                 let item_def = match item {
-                    ItemDef::StructEnum(item_def) => item_def,
+                    ItemDefRc::StructEnum(item_def) => item_def,
                     _ => todo!(),
                 };
                 let new_name = prelude_item_def_name_to_js(&item_def.ident);
@@ -1161,9 +1157,9 @@ pub fn handle_item_struct(
 ) -> JsStmt {
     let item = &global_data.item_defs[index];
     let item_def = match item {
-        ItemDef::StructEnum(actual) => match &actual.struct_or_enum_info {
-            StructOrEnumDefitionInfo2::Struct(_struct_def) => actual.clone(),
-            StructOrEnumDefitionInfo2::Enum(_enum_def) => {
+        ItemDefRc::StructEnum(actual) => match &actual.struct_or_enum_info {
+            StructEnumUniqueInfo2::Struct(_struct_def) => actual.clone(),
+            StructEnumUniqueInfo2::Enum(_enum_def) => {
                 todo!()
             }
         },
@@ -1171,8 +1167,8 @@ pub fn handle_item_struct(
     };
 
     let item_struct = match &item_def.struct_or_enum_info {
-        StructOrEnumDefitionInfo2::Struct(struct_def_info) => &struct_def_info.syn_object,
-        StructOrEnumDefitionInfo2::Enum(_) => todo!(),
+        StructEnumUniqueInfo2::Struct(struct_def_info) => &struct_def_info.syn_object,
+        StructEnumUniqueInfo2::Enum(_) => todo!(),
     };
     let name = item_struct.ident.to_string();
     // dbg!(&global_data.scopes);
@@ -1321,7 +1317,7 @@ pub fn handle_item_struct(
         // TODO IMPORTANT we are parsing impl block methods below when it is also being done in handle_item_impl(), this probably breaks assumptions eg mutates data twice etc
 
         let rust_impl_block = match global_data.item_defs[*impl_block_id].clone() {
-            ItemDef::Impl(impl_block) => impl_block,
+            ItemDefRc::Impl(impl_block) => impl_block,
             other => {
                 dbg!(index);
                 dbg!(other);
@@ -1329,7 +1325,7 @@ pub fn handle_item_struct(
             }
         };
 
-        let target_rust_type = rust_impl_block.target.into_rust_type2(global_data);
+        let target_rust_type = rust_impl_block.target.clone().into_rust_type2(global_data);
 
         global_data
             .impl_block_target_type
@@ -1337,7 +1333,7 @@ pub fn handle_item_struct(
 
         let rust_impl_items = rust_impl_block
             .rust_items
-            .into_iter()
+            .iter()
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
@@ -1365,8 +1361,8 @@ pub fn handle_item_struct(
 
         let js_impl_block = JsImplBlock2 {
             _index: index,
-            _generics: rust_impl_block.generics,
-            trait_: rust_impl_block.trait_,
+            _generics: rust_impl_block.generics.clone(),
+            trait_: rust_impl_block.trait_.clone(),
             target: target_rust_type.clone(),
             items: rust_impl_items
                 .into_iter()
@@ -1496,7 +1492,7 @@ pub fn handle_item_trait(
     debug!("handle_item_trait");
 
     let trait_def = match &global_data.item_defs[index] {
-        ItemDef::Trait(trait_def) => trait_def,
+        ItemDefRc::Trait(trait_def) => trait_def,
         _ => todo!(),
     };
 

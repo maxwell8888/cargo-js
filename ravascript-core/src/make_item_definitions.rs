@@ -9,6 +9,7 @@ use syn::{
 use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
 
+use crate::update_item_definitions::ItemDefRc;
 use crate::{update_item_definitions::ItemDef, RustPathSegment, PRELUDE_MODULE_PATH};
 
 // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
@@ -964,6 +965,7 @@ impl ItemDefNoTypes {
 }
 
 // References to top level deifinitions (used inside Mod's, Fn bodies)
+// TODO make this Copy
 #[derive(Debug, Clone)]
 pub enum ItemRef {
     StructOrEnum(usize),
@@ -1061,7 +1063,7 @@ impl RustMod {
 
     pub fn item_defined_in_module2(
         &self,
-        items: &[ItemDef],
+        items: &[ItemDefRc],
         use_private: bool,
         name: &str,
     ) -> Option<usize> {
@@ -1069,7 +1071,7 @@ impl RustMod {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemDef::StructEnum(def) => def,
+                    ItemDefRc::StructEnum(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1077,7 +1079,7 @@ impl RustMod {
             ItemRef::Fn(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemDef::Fn(fn_info) => fn_info,
+                    ItemDefRc::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1085,7 +1087,7 @@ impl RustMod {
             ItemRef::Const(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemDef::Const(def) => def,
+                    ItemDefRc::Const(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)
@@ -1093,7 +1095,7 @@ impl RustMod {
             ItemRef::Trait(index) => {
                 let item = &items[*index];
                 let def = match item {
-                    ItemDef::Trait(def) => def,
+                    ItemDefRc::Trait(def) => def,
                     _ => todo!(),
                 };
                 (def.ident == name && (use_private || def.is_pub)).then_some(*index)

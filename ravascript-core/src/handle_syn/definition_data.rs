@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, rc::Rc};
 
 use syn::{PathArguments, Type};
 use tracing::debug;
@@ -8,8 +8,8 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnDef, StructEnumDef, ItemDef, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
-        TraitDef, RustTypeParam, RustTypeParamValue,
+        FnDef, ItemDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, RustTypeParamValue, StructEnumDef, TraitDef,
     },
     PRELUDE_MODULE_PATH,
 };
@@ -86,7 +86,7 @@ pub enum RustType2 {
     // Option(Box<RustType>),
     /// (generic)
     Result(RustTypeParam2),
-    StructOrEnum(Vec<RustTypeParam2>, StructEnumDef),
+    StructOrEnum(Vec<RustTypeParam2>, Rc<StructEnumDef>),
     // Struct(Vec<RustTypeParam>, Vec<String>, String),
     /// (type params, module path, name)  
     // Enum(Vec<RustTypeParam>, Vec<String>, String),
@@ -111,7 +111,7 @@ pub enum RustType2 {
         Option<Vec<RustTypeParam2>>,
         Vec<RustTypeParam2>,
         // RustTypeFnType,
-        Box<FnDef>,
+        Rc<FnDef>,
     ),
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
@@ -206,7 +206,7 @@ impl PartialEq for RustType2 {
 
 #[derive(Debug, Clone)]
 pub enum RustTypeImplTrait2 {
-    SimpleTrait(TraitDef),
+    SimpleTrait(Rc<TraitDef>),
     /// (return type)
     Fn(RustType2),
 }
@@ -329,7 +329,7 @@ pub struct GlobalData {
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
     pub item_refs: Vec<ItemRef>,
     // pub item_refs_to_render: Vec<ItemRef>,
-    pub item_defs: Vec<ItemDef>,
+    pub item_defs: Vec<ItemDefRc>,
     pub scopes: Vec<GlobalDataScope>,
     // TODO combine this with impl_items
     // struct_or_enum_methods: Vec<StructOrEnumMethods>,
@@ -373,7 +373,7 @@ impl GlobalData {
     pub fn new(
         crate_path: Option<PathBuf>,
         item_refs: Vec<ItemRef>,
-        item_defs: Vec<ItemDef>,
+        item_defs: Vec<ItemDefRc>,
     ) -> GlobalData {
         // let option_def = ItemDefinition {
         //     ident: "Option".to_string(),
@@ -492,24 +492,24 @@ impl GlobalData {
         }
     }
 
-    pub fn get_trait(&self, index: usize) -> TraitDef {
+    pub fn get_trait(&self, index: usize) -> Rc<TraitDef> {
         let def = &self.item_defs[index];
         match def {
-            ItemDef::Trait(trait_def) => trait_def.clone(),
+            ItemDefRc::Trait(trait_def) => trait_def.clone(),
             _ => todo!(),
         }
     }
-    pub fn get_struct_enum(&self, index: usize) -> StructEnumDef {
+    pub fn get_struct_enum(&self, index: usize) -> Rc<StructEnumDef> {
         let def = &self.item_defs[index];
         match def {
-            ItemDef::StructEnum(item_def) => item_def.clone(),
+            ItemDefRc::StructEnum(item_def) => item_def.clone(),
             _ => todo!(),
         }
     }
-    pub fn get_fn(&self, index: usize) -> FnDef {
+    pub fn get_fn(&self, index: usize) -> Rc<FnDef> {
         let def = &self.item_defs[index];
         match def {
-            ItemDef::Fn(fn_info) => fn_info.clone(),
+            ItemDefRc::Fn(fn_info) => fn_info.clone(),
             _ => todo!(),
         }
     }
@@ -561,7 +561,7 @@ impl GlobalData {
 
         let item_def = &self.item_defs[index.unwrap()];
         let struct_or_enum_def = match item_def {
-            ItemDef::StructEnum(def) => def,
+            ItemDefRc::StructEnum(def) => def,
             _ => todo!(),
         };
         (
@@ -579,7 +579,7 @@ impl GlobalData {
         )
     }
 
-    pub fn get_prelude_item_def(&self, name: &str) -> StructEnumDef {
+    pub fn get_prelude_item_def(&self, name: &str) -> Rc<StructEnumDef> {
         let prelude_module = self.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
         prelude_module
             .items
@@ -588,7 +588,7 @@ impl GlobalData {
                 ItemRef::StructOrEnum(index) => {
                     let item = &self.item_defs[*index];
                     match item {
-                        ItemDef::StructEnum(item_def) => {
+                        ItemDefRc::StructEnum(item_def) => {
                             (item_def.ident == name).then_some(item_def.clone())
                         }
                         _ => todo!(),
@@ -663,7 +663,7 @@ impl GlobalData {
                     Some(RustType2::Fn(
                         Some(item_generics.to_vec()),
                         fn_generics,
-                        Box::new(fn_info),
+                        Rc::new(fn_info),
                     ))
                 }
                 RustImplItemItemNoJs::Const => todo!(),
@@ -683,20 +683,21 @@ impl GlobalData {
     ) -> Option<RustImplItemNoJs> {
         item_def.impl_block_ids.iter().find_map(|block_id| {
             let impl_block = match self.item_defs[*block_id].clone() {
-                ItemDef::Impl(impl_block) => impl_block,
+                ItemDefRc::Impl(impl_block) => impl_block,
                 _ => todo!(),
             };
             impl_block
                 .rust_items
-                .into_iter()
+                .iter()
                 .find(|rust_item| rust_item.ident == sub_path.ident)
+                .cloned()
         })
     }
 }
 
 fn look_for_module_in_items(
     items: &[ItemRef],
-    item_defs: &[ItemDef],
+    item_defs: &[ItemDefRc],
     module_path: &[String],
 ) -> Option<RustMod> {
     for item in items {
@@ -704,7 +705,7 @@ fn look_for_module_in_items(
             ItemRef::Fn(index) => {
                 let item = &item_defs[*index];
                 let fn_info = match item {
-                    ItemDef::Fn(fn_info) => fn_info,
+                    ItemDefRc::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
 
@@ -768,7 +769,7 @@ pub fn resolve_path(
     module_items: &[ItemRef],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
-    items_defs: &[ItemDef],
+    items_defs: &[ItemDefRc],
     current_mod: &[String],
     // Only used to determine if current module is the original module
     orig_mod: &[String],

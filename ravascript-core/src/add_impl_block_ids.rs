@@ -1,8 +1,10 @@
+use std::rc::Rc;
+
 use tracing::debug_span;
 
 use crate::{
     make_item_definitions::{ItemRef, StmtsRef},
-    update_item_definitions::{StructEnumDef, ItemDef, ImplBlockDef, RustType},
+    update_item_definitions::{ImplBlockDef, ItemDef, RustType, StructEnumDef},
     PRELUDE_MODULE_PATH,
 };
 
@@ -110,11 +112,10 @@ fn extract_impl_blocks(
             ItemRef::Fn(index) => match item_defs[*index].clone() {
                 ItemDef::Fn(fn_info) => {
                     let item_refs = fn_info
-                        .clone()
                         .stmts
-                        .into_iter()
+                        .iter()
                         .filter_map(|stmt_ref| match stmt_ref {
-                            StmtsRef::Item(item_ref) => Some(item_ref),
+                            StmtsRef::Item(item_ref) => Some(item_ref.clone()),
                             _ => None,
                         })
                         .collect::<Vec<_>>();

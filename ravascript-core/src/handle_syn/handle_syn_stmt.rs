@@ -17,7 +17,7 @@ use super::definition_data::{RustType2, ScopedVar};
 use crate::{
     js_ast::{Ident, JsExpr, JsIf, JsLocal, JsStmt, LocalName, LocalType, PathIdent},
     make_item_definitions::{ExprRef, ItemRef, LocalRef, RustExprPath, StmtsRef},
-    update_item_definitions::{ItemDef, StructOrEnumDefitionInfo2},
+    update_item_definitions::{ItemDef, ItemDefRc, StructEnumUniqueInfo2},
     GlobalData,
 };
 
@@ -813,8 +813,8 @@ pub fn handle_stmt(
                 ItemRef::StructOrEnum(index) => {
                     let item = &item_defs.clone()[*index];
                     match item {
-                        ItemDef::StructEnum(actual) => match &actual.struct_or_enum_info {
-                            StructOrEnumDefitionInfo2::Struct(_struct_def) => {
+                        ItemDefRc::StructEnum(actual) => match &actual.struct_or_enum_info {
+                            StructEnumUniqueInfo2::Struct(_struct_def) => {
                                 vec![(
                                     handle_item_struct(
                                         *index,
@@ -825,7 +825,7 @@ pub fn handle_stmt(
                                     RustType2::Unit,
                                 )]
                             }
-                            StructOrEnumDefitionInfo2::Enum(_enum_def) => {
+                            StructEnumUniqueInfo2::Enum(_enum_def) => {
                                 vec![(
                                     handle_item_enum(
                                         *index,
