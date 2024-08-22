@@ -594,6 +594,7 @@ fn update_item_def(
         }
         ItemDefNoTypes::Trait(trait_def) => {
             // Currently trait defs don't store any info other than the name, so we don't need to do anything
+            // dbg!(&trait_def);
 
             let js_name = if in_scope {
                 Ident::Syn(trait_def.ident.clone())
@@ -622,9 +623,17 @@ fn update_item_def(
                             .inputs
                             .iter()
                             .map(|input| match input {
-                                FnArg::Receiver(_) => {
-                                    // standalone functions cannot have self/receiver inputs
-                                    panic!();
+                                FnArg::Receiver(receiver) => {
+                                    // For `self`, `&self`, `&mut self` receiver.ty will be `Self`, `&Self`, `&mut Self`
+                                    // For a default impl we can't know what self/Self will be and while for the fn body we only need to know about the trait methods, if &Self etc is returned then we do need to know the actual concrete type. Given this we need to use RustType::Self.
+                                    // TODO This means we need to ensure we don't attempt to resolve RustType::Self during the default impl fn and instead treat it as `impl Trait`, but once it has been returned from the trait fn call, we can coerce it to a concrete type. This will be complicated in cases like returning from a default trait fn within another trait fn. I think the solution is to look at the receiver - if it is a concrete type then when can coerce, otherwise not.
+                                    // Surely this is the same for `impl Foo for T {}` trait impls? Kind of, it will be an unresolved RustType::TypeParam.
+                                    (
+                                        true,
+                                        receiver.mutability.is_some(),
+                                        "self".to_string(),
+                                        RustType::Self_,
+                                    )
                                 }
                                 FnArg::Typed(pat_type) => (
                                     false,
@@ -1685,7 +1694,9 @@ pub enum RustType {
     // Uninit,
     /// Needs implementing
     Todo,
-    // Self_,
+    /// We need Self for the `&self` input in default trait impl methods, since we won't know the concrete type while parsing the fn body.
+    /// Surely this is the same for `impl Foo for T {}` trait impls? Kind of, it will be an unresolved RustType::TypeParam.
+    Self_,
     /// I think ParentItem means it is actually `self` not just `Self`???
     /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
     /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
@@ -1860,6 +1871,7 @@ impl RustType {
                     .collect(),
                 Box::new(return_.into_rust_type2(global_data)),
             ),
+            RustType::Self_ => RustType2::Self_,
         }
     }
 }

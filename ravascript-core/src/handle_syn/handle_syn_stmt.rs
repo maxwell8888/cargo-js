@@ -350,6 +350,7 @@ fn handle_local(
             RustType2::Closure(_, _) => rhs_expr,
             RustType2::FnVanish => todo!(),
             RustType2::Box(_) => todo!(),
+            RustType2::Self_ => todo!(),
         }
     }
 

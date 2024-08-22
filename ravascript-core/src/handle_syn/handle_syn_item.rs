@@ -295,6 +295,7 @@ pub fn handle_item_fn(
                     RustType2::Fn(_, _, _) => todo!(),
                     RustType2::FnVanish => todo!(),
                     RustType2::Closure(_, _) => todo!(),
+                    RustType2::Self_ => todo!(),
                 },
             }))
         }

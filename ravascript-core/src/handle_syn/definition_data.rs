@@ -55,7 +55,7 @@ pub enum RustType2 {
     // Uninit,
     /// Needs implementing
     Todo,
-    // Self_,
+    Self_,
     /// I think ParentItem means it is actually `self` not just `Self`???
     /// NOTE ParentItem is always self or Self, and these keywords are *always* referring to the target in an impl block, so if we come across a RustType::ParentItem we can determine what it is by looking up the global_data.impl_target or whatever it is called
     /// NOTE `Self` can also be used directly in a eg struct def like `struct Foo(Box<Self>);`. We are not currently handling/supporting these cases but need to bear this in mind for `RustType::ParentItem`
@@ -149,6 +149,7 @@ impl RustType2 {
             RustType2::Closure(_, _) => todo!(),
             RustType2::FnVanish => todo!(),
             RustType2::Box(_) => todo!(),
+            RustType2::Self_ => todo!(),
         }
     }
     pub fn is_mut_ref_of_js_primative(&self, _impl_targets: &[RustType2]) -> bool {
@@ -177,6 +178,7 @@ impl RustType2 {
             RustType2::Closure(_, _) => todo!(),
             RustType2::FnVanish => todo!(),
             RustType2::Box(_) => todo!(),
+            RustType2::Self_ => todo!(),
         }
     }
 }

@@ -25,8 +25,8 @@ use crate::{
         RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnDef, StructEnumDef, ItemDef, RustImplItemItemNoJs,
-        RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructFieldInfo,
+        EnumVariantInputsInfo, FnDef, ItemDef, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, RustTypeParamValue, StructEnumDef, StructFieldInfo,
         StructOrEnumDefitionInfo2,
     },
     RustType, PRELUDE_MODULE_PATH,
@@ -881,6 +881,7 @@ pub fn handle_expr(
                 RustType2::Closure(_, _) => todo!(),
                 RustType2::FnVanish => todo!(),
                 RustType2::Box(_) => todo!(),
+                RustType2::Self_ => todo!(),
             };
             (
                 JsExpr::Index(Box::new(expr), Box::new(index_expr)),
@@ -1045,6 +1046,7 @@ pub fn handle_expr(
                             RustType2::Closure(_, _) => todo!(),
                             RustType2::FnVanish => todo!(),
                             RustType2::Box(_) => todo!(),
+                            RustType2::Self_ => todo!(),
                         }
                     }
                 };
@@ -1278,6 +1280,7 @@ pub fn handle_expr(
                             RustType2::Closure(_, _) => todo!(),
                             RustType2::FnVanish => todo!(),
                             RustType2::Box(_) => todo!(),
+                            RustType2::Self_ => todo!(),
                         };
 
                         let new_expr = if add_inner {
@@ -1510,6 +1513,7 @@ fn handle_expr_closure(
                     RustType2::Closure(_, _) => todo!(),
                     RustType2::FnVanish => todo!(),
                     RustType2::Box(_) => todo!(),
+                    RustType2::Self_ => todo!(),
                 },
             }))
         }
@@ -1761,6 +1765,7 @@ pub fn handle_expr_and_stmt_macro(
                                         RustType2::Closure(_, _) => todo!(),
                                         RustType2::FnVanish => todo!(),
                                         RustType2::Box(_) => todo!(),
+                                        RustType2::Self_ => todo!(),
                                     };
                                     let mut_ref = matches!(type_, RustType2::MutRef(_));
                                     (*mut_, mut_ref, is_primative)
@@ -1841,7 +1846,7 @@ fn handle_expr_method_call(
         ExprRef::Binary(_) => todo!(),
         ExprRef::Block(_) => todo!(),
         ExprRef::Break(_) => todo!(),
-        ExprRef::Call(_) => todo!(),
+        ExprRef::Call(_) => false,
         ExprRef::Cast(_) => todo!(),
         ExprRef::Closure(_) => todo!(),
         ExprRef::Const(_) => todo!(),
@@ -1908,6 +1913,8 @@ fn handle_expr_method_call(
     //     _ => handle_expr(&expr_method_call.receiver, global_data, current_module),
     // };
 
+    // Handling `document()` -> `document`:
+
     let (mut receiver, receiver_type, receiver_is_mut_var) = match &*expr_method_call.receiver {
         ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
@@ -1923,6 +1930,7 @@ fn handle_expr_method_call(
             (expr, type_, false)
         }
     };
+    // dbg!(&receiver_type);
 
     // TASK we want to get the type of the method arguments so we can pass it to `handle_expr_closure` (and possibly other handlers) when we create args_js_exprs and args_rust_types. The problem is that we want to use args_rust_types to get the type of the method arguments (specifically for resolving type params)
 
@@ -2289,7 +2297,7 @@ fn handle_expr_method_call(
         );
     }
 
-    match receiver_type {
+    match &receiver_type {
         RustType2::I32 => {}
         RustType2::F32 => {}
         RustType2::Bool => {}
@@ -2321,7 +2329,20 @@ fn handle_expr_method_call(
         RustType2::Box(_) => {}
         RustType2::MutRef(_) => {}
         RustType2::Ref(_) => {}
-        _ => {}
+        RustType2::NotAllowed => todo!(),
+        RustType2::Unknown => todo!(),
+        RustType2::Todo => todo!(),
+        RustType2::Self_ => todo!(),
+        RustType2::Unit => todo!(),
+        RustType2::Never => todo!(),
+        RustType2::ImplTrait(_) => todo!(),
+        RustType2::TypeParam(_) => todo!(),
+        RustType2::StructOrEnum(_, _) => {}
+        RustType2::Tuple(_) => todo!(),
+        RustType2::UserType(_, _) => todo!(),
+        RustType2::Fn(_, _, fn_def) => {}
+        RustType2::FnVanish => todo!(),
+        RustType2::Closure(_, _) => todo!(),
     }
 
     // println!("{}", quote! { #expr_method_call });
@@ -2654,6 +2675,7 @@ fn get_receiver_params_and_method_impl_item(
         RustType2::Closure(_, _) => todo!(),
         RustType2::FnVanish => todo!(),
         RustType2::Box(_) => todo!(),
+        RustType2::Self_ => todo!(),
     }
 }
 
@@ -2749,6 +2771,7 @@ fn _resolve_generics_for_return_type(
         RustType::Closure(_, _) => todo!(),
         RustType::FnVanish => todo!(),
         RustType::Box(_) => todo!(),
+        RustType::Self_ => todo!(),
     }
 }
 
@@ -3259,10 +3282,22 @@ fn handle_expr_call(
                         )
                     }
                 }
-                PartialRustType::RustType(_, _, _) => (
-                    JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
-                    rust_type,
-                ),
+                PartialRustType::RustType(rust_type2, _, _) => {
+                    match rust_type2 {
+                        // TODO fn_def should be a ref to the actual definition so we can can just compare pointers and don't have to check it is not a user shadowed var etc.
+                        RustType2::Fn(_, _, fn_def) if fn_def.ident == "document" => {
+                            (
+                                JsExpr::Var("document".to_string()),
+                                // TODO would it would be nicer/cleaner to just directly get `Document` here? Using fn_def.return_type seems miore generalisable?
+                                fn_def.return_type.clone().into_rust_type2(global_data),
+                            )
+                        }
+                        _ => (
+                            JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
+                            rust_type,
+                        ),
+                    }
+                }
             }
         }
 
@@ -4404,6 +4439,7 @@ pub fn handle_expr_match(
                         RustType2::Closure(_, _) => todo!(),
                         RustType2::FnVanish => todo!(),
                         RustType2::Box(_) => todo!(),
+                        RustType2::Self_ => todo!(),
                     }),
                     None => Some(body_return_type),
                 },

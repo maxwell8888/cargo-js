@@ -48,7 +48,7 @@ async fn it_transpiles_json_parse() {
             }
         }
         "#,
-    );
+    );  
     assert_eq!(expected, actual);
 }
 
@@ -67,10 +67,10 @@ async fn dom_nodes_and_elements() {
         // let div: HTMLInputElement = Document::create_element("div");
         // div.append_child(input);
         // div.append_child(button);
-        use web_prelude::{Div, Document};
+        use web_prelude::{HtmlDivElement, Document, document}; 
         // let tag_name = "button";
         fn main() {
-            let div = Document::create_element("div");
+            let div = document().create_element_div();  
         }
         // div.append_child(input);
         // div.append_child(button);
