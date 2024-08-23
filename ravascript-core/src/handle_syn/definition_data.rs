@@ -617,6 +617,12 @@ impl GlobalData {
         get_module_from_refs(&self.item_refs, module_path).unwrap()
     }
 
+    pub fn is_web_prelude(&self, ident: &str) -> bool {
+        // self.get_module(module_path)
+        // TODO web prelude should be a crate, not a module
+        todo!()
+    }
+
     // This Doesn't/shouldn't look up methods as far as I can tell (methods are always handled directly in handle_expr_method_call) so rename
     // fn lookup_method_or_associated_fn(
     pub fn lookup_associated_fn(

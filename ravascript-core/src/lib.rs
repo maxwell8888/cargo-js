@@ -6,7 +6,7 @@ use biome_formatter::{IndentStyle, IndentWidth};
 use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
-
+use cargo_toml::Manifest;
 use std::rc::Rc;
 use std::{fmt::Debug, fs, path::PathBuf};
 use syn::{Item, ItemTrait};
@@ -82,13 +82,21 @@ pub fn process_items(
 
     // TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
     // TODO make this robust against user modules named "web_prelude" - we need to resolve the path/use_mapping to the crate. The web_prelude crate (or rustscript::web_prelude or whatever we end up using) is unique because crate names can't be shadowed (NOT TRUE - only on crates.io. It is possible for users to have a local crate named web_prelude or be using an alternative it crates.io?? But surely we can know this from the Cargo.toml because the dep table with have a path, or an alternative repository will be specified??).
-    let include_web = crate_item_refs.iter().any(|item_ref| match item_ref {
-        ItemRef::Use(rust_use) => rust_use
-            .use_mapping
-            .iter()
-            .any(|use_mapping| use_mapping.1 == ["web_prelude"]),
-        _ => false,
-    });
+    let include_web = if let Some(crate_path) = &crate_path {
+        // TODO needs test
+        let manifest = Manifest::from_path(crate_path.join("Cargo.toml")).unwrap();
+        manifest.dependencies.contains_key("web-prelude")
+    } else {
+        // In blocks (ie no crate_path) we still want to be able to use web-prelude so we simply check for any use statement
+        crate_item_refs.iter().any(|item_ref| match item_ref {
+            ItemRef::Use(rust_use) => rust_use
+                .use_mapping
+                .iter()
+                .any(|use_mapping| use_mapping.1 == ["web_prelude"]),
+            _ => false,
+        })
+    };
+    // eprintln!("{manifest:#?}");
 
     let mut crate_item_refs = vec![ItemRef::Mod(RustMod {
         pub_: true,
@@ -118,6 +126,7 @@ pub fn process_items(
     // So better to just rely on Cargo.toml dependencies, and not support web_prelude and other crates in blocks/formats without a Cargo.toml?
 
     if include_web {
+        // NOTE in theory there is no good way to check for prelude. Users could have their own local crate named web-prelude, so we need to only check for non-local (path) deps (where the registery hasn't been changed). But this prevents us from using a local-prelude ie in this repo. Maybe this is a could reason to have all the transforms in the user code rather than hard coded into cargo-js, ie use attribute to specify what and how things should be transformed, so no special code is needed in cargo-js and it just handles web-prelude automatically if it finds it. This could also be useful for people writing Rust interfaces/wrapper for pre-existing JS libs.
         let web_prelude_crate_path = "../web-prelude";
         // We include the web prelude at compile time so that it can be used for eg from_block or from_file which operate on simple strings of Rust code and no Cargo project
         // let code = fs::read_to_string(web_prelude_entry_point_path).unwrap();
