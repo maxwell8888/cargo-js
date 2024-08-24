@@ -1066,7 +1066,8 @@ impl RustMod {
         items: &[ItemDefRc],
         use_private: bool,
         name: &str,
-    ) -> Option<usize> {
+        // ) -> Option<usize> {
+    ) -> Option<ItemDefRc> {
         self.items.iter().find_map(|item| match item {
             ItemRef::StructOrEnum(index) => {
                 let item = &items[*index];
@@ -1074,7 +1075,7 @@ impl RustMod {
                     ItemDefRc::StructEnum(def) => def,
                     _ => todo!(),
                 };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(item.clone())
             }
             ItemRef::Fn(index) => {
                 let item = &items[*index];
@@ -1082,7 +1083,7 @@ impl RustMod {
                     ItemDefRc::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(item.clone())
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
@@ -1090,7 +1091,7 @@ impl RustMod {
                     ItemDefRc::Const(def) => def,
                     _ => todo!(),
                 };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(item.clone())
             }
             ItemRef::Trait(index) => {
                 let item = &items[*index];
@@ -1098,7 +1099,7 @@ impl RustMod {
                     ItemDefRc::Trait(def) => def,
                     _ => todo!(),
                 };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.ident == name && (use_private || def.is_pub)).then_some(item.clone())
             }
             ItemRef::Mod(_) => None,
             ItemRef::Impl(_) => None,

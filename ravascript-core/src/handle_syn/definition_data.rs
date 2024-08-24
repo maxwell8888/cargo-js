@@ -519,7 +519,7 @@ impl GlobalData {
         current_module: &[String],
         // generics: &Vec<RustTypeParam>,
         syn_type: &Type,
-    ) -> (Vec<RustTypeParam>, Vec<String>, String, usize) {
+    ) -> (Vec<RustTypeParam>, Vec<String>, String, ItemDefRc) {
         let type_path = match syn_type {
             Type::Path(type_path) => {
                 type_path
@@ -545,7 +545,7 @@ impl GlobalData {
             _ => todo!(),
         };
 
-        let (module_path, item_path, _is_scoped, index) = resolve_path(
+        let (module_path, item_path, _is_scoped, item_def) = resolve_path(
             true,
             false,
             false,
@@ -559,8 +559,8 @@ impl GlobalData {
         );
         assert!(item_path.len() == 1);
 
-        let item_def = &self.item_defs[index.unwrap()];
-        let struct_or_enum_def = match item_def {
+        // let item_def = &self.item_defs[index.unwrap()];
+        let struct_or_enum_def = match item_def.as_ref().unwrap() {
             ItemDefRc::StructEnum(def) => def,
             _ => todo!(),
         };
@@ -575,7 +575,7 @@ impl GlobalData {
                 .collect::<Vec<_>>(),
             module_path.clone(),
             item_path.first().unwrap().ident.clone(),
-            index.unwrap(),
+            item_def.unwrap(),
         )
     }
 
@@ -856,7 +856,7 @@ pub fn resolve_path(
     // scopes: &Option<Vec<GlobalDataScope>>,
     scopes: &Vec<GlobalDataScope>,
     // (module path, item path, is scoped, index)
-) -> (Vec<String>, Vec<RustPathSegment2>, bool, Option<usize>) {
+) -> (Vec<String>, Vec<RustPathSegment2>, bool, Option<ItemDefRc>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
@@ -896,7 +896,7 @@ pub fn resolve_path(
     enum ScopedThing {
         UseMapping((String, Vec<String>)),
         Var(ScopedVar),
-        Item(usize),
+        Item(ItemDefRc),
     }
 
     #[allow(clippy::manual_map)]
@@ -915,7 +915,8 @@ pub fn resolve_path(
         } else if let Some(scoped_var) = scoped_var {
             Some(ScopedThing::Var(scoped_var.clone()))
         } else if let Some(scoped_item) = scoped_item {
-            Some(ScopedThing::Item(*scoped_item))
+            let item_def = items_defs[*scoped_item].clone();
+            Some(ScopedThing::Item(item_def))
         } else {
             None
         }
@@ -1155,29 +1156,29 @@ pub fn resolve_path(
         } else {
             &seg.ident
         };
-        let item_index = rust_prelude_crates
+        let item_def = rust_prelude_crates
             .items
             .iter()
             .find_map(|item_ref| match item_ref {
                 ItemRef::StructOrEnum(index) => {
                     let item = &items_defs[*index];
-                    (item.ident() == new_ident).then_some(*index)
+                    (item.ident() == new_ident).then_some(item.clone())
                 }
                 ItemRef::Fn(index) => {
                     let item = &items_defs[*index];
-                    (item.ident() == new_ident).then_some(*index)
+                    (item.ident() == new_ident).then_some(item.clone())
                 }
                 ItemRef::Const(index) => {
                     let item = &items_defs[*index];
-                    (item.ident() == new_ident).then_some(*index)
+                    (item.ident() == new_ident).then_some(item.clone())
                 }
                 ItemRef::Trait(index) => {
                     let item = &items_defs[*index];
-                    (item.ident() == new_ident).then_some(*index)
+                    (item.ident() == new_ident).then_some(item.clone())
                 }
                 _ => None,
             });
-        if let Some(item_index) = item_index {
+        if let Some(item_index) = item_def {
             (
                 vec![RUST_PRELUDE_MODULE_PATH.to_string()],
                 segs,

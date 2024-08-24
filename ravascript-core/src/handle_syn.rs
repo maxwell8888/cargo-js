@@ -243,7 +243,7 @@ fn parse_fn_input_or_field(
                             // TODO lookup trait in global data to get module path
                             // let (module_path, trait_definition) = global_data
                             //     .lookup_trait_definition_any_module(current_module, trait_name);
-                            let (trait_module_path, trait_item_path, trait_item_scope, item_index) =
+                            let (trait_module_path, trait_item_path, trait_item_scope, item_def) =
                                 resolve_path(
                                     true,
                                     false,
@@ -266,8 +266,8 @@ fn parse_fn_input_or_field(
                                 );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
-                            let trait_def = match global_data.item_defs[item_index.unwrap()].clone()
-                            {
+                            // let trait_def = match global_data.item_defs[item_index.unwrap()].clone()
+                            let trait_def = match item_def.unwrap() {
                                 ItemDefRc::Trait(trait_def) => trait_def,
                                 _ => todo!(),
                             };
@@ -385,7 +385,7 @@ fn parse_fn_input_or_field(
                         //         current_module,
                         //         &[struct_or_enum_name.to_string()],
                         //     );
-                        let (item_definition_module_path, item_path, _is_scoped, item_index) =
+                        let (item_definition_module_path, item_path, _is_scoped, item_def) =
                             resolve_path(
                                 true,
                                 false,
@@ -403,11 +403,11 @@ fn parse_fn_input_or_field(
                             );
                         // A Trait bound should just be a trait, no associated fn or whatever
                         assert!(item_path.len() == 1);
-                        let item_definition =
-                            match global_data.item_defs[item_index.unwrap()].clone() {
-                                ItemDefRc::StructEnum(trait_def) => trait_def,
-                                _ => todo!(),
-                            };
+                        // match global_data.item_defs[item_index.unwrap()].clone() {
+                        let item_definition = match item_def.unwrap() {
+                            ItemDefRc::StructEnum(trait_def) => trait_def,
+                            _ => todo!(),
+                        };
 
                         // Look to see if any of the item's type params have been specified (they *must* have been specified, because you can't use a type without specifiying prodviding it's type params so they must either be concrete types, or use one of the parents params)
                         let item_type_params = match &seg.arguments {

@@ -1944,9 +1944,9 @@ fn handle_expr_method_call(
             .map(|generic_arg| match generic_arg {
                 GenericArgument::Lifetime(_) => todo!(),
                 GenericArgument::Type(type_) => {
-                    let (_type_params, _module_path, _name, index) =
+                    let (_type_params, _module_path, _name, item) =
                         global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
-                    let item = &global_data.item_defs[index];
+                    // let item = &global_data.item_defs[index];
                     let item_def = match item {
                         ItemDefRc::StructEnum(item_def) => item_def.clone(),
                         _ => todo!(),
@@ -3522,7 +3522,8 @@ fn handle_expr_path_inner(
             // Enum::Variant ()
             // Enum::Variant {}
 
-            let item = &global_data.item_defs[segs_copy_index.unwrap()];
+            // let item = &global_data.item_defs[segs_copy_index.unwrap()];
+            let item = &segs_copy_index.unwrap();
             let item_def = match item {
                 ItemDefRc::StructEnum(item_def) => item_def,
                 _ => todo!(),
