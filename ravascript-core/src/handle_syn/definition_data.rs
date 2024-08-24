@@ -1140,61 +1140,40 @@ pub fn resolve_path(
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
         assert_eq!(current_mod, orig_mod);
         assert!(segs.len() == 1 || segs.len() == 2);
+        let rust_prelude_crates = crates
+            .iter()
+            .find(|rust_mod| rust_mod.module_path == [RUST_PRELUDE_MODULE_PATH])
+            .unwrap();
+
         let seg = &segs[0];
-        if seg.ident == "i32"
-            || seg.ident == "String"
-            || seg.ident == "str"
-            || seg.ident == "bool"
-            || seg.ident == "Some"
-            || seg.ident == "None"
-            || (seg.ident == "Box" && &segs[1].ident == "new")
-            || seg.ident == "FnOnce"
-            || seg.ident == "Copy"
-            || seg.ident == "Vec"
-        {
-            // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
-            // TODO properly encode "prelude_special_case" in a type rather than a String
-            // (vec!["prelude_special_case".to_string()], segs, None)
-            // dbg!(&segs);
-
-            // TODO clean up this hack
-            let new_ident = if seg.ident == "Some" || seg.ident == "None" {
-                "Option"
-            } else {
-                &seg.ident
-            };
-            let item_index = crates
-                .iter()
-                .find_map(|rust_mod| {
-                    (rust_mod.module_path == [RUST_PRELUDE_MODULE_PATH]).then_some(
-                        rust_mod
-                            .items
-                            .iter()
-                            .find_map(|item_ref| match item_ref {
-                                ItemRef::StructOrEnum(index) => {
-                                    let item = &items_defs[*index];
-                                    (item.ident() == new_ident).then_some(*index)
-                                }
-                                ItemRef::Fn(index) => {
-                                    let item = &items_defs[*index];
-                                    (item.ident() == new_ident).then_some(*index)
-                                }
-                                ItemRef::Const(index) => {
-                                    let item = &items_defs[*index];
-                                    (item.ident() == new_ident).then_some(*index)
-                                }
-                                ItemRef::Trait(index) => {
-                                    let item = &items_defs[*index];
-                                    (item.ident() == new_ident).then_some(*index)
-                                }
-                                _ => None,
-                            })
-                            .unwrap(),
-                    )
-                })
-                .unwrap();
-
-            // TODO length 1 `Some` and `None` paths should be converted to `Option::Some` and `Option::None`?
+        let new_ident = if seg.ident == "Some" || seg.ident == "None" {
+            "Option"
+        } else {
+            &seg.ident
+        };
+        let item_index = rust_prelude_crates
+            .items
+            .iter()
+            .find_map(|item_ref| match item_ref {
+                ItemRef::StructOrEnum(index) => {
+                    let item = &items_defs[*index];
+                    (item.ident() == new_ident).then_some(*index)
+                }
+                ItemRef::Fn(index) => {
+                    let item = &items_defs[*index];
+                    (item.ident() == new_ident).then_some(*index)
+                }
+                ItemRef::Const(index) => {
+                    let item = &items_defs[*index];
+                    (item.ident() == new_ident).then_some(*index)
+                }
+                ItemRef::Trait(index) => {
+                    let item = &items_defs[*index];
+                    (item.ident() == new_ident).then_some(*index)
+                }
+                _ => None,
+            });
+        if let Some(item_index) = item_index {
             (
                 vec![RUST_PRELUDE_MODULE_PATH.to_string()],
                 segs,
