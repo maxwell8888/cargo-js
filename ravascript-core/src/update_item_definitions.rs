@@ -7,7 +7,7 @@ use syn::{
 use syn::{ItemEnum, ItemImpl, ItemStruct, ItemTrait, Member};
 use tracing::debug;
 
-use crate::make_item_definitions::resolve_path;
+use crate::make_item_definitions::{resolve_path, RustMod};
 use crate::{
     duplicate_namespacing::Duplicate,
     make_item_definitions::{self},
@@ -17,7 +17,7 @@ use crate::{
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
     js_ast::Ident,
     make_item_definitions::{
-        look_for_module_in_items, ExprRef, FnInfoSyn, ImplItemExprStmtRefs, ItemDefNoTypes,
+        look_for_module_in_crates, ExprRef, FnInfoSyn, ImplItemExprStmtRefs, ItemDefNoTypes,
         StructOrEnumDefitionInfo,
     },
 };
@@ -27,7 +27,7 @@ use crate::{ItemRef, StmtsRef};
 // However, because we need to know which scoped items are in scope at any given point, we can't just iterate directly over the Vec<ItemActual>, we need to instead iterate over the ItemRef tree, looking for Items.
 // IMPORTANT However, means we need to be careful to preserve the order of the original Vec<ItemActual>. The best approach it probably to create an "empty" Vec initially, and then directly insert the updated defs at the position according to their index.
 pub fn update_item_defs(
-    item_refs: &[ItemRef],
+    crates: &[RustMod],
     item_defs_no_types: Vec<ItemDefNoTypes>,
     current_module: &[String],
     in_scope: bool,
@@ -39,17 +39,19 @@ pub fn update_item_defs(
     let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
     updated_item_defs.resize_with(item_defs_no_types.len(), || ItemDef::None);
 
-    for item_ref in item_refs {
-        update_item_defs_recurisve_individual_item(
-            item_ref,
-            item_refs,
-            &item_defs_no_types,
-            current_module,
-            &mut updated_item_defs,
-            &mut scoped_items,
-            in_scope,
-            &duplicates,
-        );
+    for rust_mod in crates {
+        for item_ref in &rust_mod.items {
+            update_item_defs_recurisve_individual_item(
+                item_ref,
+                crates,
+                &item_defs_no_types,
+                &rust_mod.module_path,
+                &mut updated_item_defs,
+                &mut scoped_items,
+                in_scope,
+                &duplicates,
+            );
+        }
     }
 
     updated_item_defs
@@ -57,7 +59,7 @@ pub fn update_item_defs(
 
 fn update_item_defs_recurisve_individual_item(
     item_ref: &ItemRef,
-    item_refs_all: &[ItemRef],
+    crates: &[RustMod],
     item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
     updated_item_defs: &mut [ItemDef],
@@ -80,7 +82,7 @@ fn update_item_defs_recurisve_individual_item(
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 scoped_items,
                 in_scope,
@@ -97,7 +99,7 @@ fn update_item_defs_recurisve_individual_item(
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 scoped_items,
                 in_scope,
@@ -118,7 +120,7 @@ fn update_item_defs_recurisve_individual_item(
 
             update_item_defs_recurisve_stmts(
                 &fn_stmts,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 current_module,
                 updated_item_defs,
@@ -135,7 +137,7 @@ fn update_item_defs_recurisve_individual_item(
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 scoped_items,
                 in_scope,
@@ -152,7 +154,7 @@ fn update_item_defs_recurisve_individual_item(
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 scoped_items,
                 in_scope,
@@ -167,7 +169,7 @@ fn update_item_defs_recurisve_individual_item(
             for item_ref in &rust_mod.items {
                 update_item_defs_recurisve_individual_item(
                     item_ref,
-                    item_refs_all,
+                    crates,
                     item_defs_no_types,
                     &rust_mod.module_path,
                     updated_item_defs,
@@ -183,7 +185,7 @@ fn update_item_defs_recurisve_individual_item(
             updated_item_defs[*index] = update_item_def(
                 item,
                 current_module,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 scoped_items,
                 in_scope,
@@ -218,7 +220,7 @@ fn update_item_defs_recurisve_individual_item(
 
                 update_item_defs_recurisve_stmts(
                     &stmts,
-                    item_refs_all,
+                    crates,
                     item_defs_no_types,
                     current_module,
                     updated_item_defs,
@@ -238,7 +240,7 @@ fn update_item_defs_recurisve_individual_item(
 
 fn update_item_defs_recurisve_stmts(
     stmt_refs: &[StmtsRef],
-    item_refs_all: &[ItemRef],
+    crates: &[RustMod],
     item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
     updated_item_defs: &mut [ItemDef],
@@ -254,7 +256,7 @@ fn update_item_defs_recurisve_stmts(
             StmtsRef::Item(item_ref) => {
                 update_item_defs_recurisve_individual_item(
                     item_ref,
-                    item_refs_all,
+                    crates,
                     item_defs_no_types,
                     current_module,
                     updated_item_defs,
@@ -266,7 +268,7 @@ fn update_item_defs_recurisve_stmts(
             StmtsRef::Expr(expr_ref, _) => {
                 update_item_defs_recurisve_individual_expr(
                     expr_ref,
-                    item_refs_all,
+                    crates,
                     item_defs_no_types,
                     current_module,
                     updated_item_defs,
@@ -282,7 +284,7 @@ fn update_item_defs_recurisve_stmts(
 
 fn update_item_defs_recurisve_individual_expr(
     expr_ref: &ExprRef,
-    item_refs_all: &[ItemRef],
+    crates: &[RustMod],
     item_defs_no_types: &[ItemDefNoTypes],
     current_module: &[String],
     updated_item_defs: &mut [ItemDef],
@@ -301,7 +303,7 @@ fn update_item_defs_recurisve_individual_expr(
         ExprRef::Block(rust_expr_block) => {
             update_item_defs_recurisve_stmts(
                 &rust_expr_block.stmts,
-                item_refs_all,
+                crates,
                 item_defs_no_types,
                 current_module,
                 updated_item_defs,
@@ -393,7 +395,7 @@ impl ItemDef {
 fn update_item_def(
     item: ItemDefNoTypes,
     module_path: &[String],
-    item_refs: &[ItemRef],
+    item_refs: &[RustMod],
     item_actual_defs_copy: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
     in_scope: bool,
@@ -1106,7 +1108,7 @@ fn parse_types_for_populate_item_definitions(
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     // global_data: &make_item_definitions::GlobalData,
-    item_refs: &[ItemRef],
+    crates: &[RustMod],
     item_defs: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
 ) -> RustType {
@@ -1137,7 +1139,7 @@ fn parse_types_for_populate_item_definitions(
                                                     input_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
-                                                    item_refs,
+                                                    crates,
                                                     item_defs,
                                                     scoped_items,
                                                 )
@@ -1150,7 +1152,7 @@ fn parse_types_for_populate_item_definitions(
                                                     return_type,
                                                     root_parent_item_definition_generics,
                                                     current_module,
-                                                    item_refs,
+                                                    crates,
                                                     item_defs,
                                                     scoped_items,
                                                 )
@@ -1193,7 +1195,7 @@ fn parse_types_for_populate_item_definitions(
                                                         arg_type_,
                                                         root_parent_item_definition_generics,
                                                         current_module,
-                                                        item_refs,
+                                                        crates,
                                                         item_defs,
                                                         scoped_items,
                                                     )
@@ -1219,7 +1221,7 @@ fn parse_types_for_populate_item_definitions(
                                     true,
                                     true,
                                     trait_bound_path,
-                                    item_refs,
+                                    crates,
                                     item_defs,
                                     current_module,
                                     current_module,
@@ -1306,7 +1308,7 @@ fn parse_types_for_populate_item_definitions(
                                         type_,
                                         root_parent_item_definition_generics,
                                         current_module,
-                                        item_refs,
+                                        crates,
                                         item_defs,
                                         scoped_items,
                                     )
@@ -1337,7 +1339,7 @@ fn parse_types_for_populate_item_definitions(
                                         type_,
                                         root_parent_item_definition_generics,
                                         current_module,
-                                        item_refs,
+                                        crates,
                                         item_defs,
                                         scoped_items,
                                     )
@@ -1383,7 +1385,7 @@ fn parse_types_for_populate_item_definitions(
                                                 arg_type_,
                                                 root_parent_item_definition_generics,
                                                 current_module,
-                                                item_refs,
+                                                crates,
                                                 item_defs,
                                                 scoped_items,
                                             ))
@@ -1412,7 +1414,7 @@ fn parse_types_for_populate_item_definitions(
                             true,
                             true,
                             rust_path,
-                            item_refs,
+                            crates,
                             item_defs,
                             current_module,
                             current_module,
@@ -1486,7 +1488,7 @@ fn parse_types_for_populate_item_definitions(
                 &type_reference.elem,
                 root_parent_item_definition_generics,
                 current_module,
-                item_refs,
+                crates,
                 item_defs,
                 scoped_items,
             );

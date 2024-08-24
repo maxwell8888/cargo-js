@@ -1235,7 +1235,7 @@ pub fn resolve_path(
     _look_for_scoped_items: bool,
     use_private_items: bool,
     mut segs: Vec<RustPathSegment>,
-    item_refs: &[ItemRef],
+    crates: &[RustMod],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
     items_defs: &[ItemDefNoTypes],
@@ -1252,7 +1252,13 @@ pub fn resolve_path(
     // assert!(current_module == &module.path);
 
     // dbg!(&item_refs);
-    let module = look_for_module_in_items(item_refs, items_defs, current_mod).unwrap();
+    // dbg!(&current_mod);
+    // dbg!(crates
+    //     .iter()
+    //     .map(|rust_mod| &rust_mod.module_path)
+    //     .collect::<Vec<_>>());
+    // dbg!(&segs);
+    let module = look_for_module_in_crates(crates, items_defs, current_mod).unwrap();
 
     // dbg!(&segs);
     // dbg!(&current_mod);
@@ -1279,6 +1285,7 @@ pub fn resolve_path(
     );
 
     // TODO only look through transparent scopes
+    // dbg!(&module.items);
     let matched_use_mapping = module.items.iter().find_map(|item| match item {
         ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
@@ -1364,7 +1371,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            item_refs,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -1378,7 +1385,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            item_refs,
+            crates,
             items_defs,
             current_mod,
             orig_mod,
@@ -1393,7 +1400,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            item_refs,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -1410,7 +1417,7 @@ pub fn resolve_path(
             false,
             false,
             segs,
-            item_refs,
+            crates,
             items_defs,
             &submod_path,
             orig_mod,
@@ -1457,7 +1464,7 @@ pub fn resolve_path(
             false,
             true,
             use_segs,
-            item_refs,
+            crates,
             items_defs,
             // &new_mod,
             current_mod,
@@ -1479,7 +1486,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            item_refs,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -1512,6 +1519,7 @@ pub fn resolve_path(
             || seg.ident == "FnOnce"
             || seg.ident == "Copy"
             || seg.ident == "Vec"
+            || seg.ident == "Option"
         {
             // TODO shouldn't need this
             fn prelude_item_def_name_to_js(item_def_name: &str) -> &str {
@@ -1523,55 +1531,52 @@ pub fn resolve_path(
             let seg_new = prelude_item_def_name_to_js(&seg.ident);
             // TODO IMPORTANT we aren't meant to be handling these in get_path, they should be handled in the item def passes, not the JS parsing. add a panic!() here. NO not true, we will have i32, String, etc in closure defs, type def for var assignments, etc.
             // TODO properly encode "prelude_special_case" in a type rather than a String
-            let item_index = item_refs
+            let item_index = crates
                 .iter()
-                .find_map(|item_ref| match item_ref {
-                    ItemRef::Mod(rust_mod) => {
-                        if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
-                            rust_mod.items.iter().find_map(|item_ref| match item_ref {
-                                ItemRef::StructOrEnum(index) => {
-                                    let item = &items_defs[*index];
-                                    match item {
-                                        ItemDefNoTypes::StructEnum(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
+                .find_map(|rust_mod| {
+                    if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
+                        rust_mod.items.iter().find_map(|item_ref| match item_ref {
+                            ItemRef::StructOrEnum(index) => {
+                                let item = &items_defs[*index];
+                                match item {
+                                    ItemDefNoTypes::StructEnum(def) => {
+                                        (def.ident == seg_new).then_some(*index)
                                     }
+                                    _ => todo!(),
                                 }
-                                ItemRef::Fn(index) => {
-                                    let item = &items_defs[*index];
-                                    match item {
-                                        ItemDefNoTypes::Fn(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
+                            }
+                            ItemRef::Fn(index) => {
+                                let item = &items_defs[*index];
+                                match item {
+                                    ItemDefNoTypes::Fn(def) => {
+                                        (def.ident == seg_new).then_some(*index)
                                     }
+                                    _ => todo!(),
                                 }
-                                ItemRef::Const(index) => {
-                                    let item = &items_defs[*index];
-                                    match item {
-                                        ItemDefNoTypes::Const(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
+                            }
+                            ItemRef::Const(index) => {
+                                let item = &items_defs[*index];
+                                match item {
+                                    ItemDefNoTypes::Const(def) => {
+                                        (def.ident == seg_new).then_some(*index)
                                     }
+                                    _ => todo!(),
                                 }
-                                ItemRef::Trait(index) => {
-                                    let item = &items_defs[*index];
-                                    match item {
-                                        ItemDefNoTypes::Trait(def) => {
-                                            (def.ident == seg_new).then_some(*index)
-                                        }
-                                        _ => todo!(),
+                            }
+                            ItemRef::Trait(index) => {
+                                let item = &items_defs[*index];
+                                match item {
+                                    ItemDefNoTypes::Trait(def) => {
+                                        (def.ident == seg_new).then_some(*index)
                                     }
+                                    _ => todo!(),
                                 }
-                                _ => None,
-                            })
-                        } else {
-                            None
-                        }
+                            }
+                            _ => None,
+                        })
+                    } else {
+                        None
                     }
-                    _ => None,
                 })
                 .unwrap();
             (
@@ -1589,6 +1594,64 @@ pub fn resolve_path(
             panic!()
         }
     }
+}
+
+pub fn look_for_module_in_crates(
+    crates: &[RustMod],
+    item_defs: &[ItemDefNoTypes],
+    module_path: &[String],
+) -> Option<RustMod> {
+    for rust_mod in crates {
+        if rust_mod.module_path == module_path {
+            return Some(rust_mod.clone());
+        }
+        for item in &rust_mod.items {
+            match item {
+                ItemRef::Fn(index) => {
+                    let item = &item_defs[*index];
+                    let fn_info = match item {
+                        ItemDefNoTypes::Fn(fn_info) => fn_info,
+                        _ => todo!(),
+                    };
+
+                    let fn_body_items = fn_info
+                        .stmts
+                        .clone()
+                        .into_iter()
+                        .filter_map(|stmt| {
+                            match stmt {
+                                StmtsRef::Item(item) => Some(item),
+                                // TODO
+                                // StmtsV1::Expr(_, _) => todo!(),
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let found_rust_mod =
+                        look_for_module_in_items(&fn_body_items, item_defs, module_path);
+                    if found_rust_mod.is_some() {
+                        return found_rust_mod;
+                    }
+                }
+                ItemRef::Mod(rust_mod) => {
+                    if rust_mod.module_path == module_path {
+                        return Some(rust_mod.clone());
+                    }
+                    let found_rust_mod =
+                        look_for_module_in_items(&rust_mod.items, item_defs, module_path);
+                    if found_rust_mod.is_some() {
+                        return found_rust_mod;
+                    }
+                }
+                // TODO
+                // ItemV1::Impl(_) => {}
+                // ItemV1::Use(_) => {}
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 pub fn look_for_module_in_items(

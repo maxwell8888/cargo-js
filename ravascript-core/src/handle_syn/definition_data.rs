@@ -327,7 +327,7 @@ pub struct GlobalData {
     // NOTE use separate Vecs for vars and fns because not all scopes (for vars) eg blocks are fns
     // NOTE don't want to pop fn after we finish parsing it because it will be called later in the same scope in which it was defined (but also might be called inside itself - recursively), so only want to pop it once it's parent scope completes, so may as well share scoping with vars
     // NOTE need to store vars and fns in the same Vec to ensure we know the precendence in cases like `fn foo() {}; fn bar() {}; let foo = bar;` NO - functions are hoisted so we always want to check if a var with that ident exists first *then* look for a fn, first in the scopes, then at the module level
-    pub item_refs: Vec<ItemRef>,
+    pub crates: Vec<RustMod>,
     // pub item_refs_to_render: Vec<ItemRef>,
     pub item_defs: Vec<ItemDefRc>,
     pub scopes: Vec<GlobalDataScope>,
@@ -372,7 +372,7 @@ pub struct GlobalData {
 impl GlobalData {
     pub fn new(
         crate_path: Option<PathBuf>,
-        item_refs: Vec<ItemRef>,
+        crates: Vec<RustMod>,
         item_defs: Vec<ItemDefRc>,
     ) -> GlobalData {
         // let option_def = ItemDefinition {
@@ -475,7 +475,7 @@ impl GlobalData {
 
         GlobalData {
             _crate_path: crate_path,
-            item_refs,
+            crates,
             item_defs,
             // init with an empty scope to ensure `scopes.last()` always returns something TODO improve this
             scopes: vec![GlobalDataScope {
@@ -551,7 +551,7 @@ impl GlobalData {
             false,
             true,
             type_path,
-            &self.item_refs,
+            &self.crates,
             &self.item_defs,
             current_module,
             current_module,
@@ -598,23 +598,38 @@ impl GlobalData {
             })
             .unwrap()
     }
+
+    // TODO IMPORTANT what if different crates have duplicate module paths??? We are assuming here that module_paths are unique across all crates.
     pub fn get_module(&self, module_path: &[String]) -> &RustMod {
-        fn get_module_from_refs<'a>(
-            item_refs: &'a [ItemRef],
-            module_path: &[String],
-        ) -> Option<&'a RustMod> {
-            item_refs.iter().find_map(|item_ref| match item_ref {
+        fn get_module_from_refs<'a, I>(item_refs: I, module_path: &[String]) -> Option<&'a RustMod>
+        where
+            I: IntoIterator<Item = &'a ItemRef>,
+        {
+            item_refs.into_iter().find_map(|item_ref| match item_ref {
                 ItemRef::Mod(rust_mod) => {
                     if rust_mod.module_path == module_path {
                         Some(rust_mod)
                     } else {
-                        get_module_from_refs(&rust_mod.items, module_path)
+                        let item_refs = rust_mod.items.iter();
+                        get_module_from_refs(item_refs, module_path)
                     }
                 }
                 _ => None,
             })
         }
-        get_module_from_refs(&self.item_refs, module_path).unwrap()
+        // dbg!(&module_path);
+        // dbg!(self
+        //     .crates
+        //     .iter()
+        //     .map(|rust_mod| &rust_mod.module_path)
+        //     .collect::<Vec<_>>());
+        self.crates
+            .iter()
+            .find(|rust_mod| rust_mod.module_path == module_path)
+            .unwrap_or_else(|| {
+                let item_refs = self.crates.iter().flat_map(|rust_mod| &rust_mod.items);
+                get_module_from_refs(item_refs, module_path).unwrap()
+            })
     }
 
     pub fn is_web_prelude(&self, ident: &str) -> bool {
@@ -701,6 +716,63 @@ impl GlobalData {
     }
 }
 
+fn look_for_module_in_crates(
+    crates: &[RustMod],
+    item_defs: &[ItemDefRc],
+    module_path: &[String],
+) -> Option<RustMod> {
+    for rust_mod in crates {
+        if rust_mod.module_path == module_path {
+            return Some(rust_mod.clone());
+        }
+        for item in &rust_mod.items {
+            match item {
+                ItemRef::Fn(index) => {
+                    let item = &item_defs[*index];
+                    let fn_info = match item {
+                        ItemDefRc::Fn(fn_info) => fn_info,
+                        _ => todo!(),
+                    };
+
+                    let fn_body_items = fn_info
+                        .stmts
+                        .clone()
+                        .into_iter()
+                        .filter_map(|stmt| {
+                            match stmt {
+                                StmtsRef::Item(item) => Some(item),
+                                // TODO
+                                // StmtsV1::Expr(_, _) => todo!(),
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let found_rust_mod =
+                        look_for_module_in_items(&fn_body_items, item_defs, module_path);
+                    if found_rust_mod.is_some() {
+                        return found_rust_mod;
+                    }
+                }
+                ItemRef::Mod(rust_mod) => {
+                    if rust_mod.module_path == module_path {
+                        return Some(rust_mod.clone());
+                    }
+                    let found_rust_mod =
+                        look_for_module_in_items(&rust_mod.items, item_defs, module_path);
+                    if found_rust_mod.is_some() {
+                        return found_rust_mod;
+                    }
+                }
+                // TODO
+                // ItemV1::Impl(_) => {}
+                // ItemV1::Use(_) => {}
+                _ => {}
+            }
+        }
+    }
+    None
+}
 fn look_for_module_in_items(
     items: &[ItemRef],
     item_defs: &[ItemDefRc],
@@ -772,7 +844,8 @@ pub fn resolve_path(
     use_private_items: bool,
     mut segs: Vec<RustPathSegment2>,
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
-    module_items: &[ItemRef],
+    // module_items: &[ItemRef],
+    crates: &[RustMod],
     // TODO replace GlobalData with `.modules` and `.scopes` to making setting up test cases easier
     // global_data: &GlobalData,
     items_defs: &[ItemDefRc],
@@ -788,7 +861,12 @@ pub fn resolve_path(
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
     // assert!(current_module == &module.path);
 
-    let module = look_for_module_in_items(module_items, items_defs, current_mod).unwrap();
+    // dbg!(current_mod);
+    // dbg!(crates
+    //     .iter()
+    //     .map(|rust_mod| &rust_mod.module_path)
+    //     .collect::<Vec<_>>());
+    let module = look_for_module_in_crates(crates, items_defs, current_mod).unwrap();
 
     let is_parent_or_orig_module = if orig_mod.len() >= current_mod.len() {
         current_mod
@@ -915,7 +993,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -931,7 +1009,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            crates,
             items_defs,
             current_mod,
             orig_mod,
@@ -948,7 +1026,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -967,7 +1045,7 @@ pub fn resolve_path(
             false,
             false,
             segs,
-            module_items,
+            crates,
             items_defs,
             &submod_path,
             orig_mod,
@@ -1016,7 +1094,7 @@ pub fn resolve_path(
             false,
             true,
             use_segs,
-            module_items,
+            crates,
             items_defs,
             // &new_mod,
             current_mod,
@@ -1040,7 +1118,7 @@ pub fn resolve_path(
             false,
             true,
             segs,
-            module_items,
+            crates,
             items_defs,
             &current_module,
             orig_mod,
@@ -1085,36 +1163,34 @@ pub fn resolve_path(
             } else {
                 &seg.ident
             };
-            let item_index = module_items
+            let item_index = crates
                 .iter()
-                .find_map(|item_ref| match item_ref {
-                    ItemRef::Mod(rust_mod) => (rust_mod.module_path == [PRELUDE_MODULE_PATH])
-                        .then_some(
-                            rust_mod
-                                .items
-                                .iter()
-                                .find_map(|item_ref| match item_ref {
-                                    ItemRef::StructOrEnum(index) => {
-                                        let item = &items_defs[*index];
-                                        (item.ident() == new_ident).then_some(*index)
-                                    }
-                                    ItemRef::Fn(index) => {
-                                        let item = &items_defs[*index];
-                                        (item.ident() == new_ident).then_some(*index)
-                                    }
-                                    ItemRef::Const(index) => {
-                                        let item = &items_defs[*index];
-                                        (item.ident() == new_ident).then_some(*index)
-                                    }
-                                    ItemRef::Trait(index) => {
-                                        let item = &items_defs[*index];
-                                        (item.ident() == new_ident).then_some(*index)
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap(),
-                        ),
-                    _ => None,
+                .find_map(|rust_mod| {
+                    (rust_mod.module_path == [PRELUDE_MODULE_PATH]).then_some(
+                        rust_mod
+                            .items
+                            .iter()
+                            .find_map(|item_ref| match item_ref {
+                                ItemRef::StructOrEnum(index) => {
+                                    let item = &items_defs[*index];
+                                    (item.ident() == new_ident).then_some(*index)
+                                }
+                                ItemRef::Fn(index) => {
+                                    let item = &items_defs[*index];
+                                    (item.ident() == new_ident).then_some(*index)
+                                }
+                                ItemRef::Const(index) => {
+                                    let item = &items_defs[*index];
+                                    (item.ident() == new_ident).then_some(*index)
+                                }
+                                ItemRef::Trait(index) => {
+                                    let item = &items_defs[*index];
+                                    (item.ident() == new_ident).then_some(*index)
+                                }
+                                _ => None,
+                            })
+                            .unwrap(),
+                    )
                 })
                 .unwrap();
 

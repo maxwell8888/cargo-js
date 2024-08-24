@@ -3,7 +3,7 @@ use std::rc::Rc;
 use tracing::debug_span;
 
 use crate::{
-    make_item_definitions::{ItemRef, StmtsRef},
+    make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{ImplBlockDef, ItemDef, RustType, StructEnumDef},
     PRELUDE_MODULE_PATH,
 };
@@ -130,7 +130,7 @@ fn extract_impl_blocks(
 
 /// Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
 pub fn populate_item_def_impl_blocks(
-    item_refs: &[ItemRef],
+    crates: &[RustMod],
     item_defs: &mut [ItemDef],
     // impl_blocks: &[(usize, RustImplBlockSimple)],
 ) {
@@ -139,8 +139,17 @@ pub fn populate_item_def_impl_blocks(
     let span = debug_span!("update_classes");
     let _guard = span.enter();
 
+    let item_refs = crates
+        .iter()
+        .flat_map(|rust_mod| rust_mod.items.clone())
+        .collect::<Vec<_>>();
     let mut impl_blocks = Vec::new();
-    extract_impl_blocks(item_refs, item_defs, &mut impl_blocks);
+    extract_impl_blocks(&item_refs, item_defs, &mut impl_blocks);
+
+    // dbg!(impl_blocks
+    //     .iter()
+    //     .map(|impl_block| &impl_block.1.trait_)
+    //     .collect::<Vec<_>>());
     // dbg!(impl_blocks
     //     .iter()
     //     .map(|(index, block)| (index, &block.syn.self_ty))
@@ -149,7 +158,14 @@ pub fn populate_item_def_impl_blocks(
     // Recursively update all structs/enums
 
     // TODO assuming first recursion should be finding only modules so can just past empty module name to start
-    update_all_structs_enums(item_refs, item_defs, vec![], &impl_blocks);
+    for rust_mod in crates {
+        update_all_structs_enums(
+            &rust_mod.items,
+            item_defs,
+            rust_mod.module_path.clone(),
+            &impl_blocks,
+        );
+    }
 
     // let prelude_module = global_data
     //     .modules

@@ -70,6 +70,10 @@ pub fn process_items(
 ) -> Vec<JsModule> {
     let mut item_defs = Vec::new();
 
+    // Should we have a seprate type for crates, or just use RustMod?
+    // Need a way to specify with dep crates should be inlined in the output or writen to a separate file and imported
+    // Be clear that whilst we support transpiling standalone blocks and files, they are simply wrapped up in a main.rs/lib.rs and treated the same way as a crate, and the only dep aloud is web-prelude.
+
     // TODO need borrowed items for inline `mod {}` and owned items for `mod foo` where we read from a file
 
     // gets names of module level items, creates `ModuleData` for each sub module, and adds `use` data to module's `.use_mapping`
@@ -79,6 +83,11 @@ pub fn process_items(
         &mut vec!["crate".to_string()],
         &mut item_defs,
     );
+    let mut crate_mod = RustMod {
+        pub_: true,
+        items: crate_item_refs,
+        module_path: vec!["crate".to_string()],
+    };
 
     // TODO needs to be able to distinguish between `web_prelude` which is being using as a third party crate and something that has been defined in the code, ie I think any time we find a `web_prelude` we need to check if there is any user defined item or var with the same name in scope
     // TODO make this robust against user modules named "web_prelude" - we need to resolve the path/use_mapping to the crate. The web_prelude crate (or rustscript::web_prelude or whatever we end up using) is unique because crate names can't be shadowed (NOT TRUE - only on crates.io. It is possible for users to have a local crate named web_prelude or be using an alternative it crates.io?? But surely we can know this from the Cargo.toml because the dep table with have a path, or an alternative repository will be specified??).
@@ -88,7 +97,7 @@ pub fn process_items(
         manifest.dependencies.contains_key("web-prelude")
     } else {
         // In blocks (ie no crate_path) we still want to be able to use web-prelude so we simply check for any use statement
-        crate_item_refs.iter().any(|item_ref| match item_ref {
+        crate_mod.items.iter().any(|item_ref| match item_ref {
             ItemRef::Use(rust_use) => rust_use
                 .use_mapping
                 .iter()
@@ -96,13 +105,11 @@ pub fn process_items(
             _ => false,
         })
     };
+
     // eprintln!("{manifest:#?}");
 
-    let mut crate_item_refs = vec![ItemRef::Mod(RustMod {
-        pub_: true,
-        items: crate_item_refs,
-        module_path: vec!["crate".to_string()],
-    })];
+    // let mut crate_item_refs = vec![ItemRef::Mod()];
+    let mut crates = vec![crate_mod];
 
     // TODO web prelude should probably be a cargo-js/ravascript module, not an entire crate? If people are going to have to add ravascript as a dependency as well as install the CLI then yes, otherwise if they have no dependency to add other than the web prelude, may as well make it a specific crate?
     // Now that with have extracted data for the main.rs/lib.rs, we do the same for third party crates.
@@ -141,13 +148,13 @@ pub fn process_items(
             &mut item_defs,
         );
 
-        crate_item_refs.insert(
+        crates.insert(
             0,
-            ItemRef::Mod(RustMod {
+            RustMod {
                 pub_: true,
                 items: web_prelude_items,
                 module_path: vec!["web_prelude".to_string()],
-            }),
+            },
         );
     };
 
@@ -182,13 +189,13 @@ pub fn process_items(
     }));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
-    crate_item_refs.insert(
+    crates.insert(
         0,
-        ItemRef::Mod(RustMod {
+        RustMod {
             pub_: true,
             items: rust_prelude_items,
             module_path: vec![PRELUDE_MODULE_PATH.to_string()],
-        }),
+        },
     );
 
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
@@ -212,14 +219,15 @@ pub fn process_items(
     // let mut actual_modules = make_item_definitions(modules);
 
     // find duplicates
-    let duplicates = namespace_duplicates(&crate_item_refs, &item_defs);
+    // Given we are storing crates as RustMod, rather than just treating everything as just a bag of `ItemRef`s we need to be concious about how we are doing duplication, etc.
+    let duplicates = namespace_duplicates(&crates, &item_defs);
 
     // populates `global_data.impl_blocks_simpl` and defs that use types like a structs fields in it's ItemDef, fn arguments, etc
     // TODO re updating item defs here because we need to be able to lookup other types used in item defs which might appear later: if we update extract_data to gather the location of items, rather than just their idents, we could use that data and do it all in populate_item_definitions rather than needing to do some here... although that does mean we would need to start tracking the scope in `extract_data` which we currently don't need to so that seems suboptimal
     // let (mut new_modules, impl_blocks) = update_item_definitions(actual_modules, duplicates);
 
     let mut item_defs = update_item_defs(
-        &crate_item_refs,
+        &crates,
         item_defs,
         &["crate".to_string()],
         false,
@@ -233,7 +241,7 @@ pub fn process_items(
     // TODO need to also look through the scoped `RustImplBlockSimple` and populate either scoped *or* module level `item_def.impl_blocks`s with `ItemDefintionImpls`s
     // Populates `item_def.impl_blocks: Vec<String>` with ids of impl blocks
     // TODO this could be incorporated into update_item_definitions. This would be more efficient, but arguably it makes the code easier to understand if we separate out doing different things in different passes. If the update_item_definitions code is sufficiently cleaned up then it shouldn't be a problem also incorporating this. Would need data about impl block traits and targets, so would need to start doing more processing of the ItemImpl in make_item_definitions so we can store more info in ItemActual::Impl.
-    populate_item_def_impl_blocks(&crate_item_refs, &mut item_defs);
+    populate_item_def_impl_blocks(&crates, &mut item_defs);
 
     // It makes sense to add impl block items/methods to items/classes at this point since methods and classes are completely static (definitions) and not impacted by runtime info like the instances of the items and their resolved type params, rather than doing it later where we are working with `JsStmt`s and have lost the info about which item it is (ie we no longer have the module path of the item, just the duplicated JS name). But the most important reason is that we need to be able to add methods to module level items/class when we encounter a scoped impl, and `JsClass`s might not exist for all the items/classes at that point.
     // This does mean we need a way of storing info about methods on the item definitions, that is then used for creating the JsClass along with methods... but if we are updating the item definitions during `js_stmts_from_syn_items` then the methods specified on an item definition when the item is parsed to a class might not yet contain the total final number of methods once all the scoped impls have been parsed!!!! Just have to split this into 2 separate passes? But this means remembering the location of scoped items, by either creating a whole new AST which contains both syn and item definitions, which seems overkill, or finding a way to assign a unique id to scoped items eg using the number of the scope.
@@ -268,28 +276,31 @@ pub fn process_items(
             ItemDef::None => todo!(),
         })
         .collect();
-    let mut global_data = GlobalData::new(crate_path, crate_item_refs, item_defs);
+    let mut global_data = GlobalData::new(crate_path, crates.clone(), item_defs);
     // global_data.modules = new_modules;
     // global_data.impl_blocks_simpl = impl_blocks;
 
-    let item_refs = global_data.item_refs.clone();
-    // This is intentionally only extracting the crate and prelude modules, for now
-    let top_level_modules = item_refs
-        .iter()
-        .filter_map(|item_ref| match item_ref {
-            ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
-                && rust_mod.module_path != [PRELUDE_MODULE_PATH])
-            .then_some(rust_mod),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    // let item_refs = global_data.item_refs.clone();
+    // // This is intentionally only extracting the crate and prelude modules, for now
+    // let top_level_modules = item_refs
+    //     .iter()
+    //     .filter_map(|item_ref| match item_ref {
+    //         ItemRef::Mod(rust_mod) => (rust_mod.module_path != ["web_prelude"]
+    //             && rust_mod.module_path != [PRELUDE_MODULE_PATH])
+    //         .then_some(rust_mod),
+    //         _ => None,
+    //     })
+    //     .collect::<Vec<_>>();
     // global_data.item_refs_to_render = modules;
 
     // We need/want to keep modules in tree for syn parsing to make it easy to lookup module submodules etc. However, we also want flattened modules to make it easy to iterate over them and render distinct modules
 
     // let mut transpiled_modules = Vec::new();
 
-    for rust_mod in top_level_modules {
+    let excluding_prelude_crates = crates.iter().filter(|rust_mod| {
+        rust_mod.module_path != ["web_prelude"] && rust_mod.module_path != [PRELUDE_MODULE_PATH]
+    });
+    for rust_mod in excluding_prelude_crates {
         global_data.scopes.clear();
 
         let (mut stmts, mut submodules) =

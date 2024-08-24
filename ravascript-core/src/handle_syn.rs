@@ -258,7 +258,7 @@ fn parse_fn_input_or_field(
                                             turbofish: Vec::new(),
                                         })
                                         .collect::<Vec<_>>(),
-                                    &global_data.item_refs,
+                                    &global_data.crates,
                                     &global_data.item_defs,
                                     current_module,
                                     current_module,
@@ -395,7 +395,7 @@ fn parse_fn_input_or_field(
                                     ident: struct_or_enum_name.to_string(),
                                     turbofish: Vec::new(),
                                 }],
-                                &global_data.item_refs,
+                                &global_data.crates,
                                 &global_data.item_defs,
                                 current_module,
                                 current_module,

@@ -2466,7 +2466,6 @@ fn get_receiver_params_and_method_impl_item(
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
 
             let i32_def = global_data.get_prelude_item_def("i32");
-
             (
                 Vec::new(),
                 global_data
@@ -3328,7 +3327,7 @@ fn handle_expr_path_inner(
             true,
             true,
             segs_copy,
-            &global_data.item_refs,
+            &global_data.crates,
             &global_data.item_defs,
             current_module,
             current_module,

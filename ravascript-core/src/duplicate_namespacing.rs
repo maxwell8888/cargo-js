@@ -8,7 +8,7 @@ pub struct Duplicate {
     pub original_module_path: Vec<String>,
 }
 
-pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemDefNoTypes]) -> Vec<Duplicate> {
+pub fn namespace_duplicates(crates: &[RustMod], item_defs: &[ItemDefNoTypes]) -> Vec<Duplicate> {
     // TODO account for local functions which shadow these names
     // (name space, module path (which gets popped), name, original module path)
 
@@ -40,13 +40,7 @@ pub fn namespace_duplicates(item_refs: &[ItemRef], item_defs: &[ItemDefNoTypes])
         }
     }
 
-    let rust_mods = item_refs
-        .iter()
-        .filter_map(|item_ref| match item_ref {
-            ItemRef::Mod(rust_mod) => Some(rust_mod),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let rust_mods = crates.iter().collect::<Vec<_>>();
 
     // Simply gets module path and name of all module level (non scoped) items
     let mut names_to_dedup = Vec::new();
