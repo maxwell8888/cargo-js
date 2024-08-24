@@ -11,7 +11,7 @@ use crate::{
         FnDef, ItemDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTypeParam, RustTypeParamValue, StructEnumDef, TraitDef,
     },
-    PRELUDE_MODULE_PATH,
+    RUST_PRELUDE_MODULE_PATH,
 };
 
 // use super::handle_syn_item::JsImplItem;
@@ -580,7 +580,7 @@ impl GlobalData {
     }
 
     pub fn get_prelude_item_def(&self, name: &str) -> Rc<StructEnumDef> {
-        let prelude_module = self.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
+        let prelude_module = self.get_module(&[RUST_PRELUDE_MODULE_PATH.to_string()]);
         prelude_module
             .items
             .iter()
@@ -1166,7 +1166,7 @@ pub fn resolve_path(
             let item_index = crates
                 .iter()
                 .find_map(|rust_mod| {
-                    (rust_mod.module_path == [PRELUDE_MODULE_PATH]).then_some(
+                    (rust_mod.module_path == [RUST_PRELUDE_MODULE_PATH]).then_some(
                         rust_mod
                             .items
                             .iter()
@@ -1196,7 +1196,7 @@ pub fn resolve_path(
 
             // TODO length 1 `Some` and `None` paths should be converted to `Option::Some` and `Option::None`?
             (
-                vec![PRELUDE_MODULE_PATH.to_string()],
+                vec![RUST_PRELUDE_MODULE_PATH.to_string()],
                 segs,
                 false,
                 Some(item_index),

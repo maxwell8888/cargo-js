@@ -30,7 +30,7 @@ use crate::{
         EnumVariantInputsInfo, FnDef, ItemDef, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs,
         RustTypeParam, RustTypeParamValue, StructEnumDef, StructEnumUniqueInfo2, StructFieldInfo,
     },
-    RustType, PRELUDE_MODULE_PATH,
+    RustType, RUST_PRELUDE_MODULE_PATH,
 };
 
 fn handle_expr_assign(
@@ -3360,7 +3360,7 @@ fn handle_expr_path_inner(
 
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
     let (partial_rust_type, mut js_segs_item_path) =
-        if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+        if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] {
             // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
             if segs_copy_is_scoped {
                 // Look for var
@@ -3399,7 +3399,7 @@ fn handle_expr_path_inner(
                     ),
                     ["Some"] => {
                         // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
-                        assert_eq!(segs_copy_module_path, [PRELUDE_MODULE_PATH]);
+                        assert_eq!(segs_copy_module_path, [RUST_PRELUDE_MODULE_PATH]);
                         (
                             PartialRustType::EnumVariantIdent(
                                 // TODO handle turbofish
@@ -3737,7 +3737,7 @@ fn handle_expr_path_inner(
     //     }
     // };
     // dbg!(&js_segs_path);
-    let final_expr = if segs_copy_module_path == [PRELUDE_MODULE_PATH] {
+    let final_expr = if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] {
         JsExpr::Null
     } else {
         // match (

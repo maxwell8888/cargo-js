@@ -33,7 +33,7 @@ use make_item_definitions::{make_item_defs, ItemDefNoTypes, ItemRef, RustMod, St
 mod update_item_definitions;
 use update_item_definitions::{update_item_defs, ItemDef, ItemDefRc, RustType};
 
-const PRELUDE_MODULE_PATH: &str = "prelude_special_case";
+const RUST_PRELUDE_MODULE_PATH: &str = "prelude_special_case";
 
 // TODO need to handle expressions which return `()`. Probably use `undefined` for `()` since that is what eg console.log();, var x = 5;, etc returns;
 // TODO preserve new lines so generated js is more readable
@@ -167,7 +167,7 @@ pub fn process_items(
         prelude_items,
         // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
         &None,
-        &mut vec![PRELUDE_MODULE_PATH.to_string()],
+        &mut vec![RUST_PRELUDE_MODULE_PATH.to_string()],
         &mut item_defs,
     );
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
@@ -194,7 +194,7 @@ pub fn process_items(
         RustMod {
             pub_: true,
             items: rust_prelude_items,
-            module_path: vec![PRELUDE_MODULE_PATH.to_string()],
+            module_path: vec![RUST_PRELUDE_MODULE_PATH.to_string()],
         },
     );
 
@@ -298,7 +298,7 @@ pub fn process_items(
     // let mut transpiled_modules = Vec::new();
 
     let excluding_prelude_crates = crates.iter().filter(|rust_mod| {
-        rust_mod.module_path != ["web_prelude"] && rust_mod.module_path != [PRELUDE_MODULE_PATH]
+        rust_mod.module_path != ["web_prelude"] && rust_mod.module_path != [RUST_PRELUDE_MODULE_PATH]
     });
     for rust_mod in excluding_prelude_crates {
         global_data.scopes.clear();

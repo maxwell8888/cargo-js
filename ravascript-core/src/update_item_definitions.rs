@@ -11,7 +11,7 @@ use crate::make_item_definitions::{resolve_path, RustMod};
 use crate::{
     duplicate_namespacing::Duplicate,
     make_item_definitions::{self},
-    RustPathSegment, PRELUDE_MODULE_PATH,
+    RustPathSegment, RUST_PRELUDE_MODULE_PATH,
 };
 use crate::{
     handle_syn::{GlobalData, RustType2, RustTypeImplTrait2, RustTypeParam2, RustTypeParamValue2},
@@ -875,7 +875,7 @@ fn update_item_def(
                     // TODO Need to lookup item def to get generic params for RustType::StructOrEnum()? We shouldn't need to lookup the def. If the type is generic like `struct Foo<A, B> {}`, we get the type params or concrete types that are used for A and B from item_impl.self_ty and store these in RustType::StructOrEnum.
 
                     // TODO get rid of RustType::I32 etc, and just use StructOrEnum for everything
-                    if target_item_module == [PRELUDE_MODULE_PATH] {
+                    if target_item_module == [RUST_PRELUDE_MODULE_PATH] {
                         match &target_item.ident[..] {
                             "i32" => (RustType::I32, false),
                             _other => {

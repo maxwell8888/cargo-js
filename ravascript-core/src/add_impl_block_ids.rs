@@ -5,7 +5,7 @@ use tracing::debug_span;
 use crate::{
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{ImplBlockDef, ItemDef, RustType, StructEnumDef},
-    PRELUDE_MODULE_PATH,
+    RUST_PRELUDE_MODULE_PATH,
 };
 
 fn get_traits_implemented_for_item(
@@ -59,10 +59,10 @@ fn get_traits_implemented_for_item(
                                 module_path == item_module_path && name == item_name
                             }
                             RustType::I32 => {
-                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "i32"
+                                item_module_path == [RUST_PRELUDE_MODULE_PATH] && item_name == "i32"
                             }
                             RustType::Option(_) => {
-                                item_module_path == [PRELUDE_MODULE_PATH] && item_name == "Option"
+                                item_module_path == [RUST_PRELUDE_MODULE_PATH] && item_name == "Option"
                             }
                             _ => {
                                 dbg!(&item_module_path);
@@ -271,7 +271,7 @@ fn update_item_def_block_ids(
                 // }
             }
             RustType::I32 => {
-                if item_def.ident == "i32" && module_path == [PRELUDE_MODULE_PATH] {
+                if item_def.ident == "i32" && module_path == [RUST_PRELUDE_MODULE_PATH] {
                     item_def.impl_block_ids.push(*index);
                 }
             }

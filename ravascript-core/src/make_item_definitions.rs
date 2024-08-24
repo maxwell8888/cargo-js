@@ -10,7 +10,7 @@ use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signat
 use tracing::debug;
 
 use crate::update_item_definitions::ItemDefRc;
-use crate::{update_item_definitions::ItemDef, RustPathSegment, PRELUDE_MODULE_PATH};
+use crate::{update_item_definitions::ItemDef, RustPathSegment, RUST_PRELUDE_MODULE_PATH};
 
 // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
 // TODO crate_path might use hiphens instead of underscore as a word seperator, so need to ensure it is only used for file paths, and not module paths
@@ -1534,7 +1534,7 @@ pub fn resolve_path(
             let item_index = crates
                 .iter()
                 .find_map(|rust_mod| {
-                    if rust_mod.module_path == [PRELUDE_MODULE_PATH] {
+                    if rust_mod.module_path == [RUST_PRELUDE_MODULE_PATH] {
                         rust_mod.items.iter().find_map(|item_ref| match item_ref {
                             ItemRef::StructOrEnum(index) => {
                                 let item = &items_defs[*index];
@@ -1580,7 +1580,7 @@ pub fn resolve_path(
                 })
                 .unwrap();
             (
-                vec![PRELUDE_MODULE_PATH.to_string()],
+                vec![RUST_PRELUDE_MODULE_PATH.to_string()],
                 segs,
                 false,
                 Some(item_index),

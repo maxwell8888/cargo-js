@@ -20,7 +20,7 @@ use crate::{
         ItemDef, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
         RustTypeParamValue, StructEnumUniqueInfo2,
     },
-    GlobalData, RustImplItemItemJs, RustType2, PRELUDE_MODULE_PATH,
+    GlobalData, RustImplItemItemJs, RustType2, RUST_PRELUDE_MODULE_PATH,
 };
 
 // TODO remove this as it is unnecessary redirection
@@ -1082,7 +1082,7 @@ pub fn handle_item_impl(
         }
     }
 
-    let prelude_module = global_data.get_module(&[PRELUDE_MODULE_PATH.to_string()]);
+    let prelude_module = global_data.get_module(&[RUST_PRELUDE_MODULE_PATH.to_string()]);
     let mut dedup_rust_prelude_definitions = prelude_module
         .items
         .iter()
