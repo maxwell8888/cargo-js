@@ -8,6 +8,25 @@ use ravascript_macros::fn_stmts_as_str;
 use super::utils::*;
 use crate::r2j_block_with_prelude;
 
+#[tokio::test]
+async fn simple_integer_var() {
+    let actual = r2j_block_with_prelude!({
+        let num: i32 = 1;
+        assert!(num == 1);
+    });
+
+    let expected = format_js(
+        r#"
+            let num = 1;
+            console.assert(num === 1);
+        "#,
+    );
+
+    execute_js_with_assertions(&expected).await.unwrap();
+
+    assert_eq!(expected, actual);
+}
+
 #[ignore]
 #[tokio::test]
 async fn abs() {

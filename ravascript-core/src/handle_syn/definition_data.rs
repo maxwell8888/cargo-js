@@ -855,6 +855,7 @@ pub fn resolve_path(
     // TODO scopes would ideally be set to None when resovle_path is called recursively since that means the path length is > 1 which is not possible for scoped vars and items, however it is possible for a scoped use_mapping to have path length > 1.
     // scopes: &Option<Vec<GlobalDataScope>>,
     scopes: &Vec<GlobalDataScope>,
+    // (module path, item path, is scoped, index)
 ) -> (Vec<String>, Vec<RustPathSegment2>, bool, Option<usize>) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
@@ -880,6 +881,7 @@ pub fn resolve_path(
     let single_element_path = segs.len() == 1;
 
     let use_private = use_private_items || is_parent_or_orig_module;
+
     let item_defined_in_module =
         module.item_defined_in_module2(items_defs, use_private, &segs[0].ident);
 
@@ -934,6 +936,8 @@ pub fn resolve_path(
 
     // TODO can module shadow external crate names? In which case we need to look for modules first? I think we do this implicitly based on the order of the if statements below?
     // TODO actually look up external crates in Cargo.toml
+    // NOTE for external crates which are not the rust prelude and so use-stmts are needed, we can simply check if the beginning of the current segs is equal to the name of an external crate and then below we change the current_module to simply be vec![<name of that crate>].
+    // NOTE we need to handle the *rust* prelude uniquely since although we treat is as a separate crate, there of course isn't any use stmts, so we just have to look for rust prelude items as the final thing after everything else has been checked.
     let external_crate_names = ["web_prelude"];
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 

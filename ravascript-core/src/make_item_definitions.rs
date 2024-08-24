@@ -1229,6 +1229,7 @@ pub trait ModuleMethods {
 }
 
 #[allow(clippy::too_many_arguments)]
+// NOTE rather than thinking about this version of resolve_path as simply being for the make_item_defs stage, we should simply think about it as the version to use when we know we are looking for an item, not a var. What about partial items? If not then we can return the  actual item def instead of the index? No because we use it in update_item_def where the updated item def might not exist yet which is why we just want the index. If we got rid of the StructEnum module_path etc in RustType then we could at least probably get rid of the other return fields and just return the index?
 pub fn resolve_path(
     // look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
