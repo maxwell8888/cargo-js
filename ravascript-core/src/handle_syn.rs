@@ -346,7 +346,7 @@ fn parse_fn_input_or_field(
                 // For impl blocks
                 match seg_name_str {
                     // "i32" => RustType::I32,
-                    "bool" => RustType2::Bool,
+                    // "bool" => RustType2::Bool,
                     // "str" => RustType::String,
                     "Option" => {
                         let generic_type = match &seg.arguments {
@@ -489,6 +489,11 @@ fn parse_fn_input_or_field(
                                     global_data.rust_prelude_types.rust_string = true;
                                 }
                                 RustType2::String
+                            } else if item_definition.ident == "bool" {
+                                if has_mut_keyword {
+                                    global_data.rust_prelude_types.bool = true;
+                                }
+                                RustType2::Bool
                             } else if item_definition.ident == "Vec" {
                                 if has_mut_keyword {
                                     global_data.rust_prelude_types.vec = true;
