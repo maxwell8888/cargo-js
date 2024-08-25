@@ -1944,24 +1944,13 @@ fn handle_expr_method_call(
             .map(|generic_arg| match generic_arg {
                 GenericArgument::Lifetime(_) => todo!(),
                 GenericArgument::Type(type_) => {
-                    let (_type_params, _module_path, _name, index) =
-                        global_data.syn_type_to_rust_type_struct_or_enum(current_module, type_);
-                    let item = &global_data.item_defs[index];
-                    let item_def = match item {
-                        ItemDefRc::StructEnum(item_def) => item_def.clone(),
-                        _ => todo!(),
-                    };
-
-                    RustType2::StructOrEnum(
-                        item_def
-                            .generics
-                            .iter()
-                            .map(|gen| RustTypeParam2 {
-                                name: gen.clone(),
-                                type_: RustTypeParamValue2::Unresolved,
-                            })
-                            .collect::<Vec<_>>(),
-                        item_def,
+                    parse_fn_input_or_field(
+                        type_,
+                        false,
+                        // TODO include any receiver type params here
+                        &[],
+                        current_module,
+                        global_data,
                     )
                 }
                 GenericArgument::Const(_) => todo!(),

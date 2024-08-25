@@ -17,8 +17,8 @@ use crate::{
     },
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
-        ItemDef, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
-        RustTypeParamValue, StructEnumUniqueInfo2,
+        ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
+        StructEnumUniqueInfo2,
     },
     GlobalData, RustImplItemItemJs, RustType2, RUST_PRELUDE_MODULE_PATH,
 };
@@ -55,10 +55,8 @@ pub fn js_stmts_from_syn_items(
     // What happens when a method impl is outside the class's module? Could just find the original class and add it, but what if the method if using items from *it's* module? Need to replace the usual `this.someItem` with eg `super.someItem` or `subModule.someItem`. So we need to be able to find classes that appear in other modules
     // dbg!("js_stmts_from_syn_items");
     // dbg!(&global_data.scope_id);
-    let item_defs = global_data.item_defs.clone();
     let mut temp_submodules = Vec::new();
 
-    // for item in &global_data.item_refs_to_render.clone() {
     for item in module_item_refs {
         // handle_item(item, global_data, current_module, &mut js_stmts);
         match item {
@@ -67,7 +65,7 @@ pub fn js_stmts_from_syn_items(
                 js_stmts.push(js_stmt);
             }
             ItemRef::StructOrEnum(index) => {
-                let item = &item_defs[*index];
+                let item = &global_data.item_defs[*index];
                 match item {
                     ItemDefRc::StructEnum(actual) => match &actual.struct_or_enum_info {
                         StructEnumUniqueInfo2::Struct(_struct_def) => {
@@ -157,9 +155,9 @@ pub fn handle_item_fn(
         FnInfoSyn::Trait(_) => todo!(),
     };
 
-    let name = item_fn.sig.ident.to_string();
-    let span = debug_span!("handle_item_fn", name = ?name);
-    let _guard = span.enter();
+    // let name = item_fn.sig.ident.to_string();
+    // let span = debug_span!("handle_item_fn", name = ?name);
+    // let _guard = span.enter();
 
     let ignore = if let Some(thing) = item_fn.attrs.first() {
         match &thing.meta {
@@ -409,8 +407,8 @@ pub fn handle_item_enum(
         StructEnumUniqueInfo2::Enum(enum_def_info) => &enum_def_info.syn_object,
     };
 
-    let enum_name = item_enum.ident.to_string();
-    debug!(enum_name = ?enum_name, "handle_item_enum");
+    // let enum_name = item_enum.ident.to_string();
+    // debug!(enum_name = ?enum_name, "handle_item_enum");
     // dbg!(item_enum.attrs);
 
     // Keep track of structs/enums in scope so we can subsequently add impl'd methods and then look up their return types when the method is called

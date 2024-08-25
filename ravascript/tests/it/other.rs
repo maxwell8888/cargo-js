@@ -76,6 +76,33 @@ async fn it_transpiles_iter_map() {
                 let _sum = num + 2;
                 num
             })
+            .collect::<Vec<&i32>>();
+    });
+    let expected = format_js(
+        r#"
+            let data = [1, 2, 3];
+            let _data = data.map((num) => {
+                let _sum = num + 2;
+                return num;
+            });
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "Need to implement handling of inferred types"]
+#[allow(clippy::useless_vec)]
+#[tokio::test]
+async fn it_transpiles_iter_map_inferred_type() {
+    let actual = r2j_block!({
+        let data = vec![1, 2, 3];
+        let _data = data
+            .iter()
+            .map(|num: &i32| {
+                let _sum = num + 2;
+                num
+            })
             .collect::<Vec<_>>();
     });
     let expected = format_js(

@@ -186,6 +186,8 @@ fn handle_destructure_pat(
 }
 
 /// Only used when handling syn closures and locals
+/// We are also using for parsing method call turbofish now.
+///
 /// We can't use this for fns/methods *return types* because we need to actually parse the body to differentiate between self and another var with the type Self.
 /// So in all we are (*should be) using this for parsing: field types (which are kind of like self anyway?), and fn/method inputs
 /// * fn has "return_type" in the name...
@@ -199,9 +201,10 @@ fn handle_destructure_pat(
 ///
 ///
 ///
-/// TODO should be parsing these `syn::Type`s for closures and locals in update_definitions along with the item definitions
+/// TODO should be parsing these `syn::Type`s for closures and locals in update_definitions along with the item definitions??
 fn parse_fn_input_or_field(
     type_: &Type,
+    // This is only relevant for closure args and locals where we are creating vars that can be mut. For turbofish it is always false
     has_mut_keyword: bool,
     // TODO if this is for passing types used in a parent item definition, surely the parent items generics cannot have been made concrete, in which case this should be &Vec<String> instead of &Vec<RustTypeParam>?
     parent_item_definition_generics: &[RustTypeParam],
@@ -486,7 +489,19 @@ fn parse_fn_input_or_field(
                                     global_data.rust_prelude_types.rust_string = true;
                                 }
                                 RustType2::String
+                            } else if item_definition.ident == "Vec" {
+                                if has_mut_keyword {
+                                    global_data.rust_prelude_types.vec = true;
+                                }
+                                assert_eq!(item_type_params.len(), 1);
+                                let type_param = item_type_params.into_iter().next().unwrap();
+                                let rust_type = match type_param.type_ {
+                                    RustTypeParamValue2::Unresolved => todo!(),
+                                    RustTypeParamValue2::RustType(rust_type) => rust_type,
+                                };
+                                RustType2::Vec(rust_type)
                             } else {
+                                // dbg!(&item_definition);
                                 todo!()
                             }
                         } else {
