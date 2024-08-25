@@ -236,13 +236,7 @@ fn parse_fn_input_or_field(
                                 todo!();
                             }
                             // TODO handle segment arguments because we might have eg `impl GenericFooTrait<Bar>`
-                            let trait_name = trait_bound
-                                .path
-                                .segments
-                                .iter()
-                                .map(|t| t.ident.to_string())
-                                .collect::<Vec<_>>();
-                            // let poo = trait_name.into_iter().map(|fart| fart);
+
                             // TODO lookup trait in global data to get module path
                             // let (module_path, trait_definition) = global_data
                             //     .lookup_trait_definition_any_module(current_module, trait_name);
@@ -344,175 +338,130 @@ fn parse_fn_input_or_field(
                 // Can always be inferred from the arguments used to construct the struct?
 
                 // For impl blocks
-                match seg_name_str {
-                    // "i32" => RustType::I32,
-                    // "bool" => RustType2::Bool,
-                    // "str" => RustType::String,
-                    "Option" => {
-                        let generic_type = match &seg.arguments {
-                            PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
-                                match angle_bracketed_generic_arguments.args.first().unwrap() {
-                                    GenericArgument::Lifetime(_) => todo!(),
-                                    GenericArgument::Type(type_) => parse_fn_input_or_field(
-                                        type_,
-                                        has_mut_keyword,
-                                        parent_item_definition_generics,
-                                        current_module,
-                                        global_data,
-                                    ),
-                                    GenericArgument::Const(_) => todo!(),
-                                    GenericArgument::AssocType(_) => todo!(),
-                                    GenericArgument::AssocConst(_) => todo!(),
-                                    GenericArgument::Constraint(_) => todo!(),
-                                    _ => todo!(),
-                                }
-                            }
-                            _ => todo!(),
-                        };
-                        RustType2::Option(RustTypeParam2 {
-                            // TODO "T" shouldn't be hardcoded here
-                            name: "T".to_string(),
-                            type_: RustTypeParamValue2::RustType(Box::new(generic_type)),
-                        })
-                    }
-                    // "RustInteger" => {RustType::Struct(StructOrEnum { ident: "RustInteger".to_string(), members: (), generics: (), syn_object: () }),
-                    // "RustFloat" => RustType::Struct(StructOrEnum { ident: "RustFloat".to_string(), members: (), generics: (), syn_object: () }),
-                    // "RustString" => RustType::Struct(StructOrEnum { ident: "RustString".to_string(), members: (), generics: (), syn_object: () }),
-                    // "RustBool" => RustType::Struct(StructOrEnum { ident: "RustBool".to_string(), members: (), generics: (), syn_object: () }),
-                    struct_or_enum_name => {
-                        // dbg!(current_module);
-                        // dbg!(&global_data.scope_id_as_option());
-                        // dbg!(&vec![struct_or_enum_name.to_string()]);
-                        // let (item_definition_module_path, item_definition, index) = global_data
-                        //     .lookup_item_definition_any_module_or_scope(
-                        //         current_module,
-                        //         &[struct_or_enum_name.to_string()],
-                        //     );
-                        let (item_definition_module_path, item_path, _is_scoped, item_index) =
-                            resolve_path(
-                                true,
-                                false,
-                                true,
-                                true,
-                                vec![RustPathSegment2 {
-                                    ident: struct_or_enum_name.to_string(),
-                                    turbofish: Vec::new(),
-                                }],
-                                &global_data.crates,
-                                &global_data.item_defs,
-                                current_module,
-                                current_module,
-                                &global_data.scopes,
-                            );
-                        // A Trait bound should just be a trait, no associated fn or whatever
-                        assert!(item_path.len() == 1);
-                        let item_definition =
-                            match global_data.item_defs[item_index.unwrap()].clone() {
-                                ItemDefRc::StructEnum(trait_def) => trait_def,
-                                _ => todo!(),
-                            };
+                let (item_definition_module_path, item_path, _is_scoped, item_index) = resolve_path(
+                    true,
+                    false,
+                    true,
+                    true,
+                    vec![RustPathSegment2 {
+                        ident: seg_name_str.to_string(),
+                        turbofish: Vec::new(),
+                    }],
+                    &global_data.crates,
+                    &global_data.item_defs,
+                    current_module,
+                    current_module,
+                    &global_data.scopes,
+                );
+                // A Trait bound should just be a trait, no associated fn or whatever
+                assert!(item_path.len() == 1);
+                let item_definition = match global_data.item_defs[item_index.unwrap()].clone() {
+                    ItemDefRc::StructEnum(trait_def) => trait_def,
+                    _ => todo!(),
+                };
 
-                        // Look to see if any of the item's type params have been specified (they *must* have been specified, because you can't use a type without specifiying prodviding it's type params so they must either be concrete types, or use one of the parents params)
-                        let item_type_params = match &seg.arguments {
-                            PathArguments::None => Vec::new(),
-                            PathArguments::AngleBracketed(gen_args) => {
-                                gen_args
-                                    .args
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(i, a)| match a {
-                                        GenericArgument::Lifetime(_) => None,
-                                        GenericArgument::Type(type_) => {
-                                            // Get the name of the generic from the items definition
-                                            let gen_arg_name = item_definition.generics[i].clone();
+                // Look to see if any of the item's type params have been specified (they *must* have been specified, because you can't use a type without specifiying prodviding it's type params so they must either be concrete types, or use one of the parents params)
+                let item_type_params = match &seg.arguments {
+                    PathArguments::None => Vec::new(),
+                    PathArguments::AngleBracketed(gen_args) => {
+                        gen_args
+                            .args
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, a)| match a {
+                                GenericArgument::Lifetime(_) => None,
+                                GenericArgument::Type(type_) => {
+                                    // Get the name of the generic from the items definition
+                                    let gen_arg_name = item_definition.generics[i].clone();
 
-                                            // First check if type is one of the parent's generics - why? purely so that we know whether the type is a generic or concrete type, we could equally look up the concrete type and assume that if that fails it must be a generic
-                                            let type_param = if let Some(parent_generic) =
-                                                parent_item_definition_generics
-                                                    .iter()
-                                                    .find(|g| g.name == gen_arg_name)
-                                            {
-                                                match parent_generic.type_ {
-                                                    RustTypeParamValue::Unresolved => {
-                                                        RustTypeParam2 {
-                                                            name: gen_arg_name,
-                                                            type_: RustTypeParamValue2::Unresolved,
-                                                        }
-                                                    }
-                                                    // "an item definition should not have any resovled type params"
-                                                    RustTypeParamValue::RustType(_) => panic!(),
-                                                }
-                                            } else {
-                                                // Otherwise we have another type we need to parse
-                                                let param_rust_type = parse_fn_input_or_field(
-                                                    type_,
-                                                    has_mut_keyword,
-                                                    parent_item_definition_generics,
-                                                    current_module,
-                                                    global_data,
-                                                );
-                                                RustTypeParam2 {
-                                                    name: gen_arg_name,
-                                                    type_: RustTypeParamValue2::RustType(Box::new(
-                                                        param_rust_type,
-                                                    )),
-                                                }
-                                            };
-                                            Some(type_param)
+                                    // First check if type is one of the parent's generics - why? purely so that we know whether the type is a generic or concrete type, we could equally look up the concrete type and assume that if that fails it must be a generic
+                                    let type_param = if let Some(parent_generic) =
+                                        parent_item_definition_generics
+                                            .iter()
+                                            .find(|g| g.name == gen_arg_name)
+                                    {
+                                        match parent_generic.type_ {
+                                            RustTypeParamValue::Unresolved => RustTypeParam2 {
+                                                name: gen_arg_name,
+                                                type_: RustTypeParamValue2::Unresolved,
+                                            },
+                                            // "an item definition should not have any resovled type params"
+                                            RustTypeParamValue::RustType(_) => panic!(),
                                         }
-                                        GenericArgument::Const(_) => todo!(),
-                                        GenericArgument::AssocType(_) => todo!(),
-                                        GenericArgument::AssocConst(_) => todo!(),
-                                        GenericArgument::Constraint(_) => todo!(),
-                                        _ => todo!(),
-                                    })
-                                    .collect::<Vec<_>>()
-                            }
-                            PathArguments::Parenthesized(_) => todo!(),
-                        };
-
-                        // match item_definition.syn_object {
-                        //     StructOrEnumSynObject::Struct(_) => RustType::StructOrEnum(item_type_params, item_module_path, item_definition.ident.to_string()),
-                        //     StructOrEnumSynObject::Enum(_) => RustType::Enum(item_type_params, item_module_path, item_definition.ident.to_string()),
-                        // }
-
-                        if item_definition_module_path == vec!["prelude_special_case".to_string()] {
-                            if item_definition.ident == "i32" {
-                                if has_mut_keyword {
-                                    global_data.rust_prelude_types.rust_integer = true;
+                                    } else {
+                                        // Otherwise we have another type we need to parse
+                                        let param_rust_type = parse_fn_input_or_field(
+                                            type_,
+                                            has_mut_keyword,
+                                            parent_item_definition_generics,
+                                            current_module,
+                                            global_data,
+                                        );
+                                        RustTypeParam2 {
+                                            name: gen_arg_name,
+                                            type_: RustTypeParamValue2::RustType(Box::new(
+                                                param_rust_type,
+                                            )),
+                                        }
+                                    };
+                                    Some(type_param)
                                 }
-                                RustType2::I32
-                            } else if item_definition.ident == "String"
-                                || item_definition.ident == "str"
-                            {
-                                if has_mut_keyword {
-                                    global_data.rust_prelude_types.rust_string = true;
-                                }
-                                RustType2::String
-                            } else if item_definition.ident == "bool" {
-                                if has_mut_keyword {
-                                    global_data.rust_prelude_types.bool = true;
-                                }
-                                RustType2::Bool
-                            } else if item_definition.ident == "Vec" {
-                                if has_mut_keyword {
-                                    global_data.rust_prelude_types.vec = true;
-                                }
-                                assert_eq!(item_type_params.len(), 1);
-                                let type_param = item_type_params.into_iter().next().unwrap();
-                                let rust_type = match type_param.type_ {
-                                    RustTypeParamValue2::Unresolved => todo!(),
-                                    RustTypeParamValue2::RustType(rust_type) => rust_type,
-                                };
-                                RustType2::Vec(rust_type)
-                            } else {
-                                // dbg!(&item_definition);
-                                todo!()
-                            }
-                        } else {
-                            RustType2::StructOrEnum(item_type_params, item_definition)
-                        }
+                                GenericArgument::Const(_) => todo!(),
+                                GenericArgument::AssocType(_) => todo!(),
+                                GenericArgument::AssocConst(_) => todo!(),
+                                GenericArgument::Constraint(_) => todo!(),
+                                _ => todo!(),
+                            })
+                            .collect::<Vec<_>>()
                     }
+                    PathArguments::Parenthesized(_) => todo!(),
+                };
+
+                // match item_definition.syn_object {
+                //     StructOrEnumSynObject::Struct(_) => RustType::StructOrEnum(item_type_params, item_module_path, item_definition.ident.to_string()),
+                //     StructOrEnumSynObject::Enum(_) => RustType::Enum(item_type_params, item_module_path, item_definition.ident.to_string()),
+                // }
+
+                if item_definition_module_path == vec!["prelude_special_case".to_string()] {
+                    if item_definition.ident == "i32" {
+                        if has_mut_keyword {
+                            global_data.rust_prelude_types.rust_integer = true;
+                        }
+                        RustType2::I32
+                    } else if item_definition.ident == "String" || item_definition.ident == "str" {
+                        if has_mut_keyword {
+                            global_data.rust_prelude_types.rust_string = true;
+                        }
+                        RustType2::String
+                    } else if item_definition.ident == "bool" {
+                        if has_mut_keyword {
+                            global_data.rust_prelude_types.bool = true;
+                        }
+                        RustType2::Bool
+                    } else if item_definition.ident == "Option" {
+                        if has_mut_keyword {
+                            global_data.rust_prelude_types.option = true;
+                        }
+                        assert_eq!(item_type_params.len(), 1);
+                        let type_param = item_type_params.into_iter().next().unwrap();
+                        RustType2::Option(type_param)
+                    } else if item_definition.ident == "Vec" {
+                        if has_mut_keyword {
+                            global_data.rust_prelude_types.vec = true;
+                        }
+                        assert_eq!(item_type_params.len(), 1);
+                        let type_param = item_type_params.into_iter().next().unwrap();
+                        let rust_type = match type_param.type_ {
+                            RustTypeParamValue2::Unresolved => todo!(),
+                            RustTypeParamValue2::RustType(rust_type) => rust_type,
+                        };
+                        RustType2::Vec(rust_type)
+                    } else {
+                        // dbg!(&item_definition);
+                        todo!()
+                    }
+                } else {
+                    RustType2::StructOrEnum(item_type_params, item_definition)
                 }
             } else {
                 todo!()
