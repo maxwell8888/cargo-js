@@ -1032,6 +1032,144 @@ async fn multiple_scoped_impl_trait_for_type_param_for_primative() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn trait_generic_impl() {
+    setup_tracing();
+
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        trait Bar {
+            fn get_num(&self) -> i32;
+        }
+        impl<T> Bar for T {
+            fn get_num(&self) -> i32 {
+                5
+            }
+        }
+
+        let bar = Foo { num: 1 };
+        assert!(bar.get_num() == 5);
+        let num = 1;
+        assert!(num.get_num() == 5);
+        let text = "hello";
+        assert!(text.get_num() == 5);
+    });
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+                getNum = Bar__for__T.prototype.getNum;
+            }
+
+            class Bar__for__T {
+                getNum() {
+                    return 5;
+                }
+            }
+            Array.prototype.getNum = Bar__for__T.prototype.getNum;
+            Boolean.prototype.getNum = Bar__for__T.prototype.getNum;
+            Number.prototype.getNum = Bar__for__T.prototype.getNum;
+            String.prototype.getNum = Bar__for__T.prototype.getNum;
+            let bar = new Foo(1);
+            console.assert(bar.getNum() === 5);
+            let num = 1;
+            console.assert(num.getNum() === 5);
+            let text = "hello";
+            console.assert(text.getNum() === 5);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "reason"]
+#[tokio::test]
+async fn trait_default_impl() {
+    setup_tracing();
+
+    let actual = r2j_block_with_prelude!({
+        struct Foo {
+            num: i32,
+        }
+        trait Bar {
+            fn get_five(&self) -> i32 {
+                5
+            }
+        }
+        impl Bar for Foo {}
+
+        let bar = Foo { num: 1 };
+        assert!(bar.get_five() == 5);
+    });
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(num) {
+                    this.num = num;
+                }
+            
+                getFive() {
+                    return 5;
+                }
+            }
+            class Bar {
+                getFive() {
+                    return 5;
+                }
+            }
+
+            let bar = new Bar(1);
+            console.assert(bar.getFive() === 5);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// #[tokio::test]
+// async fn super_trait_default_impl() {
+//     setup_tracing();
+
+//     let actual = r2j_block_with_prelude!({
+//         struct Foo {
+//             num: i32,
+//         }
+//         trait Bar {
+//             fn get_num(&self) -> i32 {
+//                 4
+//             }
+//         }
+//         trait Baz: Bar {}
+//         impl Bar for Foo {}
+//         impl Baz for Foo {}
+
+//         let bar = Foo { num: 5 };
+//         assert!(bar.get_foo() == 5);
+//     });
+//     let expected = format_js(
+//         r#"
+//             class Bar {
+//                 constructor(num) {
+//                     this.num = num;
+//                 }
+
+//                 getFoo() {
+//                     return this.num;
+//                 }
+//             }
+
+//             let bar = new Bar(5);
+//             console.assert(bar.getFoo() === 5);
+//         "#,
+//     );
+//     assert_eq!(expected, actual);
+//     execute_js_with_assertions(&expected).await.unwrap();
+// }
+
 #[allow(dead_code, unused_mut)]
 #[tokio::test]
 async fn mut_method_call_struct() {

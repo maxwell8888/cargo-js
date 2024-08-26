@@ -1485,45 +1485,201 @@ pub fn handle_item_trait(
     index: usize,
     _at_module_top_level: bool,
     global_data: &mut GlobalData,
-    _current_module_path: &[String],
+    current_module_path: &[String],
 ) -> JsStmt {
     debug!("handle_item_trait");
 
-    let trait_def = match &global_data.item_defs[index] {
+    let trait_def = match global_data.item_defs[index].clone() {
         ItemDefRc::Trait(trait_def) => trait_def,
         _ => todo!(),
     };
 
     if !trait_def.default_impls.is_empty() {
-        let _methods = trait_def
+        let methods = trait_def
             .default_impls
             .iter()
             .map(|fn_info| {
-                let _js_fn = JsFn {
-                    iife: false,
+                // TODO remove use of syn?
+                let item_fn = match &fn_info.syn {
+                    FnInfoSyn::Standalone(_) => todo!(),
+                    FnInfoSyn::Impl(_) => todo!(),
+                    FnInfoSyn::Trait(trait_item_fn) => trait_item_fn.clone(),
+                };
+
+                // Create new scope for fn vars
+                global_data.scopes.push(GlobalDataScope {
+                    variables: Vec::new(),
+                    // items: scoped_item_defs,
+                    items: vec![],
+                    _look_in_outer_scope: false,
+                    use_mappings: Vec::new(),
+                });
+
+                // Adds fn args as `ScopedVar`s
+                // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
+                let mut copy_stmts = Vec::new();
+
+                for (_is_self, is_mut, name, type_) in &fn_info.inputs_types {
+                    let type_ = type_.clone().into_rust_type2(global_data);
+
+                    let scoped_var = ScopedVar {
+                        name: name.clone(),
+                        mut_: *is_mut,
+                        type_: type_.clone(),
+                    };
+                    // record add var to scope
+                    global_data
+                        .scopes
+                        .last_mut()
+                        .unwrap()
+                        .variables
+                        .push(scoped_var);
+
+                    // a mut input of a copy type like `mut num: i32` must be converted to `RustInteger`
+                    // TODO need to add this to `handle_impl_fn_item()`
+                    if *is_mut {
+                        copy_stmts.push(JsStmt::Local(JsLocal {
+                            public: false,
+                            export: false,
+                            type_: LocalType::None,
+                            lhs: LocalName::Single(Ident::String(name.clone())),
+                            value: match type_ {
+                                RustType2::NotAllowed => todo!(),
+                                RustType2::Unknown => todo!(),
+                                RustType2::Todo => todo!(),
+                                RustType2::Unit => todo!(),
+                                RustType2::Never => todo!(),
+                                RustType2::ImplTrait(_) => todo!(),
+                                RustType2::TypeParam(_) => todo!(),
+                                RustType2::I32 => {
+                                    global_data.rust_prelude_types.rust_integer = true;
+                                    // JsExpr::New(
+                                    //     vec!["RustInteger".to_string()],
+                                    //     vec![JsExpr::MethodCall(
+                                    //         Box::new(JsExpr::Path(vec![pat_ident
+                                    //             .ident
+                                    //             .to_string()])),
+                                    //         "inner".to_string(),
+                                    //         Vec::new(),
+                                    //     )],
+                                    // )
+                                    JsExpr::New(
+                                        "RustInteger".into(),
+                                        vec![JsExpr::Path(PathIdent::Single(Ident::String(
+                                            name.clone(),
+                                        )))],
+                                    )
+                                }
+                                RustType2::F32 => todo!(),
+                                RustType2::Bool => todo!(),
+                                RustType2::String => todo!(),
+                                RustType2::Option(_) => todo!(),
+                                RustType2::Result(_) => todo!(),
+                                RustType2::StructOrEnum(_, _) => todo!(),
+                                RustType2::Vec(_) => todo!(),
+                                RustType2::Array(_) => todo!(),
+                                RustType2::Tuple(_) => todo!(),
+                                RustType2::Box(_) => todo!(),
+                                RustType2::UserType(_, _) => todo!(),
+                                RustType2::MutRef(_) => todo!(),
+                                RustType2::Ref(_) => todo!(),
+                                RustType2::Fn(_, _, _) => todo!(),
+                                RustType2::FnVanish => todo!(),
+                                RustType2::Closure(_, _) => todo!(),
+                                RustType2::Self_ => todo!(),
+                            },
+                        }))
+                    }
+                }
+
+                // If we are returning a type which is *not* &mut, then we need to `.copy()` or `.inner()` if the value being returned is mut (if the value is &mut, the compiler will have ensured there is a deref, so we will have already added a `.copy()` or `.inner()`).
+                let returns_non_mut_ref_val = match &item_fn.sig.output {
+                    ReturnType::Default => true,
+                    ReturnType::Type(_, type_) => {
+                        // TODO this line is too long and kills rustfmt :(
+                        // #[rustfmt::skip]
+                        // let is_mut_ref = matches!(&**type_, Type::Reference(type_reference) if type_reference.mutability.is_some());
+                        #[allow(clippy::match_like_matches_macro)]
+                        let is_mut_ref = match &**type_ {
+                            Type::Reference(type_reference)
+                                if type_reference.mutability.is_some() =>
+                            {
+                                true
+                            }
+                            _ => false,
+                        };
+
+                        !is_mut_ref
+                    }
+                };
+
+                let (body_stmts, _return_type) = parse_fn_body_stmts(
+                    false,
+                    returns_non_mut_ref_val,
+                    true,
+                    &fn_info.stmts,
+                    global_data,
+                    current_module_path,
+                );
+
+                copy_stmts.extend(body_stmts);
+
+                let input_names = item_fn
+                    .sig
+                    .inputs
+                    .iter()
+                    .filter_map(|input| match input {
+                        FnArg::Receiver(_) => None,
+                        FnArg::Typed(pat_type) => match &*pat_type.pat {
+                            Pat::Ident(pat_ident) => Some(Ident::Syn(pat_ident.ident.clone())),
+                            _ => todo!(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
+
+                let iife = false;
+                let js_fn = JsFn {
+                    iife,
                     public: false,
                     export: false,
-                    async_: false,
-                    is_method: true,
+                    async_: item_fn.sig.asyncness.is_some(),
+                    is_method: false,
                     name: fn_info.js_name.clone(),
-                    input_names: todo!(),
-                    body_stmts: todo!(),
+                    input_names,
+                    body_stmts: copy_stmts,
                 };
+
+                // pop fn scope
+                global_data.scopes.pop();
+
+                // let _js_fn = JsFn {
+                //     iife: false,
+                //     public: false,
+                //     export: false,
+                //     async_: false,
+                //     is_method: true,
+                //     name: fn_info.js_name.clone(),
+                //     input_names: todo!(),
+                //     body_stmts: todo!(),
+                // };
+
+                let static_ = matches!(item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
+                (fn_info.js_name.clone(), static_, js_fn)
             })
             .collect::<Vec<_>>();
 
         JsStmt::Class(JsClass {
-            public: todo!(),
-            export: todo!(),
-            tuple_struct: todo!(),
-            name: todo!(),
-            inputs: todo!(),
-            static_fields: todo!(),
-            methods: todo!(),
-            rust_name: todo!(),
-            module_path: todo!(),
-            scope_id: todo!(),
-            is_impl_block: todo!(),
+            public: trait_def.is_pub,
+            export: false,
+            tuple_struct: false,
+            name: trait_def.js_name.clone(),
+            inputs: vec![],
+            static_fields: vec![],
+            methods,
+            rust_name: "RUSTNAMEDELETEME".to_string(),
+            module_path: current_module_path.to_vec(),
+            scope_id: None,
+            is_impl_block: false,
         })
     } else {
         JsStmt::Raw("".to_string())

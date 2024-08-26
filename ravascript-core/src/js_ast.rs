@@ -859,6 +859,7 @@ pub struct JsFn {
     pub is_method: bool,
     // Camel case?
     pub name: Ident,
+    // TODO NOTE in some places we are exluding self as an input name but not sure if we are doing this consistently
     pub input_names: Vec<Ident>,
     pub body_stmts: Vec<JsStmt>,
 }

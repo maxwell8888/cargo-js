@@ -52,7 +52,6 @@ async fn it_transpiles_json_parse() {
     assert_eq!(expected, actual);
 }
 
-// #[ignore = "reason"]
 #[allow(unused_variables)]
 #[tokio::test]
 async fn dom_nodes_and_elements() {
@@ -71,6 +70,47 @@ async fn dom_nodes_and_elements() {
         // let tag_name = "button";
         fn main() {
             let div = document().create_element_div();  
+        }
+        // div.append_child(input);
+        // div.append_child(button);
+    );
+
+    // let expected = format_js(
+    //     r#"
+    //     let tagName = "button";
+    //     let button = document.createElement(tagName);
+    //     let input = document.createElement("input");
+    //     let div = document.createElement("div");
+    //     div.appendChild(input);
+    //     div.appendChild(button);
+    //     "#,
+    // );
+    let expected = format_js(
+        r#"
+        function main() {
+            let div = document.createElement("div");
+        }
+
+        main();
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[ignore = "reason"]
+#[allow(unused_variables)]
+#[tokio::test]
+async fn append_child() {
+    setup_tracing();
+
+    let actual = r2j_file_run_main!(
+        use web_prelude::{HtmlDivElement, Document, document, Node}; 
+        fn main() {
+            let div1 = document().create_element_div();  
+            let div2 = document().create_element_div();  
+            div1.append_child(div2);
         }
         // div.append_child(input);
         // div.append_child(button);
