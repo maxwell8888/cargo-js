@@ -114,8 +114,10 @@ pub fn js_stmts_from_syn_items(
             }
             // ItemRef::Static(_) => todo!(),
             ItemRef::Trait(index) => {
-                handle_item_trait(*index, true, global_data, current_module);
-                js_stmts.push(JsStmt::Expr(JsExpr::Vanish, false));
+                dbg!("hello????");
+                let js_stmt = handle_item_trait(*index, true, global_data, current_module);
+                dbg!(&js_stmt);
+                js_stmts.push(js_stmt);
             }
             // Item::TraitAlias(_) => todo!(),
             // Item::Type(_) => todo!(),
@@ -1306,6 +1308,37 @@ pub fn handle_item_struct(
         scope_id: None,
     };
 
+    // Add static fields pointing to trait default impls like like `someMethod = TraitFoo.prototype.someMethod`
+    for trait_index in &item_def.traits {
+        let trait_def = match &global_data.item_defs[*trait_index] {
+            ItemDefRc::Trait(trait_def) => trait_def,
+            _ => todo!(),
+        };
+
+        for impl_item in &trait_def.default_impls {
+            match &impl_item.item {
+                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
+                    js_class.static_fields.push(JsLocal {
+                        public: false,
+                        export: false,
+                        type_: LocalType::None,
+                        lhs: LocalName::Single(fn_info.js_name.clone()),
+                        value: JsExpr::Path(PathIdent::Path(
+                            [
+                                trait_def.js_name.clone(),
+                                Ident::Str("prototype"),
+                                fn_info.js_name.clone(),
+                            ]
+                            .to_vec(),
+                        )),
+                    });
+                }
+                RustImplItemItemNoJs::Const => todo!(),
+            }
+        }
+    }
+
+    // Add static fields pointing to impl blocks like `someMethod = Bar__for__Foo.prototype.someMethod`
     let mut dedup_impl_block_ids = item_def.impl_block_ids.clone();
     dedup_impl_block_ids.sort();
     dedup_impl_block_ids.dedup();
@@ -1498,7 +1531,11 @@ pub fn handle_item_trait(
         let methods = trait_def
             .default_impls
             .iter()
-            .map(|fn_info| {
+            .map(|rust_impl_item| {
+                let (static_, fn_info) = match &rust_impl_item.item {
+                    RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
+                    RustImplItemItemNoJs::Const => todo!(),
+                };
                 // TODO remove use of syn?
                 let item_fn = match &fn_info.syn {
                     FnInfoSyn::Standalone(_) => todo!(),
@@ -1643,7 +1680,7 @@ pub fn handle_item_trait(
                     public: false,
                     export: false,
                     async_: item_fn.sig.asyncness.is_some(),
-                    is_method: false,
+                    is_method: true,
                     name: fn_info.js_name.clone(),
                     input_names,
                     body_stmts: copy_stmts,
@@ -1663,8 +1700,7 @@ pub fn handle_item_trait(
                 //     body_stmts: todo!(),
                 // };
 
-                let static_ = matches!(item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
-                (fn_info.js_name.clone(), static_, js_fn)
+                (fn_info.js_name.clone(), *static_, js_fn)
             })
             .collect::<Vec<_>>();
 
@@ -1682,7 +1718,7 @@ pub fn handle_item_trait(
             is_impl_block: false,
         })
     } else {
-        JsStmt::Raw("".to_string())
+        JsStmt::Expr(JsExpr::Vanish, false)
     }
 
     // IMPORTANT TODO I think we need to be adding scoped traits to .scopes here but we are not

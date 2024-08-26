@@ -853,8 +853,10 @@ pub fn handle_stmt(
                     )]
                 }
                 ItemRef::Trait(index) => {
-                    handle_item_trait(*index, true, global_data, current_module_path);
-                    vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
+                    vec![(
+                        handle_item_trait(*index, true, global_data, current_module_path),
+                        RustType2::Unit,
+                    )]
                 }
                 ItemRef::Impl(index) => {
                     // TODO maybe it would be better for handle_item_impl (and similar fns) to return a JsClass and then we wrap it into a stmt here?

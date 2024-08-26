@@ -637,7 +637,7 @@ impl GlobalData {
         sub_path: &RustPathSegment2,
         // TODO why return Option?
     ) -> Option<RustImplItemNoJs> {
-        item_def.impl_block_ids.iter().find_map(|block_id| {
+        let impl_block_item = item_def.impl_block_ids.iter().find_map(|block_id| {
             let impl_block = match self.item_defs[*block_id].clone() {
                 ItemDefRc::Impl(impl_block) => impl_block,
                 _ => todo!(),
@@ -647,7 +647,21 @@ impl GlobalData {
                 .iter()
                 .find(|rust_item| rust_item.ident == sub_path.ident)
                 .cloned()
-        })
+        });
+
+        let trait_default_item = item_def.traits.iter().find_map(|trait_id| {
+            let trait_def = match self.item_defs[*trait_id].clone() {
+                ItemDefRc::Trait(trait_def) => trait_def,
+                _ => todo!(),
+            };
+            trait_def
+                .default_impls
+                .iter()
+                .find(|rust_item| rust_item.ident == sub_path.ident)
+                .cloned()
+        });
+
+        impl_block_item.or(trait_default_item)
     }
 }
 

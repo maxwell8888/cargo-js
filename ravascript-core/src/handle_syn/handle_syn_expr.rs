@@ -2518,6 +2518,7 @@ fn get_receiver_params_and_method_impl_item(
         }
         RustType2::Result(_) => todo!(),
         RustType2::StructOrEnum(item_type_params, item_def) => {
+            // dbg!(&item_def);
             (
                 item_type_params,
                 global_data

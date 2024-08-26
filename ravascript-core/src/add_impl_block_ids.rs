@@ -4,7 +4,7 @@ use tracing::debug_span;
 
 use crate::{
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
-    update_item_definitions::{ImplBlockDef, ItemDef, RustType, StructEnumDef},
+    update_item_definitions::{ImplBlockDef, ItemDef, ItemDefRc, RustType, StructEnumDef},
     RUST_PRELUDE_MODULE_PATH,
 };
 
@@ -19,7 +19,7 @@ fn get_traits_implemented_for_item(
     // TODO this code is duplicated from elsewhere
     // Each time we find new traits we need to again look for matching traits, and repeat this until we don't find any new traits
     let mut found_traits_count = 0;
-    // (trait module path (None for scoped), trait name)
+    // (trait module path, trait name, trait index)
     let mut found_traits: Vec<(Vec<String>, String, usize)> = Vec::new();
     loop {
         found_traits.clear();
@@ -62,7 +62,8 @@ fn get_traits_implemented_for_item(
                                 item_module_path == [RUST_PRELUDE_MODULE_PATH] && item_name == "i32"
                             }
                             RustType::Option(_) => {
-                                item_module_path == [RUST_PRELUDE_MODULE_PATH] && item_name == "Option"
+                                item_module_path == [RUST_PRELUDE_MODULE_PATH]
+                                    && item_name == "Option"
                             }
                             _ => {
                                 dbg!(&item_module_path);
@@ -191,14 +192,9 @@ fn update_all_structs_enums(
     for item_ref in item_refs {
         match item_ref {
             ItemRef::StructOrEnum(index) => {
-                let actual = item_defs.get_mut(*index).unwrap();
-                let item_def = match actual {
-                    ItemDef::StructEnum(def) => def,
-                    _ => todo!(),
-                };
                 update_item_def_block_ids(
                     *index,
-                    item_def,
+                    item_defs,
                     // &item_def_scope_id,
                     &current_module,
                     impl_blocks,
@@ -239,14 +235,40 @@ fn update_all_structs_enums(
 
 fn update_item_def_block_ids(
     item_index: usize,
-    item_def: &mut StructEnumDef,
+    item_defs: &mut [ItemDef],
     // item_def_scope_id: &Option<Vec<usize>>,
     module_path: &[String],
     // global_data: &GlobalData,
     impl_blocks: &[(usize, ImplBlockDef)],
 ) {
+    let actual = &item_defs[item_index];
+    let item_def_ident = match actual {
+        ItemDef::StructEnum(def) => def.ident.clone(),
+        _ => todo!(),
+    };
     let traits_impld_for_class =
-        get_traits_implemented_for_item(impl_blocks, module_path, &item_def.ident);
+        get_traits_implemented_for_item(impl_blocks, module_path, &item_def_ident);
+
+    let mut trait_with_defaults = Vec::new();
+    for (module_path, name, index) in &traits_impld_for_class {
+        let trait_def = match &item_defs[*index] {
+            ItemDef::Trait(trait_def) => trait_def,
+            _ => todo!(),
+        };
+        // Check if trait has any default impls, and if so record it's id on the struct/enum
+        if !trait_def.default_impls.is_empty() {
+            trait_with_defaults.push(*index);
+        }
+    }
+
+    let actual = item_defs.get_mut(item_index).unwrap();
+    let item_def = match actual {
+        ItemDef::StructEnum(def) => def,
+        _ => todo!(),
+    };
+
+    item_def.traits = trait_with_defaults;
+
     // for impl_block in impl_blocks.iter().chain(scoped_impl_blocks.clone()) {
     for (index, impl_block) in impl_blocks {
         // NOTE we differentiate between concrete and type param targets because for (non-generic TODO) concrete types we only have to match on item name/id, whereas for type params we have to check if the item implements all the type bounds

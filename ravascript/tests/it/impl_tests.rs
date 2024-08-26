@@ -1086,7 +1086,6 @@ async fn trait_generic_impl() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "reason"]
 #[tokio::test]
 async fn trait_default_impl() {
     setup_tracing();
@@ -1111,10 +1110,7 @@ async fn trait_default_impl() {
                 constructor(num) {
                     this.num = num;
                 }
-            
-                getFive() {
-                    return 5;
-                }
+                getFive = Bar.prototype.getFive;
             }
             class Bar {
                 getFive() {
@@ -1122,7 +1118,7 @@ async fn trait_default_impl() {
                 }
             }
 
-            let bar = new Bar(1);
+            let bar = new Foo(1);
             console.assert(bar.getFive() === 5);
         "#,
     );

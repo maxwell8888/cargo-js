@@ -298,7 +298,8 @@ pub fn process_items(
     // let mut transpiled_modules = Vec::new();
 
     let excluding_prelude_crates = crates.iter().filter(|rust_mod| {
-        rust_mod.module_path != ["web_prelude"] && rust_mod.module_path != [RUST_PRELUDE_MODULE_PATH]
+        rust_mod.module_path != ["web_prelude"]
+            && rust_mod.module_path != [RUST_PRELUDE_MODULE_PATH]
     });
     for rust_mod in excluding_prelude_crates {
         global_data.scopes.clear();

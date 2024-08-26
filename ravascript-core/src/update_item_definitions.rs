@@ -513,6 +513,7 @@ fn update_item_def(
                 generics: item_def.generics,
                 struct_or_enum_info: _new_struct_or_enum_info,
                 impl_block_ids: Vec::new(),
+                traits: Vec::new(),
             })
         }
         ItemDefNoTypes::Fn(fn_info) => {
@@ -705,15 +706,30 @@ fn update_item_def(
                         }
                     };
 
-                    FnDef {
+                    let trait_item_fn = match &fn_info.syn {
+                        FnInfoSyn::Standalone(_) => todo!(),
+                        FnInfoSyn::Impl(_) => todo!(),
+                        FnInfoSyn::Trait(trait_item_fn) => trait_item_fn,
+                    };
+
+                    let static_ =
+                        !matches!(trait_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
+
+                    RustImplItemNoJs {
                         ident: fn_info.ident.to_string(),
-                        js_name,
-                        is_pub: fn_info.is_pub,
-                        inputs_types,
-                        generics: fn_info.generics,
-                        return_type,
-                        stmts: fn_info.stmts,
-                        syn: fn_info.syn,
+                        item: RustImplItemItemNoJs::Fn(
+                            static_,
+                            FnDef {
+                                ident: fn_info.ident.to_string(),
+                                js_name,
+                                is_pub: fn_info.is_pub,
+                                inputs_types,
+                                generics: fn_info.generics,
+                                return_type,
+                                stmts: fn_info.stmts,
+                                syn: fn_info.syn,
+                            },
+                        ),
                     }
                 })
                 .collect();
@@ -1580,6 +1596,8 @@ pub struct StructEnumDef {
     /// (unique impl id)
     // TODO use reference instead of id?
     pub impl_block_ids: Vec<usize>,
+    // Store indexes of traits with any default impls, that the struct impls
+    pub traits: Vec<usize>,
 }
 impl StructEnumDef {
     pub fn get_type(&self, field_member: &Member, global_data: &GlobalData) -> RustType2 {
@@ -1612,7 +1630,7 @@ pub struct TraitDef {
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
-    pub default_impls: Vec<FnDef>,
+    pub default_impls: Vec<RustImplItemNoJs>,
 }
 
 // Do we want to also store the trait bounds of each type param? This way if we have an unresolved type param that calls some function, we will know what trait to look up to find it. In some cases this might also remove the need for looking forward to resolve type params, if all we need to do with the type param/value/intance/type is call a method on it.
