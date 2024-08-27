@@ -924,7 +924,7 @@ pub fn handle_item_use2(item_use: &ItemUse) -> RustUse {
 
     RustUse {
         pub_,
-        use_mapping: item_paths,
+        use_mappings: item_paths,
     }
 }
 
@@ -994,7 +994,7 @@ pub struct RustUse {
     pub pub_: bool,
     // pub item_name: String,
     // pub usepath: Vec<String>,
-    pub use_mapping: Vec<(String, Vec<String>)>,
+    pub use_mappings: Vec<(String, Vec<String>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1288,7 +1288,7 @@ pub fn resolve_path(
     // TODO only look through transparent scopes
     // dbg!(&module.items);
     let matched_use_mapping = module.items.iter().find_map(|item| match item {
-        ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
+        ItemRef::Use(rust_use) => rust_use.use_mappings.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
                 .then_some(use_mapping.clone())
         }),

@@ -866,12 +866,14 @@ pub fn handle_stmt(
                         .collect()
                 }
                 ItemRef::Mod(_rust_mod) => todo!(),
-                ItemRef::Use(_rust_use) => {
+                ItemRef::Use(rust_use) => {
                     // TODO surely need to handle scoped use statements as they could shadow other item idents?
-                    // let scope = global_data.scopes.last_mut().unwrap();
                     // handle_item_use(item_use, ItemUseModuleOrScope::Scope(scope));
                     // vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
-                    vec![]
+                    let scope = global_data.scopes.last_mut().unwrap();
+                    scope.use_mappings.extend(rust_use.use_mappings.clone());
+                    
+                    vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                 }
                 ItemRef::Macro => todo!(),
             }
@@ -1146,8 +1148,6 @@ pub fn parse_fn_body_stmts(
                 }
             }
         } else {
-            // dbg!("print the stmt");
-            // println!("{}", quote! { #stmt });
             let stmts = handle_stmt(stmt, global_data, current_module);
             return_type = Some(stmts.last().unwrap().1.clone());
             js_stmts.extend(stmts.into_iter().map(|(stmt, _type_)| stmt));

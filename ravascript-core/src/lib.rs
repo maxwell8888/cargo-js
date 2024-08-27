@@ -96,14 +96,38 @@ pub fn process_items(
         let manifest = Manifest::from_path(crate_path.join("Cargo.toml")).unwrap();
         manifest.dependencies.contains_key("web-prelude")
     } else {
-        // In blocks (ie no crate_path) we still want to be able to use web-prelude so we simply check for any use statement
-        crate_mod.items.iter().any(|item_ref| match item_ref {
-            ItemRef::Use(rust_use) => rust_use
-                .use_mapping
+        // In blocks (ie no crate_path) we still want to be able to use web-prelude so we simply recursively check for any use statement
+        fn any_web_prelude_stmts(stmt_refs: &[StmtsRef], item_defs: &[ItemDefNoTypes]) -> bool {
+            stmt_refs.iter().any(|stmt_ref| match stmt_ref {
+                // TODO handle all cases
+                StmtsRef::Local(_) => false,
+                StmtsRef::Item(item_ref) => any_web_prelude_item(item_ref, item_defs),
+                StmtsRef::Expr(_, _) => false,
+                StmtsRef::Macro(_) => false,
+            })
+        }
+        fn any_web_prelude_item(item_ref: &ItemRef, item_defs: &[ItemDefNoTypes]) -> bool {
+            match item_ref {
+                ItemRef::Use(rust_use) => rust_use
+                    .use_mappings
+                    .iter()
+                    .any(|use_mapping| use_mapping.1 == ["web_prelude"]),
+                ItemRef::Fn(index) => {
+                    let stmts = match &item_defs[*index] {
+                        ItemDefNoTypes::Fn(fn_def) => &fn_def.stmts,
+                        _ => todo!(),
+                    };
+                    any_web_prelude_stmts(stmts, item_defs)
+                }
+                _ => false,
+            }
+        }
+        fn any_web_prelude_items(item_refs: &[ItemRef], item_defs: &[ItemDefNoTypes]) -> bool {
+            item_refs
                 .iter()
-                .any(|use_mapping| use_mapping.1 == ["web_prelude"]),
-            _ => false,
-        })
+                .any(|item_ref| any_web_prelude_item(item_ref, item_defs))
+        }
+        any_web_prelude_items(&crate_mod.items, &item_defs)
     };
 
     // eprintln!("{manifest:#?}");

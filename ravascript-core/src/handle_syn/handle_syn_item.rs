@@ -208,7 +208,7 @@ pub fn handle_item_fn(
                         ItemRef::Const(index) => Some(*index),
                         ItemRef::Trait(index) => Some(*index),
                         ItemRef::Mod(_) => todo!(),
-                        ItemRef::Use(_) => todo!(),
+                        ItemRef::Use(_) => None,
                         ItemRef::Macro => todo!(),
                         ItemRef::Impl(_) => None,
                     }

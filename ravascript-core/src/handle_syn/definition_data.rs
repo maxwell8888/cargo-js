@@ -875,7 +875,7 @@ pub fn resolve_path(
             Some(scoped_use_mapping.clone())
         } else {
             module.items.iter().find_map(|item| match item {
-                ItemRef::Use(rust_use) => rust_use.use_mapping.iter().find_map(|use_mapping| {
+                ItemRef::Use(rust_use) => rust_use.use_mappings.iter().find_map(|use_mapping| {
                     (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
                         .then_some(use_mapping.clone())
                 }),

@@ -16,7 +16,7 @@ use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;
-use crate::{r2j_block, r2j_file_run_main};
+use crate::{r2j_block, r2j_block_with_prelude, r2j_file_run_main};
 
 #[ignore]
 #[allow(dead_code, clippy::needless_return)]
@@ -48,9 +48,12 @@ async fn it_transpiles_json_parse() {
             }
         }
         "#,
-    );  
+    );
     assert_eq!(expected, actual);
 }
+
+// let tag_name = "button";
+// let button: AnyHtmlElement = Document::create_element(tag_name);
 
 #[allow(unused_variables)]
 #[tokio::test]
@@ -58,33 +61,12 @@ async fn dom_nodes_and_elements() {
     setup_tracing();
 
     let actual = r2j_file_run_main!(
-        // use ravascript::prelude::web::{AnyHtmlElement, Document, HTMLInputElement};
-        // let tag_name = "button";
-        // let button: AnyHtmlElement = Document::create_element(tag_name);
-        // let input: HTMLInputElement = Document::create_element("input");
-        // // TODO make HTMLDivElement
-        // let div: HTMLInputElement = Document::create_element("div");
-        // div.append_child(input);
-        // div.append_child(button);
-        use web_prelude::{HtmlDivElement, Document, document}; 
-        // let tag_name = "button";
+        use web_prelude::{HtmlDivElement, Document, document};
         fn main() {
-            let div = document().create_element_div();  
+            let div = document().create_element_div();
         }
-        // div.append_child(input);
-        // div.append_child(button);
     );
 
-    // let expected = format_js(
-    //     r#"
-    //     let tagName = "button";
-    //     let button = document.createElement(tagName);
-    //     let input = document.createElement("input");
-    //     let div = document.createElement("div");
-    //     div.appendChild(input);
-    //     div.appendChild(button);
-    //     "#,
-    // );
     let expected = format_js(
         r#"
         function main() {
@@ -99,40 +81,23 @@ async fn dom_nodes_and_elements() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore = "reason"]
 #[allow(unused_variables)]
 #[tokio::test]
 async fn append_child() {
     setup_tracing();
 
-    let actual = r2j_file_run_main!(
-        use web_prelude::{HtmlDivElement, Document, document, Node}; 
-        fn main() {
-            let div1 = document().create_element_div();  
-            let div2 = document().create_element_div();  
-            div1.append_child(div2);
-        }
-        // div.append_child(input);
-        // div.append_child(button);
-    );
+    let actual = r2j_block_with_prelude!({
+        use web_prelude::{document, Document, HtmlDivElement, Node};
+        let div1 = document().create_element_div();
+        let div2 = document().create_element_div();
+        div1.append_child(div2);
+    });
 
-    // let expected = format_js(
-    //     r#"
-    //     let tagName = "button";
-    //     let button = document.createElement(tagName);
-    //     let input = document.createElement("input");
-    //     let div = document.createElement("div");
-    //     div.appendChild(input);
-    //     div.appendChild(button);
-    //     "#,
-    // );
     let expected = format_js(
         r#"
-        function main() {
-            let div = document.createElement("div");
-        }
-
-        main();
+            let div1 = document.createElement("div");
+            let div2 = document.createElement("div");
+            div1.appendChild(div2);
         "#,
     );
 
