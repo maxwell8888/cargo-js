@@ -160,7 +160,14 @@ impl RustType2 {
             RustType2::Unit => false,
             RustType2::Never => todo!(),
             RustType2::ImplTrait(_) => todo!(),
-            RustType2::TypeParam(_) => todo!(),
+            RustType2::TypeParam(rust_type_param) => {
+                // TODO ??????????????
+                // match rust_type_param.type_ {
+                //     RustTypeParamValue2::Unresolved => todo!(),
+                //     RustTypeParamValue2::RustType(rust_type) => rust_type.is_mut_ref_of_js_primative(impl_targets),
+                // }
+                false
+            }
             RustType2::I32 => false,
             RustType2::F32 => false,
             RustType2::Bool => false,

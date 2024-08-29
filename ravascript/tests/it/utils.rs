@@ -152,11 +152,28 @@ macro_rules! r2j_file_run_main {
     }};
 }
 
+/// Don't run Rust or JavaScript
 #[macro_export]
 macro_rules! r2j_file_unchecked {
     ($($item:item)*) => {{
         let file = stringify!($($item)*);
         r2j_file(file, false)
+    }};
+}
+
+/// Run JavaScript, Don't run Rust
+#[macro_export]
+macro_rules! r2j_file_no_rust {
+    ($($item:item)*) => {{
+        #[allow(dead_code)]
+        mod generated {
+            $($item)*
+            pub fn run_main() {
+                main();
+            }
+        }
+        let file = stringify!($($item)*);
+        r2j_file(file, true)
     }};
 }
 

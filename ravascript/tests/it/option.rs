@@ -90,9 +90,9 @@ async fn option_unwrap_some() {
 }
 
 #[allow(clippy::unnecessary_literal_unwrap)]
-#[ignore = "TODO is error"]
+#[ignore = "TODO MED PRIORITY"]
 #[tokio::test]
-async fn option_unwrap_none() {
+async fn option_catch_unwind_unwrap_none() {
     let actual = r2j_block_with_prelude!({
         let none: Option<i32> = None;
         let err = catch_unwind(|| none.unwrap());
@@ -100,13 +100,25 @@ async fn option_unwrap_none() {
     });
     let expected = format_js(
         r#"
-            let none = null;
-            let err;
-            try {
-                optionUnwrap(none)
-            } catch(error) {
-                err = error;
+            function optionUnwrap(value) {
+                if (value === null) {
+                    throw new Error("called `Option::unwrap()` on a `None` value");
+                } else {
+                    return value;
+                }
             }
+            function catchUnwind(closure) {
+                try {
+                    return closure(none);
+                } catch(error) {
+                    return error;
+                }
+            }
+            function resultIsErr(value) {
+                return e instanceof Error;
+            }
+            let none = null;
+            let err = catchUnwind(() => optionUnwrap(none));
             console.assert(resultIsErr(err));
         "#,
     );

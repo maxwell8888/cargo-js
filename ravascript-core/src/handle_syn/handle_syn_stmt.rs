@@ -292,7 +292,8 @@ fn handle_local(
         ExprRef::Try(_) => todo!(),
         ExprRef::TryBlock(_) => todo!(),
         ExprRef::Unary(_) => false,
-        ExprRef::Unsafe(_) => todo!(),
+        // TODO handle inner expr properly
+        ExprRef::Unsafe(_) => false,
         ExprRef::Verbatim(_) => todo!(),
         ExprRef::While(_) => todo!(),
         ExprRef::Yield(_) => todo!(),

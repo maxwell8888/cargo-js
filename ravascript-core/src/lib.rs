@@ -18,8 +18,8 @@ mod handle_syn;
 use handle_syn::{js_stmts_from_syn_items, GlobalData, RustImplItemItemJs, RustType2};
 
 mod js_ast;
-use js_ast::JsStmt;
 use js_ast::{Ident, JsClass, JsFn, JsModule};
+use js_ast::{JsExpr, JsStmt};
 
 pub mod prelude;
 pub mod rust_prelude;
@@ -222,6 +222,28 @@ pub fn process_items(
         },
     );
 
+    // Alternate std lib
+    let code = include_str!("../../std/src/lib.rs");
+    let file = syn::parse_file(code).unwrap();
+    let prelude_items = file.items;
+
+    let alternate_std_items = make_item_defs(
+        prelude_items,
+        // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
+        &None,
+        &mut vec!["std".to_string()],
+        &mut item_defs,
+    );
+
+    crates.insert(
+        0,
+        RustMod {
+            pub_: true,
+            items: alternate_std_items,
+            module_path: vec!["std".to_string()],
+        },
+    );
+
     // TODO convert relative_path use_mappings to absolute paths to simply `resolve_path` and prevent duplicate work? `resolve_path` already nicely handles this so would be duplicating code?
 
     // In extract_data() we record all module level item/fn/trait definitions/data in the `ModulData`. However, the types used in the definition might be paths to an item/fn that hasn't been parsed yet. This means we need to either:
@@ -393,25 +415,35 @@ pub fn process_items(
     // add module name comments when there is more than 1 module
 
     let mut transpiled_modules = global_data.transpiled_modules;
-    if transpiled_modules.len() > 1 {
-        for module in transpiled_modules
-            .iter_mut()
-            .filter(|m| m.module_path != ["web_prelude"])
-        {
-            module.stmts.insert(
-                0,
-                JsStmt::Comment(if module.module_path == ["crate"] {
-                    "crate".to_string()
-                } else {
-                    module
-                        .module_path
-                        .iter()
-                        .skip(1)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("::")
-                }),
-            );
+    // dbg!(transpiled_modules
+    //     .iter()
+    //     .map(|t| (&t.module_path, &t.name))
+    //     .collect::<Vec<_>>());
+    // TODO do proper check for modules which are not built-ins
+    if transpiled_modules.len() > 3 {
+        for module in transpiled_modules.iter_mut().filter(|m| {
+            // TODO tag prelude etc modules that shouldn't have names printed
+            // TODO but sometimes we might actually include stuff from Rust std? Not everything is vanishing? These are cases where we do actually want to hide them if they are empty though because the user didn't add them so there is no context and could just be confusing.
+            m.module_path != ["web_prelude"] && m.module_path[0] != "std"
+            // It is actually helpful to show empty module names
+            // && !m.stmts.is_empty()
+            // && !m
+            //     .stmts
+            //     .iter()
+            //     .all(|s| matches!(s, JsStmt::Expr(JsExpr::Vanish, _)))
+        }) {
+            let comment = if module.module_path == ["crate"] {
+                "crate".to_string()
+            } else {
+                module
+                    .module_path
+                    .iter()
+                    .skip(1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("::")
+            };
+            module.stmts.insert(0, JsStmt::Comment(comment));
         }
     }
 
@@ -712,7 +744,7 @@ pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
     // Blocks should only be 1 module and optionally include a second module for rust prelude
     // TODO why return the prelude module from process_items when it is not to be rendered?
-    assert!(modules.len() == 1 || modules.len() == 2);
+    assert!(modules.len() == 1 || modules.len() == 2 || modules.len() == 3);
     let mut module = modules.into_iter().next().unwrap();
     // If we have inserted prelude statements, the len will be > 1. Ideally we would insert the prelude stmts inside `fn temp`. For now we are just assuming any added stmts are inserted before `fn temp`
     // assert!(module.stmts.len() == 1);

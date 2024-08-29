@@ -1308,7 +1308,9 @@ pub fn handle_expr(
             }
             _ => todo!(),
         },
-        ExprRef::Unsafe(_) => todo!(),
+        ExprRef::Unsafe(expr_unsafe) => {
+            handle_expr_block(&expr_unsafe.block, global_data, current_module, true, true)
+        }
         ExprRef::Verbatim(_) => todo!(),
         ExprRef::While(expr_while) => (
             JsExpr::While(
@@ -2064,9 +2066,11 @@ fn handle_expr_method_call(
             // Check to see if type param has been resolved by parent/receiver type
             let parent_type_params = match &receiver_type {
                 RustType2::TypeParam(_) => todo!(),
-                RustType2::Option(inner) => Some(vec![inner]),
+                RustType2::Option(inner) => Some(vec![inner.clone()]),
                 RustType2::Result(_) => todo!(),
-                RustType2::StructOrEnum(_, _) => todo!(),
+                // TODO
+                // RustType2::StructOrEnum(type_params, _) => Some(type_params.clone()),
+                RustType2::StructOrEnum(type_params, _) => None,
                 RustType2::Vec(_) => todo!(),
                 RustType2::Array(_) => todo!(),
                 RustType2::Tuple(_) => todo!(),
@@ -2265,6 +2269,12 @@ fn handle_expr_method_call(
         RustType2::Never => todo!(),
         RustType2::ImplTrait(_) => todo!(),
         RustType2::TypeParam(_) => todo!(),
+        RustType2::StructOrEnum(_, struct_enum_def)
+            if struct_enum_def.ident == "Something" && expr_method_call.method == "cast" =>
+        {
+            assert!(args_js_exprs.is_empty());
+            (receiver, method_return_type)
+        }
         RustType2::StructOrEnum(_, struct_enum_def)
             if struct_enum_def.ident == "Document"
                 && expr_method_call.method == "create_element_div" =>
@@ -3067,6 +3077,7 @@ fn handle_expr_call(
                         RustType2::TypeParam(_) => {
                             // TODO if type param is resolved it could be a fn or whatever so need to call this match recursively/as a fn
                             // otherwise need return the unresolved type but also note that it has been called(!) so could be the return type of some fn yet to be known, a tuple struct instance, and enum instance, etc. Though this seems like a rarer case and I'm not sure it is even possbile/aloud to wait until after calling a type param to resolved
+                            dbg!(rust_type);
                             todo!()
                         }
                         RustType2::Fn(_item_type_params, _type_params, fn_info) => {
@@ -3239,6 +3250,18 @@ fn handle_expr_call(
                                 fn_def.return_type.clone().into_rust_type2(global_data),
                             )
                         }
+                        // TODO check this isn't a user fn
+                        // TODO use attributes in source code instead then we don't have to check
+                        RustType2::Fn(_, _, fn_def) if fn_def.ident == "json_parse" => (
+                            JsExpr::FnCall(
+                                Box::new(JsExpr::Path(PathIdent::PathTwo([
+                                    Ident::Str("JSON"),
+                                    Ident::Str("parse"),
+                                ]))),
+                                args_js_expr.clone(),
+                            ),
+                            rust_type,
+                        ),
                         _ => (
                             JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
                             rust_type,

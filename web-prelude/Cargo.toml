@@ -6,3 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# We don't need to depend on std because we have hardcoded that it is automatically included. Although it does make sense to add it to allowing jumping to source
+# std = { path = "../std" }

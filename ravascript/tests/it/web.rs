@@ -16,26 +16,85 @@ use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
 
 use super::utils::*;
-use crate::{r2j_block, r2j_block_with_prelude, r2j_file_run_main};
+use crate::{r2j_block, r2j_block_with_prelude, r2j_file_no_rust, r2j_file_run_main};
+
+#[tokio::test]
+async fn json_parse_unsafe() {
+    let actual = r2j_file_no_rust!(
+        use web_prelude::{SyntaxError, catch, try_, json_parse};
+        #[derive(Default)]
+        pub struct Foo {
+            text: String,
+            num: i32,
+        }
+
+        fn main() {
+            // TODO support raw strings
+            // let json = r#"{ "text": "hello", "num": 5 }"#;
+            // let json = "{ \"text\": \"hello\", \"num\": 5 }";
+            let json = r#"{ \"text\": \"hello\", \"num\": 5 }"#;
+            // To acutally have a compiling, working json_parse implementation that we can run as Rust, not only would we need to include serde_json, but we would also need to derive `Deserialize` for Foo
+            // TODO fix specifying generic in turbofish
+            // let foo = unsafe { json_parse(json).cast::<Foo>() };
+            let foo: Foo = unsafe { json_parse(json).cast() };
+            assert!(foo.text == "hello");
+            assert!(foo.num == 5);
+        }
+    );
+
+    // NOTE the formatter is automatically converting the escaped JSON string to just use single quotes.
+    let expected = format_js(
+        r#"
+            class Foo {
+                constructor(text, num) {
+                    this.text = text;
+                    this.num = num;
+                }
+            }
+            function main() {
+                let json = '{ "text": "hello", "num": 5 }';
+                let foo = (() => {
+                    return JSON.parse(json);
+                })();
+                console.assert(foo.text === "hello");
+                console.assert(foo.num === 5);
+            }
+
+            main();
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
 
 #[ignore]
 #[allow(dead_code, clippy::needless_return)]
 #[tokio::test]
-async fn it_transpiles_json_parse() {
+async fn json_parse_wrapper() {
     let actual = r2j_file_run_main!(
-        use web_prelude::{SyntaxError, catch, try_, Json};
+        use web_prelude::{SyntaxError, catch, try_, json_parse};
+
+        #[derive(Default)]
         pub struct Foo {
-            bar: i32,
+            text: String,
+            num: i32,
         }
-        fn parse(text: &str) -> Result<Foo, SyntaxError> {
+
+        fn parse<T: Default>(text: &str) -> Result<T, SyntaxError> {
             try_! {{
-                return Ok(Json::parse::<Foo>(text));
+                return Ok(unsafe { json_parse(text).cast::<T>() });
             }}
             catch! {err, SyntaxError,{
                 return Err(err);
             }}
         }
-        fn main() {}
+
+        fn main() {
+            let json = r#"{ "text": "hello", "num": 5 }"#;
+            let foo = parse::<Foo>(json).unwrap();
+            assert!(foo.text == "hello");
+            assert!(foo.num == 5);
+        }
     );
 
     let expected = format_js(
@@ -81,7 +140,6 @@ async fn dom_nodes_and_elements() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[allow(unused_variables)]
 #[tokio::test]
 async fn append_child() {
     setup_tracing();

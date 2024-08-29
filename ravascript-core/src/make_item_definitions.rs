@@ -116,7 +116,7 @@ fn item_to_item_ref(
                 Meta::List(meta_list) => {
                     let segs = &meta_list.path.segments;
                     if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                        let tokens = format!("({})", meta_list.tokens);
+                        let tokens = format!("({},)", meta_list.tokens);
                         let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
                         trait_tuple.elems.iter().any(|elem| match elem {
                             Type::Path(type_path) => {
@@ -847,7 +847,19 @@ pub fn expr_to_expr_ref(
                 current_path,
             )),
         }),
-        Expr::Unsafe(_) => todo!(),
+        Expr::Unsafe(expr_unsafe) => ExprRef::Unsafe(RustExprUnsafe {
+            attrs: expr_unsafe.attrs,
+            block: RustExprBlock {
+                attrs: vec![],
+                label: None,
+                stmts: expr_unsafe
+                    .block
+                    .stmts
+                    .into_iter()
+                    .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
+                    .collect(),
+            },
+        }),
         Expr::Verbatim(_) => todo!(),
         Expr::While(_) => todo!(),
         Expr::Yield(_) => todo!(),
@@ -1294,10 +1306,11 @@ pub fn resolve_path(
         }),
         _ => None,
     });
+    // dbg!(&matched_use_mapping);
 
     // TODO can module shadow external crate names? In which case we need to look for modules first? I think we do this implicitly based on the order of the if statements below?
     // TODO actually look up external crates in Cargo.toml
-    let external_crate_names = ["web_prelude"];
+    let external_crate_names = ["web_prelude", "std"];
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     // Look for scoped item
@@ -1508,6 +1521,7 @@ pub fn resolve_path(
 
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
         assert_eq!(current_mod, orig_mod);
+        // dbg!(&segs);
         assert!(segs.len() == 1 || segs.len() == 2);
         let seg = &segs[0];
         if seg.ident == "i32"
@@ -1985,7 +1999,9 @@ pub struct RustExprUnary {
 #[derive(Debug, Clone)]
 pub struct RustExprUnsafe {
     pub attrs: Vec<Attribute>,
-    pub block: Vec<StmtsRef>,
+    // pub block: Vec<StmtsRef>,
+    // TODO we use RustExprBlock even though unsafe blocks do not have attrs or lables, because it allows easy reuse of handle_expr_block, but really we should just separate handle_expr_block out into two nested fns to handle both cases
+    pub block: RustExprBlock,
 }
 #[derive(Debug, Clone)]
 pub struct RustTokenStream {

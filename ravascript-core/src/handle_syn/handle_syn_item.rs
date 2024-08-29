@@ -324,6 +324,7 @@ pub fn handle_item_fn(
         );
 
         copy_stmts.extend(body_stmts);
+
         // let iife = item_fn.sig.ident == "main";
         // wrapping main in an iffe means we need to move it to the end of the JS file, given we have the crate module appear first, and even if it appears last, main() can appear anywhere within the crate module so the easist thing is to just append a `main();` call to the end of the JS file
         let iife = false;
@@ -1170,7 +1171,14 @@ pub fn handle_item_struct(
         StructEnumUniqueInfo2::Struct(struct_def_info) => &struct_def_info.syn_object,
         StructEnumUniqueInfo2::Enum(_) => todo!(),
     };
+
+    // TODO check this is not a user type
+    if item_struct.ident == "PhantomData" {
+        return JsStmt::Expr(JsExpr::Vanish, false);
+    }
+
     let name = item_struct.ident.to_string();
+
     // dbg!(&global_data.scopes);
     debug!(name = ?name, "handle_item_struct");
     // Attribute {
@@ -1207,7 +1215,7 @@ pub fn handle_item_struct(
         Meta::List(meta_list) => {
             let segs = &meta_list.path.segments;
             if segs.len() == 1 && segs.first().unwrap().ident == "derive" {
-                let tokens = format!("({})", meta_list.tokens);
+                let tokens = format!("({},)", meta_list.tokens);
                 let trait_tuple = syn::parse_str::<syn::TypeTuple>(&tokens).unwrap();
                 trait_tuple.elems.iter().any(|elem| match elem {
                     Type::Path(type_path) => {
@@ -1286,7 +1294,8 @@ pub fn handle_item_struct(
                 .map(|(i, _field)| Ident::String(format!("arg{i}")))
                 .collect::<Vec<_>>(),
         ),
-        Fields::Unit => todo!(),
+        // NOTE doesn't matter what bool we return for tuple_struct since it is not used when inputs is empty
+        Fields::Unit => (false, vec![]),
     };
 
     let mut js_class = JsClass {

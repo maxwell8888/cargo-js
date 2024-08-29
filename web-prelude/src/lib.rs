@@ -1,3 +1,6 @@
+//  TODO we can't publish std to crates.io so seems like we need to use a different name?
+use std::marker::PhantomData;
+
 // TODO this is duplicated from ravascript-core/src/prelude.rs so need to eventually remove that dupication
 
 pub trait Node {
@@ -69,22 +72,106 @@ impl Document {
     }
 }
 
-#[derive(Default)]
+// TODO derives Default because we use it in `catch!` so that we can return an error and allow the code to compile
+#[derive(Default, Debug)]
 pub struct SyntaxError {
     // pub message: &'static str,
     pub message: String,
 }
-#[derive(Debug, Default)]
-pub struct Json {}
-impl Json {
-    // TODO stringify should require deriving serde?
-    // pub fn stringify(_object: impl JsonStringyArg) -> &'static str {
-    //     todo!()
-    // }
-    pub fn parse<T>(_text: &str) -> T {
-        todo!()
+#[derive(Debug)]
+pub struct Number {}
+
+#[derive(Debug)]
+pub struct Map<K, V> {
+    key: PhantomData<K>,
+    value: PhantomData<V>,
+}
+
+// TODO To create a `Value` should we:
+// 1. Have a fn eg `from_something` where we check we check the type of the something value.
+// 2. Keep it as a random value and do the type checking each time we do a match - this is harder, more inefficient (we surely have to do a match if we are going to do anything with the value), and means if the original value is not valid, then we will error when doing a match rather than a conversion, which is potentially harder to the debug if the value is now far away from where it was originally parsed.
+#[derive(Debug)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    Number(Number),
+    String(String),
+    Array(Vec<Value>),
+    Object(Map<String, Value>),
+}
+// impl<T> From<Value> for T {
+//     fn from(value: Value) -> Self {
+//         todo!()
+//     }
+// }
+
+#[derive(Debug)]
+pub struct Something;
+
+// impl From<Something> for Value {
+//     fn from(value: Something) -> Self {
+//         unsafe { Value::Null }
+//     }
+// }
+impl Something {
+    /// This function is a noop in the transpiled JS, it's only purpose is for casting types in the Rust source code. This is only suitable for converting to primative types or user types with no impls, since the JS is a noop, we do not actually converting the JS object to a class or adding anything to the prototype, the value remains the original Object/Array/Bool/Number/String and so attempting to call methods on it which are only defined on specific user type/class (rather than methods that are already defined on all objects/primatives) would result in a not found error. To convert to a user type with impls we must use Object.setProtoTypeOf which is not a JS noop and will actually update the prototype of the value so that methods can be called.
+    pub unsafe fn cast<T>(self) -> T {
+        unimplemented!()
+        // T::default()
+    }
+
+    pub fn to_value(self) -> Value {
+        unimplemented!()
     }
 }
+
+// NOTE even though we don't need any of the actual code from `Deserialize` for `JSON.parse()` to a concrete type, the type we are casting to does need to be a "simple" type that can be constructed from JSON, so it should be a trivial requirement that users `derive(Derserialize)` and this way we have something to construct T from. Otherwise could use Default, or just leave it unimplemented.
+
+// TODO stringify should require deriving serde?
+// pub fn stringify(_object: impl JsonStringyArg) -> &'static str {
+//     todo!()
+// }
+
+// "Unlike most global objects, JSON is not a constructor. You cannot use it with the new operator or invoke the JSON object as a function. All properties and methods of JSON are static (just like the Math object)."
+
+// Can throw SyntaxError. So leave it up to users to add try catch? Optionally yes but also provide a wrapper in web-helpers that is just parse that returns a Result instead.
+// Parsing directly to a struct doesn't make much sense since it is impossible for JS to directly create a `class` (and so has the methods etc we would expect) from parse. Only an object/map can be returned. Need to use Object.assign(new Foo, { a: 1 }) or Object.setPrototypeOf({ a: 1 }, Foo.prototype) to convert object to a "class".
+// Whilst sometimes we might want to convert the result to a class, sometime we just want to use the object like a class/struct with no methods, eg just directly use it to construct dom, and save the overhead of converting to a class. How do we do this? We could just "cast" it to a struct type, but how do we prevent that struct having methods and therefore requiring Object.assign etc? The compiler can just check if the type has any impls? Or even better if this particular instance of the type uses any impls?
+// So allow "casting" to a struct (how?)
+// Whilst we do want to allow directly creating succint JS, the focus should be providing safe abstractions that are guaranteed not to have hidden errors. So always use reviver. Always Object.assign? No this is pointless if there is no methods. But add this as an optimisation later. Of course the only reliable way to do this is to have type safety across the frontend and backend, in which case we don't actually really need to be
+// all silent errors are UB so should be in `unsafe {}`
+// Do like serde_json:
+// let json: Value = serde_json::from_str(text)?;
+// let json: Foo = serde_json::from_str(text)?;
+// let json: i32 = serde_json::from_str(text)?;
+// let json: Option<i32> = serde_json::from_str(text)?;
+// pub fn parse_result<T: Deserialize>(_text: &str) -> Result<T, SyntaxError> {
+//     unimplemented!()
+// }
+
+// The return value can be an: "Object, Array, string, number, boolean, or null value corresponding to the given JSON text".
+// "Unsafe"
+// Will panic/throw a SyntaxError if the JSON cannot be parsed.
+pub fn json_parse(_text: &str) -> Something {
+    // TODO add an actual implementation here?
+    Something
+}
+
+// pub unsafe fn parse_cast<T>(_text: &str) -> T {
+//     unimplemented!()
+// }
+
+fn testing_out_stuff() {
+    #[derive(Default)]
+    struct Foo;
+    let something = json_parse("some json");
+    let value: Foo = unsafe { something.cast() };
+    let value2: Foo = unsafe { json_parse("some json").cast() };
+}
+
+// pub fn parse_2<T>(_text: &str, _reviver: ) -> T {
+//     unimplemented!()
+// }
 
 #[macro_export]
 macro_rules! try_ {
@@ -92,6 +179,15 @@ macro_rules! try_ {
         $try_block
     }};
 }
+
+// Don't want to require `Default`???
+// #[macro_export]
+// macro_rules! catch {
+//     ($err_ident:ident, $ErrType:ty, $catch_block:block) => {{
+//         let $err_ident: $ErrType = <$ErrType>::default();
+//         $catch_block
+//     }};
+// }
 
 #[macro_export]
 macro_rules! catch {

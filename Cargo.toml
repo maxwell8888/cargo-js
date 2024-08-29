@@ -9,6 +9,8 @@ members = [
     "syn-cli",
     "website",
     "web-helpers",
+    "std",
+    "javascript",
 ]
 resolver = "2"
 
