@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# We don't need to depend on std because we have hardcoded that it is automatically included. Although it does make sense to add it to allowing jumping to source
-# std = { path = "../std" }
+# We don't need to depend on std because we have hardcoded that it is automatically included. Although it does make sense to add it to allowing jumping to source. Doesn't currently work because cargo check or whatever can't find the prelude, so seems we would need to somehow provide an alternative prelude. Easiest solution seems to be to just use `use rustscript_std::whatever;` and not try and rename.
+# std = { path = "../rustscript-std", package = "rustscript-std" }

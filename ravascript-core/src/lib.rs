@@ -223,7 +223,7 @@ pub fn process_items(
     );
 
     // Alternate std lib
-    let code = include_str!("../../std/src/lib.rs");
+    let code = include_str!("../../rustscript-std/src/lib.rs");
     let file = syn::parse_file(code).unwrap();
     let prelude_items = file.items;
 

@@ -9,7 +9,7 @@ members = [
     "syn-cli",
     "website",
     "web-helpers",
-    "std",
+    "rustscript-std",
     "javascript",
 ]
 resolver = "2"
