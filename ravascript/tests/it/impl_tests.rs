@@ -1306,7 +1306,7 @@ async fn method_call_num_mut_self() {
 #[ignore = "TODO MED PRIORITY"]
 #[allow(unused_mut)]
 #[tokio::test]
-async fn method_call_on_type_param() {
+async fn method_call_on_type_param_trait_default() {
     let actual = r2j_block_with_prelude!({
         trait Foo {
             fn get_num(&self) -> i32 {
@@ -1320,6 +1320,48 @@ async fn method_call_on_type_param() {
 
     let expected = format_js(
         r#"
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[allow(unused_mut)]
+#[tokio::test]
+async fn method_call_on_type_param_impl_block() {
+    let actual = r2j_block_with_prelude!({
+        trait Foo {
+            fn get_num(&self) -> i32;
+        }
+        impl<T> Foo for T {
+            fn get_num(&self) -> i32 {
+                4
+            }
+        }
+        fn bar<T: Foo>(foo: T) -> i32 {
+            foo.get_num()
+        }
+        let num = bar(5);
+        assert!(num == 4);
+    });
+
+    // TODO calculate which types actually need the impls
+    let expected = format_js(
+        r#"
+            class Foo__for__T {
+                getNum() {
+                    return 4;
+                }
+            }
+            Array.prototype.getNum = Foo__for__T.prototype.getNum;
+            Boolean.prototype.getNum = Foo__for__T.prototype.getNum;
+            Number.prototype.getNum = Foo__for__T.prototype.getNum;
+            String.prototype.getNum = Foo__for__T.prototype.getNum;
+            function bar(foo) {
+                return foo.getNum();
+            }
+            let num = bar(5);
+            console.assert(num === 4);
         "#,
     );
     assert_eq!(expected, actual);

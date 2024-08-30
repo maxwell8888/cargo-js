@@ -1178,7 +1178,6 @@ pub struct StructEnumDefNoTypes {
 pub struct TraitDefNoTypes {
     pub ident: Ident,
     pub is_pub: bool,
-    // impl_items:
     pub syn: ItemTrait,
     pub default_impls: Vec<FnDefNoTypes>,
 }

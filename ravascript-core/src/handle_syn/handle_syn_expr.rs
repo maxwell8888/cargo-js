@@ -27,8 +27,9 @@ use crate::{
         RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnDef, ItemDef, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, RustTypeParamValue, StructEnumDef, StructEnumUniqueInfo2, StructFieldInfo,
+        EnumVariantInputsInfo, FnDef, FnSigDef, ItemDef, ItemDefRc, RustImplItemItemNoJs,
+        RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructEnumDef, StructEnumUniqueInfo2,
+        StructFieldInfo, TraitItemDef,
     },
     RustType, RUST_PRELUDE_MODULE_PATH,
 };
@@ -1981,9 +1982,14 @@ fn handle_expr_method_call(
         &sub_path,
     );
 
-    let (_static, fn_info) = match method_impl_item.item {
-        RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
-        RustImplItemItemNoJs::Const => todo!(),
+    // let (_static, fn_info) = match method_impl_item.item {
+    //     RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
+    //     RustImplItemItemNoJs::Const => todo!(),
+    // };
+    let fn_info = match method_impl_item {
+        TraitItemDef::Fn(fn_sig_def) => fn_sig_def,
+        TraitItemDef::Const => todo!(),
+        TraitItemDef::Type => todo!(),
     };
 
     // Now that we have the method impl item, we can get the method input types, and if any of them contain type params, we can attempt to resolve them from receiver_type_params or method_turbofish_rust_types
@@ -2272,7 +2278,7 @@ fn handle_expr_method_call(
         RustType2::Unit => todo!(),
         RustType2::Never => todo!(),
         RustType2::ImplTrait(_) => todo!(),
-        RustType2::TypeParam(_) => todo!(),
+        // RustType2::TypeParam(_) => todo!(),
         RustType2::StructOrEnum(_, struct_enum_def)
             if struct_enum_def.ident == "Something" && expr_method_call.method == "cast" =>
         {
@@ -2456,7 +2462,7 @@ fn get_receiver_params_and_method_impl_item(
     sub_path: &RustPathSegment2,
     // args_rust_types: Vec<RustType>,
     // ) -> (Vec<RustType>, RustType) {
-) -> (Vec<RustTypeParam2>, RustImplItemNoJs) {
+) -> (Vec<RustTypeParam2>, TraitItemDef) {
     match receiver_type {
         RustType2::NotAllowed => todo!(),
         RustType2::Unknown => todo!(),
@@ -2473,10 +2479,23 @@ fn get_receiver_params_and_method_impl_item(
             //     RustTypeParamValue2::RustType(_) => todo!(),
             // }
 
-            dbg!(&rust_type_param);
-            dbg!(&method_name);
-            dbg!(&sub_path);
-            todo!();
+            // How to handle the case that there is no default impl_item_fn, and the impl item is defined in an impl block? We only know the trait bounds, and we might no know the concrete type yet. For now just have to assume we know the concrete type and so look up the appropriate impl block?
+            // The impl might be defined on:
+            // the Trait as a default
+            // impl<T> Foo for T {}
+            // impl Foo for Bar {}
+            // Why is the `RustImplItemNoJs` even needed? Surely we only need the input types and return type, which is found on the trait in any case? Yes fn is only called by `handle_expr_method_call` and the fn body is not used.
+
+            // dbg!(&rust_type_param);
+            // dbg!(&method_name);
+            // dbg!(&sub_path);
+            (
+                // TODO what should we be returning as reciever type params? the receiver is a type param so can't have any itself?
+                Vec::new(),
+                global_data
+                    .lookup_trait_impl_item(&rust_type_param.trait_bounds, sub_path)
+                    .unwrap(),
+            )
         }
         RustType2::I32 => {
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
@@ -2485,7 +2504,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&i32_def, sub_path)
+                    .lookup_impl_item_item3(&i32_def, sub_path)
                     .unwrap(),
             )
             // match impl_method.item {
@@ -2523,7 +2542,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&string_def, sub_path)
+                    .lookup_impl_item_item3(&string_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2539,7 +2558,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 vec![type_param],
                 global_data
-                    .lookup_impl_item_item2(&item_def, sub_path)
+                    .lookup_impl_item_item3(&item_def, sub_path)
                     .unwrap(),
             )
         }
@@ -2549,7 +2568,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 item_type_params,
                 global_data
-                    .lookup_impl_item_item2(&item_def, sub_path)
+                    .lookup_impl_item_item3(&item_def, sub_path)
                     .unwrap(),
             )
 
@@ -2599,7 +2618,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 Vec::new(),
                 global_data
-                    .lookup_impl_item_item2(&vec_def, sub_path)
+                    .lookup_impl_item_item3(&vec_def, sub_path)
                     .unwrap(),
             )
         }

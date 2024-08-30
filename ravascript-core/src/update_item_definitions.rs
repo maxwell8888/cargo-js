@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use syn::{
-    FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, Type,
-    TypeParamBound, Visibility,
+    FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, TraitItem,
+    Type, TypeParamBound, Visibility,
 };
 use syn::{ItemEnum, ItemImpl, ItemStruct, ItemTrait, Member};
 use tracing::debug;
@@ -753,6 +753,159 @@ fn update_item_def(
                     Ident::Syn(trait_def.ident.clone())
                 }
             };
+
+            // TODO lot's of duplication with default_impls below
+            let items = trait_def
+                .syn
+                .clone()
+                .items
+                .into_iter()
+                .map(|trait_item| {
+                    let trait_item_fn = match trait_item {
+                        TraitItem::Const(_) => todo!(),
+                        TraitItem::Fn(trait_item_fn) => trait_item_fn,
+                        TraitItem::Type(_) => todo!(),
+                        TraitItem::Macro(_) => todo!(),
+                        TraitItem::Verbatim(_) => todo!(),
+                        _ => todo!(),
+                    };
+                    let generics = trait_item_fn
+                        .sig
+                        .generics
+                        .params
+                        .into_iter()
+                        .map(|param| {
+                            match param {
+                                GenericParam::Lifetime(_) => todo!(),
+                                GenericParam::Type(type_param) => {
+                                    let bound_indexes = type_param
+                                        .bounds
+                                        .into_iter()
+                                        .map(|bound| {
+                                            match bound {
+                                                TypeParamBound::Trait(trait_bound) => {
+                                                    let (
+                                                        _trait_module_path,
+                                                        _trait_item_path,
+                                                        _trait_item_scope,
+                                                        trait_index,
+                                                    ) = make_item_definitions::resolve_path(
+                                                        true,
+                                                        true,
+                                                        trait_bound
+                                                            .path
+                                                            .segments
+                                                            .into_iter()
+                                                            .map(|seg| {
+                                                                RustPathSegment {
+                                                                    ident: seg.ident.to_string(),
+                                                                    // TODO
+                                                                    turbofish: vec![],
+                                                                }
+                                                            })
+                                                            .collect(),
+                                                        item_refs,
+                                                        item_actual_defs_copy,
+                                                        module_path,
+                                                        module_path,
+                                                        scoped_items,
+                                                    );
+                                                    trait_index.unwrap()
+                                                }
+                                                TypeParamBound::Lifetime(_) => todo!(),
+                                                TypeParamBound::Verbatim(_) => todo!(),
+                                                _ => todo!(),
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    (type_param.ident.to_string(), bound_indexes)
+                                }
+                                GenericParam::Const(_) => todo!(),
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let inputs_types = trait_item_fn
+                        .sig
+                        .inputs
+                        .iter()
+                        .map(|input| match input {
+                            FnArg::Receiver(receiver) => {
+                                // For `self`, `&self`, `&mut self` receiver.ty will be `Self`, `&Self`, `&mut Self`
+                                // For a default impl we can't know what self/Self will be and while for the fn body we only need to know about the trait methods, if &Self etc is returned then we do need to know the actual concrete type. Given this we need to use RustType::Self.
+                                // TODO This means we need to ensure we don't attempt to resolve RustType::Self during the default impl fn and instead treat it as `impl Trait`, but once it has been returned from the trait fn call, we can coerce it to a concrete type. This will be complicated in cases like returning from a default trait fn within another trait fn. I think the solution is to look at the receiver - if it is a concrete type then when can coerce, otherwise not.
+                                // Surely this is the same for `impl Foo for T {}` trait impls? Kind of, it will be an unresolved RustType::TypeParam.
+                                (
+                                    true,
+                                    receiver.mutability.is_some(),
+                                    "self".to_string(),
+                                    RustType::Self_,
+                                )
+                            }
+                            FnArg::Typed(pat_type) => (
+                                false,
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => pat_ident.mutability.is_some(),
+                                    _ => todo!(),
+                                },
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                                    _ => todo!(),
+                                },
+                                parse_types_for_populate_item_definitions(
+                                    &pat_type.ty,
+                                    &[],
+                                    &generics,
+                                    module_path,
+                                    item_refs,
+                                    item_actual_defs_copy,
+                                    scoped_items,
+                                ),
+                            ),
+                        })
+                        .collect::<Vec<_>>();
+
+                    let return_type = match &trait_item_fn.sig.output {
+                        ReturnType::Default => RustType::Unit,
+                        ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                            type_,
+                            &[],
+                            &generics,
+                            module_path,
+                            item_refs,
+                            item_actual_defs_copy,
+                            scoped_items,
+                        ),
+                    };
+
+                    let js_name = if in_scope {
+                        Ident::Syn(trait_item_fn.sig.ident.clone())
+                    } else {
+                        let in_module_level_duplicates = duplicates.iter().find(|dup| {
+                            trait_item_fn.sig.ident == dup.name
+                                && dup.original_module_path == module_path
+                        });
+
+                        if let Some(dup) = in_module_level_duplicates {
+                            Ident::Deduped(dup.namespace.clone())
+                        } else {
+                            Ident::Syn(trait_item_fn.sig.ident.clone())
+                        }
+                    };
+
+                    let static_ =
+                        !matches!(trait_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
+
+                    TraitItemDef::Fn(FnSigDef {
+                        js_name,
+                        ident: trait_item_fn.sig.ident.to_string(),
+                        inputs_types,
+                        generics,
+                        return_type,
+                    })
+                })
+                .collect();
+
             let default_impls = trait_def
                 .default_impls
                 .into_iter()
@@ -907,10 +1060,12 @@ fn update_item_def(
                     }
                 })
                 .collect();
+
             ItemDef::Trait(TraitDef {
                 ident: trait_def.ident.to_string(),
                 js_name,
                 is_pub: trait_def.is_pub,
+                items,
                 syn: trait_def.syn,
                 default_impls,
             })
@@ -1886,9 +2041,15 @@ pub struct TraitDef {
     pub js_name: Ident,
     pub ident: String,
     pub is_pub: bool,
-    // impl_items:
+    pub items: Vec<TraitItemDef>,
     pub syn: ItemTrait,
     pub default_impls: Vec<RustImplItemNoJs>,
+}
+#[derive(Debug, Clone)]
+pub enum TraitItemDef {
+    Fn(FnSigDef),
+    Const,
+    Type,
 }
 
 // Do we want to also store the trait bounds of each type param? This way if we have an unresolved type param that calls some function, we will know what trait to look up to find it. In some cases this might also remove the need for looking forward to resolve type params, if all we need to do with the type param/value/intance/type is call a method on it.
@@ -2227,6 +2388,18 @@ pub struct FnDef {
     pub syn: FnInfoSyn,
 
     pub stmts: Vec<StmtsRef>,
+}
+#[derive(Debug, Clone)]
+pub struct FnSigDef {
+    pub js_name: Ident,
+    pub ident: String,
+    /// (is_self, is_mut, name, type)
+    pub inputs_types: Vec<(bool, bool, String, RustType)>,
+    /// (type param name, trait bounds)
+    pub generics: Vec<(String, Vec<usize>)>,
+    // pub generics: Vec<String>,
+    // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
+    pub return_type: RustType,
 }
 
 impl FnDef {

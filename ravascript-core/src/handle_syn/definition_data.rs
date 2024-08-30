@@ -8,8 +8,8 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnDef, ItemDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, RustTypeParamValue, StructEnumDef, TraitDef,
+        FnDef, FnSigDef, ItemDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, RustTypeParamValue, StructEnumDef, TraitDef, TraitItemDef,
     },
     RUST_PRELUDE_MODULE_PATH,
 };
@@ -693,6 +693,92 @@ impl GlobalData {
         });
 
         impl_block_item.or(trait_default_item)
+    }
+
+    pub fn lookup_impl_item_item3(
+        &self,
+        item_def: &StructEnumDef,
+        sub_path: &RustPathSegment2,
+        // TODO why return Option?
+    ) -> Option<TraitItemDef> {
+        let impl_block_item = item_def.impl_block_ids.iter().find_map(|block_id| {
+            let impl_block = match self.item_defs[*block_id].clone() {
+                ItemDefRc::Impl(impl_block) => impl_block,
+                _ => todo!(),
+            };
+            impl_block
+                .rust_items
+                .iter()
+                .find(|rust_item| rust_item.ident == sub_path.ident)
+                .cloned()
+        });
+
+        let trait_default_item = item_def.traits.iter().find_map(|trait_id| {
+            let trait_def = match self.item_defs[*trait_id].clone() {
+                ItemDefRc::Trait(trait_def) => trait_def,
+                _ => todo!(),
+            };
+            trait_def
+                .default_impls
+                .iter()
+                .find(|rust_item| rust_item.ident == sub_path.ident)
+                .cloned()
+        });
+
+        let item = impl_block_item.or(trait_default_item);
+        item.map(|item| match item.item {
+            RustImplItemItemNoJs::Fn(_, fn_info) => TraitItemDef::Fn(FnSigDef {
+                js_name: fn_info.js_name,
+                ident: fn_info.ident,
+                inputs_types: fn_info.inputs_types,
+                generics: fn_info.generics,
+                return_type: fn_info.return_type,
+            }),
+            RustImplItemItemNoJs::Const => todo!(),
+        })
+    }
+
+    pub fn lookup_trait_impl_item(
+        &self,
+        trait_bounds: &[Rc<TraitDef>],
+        sub_path: &RustPathSegment2,
+        // TODO why return Option?
+    ) -> Option<TraitItemDef> {
+        trait_bounds.iter().find_map(|trait_def| {
+            trait_def.items.iter().find_map(|item| match item {
+                TraitItemDef::Fn(fn_sig_def) => {
+                    (fn_sig_def.ident == sub_path.ident).then_some(item.clone())
+                }
+                TraitItemDef::Const => todo!(),
+                TraitItemDef::Type => todo!(),
+            })
+        })
+
+        // let impl_block_item = item_def.impl_block_ids.iter().find_map(|block_id| {
+        //     let impl_block = match self.item_defs[*block_id].clone() {
+        //         ItemDefRc::Impl(impl_block) => impl_block,
+        //         _ => todo!(),
+        //     };
+        //     impl_block
+        //         .rust_items
+        //         .iter()
+        //         .find(|rust_item| rust_item.ident == sub_path.ident)
+        //         .cloned()
+        // });
+
+        // let trait_default_item = item_def.traits.iter().find_map(|trait_id| {
+        //     let trait_def = match self.item_defs[*trait_id].clone() {
+        //         ItemDefRc::Trait(trait_def) => trait_def,
+        //         _ => todo!(),
+        //     };
+        //     trait_def
+        //         .default_impls
+        //         .iter()
+        //         .find(|rust_item| rust_item.ident == sub_path.ident)
+        //         .cloned()
+        // });
+
+        // impl_block_item.or(trait_default_item)
     }
 }
 
