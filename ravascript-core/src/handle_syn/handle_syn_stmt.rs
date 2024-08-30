@@ -873,7 +873,7 @@ pub fn handle_stmt(
                     // vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                     let scope = global_data.scopes.last_mut().unwrap();
                     scope.use_mappings.extend(rust_use.use_mappings.clone());
-                    
+
                     vec![(JsStmt::Expr(JsExpr::Vanish, false), RustType2::Unit)]
                 }
                 ItemRef::Macro => todo!(),

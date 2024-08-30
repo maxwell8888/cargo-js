@@ -1302,7 +1302,6 @@ async fn method_call_num_mut_self() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-
 // Currently we aren't storing generic bounds on `RustTypeParam`s. However we will have to in the case that eg a method is called on a type param, in order to be able to look up the appropriate trait.
 #[ignore = "TODO MED PRIORITY"]
 #[allow(unused_mut)]
@@ -1315,6 +1314,30 @@ async fn method_call_on_type_param() {
             }
         }
         fn bar<T: Foo>(foo: T) {
+            foo.get_num();
+        }
+    });
+
+    let expected = format_js(
+        r#"
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+// TODO support trait bounds where the trait is generic
+#[ignore = "TODO MED PRIORITY"]
+#[allow(unused_mut)]
+#[tokio::test]
+async fn method_call_on_type_param_generic_trait_bounds() {
+    let actual = r2j_block_with_prelude!({
+        trait Foo<T> {
+            fn get_num(&self) -> i32 {
+                4
+            }
+        }
+        fn bar<T, U: Foo<T>>(foo: U) {
             foo.get_num();
         }
     });

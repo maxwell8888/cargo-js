@@ -3,13 +3,14 @@ use quote::quote;
 use std::{fs, path::PathBuf};
 use syn::{
     AngleBracketedGenericArguments, Attribute, BinOp, BoundLifetimes, Expr, ExprYield,
-    GenericParam, Ident, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro, Member,
-    Meta, Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, UnOp, UseTree, Visibility,
+    GenericParam, Generics, Ident, ImplItem, Item, ItemImpl, ItemUse, Label, Lifetime, Lit, Macro,
+    Member, Meta, Pat, QSelf, RangeLimits, ReturnType, Stmt, TraitItem, Type, TypeParamBound, UnOp,
+    UseTree, Visibility,
 };
 use syn::{ImplItemFn, ItemConst, ItemEnum, ItemFn, ItemStruct, ItemTrait, Signature, TraitItemFn};
 use tracing::debug;
 
-use crate::update_item_definitions::ItemDefRc;
+use crate::update_item_definitions::{ItemDefRc, RustTypeParam, RustTypeParamValue};
 use crate::{update_item_definitions::ItemDef, RustPathSegment, RUST_PRELUDE_MODULE_PATH};
 
 // Having "crate" in the module path is useful for representing that the top level module is indeed a module, and for giving it a name that can be looked up in the list. However, it is annoying for eg using the path to create a filepath from
@@ -82,7 +83,7 @@ fn item_to_item_ref(
                 Visibility::Inherited => false,
             };
 
-            let const_def = ConstDef {
+            let const_def = ConstDefNoTypes {
                 ident: item_const.ident.clone(),
                 is_pub,
                 syn_object: item_const.clone(),
@@ -138,11 +139,12 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDef {
+            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDefNoTypes {
                 ident: item_enum.ident.clone(),
                 is_copy,
                 is_pub,
                 generics,
+                syn_generics: item_enum.generics.clone(),
                 struct_or_enum_info: StructOrEnumDefitionInfo::Enum(item_enum.clone()),
                 // impl_block_ids: Vec::new(),
             }));
@@ -176,10 +178,11 @@ fn item_to_item_ref(
                 .map(|stmt| stmt_to_stmts_ref(stmt, actual_item_defs, crate_path, current_path))
                 .collect();
 
-            actual_item_defs.push(ItemDefNoTypes::Fn(FnDef {
+            actual_item_defs.push(ItemDefNoTypes::Fn(FnDefNoTypes {
                 ident: item_fn.sig.ident.clone(),
                 is_pub,
                 generics,
+                syn_generics: item_fn.sig.generics.clone(),
                 signature: item_fn.sig.clone(),
                 // syn: FnInfoSyn::Standalone(item_fn.clone()),
                 stmts: rust_stmts,
@@ -391,11 +394,12 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
-            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDef {
+            actual_item_defs.push(ItemDefNoTypes::StructEnum(StructEnumDefNoTypes {
                 ident: item_struct.ident.clone(),
                 is_pub,
                 is_copy,
                 generics,
+                syn_generics: item_struct.generics.clone(),
                 struct_or_enum_info: StructOrEnumDefitionInfo::Struct(item_struct.clone()),
                 // impl_block_ids: Vec::new(),
             }));
@@ -443,10 +447,11 @@ fn item_to_item_ref(
                                     })
                                     .collect();
 
-                                Some(FnDef {
+                                Some(FnDefNoTypes {
                                     ident: item_fn.sig.ident.clone(),
                                     is_pub,
                                     generics,
+                                    syn_generics: item_fn.sig.generics.clone(),
                                     signature: item_fn.sig.clone(),
                                     // syn: FnInfoSyn::Standalone(item_fn.clone()),
                                     stmts: rust_stmts,
@@ -463,7 +468,7 @@ fn item_to_item_ref(
                     }
                 })
                 .collect();
-            actual_item_defs.push(ItemDefNoTypes::Trait(TraitDef {
+            actual_item_defs.push(ItemDefNoTypes::Trait(TraitDefNoTypes {
                 ident: item_trait.ident.clone(),
                 is_pub,
                 syn: item_trait.clone(),
@@ -949,10 +954,10 @@ pub enum ImplItemExprStmtRefs {
 // Actual definitions (only use at top level)
 #[derive(Debug, Clone)]
 pub enum ItemDefNoTypes {
-    StructEnum(StructEnumDef),
-    Fn(FnDef),
-    Const(ConstDef),
-    Trait(TraitDef),
+    StructEnum(StructEnumDefNoTypes),
+    Fn(FnDefNoTypes),
+    Const(ConstDefNoTypes),
+    Trait(TraitDefNoTypes),
     // TODO replace these with proper type to be more consistent with othe variants?
     Impl(ItemImpl, Vec<ImplItemExprStmtRefs>),
     // Should never be handled, only used for empty initialisation
@@ -1154,26 +1159,28 @@ pub enum StructOrEnumDefitionInfo {
 /// Similar to StructOrEnum which gets used in RustType, but is for storing info about the actual item definition, rather than instances of, so eg we don't need to be able to store resolved generics. Minor differences but making distinct type helps with reasoning about the different use cases.
 /// Just structs and enums or should we include functions?
 #[derive(Debug, Clone)]
-pub struct StructEnumDef {
+pub struct StructEnumDefNoTypes {
     pub ident: Ident,
     // NOTE we don't need to store the module path because module level `ItemDefinition`s are stored within modules so we will already know the module path
     // module_path: Option<Vec<String>>,
     pub is_copy: bool,
     pub is_pub: bool,
-    // TODO do we need to know eg bounds for each generic?
+    // TODO do we need to know eg bounds for each generic? Yes, but how do we store the trait considering even it might not have been parsed yet so won't have an index?
+    // pub generics: Vec<RustTypeParam>,
     pub generics: Vec<String>,
+    pub syn_generics: Generics,
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructOrEnumDefitionInfo,
     // pub impl_block_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TraitDef {
+pub struct TraitDefNoTypes {
     pub ident: Ident,
     pub is_pub: bool,
     // impl_items:
     pub syn: ItemTrait,
-    pub default_impls: Vec<FnDef>,
+    pub default_impls: Vec<FnDefNoTypes>,
 }
 
 // We have some kind of usage of the struct/enum, eg `let foo = Foo::Bar(5)` and want to check if the struct/enum is/has generic(s) and if so is eg the input to variant `Bar` one of those generic(s). For now just store the whole ItemStruct/ItemEnum and do the checking each time from wherever eg `Foo::Bar(5)` is.
@@ -1195,7 +1202,7 @@ pub struct TraitDef {
 // }
 
 #[derive(Debug, Clone)]
-pub struct ConstDef {
+pub struct ConstDefNoTypes {
     pub ident: Ident,
     pub is_pub: bool,
     pub syn_object: ItemConst,
@@ -1204,10 +1211,13 @@ pub struct ConstDef {
 
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
-pub struct FnDef {
+pub struct FnDefNoTypes {
     pub ident: Ident,
     pub is_pub: bool,
+    // NOTE see StructEnumDef
+    // pub generics: Vec<RustTypeParam>,
     pub generics: Vec<String>,
+    pub syn_generics: Generics,
     // TODO remove this, just legacy thing we need for now because it gets used in the JS parsing (I think)
     pub syn: FnInfoSyn,
 
@@ -1233,7 +1243,7 @@ pub trait ModuleMethods {
         // path: &Vec<String>,
         path: I,
         // current_module: &Vec<String>,
-    ) -> (Vec<String>, Option<Vec<usize>>, TraitDef)
+    ) -> (Vec<String>, Option<Vec<usize>>, TraitDefNoTypes)
     where
         // I: IntoIterator<Item = String>,
         I: IntoIterator,

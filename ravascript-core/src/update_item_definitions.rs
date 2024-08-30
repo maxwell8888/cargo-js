@@ -403,6 +403,62 @@ fn update_item_def(
 ) -> ItemDef {
     match item {
         ItemDefNoTypes::StructEnum(item_def) => {
+            // TODO we have the same `let generics = ...` repeated a few times and they should be filtering out lifetimes like below
+            let generics = item_def
+                .syn_generics
+                .params
+                .into_iter()
+                .filter_map(|param| {
+                    match param {
+                        GenericParam::Lifetime(_) => None,
+                        GenericParam::Type(type_param) => {
+                            let bound_indexes = type_param
+                                .bounds
+                                .into_iter()
+                                .map(|bound| {
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            let (
+                                                _trait_module_path,
+                                                _trait_item_path,
+                                                _trait_item_scope,
+                                                trait_index,
+                                            ) = make_item_definitions::resolve_path(
+                                                true,
+                                                true,
+                                                trait_bound
+                                                    .path
+                                                    .segments
+                                                    .into_iter()
+                                                    .map(|seg| {
+                                                        RustPathSegment {
+                                                            ident: seg.ident.to_string(),
+                                                            // TODO
+                                                            turbofish: vec![],
+                                                        }
+                                                    })
+                                                    .collect(),
+                                                item_refs,
+                                                item_actual_defs_copy,
+                                                module_path,
+                                                module_path,
+                                                scoped_items,
+                                            );
+                                            trait_index.unwrap()
+                                        }
+                                        TypeParamBound::Lifetime(_) => todo!(),
+                                        TypeParamBound::Verbatim(_) => todo!(),
+                                        _ => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            Some((type_param.ident.to_string(), bound_indexes))
+                        }
+                        GenericParam::Const(_) => todo!(),
+                    }
+                })
+                .collect::<Vec<_>>();
+
             let _new_struct_or_enum_info = match item_def.struct_or_enum_info {
                 StructOrEnumDefitionInfo::Struct(struct_def_info) => {
                     let fields = if struct_def_info.fields.is_empty() {
@@ -425,7 +481,8 @@ fn update_item_def(
                                         // HERE IS THE PROBLEM
                                         parse_types_for_populate_item_definitions(
                                             &f.ty,
-                                            &item_def.generics,
+                                            &[],
+                                            &generics,
                                             module_path,
                                             item_refs,
                                             item_actual_defs_copy,
@@ -443,7 +500,8 @@ fn update_item_def(
                                 .map(|f| {
                                     parse_types_for_populate_item_definitions(
                                         &f.ty,
-                                        &item_def.generics,
+                                        &[],
+                                        &generics,
                                         module_path,
                                         item_refs,
                                         item_actual_defs_copy,
@@ -470,7 +528,8 @@ fn update_item_def(
                                 .map(|f| {
                                     let input_type = parse_types_for_populate_item_definitions(
                                         &f.ty,
-                                        &item_def.generics,
+                                        &[],
+                                        & generics,
                                         module_path,
                                         item_refs,
                                         item_actual_defs_copy,
@@ -510,7 +569,7 @@ fn update_item_def(
                 js_name,
                 is_copy: item_def.is_copy,
                 is_pub: item_def.is_pub,
-                generics: item_def.generics,
+                generics,
                 struct_or_enum_info: _new_struct_or_enum_info,
                 impl_block_ids: Vec::new(),
                 traits: Vec::new(),
@@ -521,6 +580,61 @@ fn update_item_def(
             //     make_item_definitions::FnInfoSyn::Standalone(item_fn) => item_fn,
             //     make_item_definitions::FnInfoSyn::Impl(_) => todo!(),
             // };
+
+            let generics = fn_info
+                .syn_generics
+                .params
+                .into_iter()
+                .map(|param| {
+                    match param {
+                        GenericParam::Lifetime(_) => todo!(),
+                        GenericParam::Type(type_param) => {
+                            let bound_indexes = type_param
+                                .bounds
+                                .into_iter()
+                                .map(|bound| {
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            let (
+                                                _trait_module_path,
+                                                _trait_item_path,
+                                                _trait_item_scope,
+                                                trait_index,
+                                            ) = make_item_definitions::resolve_path(
+                                                true,
+                                                true,
+                                                trait_bound
+                                                    .path
+                                                    .segments
+                                                    .into_iter()
+                                                    .map(|seg| {
+                                                        RustPathSegment {
+                                                            ident: seg.ident.to_string(),
+                                                            // TODO
+                                                            turbofish: vec![],
+                                                        }
+                                                    })
+                                                    .collect(),
+                                                item_refs,
+                                                item_actual_defs_copy,
+                                                module_path,
+                                                module_path,
+                                                scoped_items,
+                                            );
+                                            trait_index.unwrap()
+                                        }
+                                        TypeParamBound::Lifetime(_) => todo!(),
+                                        TypeParamBound::Verbatim(_) => todo!(),
+                                        _ => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            (type_param.ident.to_string(), bound_indexes)
+                        }
+                        GenericParam::Const(_) => todo!(),
+                    }
+                })
+                .collect::<Vec<_>>();
 
             let inputs_types = fn_info
                 .signature
@@ -543,7 +657,8 @@ fn update_item_def(
                         },
                         parse_types_for_populate_item_definitions(
                             &pat_type.ty,
-                            &fn_info.generics,
+                            &[],
+                            &generics,
                             module_path,
                             item_refs,
                             item_actual_defs_copy,
@@ -557,7 +672,8 @@ fn update_item_def(
                 ReturnType::Default => RustType::Unit,
                 ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
                     type_,
-                    &fn_info.generics,
+                    &[],
+                    &generics,
                     module_path,
                     item_refs,
                     item_actual_defs_copy,
@@ -584,7 +700,7 @@ fn update_item_def(
                 js_name,
                 is_pub: fn_info.is_pub,
                 inputs_types,
-                generics: fn_info.generics,
+                generics,
                 return_type,
                 stmts: fn_info.stmts,
                 syn: fn_info.syn,
@@ -593,7 +709,8 @@ fn update_item_def(
         ItemDefNoTypes::Const(const_def) => {
             let rust_type = parse_types_for_populate_item_definitions(
                 &const_def.syn_object.ty,
-                &Vec::new(),
+                &[],
+                &[],
                 module_path,
                 item_refs,
                 item_actual_defs_copy,
@@ -640,6 +757,61 @@ fn update_item_def(
                 .default_impls
                 .into_iter()
                 .map(|fn_info| {
+                    let generics = fn_info
+                        .syn_generics
+                        .params
+                        .into_iter()
+                        .map(|param| {
+                            match param {
+                                GenericParam::Lifetime(_) => todo!(),
+                                GenericParam::Type(type_param) => {
+                                    let bound_indexes = type_param
+                                        .bounds
+                                        .into_iter()
+                                        .map(|bound| {
+                                            match bound {
+                                                TypeParamBound::Trait(trait_bound) => {
+                                                    let (
+                                                        _trait_module_path,
+                                                        _trait_item_path,
+                                                        _trait_item_scope,
+                                                        trait_index,
+                                                    ) = make_item_definitions::resolve_path(
+                                                        true,
+                                                        true,
+                                                        trait_bound
+                                                            .path
+                                                            .segments
+                                                            .into_iter()
+                                                            .map(|seg| {
+                                                                RustPathSegment {
+                                                                    ident: seg.ident.to_string(),
+                                                                    // TODO
+                                                                    turbofish: vec![],
+                                                                }
+                                                            })
+                                                            .collect(),
+                                                        item_refs,
+                                                        item_actual_defs_copy,
+                                                        module_path,
+                                                        module_path,
+                                                        scoped_items,
+                                                    );
+                                                    trait_index.unwrap()
+                                                }
+                                                TypeParamBound::Lifetime(_) => todo!(),
+                                                TypeParamBound::Verbatim(_) => todo!(),
+                                                _ => todo!(),
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    (type_param.ident.to_string(), bound_indexes)
+                                }
+                                GenericParam::Const(_) => todo!(),
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
                     let inputs_types = fn_info
                         .signature
                         .inputs
@@ -669,7 +841,8 @@ fn update_item_def(
                                 },
                                 parse_types_for_populate_item_definitions(
                                     &pat_type.ty,
-                                    &fn_info.generics,
+                                    &[],
+                                    &generics,
                                     module_path,
                                     item_refs,
                                     item_actual_defs_copy,
@@ -683,7 +856,8 @@ fn update_item_def(
                         ReturnType::Default => RustType::Unit,
                         ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
                             type_,
-                            &fn_info.generics,
+                            &[],
+                            &generics,
                             module_path,
                             item_refs,
                             item_actual_defs_copy,
@@ -724,7 +898,7 @@ fn update_item_def(
                                 js_name,
                                 is_pub: fn_info.is_pub,
                                 inputs_types,
-                                generics: fn_info.generics,
+                                generics,
                                 return_type,
                                 stmts: fn_info.stmts,
                                 syn: fn_info.syn,
@@ -852,7 +1026,8 @@ fn update_item_def(
                 if let Some(target_type_param) = target_type_param {
                     (
                         RustType::TypeParam(RustTypeParam {
-                            name: target_type_param.ident.clone(),
+                            name: target_type_param.ident,
+                            trait_bounds: target_type_param.trait_bounds,
                             type_: RustTypeParamValue::Unresolved,
                         }),
                         true,
@@ -947,8 +1122,72 @@ fn update_item_def(
                     let rust_impl_item_item = match syn_item {
                         ImplItem::Const(_) => todo!(),
                         ImplItem::Fn(impl_item_fn) => {
+                            let generics = impl_item_fn
+                                .clone()
+                                .sig
+                                .generics
+                                .params
+                                .into_iter()
+                                .map(|param| {
+                                    match param {
+                                        GenericParam::Lifetime(_) => todo!(),
+                                        GenericParam::Type(type_param) => {
+                                            let bound_indexes =
+                                                type_param
+                                                    .bounds
+                                                    .into_iter()
+                                                    .map(|bound| {
+                                                        match bound {
+                                                            TypeParamBound::Trait(trait_bound) => {
+                                                                let (
+                                                _trait_module_path,
+                                                _trait_item_path,
+                                                _trait_item_scope,
+                                                trait_index,
+                                            ) = make_item_definitions::resolve_path(
+                                                true,
+                                                true,
+                                                trait_bound
+                                                    .path
+                                                    .segments
+                                                    .into_iter()
+                                                    .map(|seg| {
+                                                        RustPathSegment {
+                                                            ident: seg.ident.to_string(),
+                                                            // TODO
+                                                            turbofish: vec![],
+                                                        }
+                                                    })
+                                                    .collect(),
+                                                item_refs,
+                                                item_actual_defs_copy,
+                                                module_path,
+                                                module_path,
+                                                scoped_items,
+                                            );
+                                                                trait_index.unwrap()
+                                                            }
+                                                            TypeParamBound::Lifetime(_) => todo!(),
+                                                            TypeParamBound::Verbatim(_) => todo!(),
+                                                            _ => todo!(),
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>();
+                                            (type_param.ident.to_string(), bound_indexes)
+                                        }
+                                        GenericParam::Const(_) => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+
                             let impl_block_generics =
                                 rust_impl_block_generics.iter().map(|g| g.ident.clone());
+
+                            let impl_block_generics2 = rust_impl_block_generics
+                                .iter()
+                                .map(|g| (g.ident.clone(), g.trait_bounds.clone()))
+                                .collect::<Vec<_>>();
+
                             let fn_generics = impl_item_fn
                                 .sig
                                 .generics
@@ -1005,7 +1244,8 @@ fn update_item_def(
                                         },
                                         parse_types_for_populate_item_definitions(
                                             &pat_type.ty,
-                                            &combined_generics,
+                                            &impl_block_generics2,
+                                            &generics,
                                             &module_path,
                                             item_refs,
                                             item_actual_defs_copy,
@@ -1020,7 +1260,8 @@ fn update_item_def(
                                 ReturnType::Type(_, type_) => {
                                     parse_types_for_populate_item_definitions(
                                         type_,
-                                        &combined_generics,
+                                        &impl_block_generics2,
+                                        &generics,
                                         &module_path,
                                         item_refs,
                                         item_actual_defs_copy,
@@ -1065,7 +1306,7 @@ fn update_item_def(
                                     ident: item_name.clone(),
                                     is_pub,
                                     inputs_types,
-                                    generics: fn_generics,
+                                    generics,
                                     return_type,
                                     syn: FnInfoSyn::Impl(impl_item_fn.clone()),
                                     stmts: match exprs_stmts_refs {
@@ -1119,8 +1360,9 @@ fn update_item_def(
 /// IMPORTANT NOTE this fn is never used in the first pass where item definitions are being recorded, only in the second pass where info about dependant types is being add, so we can safely lookup Path -> ItemDefinition here
 fn parse_types_for_populate_item_definitions(
     type_: &Type,
+    impl_generics: &[(String, Vec<usize>)],
     // NOTE this will simply be empty for items that can't be generic, ie consts, or can but simply don't have any
-    root_parent_item_definition_generics: &[String],
+    root_parent_item_def_generics: &[(String, Vec<usize>)],
     // TODO should just store the current module in GlobalData to save having to pass this around everywhere
     current_module: &[String],
     // global_data: &make_item_definitions::GlobalData,
@@ -1153,7 +1395,8 @@ fn parse_types_for_populate_item_definitions(
                                             .map(|input_type| {
                                                 parse_types_for_populate_item_definitions(
                                                     input_type,
-                                                    root_parent_item_definition_generics,
+                                                    impl_generics,
+                                                    root_parent_item_def_generics,
                                                     current_module,
                                                     crates,
                                                     item_defs,
@@ -1166,7 +1409,8 @@ fn parse_types_for_populate_item_definitions(
                                             ReturnType::Type(_, return_type) => {
                                                 parse_types_for_populate_item_definitions(
                                                     return_type,
-                                                    root_parent_item_definition_generics,
+                                                    impl_generics,
+                                                    root_parent_item_def_generics,
                                                     current_module,
                                                     crates,
                                                     item_defs,
@@ -1209,7 +1453,8 @@ fn parse_types_for_populate_item_definitions(
                                                 GenericArgument::Type(arg_type_) => {
                                                     parse_types_for_populate_item_definitions(
                                                         arg_type_,
-                                                        root_parent_item_definition_generics,
+                                                        impl_generics,
+                                                        root_parent_item_def_generics,
                                                         current_module,
                                                         crates,
                                                         item_defs,
@@ -1284,16 +1529,22 @@ fn parse_types_for_populate_item_definitions(
             let seg_name_str = seg_name.as_str();
 
             // Look to see if name is a generic which has been declared
-            let generic = root_parent_item_definition_generics
+            let parent_generic = root_parent_item_def_generics
                 .iter()
-                .find(|generic| generic == &seg_name_str);
-            if let Some(generic) = generic {
+                .find(|(generic_name, _trait_bounds)| generic_name == seg_name_str);
+
+            let impl_block_generic = impl_generics
+                .iter()
+                .find(|(generic_name, _trait_bounds)| generic_name == seg_name_str);
+
+            if let Some((generic_name, trait_bounds)) = parent_generic.or(impl_block_generic) {
                 // return match &generic.type_ {
                 //     RustTypeParamValue::Unresolved => todo!(),
                 //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                 // };
                 return RustType::TypeParam(RustTypeParam {
-                    name: generic.clone(),
+                    name: generic_name.clone(),
+                    trait_bounds: trait_bounds.clone(),
                     type_: RustTypeParamValue::Unresolved,
                 });
             }
@@ -1314,66 +1565,68 @@ fn parse_types_for_populate_item_definitions(
                 // TODO Option should be added to module/global data so we can handle it like any other item and also handle it properly if is has been shadowed
                 "Option" => {
                     todo!();
-                    let generic_type = match &seg.arguments {
-                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
-                            // Option only has
-                            match angle_bracketed_generic_arguments.args.first().unwrap() {
-                                GenericArgument::Lifetime(_) => todo!(),
-                                GenericArgument::Type(type_) => {
-                                    parse_types_for_populate_item_definitions(
-                                        type_,
-                                        root_parent_item_definition_generics,
-                                        current_module,
-                                        crates,
-                                        item_defs,
-                                        scoped_items,
-                                    )
-                                }
-                                GenericArgument::Const(_) => todo!(),
-                                GenericArgument::AssocType(_) => todo!(),
-                                GenericArgument::AssocConst(_) => todo!(),
-                                GenericArgument::Constraint(_) => todo!(),
-                                _ => todo!(),
-                            }
-                        }
-                        _ => todo!(),
-                    };
-                    RustType::Option(RustTypeParam {
-                        // TODO "T" shouldn't be hardcoded here
-                        name: "T".to_string(),
-                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
-                    })
+                    // let generic_type = match &seg.arguments {
+                    //     PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                    //         // Option only has
+                    //         match angle_bracketed_generic_arguments.args.first().unwrap() {
+                    //             GenericArgument::Lifetime(_) => todo!(),
+                    //             GenericArgument::Type(type_) => {
+                    //                 parse_types_for_populate_item_definitions(
+                    //                     type_,
+                    //                     root_parent_item_definition_generics,
+                    //                     current_module,
+                    //                     crates,
+                    //                     item_defs,
+                    //                     scoped_items,
+                    //                 )
+                    //             }
+                    //             GenericArgument::Const(_) => todo!(),
+                    //             GenericArgument::AssocType(_) => todo!(),
+                    //             GenericArgument::AssocConst(_) => todo!(),
+                    //             GenericArgument::Constraint(_) => todo!(),
+                    //             _ => todo!(),
+                    //         }
+                    //     }
+                    //     _ => todo!(),
+                    // };
+                    // RustType::Option(RustTypeParam {
+                    //     // TODO "T" shouldn't be hardcoded here
+                    //     name: "T".to_string(),
+                    //     trait_bounds: todo!(),
+                    //     type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    // })
                 }
                 "Result" => {
-                    let generic_type = match &seg.arguments {
-                        PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
-                            // Option only has
-                            match angle_bracketed_generic_arguments.args.first().unwrap() {
-                                GenericArgument::Lifetime(_) => todo!(),
-                                GenericArgument::Type(type_) => {
-                                    parse_types_for_populate_item_definitions(
-                                        type_,
-                                        root_parent_item_definition_generics,
-                                        current_module,
-                                        crates,
-                                        item_defs,
-                                        scoped_items,
-                                    )
-                                }
-                                GenericArgument::Const(_) => todo!(),
-                                GenericArgument::AssocType(_) => todo!(),
-                                GenericArgument::AssocConst(_) => todo!(),
-                                GenericArgument::Constraint(_) => todo!(),
-                                _ => todo!(),
-                            }
-                        }
-                        _ => todo!(),
-                    };
-                    RustType::Result(RustTypeParam {
-                        // TODO "T" shouldn't be hardcoded here
-                        name: "T".to_string(),
-                        type_: RustTypeParamValue::RustType(Box::new(generic_type)),
-                    })
+                    todo!();
+                    // let generic_type = match &seg.arguments {
+                    //     PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                    //         // Option only has
+                    //         match angle_bracketed_generic_arguments.args.first().unwrap() {
+                    //             GenericArgument::Lifetime(_) => todo!(),
+                    //             GenericArgument::Type(type_) => {
+                    //                 parse_types_for_populate_item_definitions(
+                    //                     type_,
+                    //                     root_parent_item_definition_generics,
+                    //                     current_module,
+                    //                     crates,
+                    //                     item_defs,
+                    //                     scoped_items,
+                    //                 )
+                    //             }
+                    //             GenericArgument::Const(_) => todo!(),
+                    //             GenericArgument::AssocType(_) => todo!(),
+                    //             GenericArgument::AssocConst(_) => todo!(),
+                    //             GenericArgument::Constraint(_) => todo!(),
+                    //             _ => todo!(),
+                    //         }
+                    //     }
+                    //     _ => todo!(),
+                    // };
+                    // RustType::Result(RustTypeParam {
+                    //     // TODO "T" shouldn't be hardcoded here
+                    //     name: "T".to_string(),
+                    //     type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                    // })
                 }
                 _ => {
                     // get full path
@@ -1399,7 +1652,8 @@ fn parse_types_for_populate_item_definitions(
                                         GenericArgument::Type(arg_type_) => {
                                             Some(parse_types_for_populate_item_definitions(
                                                 arg_type_,
-                                                root_parent_item_definition_generics,
+                                                impl_generics,
+                                                root_parent_item_def_generics,
                                                 current_module,
                                                 crates,
                                                 item_defs,
@@ -1443,6 +1697,8 @@ fn parse_types_for_populate_item_definitions(
                         .iter()
                         .map(|rt| RustTypeParam {
                             name: "unknown_todo".to_string(),
+                            // TODO
+                            trait_bounds: vec![],
                             type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
                         })
                         .collect::<Vec<_>>();
@@ -1502,7 +1758,8 @@ fn parse_types_for_populate_item_definitions(
             // })
             let type_ = parse_types_for_populate_item_definitions(
                 &type_reference.elem,
-                root_parent_item_definition_generics,
+                impl_generics,
+                root_parent_item_def_generics,
                 current_module,
                 crates,
                 item_defs,
@@ -1580,7 +1837,8 @@ pub struct StructEnumDef {
     // members: Vec<StructFieldInfo>,
     // members: Vec<ImplItem>,
     // TODO do we need to know eg bounds for each generic?
-    pub generics: Vec<String>,
+    /// (type param name, trait bounds)
+    pub generics: Vec<(String, Vec<usize>)>,
     // syn_object: StructOrEnumSynObject,
     pub struct_or_enum_info: StructEnumUniqueInfo2,
     // impl_blocks: Vec<ItemDefintionImpls>,
@@ -1637,12 +1895,22 @@ pub struct TraitDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustTypeParam {
     pub name: String,
+    // TODO What if the trait is generic and so has concrete types specified? Need something like `Vec<(RustTypeParam, usize)>`?
+    pub trait_bounds: Vec<usize>,
     pub type_: RustTypeParamValue,
 }
 impl RustTypeParam {
     pub fn into_rust_type_param2(self, global_data: &GlobalData) -> RustTypeParam2 {
         RustTypeParam2 {
             name: self.name,
+            trait_bounds: self
+                .trait_bounds
+                .into_iter()
+                .map(|index| match &global_data.item_defs[index] {
+                    ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                    _ => todo!(),
+                })
+                .collect(),
             type_: match self.type_ {
                 RustTypeParamValue::Unresolved => RustTypeParamValue2::Unresolved,
                 RustTypeParamValue::RustType(type_) => {
@@ -1948,7 +2216,9 @@ pub struct FnDef {
     /// TODO probably don't actually need `is_self`
     /// (is_self, is_mut, name, type)
     pub inputs_types: Vec<(bool, bool, String, RustType)>,
-    pub generics: Vec<String>,
+    /// (type param name, trait bounds)
+    pub generics: Vec<(String, Vec<usize>)>,
+    // pub generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
     pub return_type: RustType,
     // /// type of fn eg Fn(i32) -> ()
@@ -1963,14 +2233,17 @@ impl FnDef {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
         args: &[RustType2],
+        item_defs: &[ItemDefRc],
     ) -> Vec<RustTypeParam2> {
         self.generics
             .iter()
-            .map(|g| {
+            .map(|(type_param_name, trait_bounds)| {
                 let matched_arg_rust_type = self.inputs_types.iter().enumerate().find_map(
                     |(i, (_is_self, _is_mut, _name, input_type))| {
                         match input_type {
-                            RustType::TypeParam(type_param) if g == &type_param.name => {
+                            RustType::TypeParam(type_param)
+                                if type_param_name == &type_param.name =>
+                            {
                                 Some(args[i].clone())
                             }
                             // TODO what about types that *contain* a type param eg `foo: Option<T>`
@@ -1986,8 +2259,17 @@ impl FnDef {
                         RustTypeParamValue2::Unresolved
                     };
 
+                let trait_bounds = trait_bounds
+                    .iter()
+                    .map(|index| match &item_defs[*index] {
+                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                        _ => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+
                 RustTypeParam2 {
-                    name: g.clone(),
+                    name: type_param_name.clone(),
+                    trait_bounds,
                     type_: rust_type_param_value,
                 }
             })

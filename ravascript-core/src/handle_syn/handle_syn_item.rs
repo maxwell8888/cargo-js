@@ -425,6 +425,8 @@ pub fn handle_item_enum(
             GenericParam::Lifetime(_) => todo!(),
             GenericParam::Type(type_param) => RustTypeParam {
                 name: type_param.ident.to_string(),
+                // TODO
+                trait_bounds: Vec::new(),
                 type_: RustTypeParamValue::Unresolved,
             },
             GenericParam::Const(_) => todo!(),

@@ -35,6 +35,7 @@ impl ScopedVar {
 #[derive(Debug, Clone)]
 pub struct RustTypeParam2 {
     pub name: String,
+    pub trait_bounds: Vec<Rc<TraitDef>>,
     pub type_: RustTypeParamValue2,
 }
 
@@ -599,15 +600,28 @@ impl GlobalData {
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
                 RustImplItemItemNoJs::Fn(_static_, fn_info) => {
+                    // Get trait bounds
+
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
                     let fn_generics = if !sub_path.turbofish.is_empty() {
                         sub_path
                             .turbofish
                             .iter()
                             .enumerate()
-                            .map(|(i, g)| RustTypeParam2 {
-                                name: fn_info.generics[i].clone(),
-                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                            .map(|(i, g)| {
+                                let (name, trait_bounds) = fn_info.generics[i].clone();
+                                let trait_bounds = trait_bounds
+                                    .into_iter()
+                                    .map(|index| match &self.item_defs[index] {
+                                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                        _ => todo!(),
+                                    })
+                                    .collect();
+                                RustTypeParam2 {
+                                    name,
+                                    trait_bounds,
+                                    type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                                }
                             })
                             .collect::<Vec<_>>()
                     } else {
@@ -616,9 +630,19 @@ impl GlobalData {
                         fn_info
                             .generics
                             .iter()
-                            .map(|g| RustTypeParam2 {
-                                name: g.clone(),
-                                type_: RustTypeParamValue2::Unresolved,
+                            .map(|(name, trait_bounds)| {
+                                let trait_bounds = trait_bounds
+                                    .into_iter()
+                                    .map(|index| match &self.item_defs[*index] {
+                                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                        _ => todo!(),
+                                    })
+                                    .collect();
+                                RustTypeParam2 {
+                                    name: name.clone(),
+                                    trait_bounds,
+                                    type_: RustTypeParamValue2::Unresolved,
+                                }
                             })
                             .collect::<Vec<_>>()
                     };

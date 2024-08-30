@@ -196,21 +196,25 @@ pub fn process_items(
     );
     // Need to manually add the Fn traits because we can't redefine them to allow them be read in with all the prelude items.
     let trait_syn = syn::parse_str::<ItemTrait>("trait FnOnce {}").unwrap();
-    item_defs.push(ItemDefNoTypes::Trait(make_item_definitions::TraitDef {
-        ident: trait_syn.ident.clone(),
-        is_pub: true,
-        syn: trait_syn,
-        default_impls: Vec::new(),
-    }));
+    item_defs.push(ItemDefNoTypes::Trait(
+        make_item_definitions::TraitDefNoTypes {
+            ident: trait_syn.ident.clone(),
+            is_pub: true,
+            syn: trait_syn,
+            default_impls: Vec::new(),
+        },
+    ));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     let trait_syn = syn::parse_str::<ItemTrait>("trait Copy {}").unwrap();
-    item_defs.push(ItemDefNoTypes::Trait(make_item_definitions::TraitDef {
-        ident: trait_syn.ident.clone(),
-        is_pub: true,
-        syn: trait_syn,
-        default_impls: Vec::new(),
-    }));
+    item_defs.push(ItemDefNoTypes::Trait(
+        make_item_definitions::TraitDefNoTypes {
+            ident: trait_syn.ident.clone(),
+            is_pub: true,
+            syn: trait_syn,
+            default_impls: Vec::new(),
+        },
+    ));
     rust_prelude_items.push(ItemRef::Trait(item_defs.len() - 1));
 
     crates.insert(

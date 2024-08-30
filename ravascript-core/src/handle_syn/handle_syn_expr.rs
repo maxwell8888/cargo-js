@@ -1995,7 +1995,11 @@ fn handle_expr_method_call(
                 input_type,
                 &receiver_type,
                 &receiver_type_params,
-                &fn_info.generics,
+                &fn_info
+                    .generics
+                    .iter()
+                    .map(|(name, indexes)| name.clone())
+                    .collect::<Vec<_>>(),
                 &method_turbofish_rust_types,
                 global_data,
             )
@@ -2460,7 +2464,20 @@ fn get_receiver_params_and_method_impl_item(
         RustType2::Unit => todo!(),
         RustType2::Never => todo!(),
         RustType2::ImplTrait(_) => todo!(),
-        RustType2::TypeParam(_) => todo!(),
+        RustType2::TypeParam(rust_type_param) => {
+            // If we are calling a method on a type param, then it must have at least one trait bound
+            assert!(!rust_type_param.trait_bounds.is_empty());
+
+            // match rust_type_param.type_ {
+            //     RustTypeParamValue2::Unresolved => todo!(),
+            //     RustTypeParamValue2::RustType(_) => todo!(),
+            // }
+
+            dbg!(&rust_type_param);
+            dbg!(&method_name);
+            dbg!(&sub_path);
+            todo!();
+        }
         RustType2::I32 => {
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
 
@@ -2746,9 +2763,15 @@ fn _method_return_type_generic_resolve_to_rust_type(
             RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
         }
         // Is type param specified on method (and we have a method turbofish)?
-    } else if let Some(gen_index) = fn_info.generics.iter().position(|method_type_param| {
-        method_type_param == &return_type_param.name && method_turbofish_rust_types.is_some()
-    }) {
+    } else if let Some(gen_index) =
+        fn_info
+            .generics
+            .iter()
+            .position(|(method_type_param, _indexes)| {
+                method_type_param == &return_type_param.name
+                    && method_turbofish_rust_types.is_some()
+            })
+    {
         method_turbofish_rust_types.as_ref().unwrap()[gen_index].clone()
 
         // Is type param concrete value resolved by input argument?
@@ -2957,6 +2980,9 @@ fn handle_expr_call(
 
     let (mut args_js_expr, mut args_rust_types) =
         parse_args(expr_call, None, global_data, current_module);
+    // dbg!(&expr_call);
+    // dbg!(&args_js_expr);
+    // dbg!(&args_rust_types);
 
     // Determine return type, looking up structs/enums in scope and checking for generics and whether they can be inferred
     // TODO also need to handle looking up fns
@@ -3014,7 +3040,7 @@ fn handle_expr_call(
 
                     RustType2::StructOrEnum(updated_type_params, item_def)
                 }
-                PartialRustType::EnumVariantIdent(type_params, item_def, variant_name) => {
+                PartialRustType::EnumVariantIdent(enum_type_params, item_def, variant_name) => {
                     let enum_def = match &item_def.struct_or_enum_info {
                         StructEnumUniqueInfo2::Struct(_) => panic!(),
                         StructEnumUniqueInfo2::Enum(enum_def) => enum_def,
@@ -3026,28 +3052,39 @@ fn handle_expr_call(
                         .unwrap();
 
                     // Do any of the args for the enum variant resolve any of the enum's generics?
-                    let updated_type_params = type_params
+                    let updated_type_params = enum_type_params
                         .iter()
-                        .map(|tp| {
+                        .map(|enum_tp| {
                             for (i, input) in enum_variant.inputs.iter().enumerate() {
                                 let input_type = match input {
                                     EnumVariantInputsInfo::Named { input_type, .. } => input_type,
                                     EnumVariantInputsInfo::Unnamed(input_type) => input_type,
                                 };
                                 let matches_gen = match input_type {
-                                    RustType::TypeParam(type_param) => type_param.name == tp.name,
-                                    _ => false,
+                                    RustType::TypeParam(input_tp) => {
+                                        (input_tp.name == enum_tp.name).then_some(input_tp)
+                                    }
+                                    _ => None,
                                 };
-                                if matches_gen {
+                                if let Some(input_tp) = matches_gen {
+                                    let trait_bounds = input_tp
+                                        .trait_bounds
+                                        .iter()
+                                        .map(|i| match &global_data.item_defs[*i] {
+                                            ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                            _ => todo!(),
+                                        })
+                                        .collect();
                                     return RustTypeParam2 {
-                                        name: tp.name.clone(),
+                                        name: enum_tp.name.clone(),
+                                        trait_bounds,
                                         type_: RustTypeParamValue2::RustType(Box::new(
                                             args_rust_types[i].clone(),
                                         )),
                                     };
                                 }
                             }
-                            tp.clone()
+                            enum_tp.clone()
                         })
                         .collect::<Vec<_>>();
 
@@ -3058,6 +3095,8 @@ fn handle_expr_call(
                         RustType2::Option(RustTypeParam2 {
                             // TODO don't hardcode "T"
                             name: "T".to_string(),
+                            // TODO
+                            trait_bounds: Vec::new(),
                             type_: RustTypeParamValue2::RustType(Box::new(
                                 args_rust_types.first().unwrap().clone(),
                             )),
@@ -3077,8 +3116,10 @@ fn handle_expr_call(
                         RustType2::TypeParam(_) => {
                             // TODO if type param is resolved it could be a fn or whatever so need to call this match recursively/as a fn
                             // otherwise need return the unresolved type but also note that it has been called(!) so could be the return type of some fn yet to be known, a tuple struct instance, and enum instance, etc. Though this seems like a rarer case and I'm not sure it is even possbile/aloud to wait until after calling a type param to resolved
+                            dbg!(expr_call);
                             dbg!(rust_type);
-                            todo!()
+                            // Type Param must be a closure type, and given we have a type param we know there is a parent type, so need to get this type from the parent.
+                            todo!();
                         }
                         RustType2::Fn(_item_type_params, _type_params, fn_info) => {
                             // let name = match name {
@@ -3128,7 +3169,10 @@ fn handle_expr_call(
                             // Look to see if any of the input types are type params replace with concrete type from argument
                             // TODO IMPORTANT for an associated fn, attempt_to_resolve_type_params_using_arg_types will not take into account generics defined on the *item* which might be concretised by the args and used in the return type
                             let new_type_params = fn_info
-                                .attempt_to_resolve_type_params_using_arg_types(&args_rust_types);
+                                .attempt_to_resolve_type_params_using_arg_types(
+                                    &args_rust_types,
+                                    &global_data.item_defs,
+                                );
 
                             // Resolve return type
                             // RustType::Fn returns a different type when called (which is obviously what is happening given we are handling expr_call), and also might be nested, ie inside other types that take generics eg Some(fn_returns_i32()) => RustType::Option(RustType::i32), so need to resolve this
@@ -3549,9 +3593,20 @@ fn handle_expr_path_inner(
                     .turbofish
                     .iter()
                     .enumerate()
-                    .map(|(i, g)| RustTypeParam2 {
-                        name: item_def.generics[i].clone(),
-                        type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                    .map(|(i, g)| {
+                        let (name, indexes) = item_def.generics[i].clone();
+                        let trait_bounds = indexes
+                            .iter()
+                            .map(|i| match &global_data.item_defs[*i] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect();
+                        RustTypeParam2 {
+                            name,
+                            trait_bounds,
+                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                        }
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -3560,9 +3615,19 @@ fn handle_expr_path_inner(
                 item_def
                     .generics
                     .iter()
-                    .map(|g| RustTypeParam2 {
-                        name: g.clone(),
-                        type_: RustTypeParamValue2::Unresolved,
+                    .map(|(name, indexes)| {
+                        let trait_bounds = indexes
+                            .iter()
+                            .map(|i| match &global_data.item_defs[*i] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect();
+                        RustTypeParam2 {
+                            name: name.clone(),
+                            trait_bounds,
+                            type_: RustTypeParamValue2::Unresolved,
+                        }
                     })
                     .collect::<Vec<_>>()
             };
@@ -3595,18 +3660,39 @@ fn handle_expr_path_inner(
                             .turbofish
                             .iter()
                             .enumerate()
-                            .map(|(i, g)| RustTypeParam2 {
-                                name: item_def.generics[i].clone(),
-                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                            .map(|(i, g)| {
+                                let (name, indexes) = item_def.generics[i].clone();
+                                let trait_bounds = indexes
+                                    .iter()
+                                    .map(|i| match &global_data.item_defs[*i] {
+                                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                        _ => todo!(),
+                                    })
+                                    .collect();
+                                RustTypeParam2 {
+                                    name,
+                                    trait_bounds,
+                                    type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                                }
                             })
                             .collect::<Vec<_>>()
                     } else {
                         item_def
                             .generics
                             .iter()
-                            .map(|g| RustTypeParam2 {
-                                name: g.clone(),
-                                type_: RustTypeParamValue2::Unresolved,
+                            .map(|(name, indexes)| {
+                                let trait_bounds = indexes
+                                    .iter()
+                                    .map(|i| match &global_data.item_defs[*i] {
+                                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                        _ => todo!(),
+                                    })
+                                    .collect();
+                                RustTypeParam2 {
+                                    name: name.clone(),
+                                    trait_bounds,
+                                    type_: RustTypeParamValue2::Unresolved,
+                                }
                             })
                             .collect::<Vec<_>>()
                     };
@@ -4451,18 +4537,39 @@ fn found_item_to_partial_rust_type(
                         .turbofish
                         .iter()
                         .enumerate()
-                        .map(|(i, g)| RustTypeParam2 {
-                            name: item_def.generics[i].clone(),
-                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                        .map(|(i, g)| {
+                            let (name, indexes) = item_def.generics[i].clone();
+                            let trait_bounds = indexes
+                                .iter()
+                                .map(|i| match &global_data.item_defs[*i] {
+                                    ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                    _ => todo!(),
+                                })
+                                .collect();
+                            RustTypeParam2 {
+                                name,
+                                trait_bounds,
+                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                            }
                         })
                         .collect::<Vec<_>>()
                 } else {
                     item_def
                         .generics
                         .iter()
-                        .map(|g| RustTypeParam2 {
-                            name: g.clone(),
-                            type_: RustTypeParamValue2::Unresolved,
+                        .map(|(name, indexes)| {
+                            let trait_bounds = indexes
+                                .iter()
+                                .map(|i| match &global_data.item_defs[*i] {
+                                    ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                    _ => todo!(),
+                                })
+                                .collect();
+                            RustTypeParam2 {
+                                name: name.clone(),
+                                trait_bounds,
+                                type_: RustTypeParamValue2::Unresolved,
+                            }
                         })
                         .collect::<Vec<_>>()
                 };
@@ -4487,18 +4594,39 @@ fn found_item_to_partial_rust_type(
                         .turbofish
                         .iter()
                         .enumerate()
-                        .map(|(i, g)| RustTypeParam2 {
-                            name: fn_info.generics[i].clone(),
-                            type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                        .map(|(i, g)| {
+                            let (name, indexes) = fn_info.generics[i].clone();
+                            let trait_bounds = indexes
+                                .iter()
+                                .map(|i| match &global_data.item_defs[*i] {
+                                    ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                    _ => todo!(),
+                                })
+                                .collect();
+                            RustTypeParam2 {
+                                name,
+                                trait_bounds,
+                                type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                            }
                         })
                         .collect::<Vec<_>>()
                 } else {
                     fn_info
                         .generics
                         .iter()
-                        .map(|g| RustTypeParam2 {
-                            name: g.clone(),
-                            type_: RustTypeParamValue2::Unresolved,
+                        .map(|(name, indexes)| {
+                            let trait_bounds = indexes
+                                .iter()
+                                .map(|i| match &global_data.item_defs[*i] {
+                                    ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                    _ => todo!(),
+                                })
+                                .collect();
+                            RustTypeParam2 {
+                                name: name.clone(),
+                                trait_bounds,
+                                type_: RustTypeParamValue2::Unresolved,
+                            }
                         })
                         .collect::<Vec<_>>()
                 };

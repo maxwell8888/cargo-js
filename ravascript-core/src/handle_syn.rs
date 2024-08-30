@@ -317,6 +317,14 @@ fn parse_fn_input_or_field(
                     // };
                     return RustType2::TypeParam(RustTypeParam2 {
                         name: generic.name.clone(),
+                        trait_bounds: generic
+                            .trait_bounds
+                            .iter()
+                            .map(|index| match &global_data.item_defs[*index] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect(),
                         type_: match generic.type_.clone() {
                             RustTypeParamValue::Unresolved => RustTypeParamValue2::Unresolved,
                             RustTypeParamValue::RustType(rust_type) => {
@@ -371,8 +379,8 @@ fn parse_fn_input_or_field(
                             .filter_map(|(i, a)| match a {
                                 GenericArgument::Lifetime(_) => None,
                                 GenericArgument::Type(type_) => {
-                                    // Get the name of the generic from the items definition
-                                    let gen_arg_name = item_definition.generics[i].clone();
+                                    let (gen_arg_name, indexes) =
+                                        item_definition.generics[i].clone();
 
                                     // First check if type is one of the parent's generics - why? purely so that we know whether the type is a generic or concrete type, we could equally look up the concrete type and assume that if that fails it must be a generic
                                     let type_param = if let Some(parent_generic) =
@@ -380,9 +388,20 @@ fn parse_fn_input_or_field(
                                             .iter()
                                             .find(|g| g.name == gen_arg_name)
                                     {
+                                        // Get trait bounds of found generic
+                                        let trait_bounds = parent_generic
+                                            .trait_bounds
+                                            .iter()
+                                            .map(|index| match &global_data.item_defs[*index] {
+                                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                                _ => todo!(),
+                                            })
+                                            .collect();
+
                                         match parent_generic.type_ {
                                             RustTypeParamValue::Unresolved => RustTypeParam2 {
-                                                name: gen_arg_name,
+                                                name: parent_generic.name.clone(),
+                                                trait_bounds,
                                                 type_: RustTypeParamValue2::Unresolved,
                                             },
                                             // "an item definition should not have any resovled type params"
@@ -390,6 +409,17 @@ fn parse_fn_input_or_field(
                                         }
                                     } else {
                                         // Otherwise we have another type we need to parse
+
+                                        // Get the name of the generic from the items definition
+
+                                        let trait_bounds = indexes
+                                            .into_iter()
+                                            .map(|index| match &global_data.item_defs[index] {
+                                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                                _ => todo!(),
+                                            })
+                                            .collect();
+
                                         let param_rust_type = parse_fn_input_or_field(
                                             type_,
                                             has_mut_keyword,
@@ -399,6 +429,7 @@ fn parse_fn_input_or_field(
                                         );
                                         RustTypeParam2 {
                                             name: gen_arg_name,
+                                            trait_bounds,
                                             type_: RustTypeParamValue2::RustType(Box::new(
                                                 param_rust_type,
                                             )),
