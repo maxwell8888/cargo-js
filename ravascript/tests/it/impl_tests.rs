@@ -1305,7 +1305,7 @@ async fn method_call_num_mut_self() {
 // Currently we aren't storing generic bounds on `RustTypeParam`s. However we will have to in the case that eg a method is called on a type param, in order to be able to look up the appropriate trait.
 #[allow(unused_mut)]
 #[tokio::test]
-async fn method_call_on_type_param_trait_default() {
+async fn method_call_on_type_param_trait_default_user_type() {
     let actual = r2j_block_with_prelude!({
         trait Foo {
             fn get_num(&self) -> i32 {
@@ -1341,6 +1341,47 @@ async fn method_call_on_type_param_trait_default() {
                 return foo.getNum();
             }
             let num = bar(baz);
+            console.assert(num === 4);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[allow(unused_mut)]
+#[tokio::test]
+async fn method_call_on_type_param_trait_default_primative() {
+    let actual = r2j_block_with_prelude!({
+        trait Foo {
+            fn get_num(&self) -> i32 {
+                4
+            }
+        }
+        // struct Baz;
+        // impl Foo for Baz {}
+        impl Foo for i32 {}
+        fn bar<T: Foo>(foo: T) -> i32 {
+            foo.get_num()
+        }
+        let num = bar(1);
+        assert!(num == 4);
+    });
+
+    // println!("{actual}");
+    // TODO don't output empty impl blocks
+    let expected = format_js(
+        r#"
+            class Foo {
+                getNum() {
+                    return 4;
+                }
+            }
+            class Foo__i32 {}
+            Number.prototype.getNum = Foo.prototype.getNum;
+            function bar(foo) {
+                return foo.getNum();
+            }
+            let num = bar(1);
             console.assert(num === 4);
         "#,
     );

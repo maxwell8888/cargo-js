@@ -1,5 +1,5 @@
 use heck::AsPascalCase;
-use std::fs;
+use std::{fs, iter::once};
 use syn::{
     Fields, FnArg, GenericParam, ImplItemFn, ItemMod, Meta, Pat, ReturnType, Type, Visibility,
 };
@@ -18,7 +18,7 @@ use crate::{
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
         ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
-        StructEnumUniqueInfo2,
+        StructEnumUniqueInfo2, TraitItemDef,
     },
     GlobalData, RustImplItemItemJs, RustType2, RUST_PRELUDE_MODULE_PATH,
 };
@@ -1113,29 +1113,78 @@ pub fn handle_item_impl(
         .dedup_by(|(js_name, _item_def), (js_name2, _item_def2)| js_name == js_name2);
 
     // Push stmts like `Number.prototype.foo = bar.prototype.foo`
+    // TODO very convoluted and duplication
     for (js_name, prelude_item_def) in &dedup_rust_prelude_definitions {
         // If impl block matches the prelude type, push prototype assignments for each item in block
         if prelude_item_def.impl_block_ids.contains(&index) {
-            for (_is_used, item) in &js_impl_block.items {
+            // (item name, block name, method_self_mut_ref)
+            let mut stuff_to_iter = js_impl_block
+                .items
+                .iter()
+                .map(|(_is_used, item)| {
+                    let method_self_mut_ref = match &item.item {
+                        RustImplItemItemJs::Fn(_, fn_info, _) => fn_info
+                            .inputs_types
+                            .first()
+                            .is_some_and(|(is_self, _is_mut, _name, type_)| {
+                                *is_self
+                                    && matches!(
+                                        // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
+                                        type_.clone().into_rust_type2(global_data),
+                                        RustType2::MutRef(_)
+                                    )
+                            }),
+                        RustImplItemItemJs::Const(_) => todo!(),
+                    };
+                    (
+                        Ident::String(item.ident.clone()),
+                        js_impl_block.js_name(),
+                        method_self_mut_ref,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            // NOTE For trait impl blocks, we need to check that all the items in the trait are implemented in the impl block and for any that are not, use the default item impl from the trait
+            let trait_def =
+                js_impl_block.trait_.as_ref().map(
+                    |(_module_path, _name, index)| match &global_data.item_defs[*index] {
+                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                        _ => todo!(),
+                    },
+                );
+            if let Some(trait_def) = trait_def {
+                for item in &trait_def.items {
+                    let fn_sig_def = match item {
+                        TraitItemDef::Fn(fn_sig_def) => fn_sig_def,
+                        TraitItemDef::Const => todo!(),
+                        TraitItemDef::Type => todo!(),
+                    };
+                    let impl_block_contains_item = js_impl_block
+                        .items
+                        .iter()
+                        .any(|(_, impl_item)| impl_item.ident == fn_sig_def.ident);
+                    if !impl_block_contains_item {
+                        stuff_to_iter.push((
+                            Ident::String(fn_sig_def.ident.clone()),
+                            trait_def.js_name.clone(),
+                            fn_sig_def.inputs_types.first().is_some_and(
+                                |(is_self, _is_mut, _name, type_)| {
+                                    *is_self
+                                        && matches!(
+                                            // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
+                                            type_.clone().into_rust_type2(global_data),
+                                            RustType2::MutRef(_)
+                                        )
+                                },
+                            ),
+                        ));
+                    }
+                }
+            }
+            for (item_name, block_name, method_self_mut_ref) in stuff_to_iter {
                 // TODO only add if `is_used == true`
-                let item_name = Ident::String(item.ident.clone());
-                let block_name = &js_impl_block.js_name();
 
                 // methods on primative values like i32 need to be added to eg `RustInteger` rather than `Number` if they take `&mut self`
-                let method_self_mut_ref = match &item.item {
-                    RustImplItemItemJs::Fn(_, fn_info, _) => fn_info
-                        .inputs_types
-                        .first()
-                        .is_some_and(|(is_self, _is_mut, _name, type_)| {
-                            *is_self
-                                && matches!(
-                                    // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
-                                    type_.clone().into_rust_type2(global_data),
-                                    RustType2::MutRef(_)
-                                )
-                        }),
-                    RustImplItemItemJs::Const(_) => todo!(),
-                };
                 let js_name = if *js_name == "Number" && method_self_mut_ref {
                     "RustInteger"
                 } else {
