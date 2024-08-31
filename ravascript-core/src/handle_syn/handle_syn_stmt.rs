@@ -100,10 +100,22 @@ fn handle_local(
     // dbg!("handle_local");
     // println!("{}", quote! { #local });
     let (mut rhs_expr, rhs_type, rhs_is_mut_var) = match &*local_init.expr {
+        // TODO Why are we calling handle_expr_path separately here? To know if we have a mut var?
         ExprRef::Path(expr_path) => {
             let (expr, partial) = handle_expr_path(expr_path, global_data, current_module_path);
             match partial {
-                PartialRustType::StructIdent(_, _) => todo!(),
+                PartialRustType::StructIdent(type_params, struct_enum_def) => {
+                    // TODO feels wrong to be extracting data from a parsed JsExpr?
+                    let path_ident = match expr {
+                        JsExpr::Path(path_ident) => path_ident,
+                        _ => todo!(),
+                    };
+                    (
+                        JsExpr::New(path_ident, vec![]),
+                        RustType2::StructOrEnum(type_params, struct_enum_def),
+                        false,
+                    )
+                }
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
                 PartialRustType::RustType(rust_type, is_mut_var, _is_var) => {
                     (expr, rust_type, is_mut_var)
