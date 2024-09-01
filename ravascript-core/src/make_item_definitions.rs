@@ -1544,6 +1544,7 @@ pub fn resolve_path(
             || seg.ident == "Copy"
             || seg.ident == "Vec"
             || seg.ident == "Option"
+            || seg.ident == "Result"
         {
             // TODO shouldn't need this
             fn prelude_item_def_name_to_js(item_def_name: &str) -> &str {

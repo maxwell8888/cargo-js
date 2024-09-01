@@ -71,16 +71,15 @@ async fn json_parse_unsafe() {
 #[allow(dead_code, clippy::needless_return)]
 #[tokio::test]
 async fn json_parse_wrapper() {
-    let actual = r2j_file_run_main!(
+    let actual = r2j_file_no_rust!(
         use web_prelude::{SyntaxError, catch, try_, json_parse};
 
-        #[derive(Default)]
         pub struct Foo {
             text: String,
             num: i32,
         }
 
-        fn parse<T: Default>(text: &str) -> Result<T, SyntaxError> {
+        fn parse<T>(text: &str) -> Result<T, SyntaxError> {
             try_! {{
                 return Ok(unsafe { json_parse(text).cast::<T>() });
             }}

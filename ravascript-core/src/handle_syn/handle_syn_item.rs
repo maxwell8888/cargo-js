@@ -283,7 +283,7 @@ pub fn handle_item_fn(
                     RustType2::Bool => todo!(),
                     RustType2::String => todo!(),
                     RustType2::Option(_) => todo!(),
-                    RustType2::Result(_) => todo!(),
+                    RustType2::Result(_, _) => todo!(),
                     RustType2::StructOrEnum(_, _) => todo!(),
                     RustType2::Vec(_) => todo!(),
                     RustType2::Array(_) => todo!(),
@@ -1081,6 +1081,7 @@ pub fn handle_item_impl(
             "Box" => "donotuse",
             "Option" => "donotuse",
             "Vec" => "Array",
+            "Result" => "donotuse",
             _ => todo!(),
         }
     }
@@ -1671,7 +1672,7 @@ pub fn handle_item_trait(
                                 RustType2::Bool => todo!(),
                                 RustType2::String => todo!(),
                                 RustType2::Option(_) => todo!(),
-                                RustType2::Result(_) => todo!(),
+                                RustType2::Result(_, _) => todo!(),
                                 RustType2::StructOrEnum(_, _) => todo!(),
                                 RustType2::Vec(_) => todo!(),
                                 RustType2::Array(_) => todo!(),

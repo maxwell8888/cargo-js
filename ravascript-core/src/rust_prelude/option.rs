@@ -5,6 +5,11 @@
 
 use std::marker::PhantomData;
 
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
 // #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]
 // #[derive(PartialEq)]

@@ -222,7 +222,7 @@ fn handle_local(
                         RustType2::Bool => todo!(),
                         RustType2::String => todo!(),
                         RustType2::Option(_) => todo!(),
-                        RustType2::Result(_) => todo!(),
+                        RustType2::Result(_, _) => todo!(),
                         RustType2::StructOrEnum(_type_params, item_def) => {
                             item_def.is_copy && var.mut_ && !mut_ref_taken
                         }
@@ -351,7 +351,7 @@ fn handle_local(
                 JsExpr::New("RustString".into(), vec![rhs_expr])
             }
             RustType2::Option(_) => todo!(),
-            RustType2::Result(_) => todo!(),
+            RustType2::Result(_, _) => todo!(),
             RustType2::StructOrEnum(_, _) => todo!(),
             RustType2::Vec(_) => todo!(),
             RustType2::Array(_) => todo!(),

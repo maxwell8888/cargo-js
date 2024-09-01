@@ -1751,38 +1751,38 @@ fn parse_types_for_populate_item_definitions(
                     //     type_: RustTypeParamValue::RustType(Box::new(generic_type)),
                     // })
                 }
-                "Result" => {
-                    todo!();
-                    // let generic_type = match &seg.arguments {
-                    //     PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
-                    //         // Option only has
-                    //         match angle_bracketed_generic_arguments.args.first().unwrap() {
-                    //             GenericArgument::Lifetime(_) => todo!(),
-                    //             GenericArgument::Type(type_) => {
-                    //                 parse_types_for_populate_item_definitions(
-                    //                     type_,
-                    //                     root_parent_item_definition_generics,
-                    //                     current_module,
-                    //                     crates,
-                    //                     item_defs,
-                    //                     scoped_items,
-                    //                 )
-                    //             }
-                    //             GenericArgument::Const(_) => todo!(),
-                    //             GenericArgument::AssocType(_) => todo!(),
-                    //             GenericArgument::AssocConst(_) => todo!(),
-                    //             GenericArgument::Constraint(_) => todo!(),
-                    //             _ => todo!(),
-                    //         }
-                    //     }
-                    //     _ => todo!(),
-                    // };
-                    // RustType::Result(RustTypeParam {
-                    //     // TODO "T" shouldn't be hardcoded here
-                    //     name: "T".to_string(),
-                    //     type_: RustTypeParamValue::RustType(Box::new(generic_type)),
-                    // })
-                }
+                // "Result" => {
+                // todo!();
+                // let generic_type = match &seg.arguments {
+                //     PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
+                //         // Option only has
+                //         match angle_bracketed_generic_arguments.args.first().unwrap() {
+                //             GenericArgument::Lifetime(_) => todo!(),
+                //             GenericArgument::Type(type_) => {
+                //                 parse_types_for_populate_item_definitions(
+                //                     type_,
+                //                     root_parent_item_definition_generics,
+                //                     current_module,
+                //                     crates,
+                //                     item_defs,
+                //                     scoped_items,
+                //                 )
+                //             }
+                //             GenericArgument::Const(_) => todo!(),
+                //             GenericArgument::AssocType(_) => todo!(),
+                //             GenericArgument::AssocConst(_) => todo!(),
+                //             GenericArgument::Constraint(_) => todo!(),
+                //             _ => todo!(),
+                //         }
+                //     }
+                //     _ => todo!(),
+                // };
+                // RustType::Result(RustTypeParam {
+                //     // TODO "T" shouldn't be hardcoded here
+                //     name: "T".to_string(),
+                //     type_: RustTypeParamValue::RustType(Box::new(generic_type)),
+                // })
+                // }
                 _ => {
                     // get full path
                     // NOTE only the final segment should have turbofish, or the final two if the path is an associated item
@@ -1882,6 +1882,9 @@ fn parse_types_for_populate_item_definitions(
                             // dbg!(&type_path.path.segments);
                             assert_eq!(type_params.len(), 1);
                             RustType::Vec(Box::new(RustType::TypeParam(type_params.remove(0))))
+                        } else if item_seg.ident == "Result" {
+                            assert_eq!(type_params.len(), 2);
+                            RustType::Result(type_params.remove(0), type_params.remove(0))
                         } else {
                             dbg!(&item_seg.ident);
                             todo!()
@@ -2198,7 +2201,7 @@ pub enum RustType {
     Option(RustTypeParam),
     // Option(Box<RustType>),
     /// (generic)
-    Result(RustTypeParam),
+    Result(RustTypeParam, RustTypeParam),
     /// Need to remember that because StructOrEnum can have generics that have been resolved to concrete types, it means we are using RustType to record the type of both the single defined item that gets recorded in scopes modules/structs and enums, but also instances of the item, stored the in variables vec of the scope
     // Struct(StructOrEnumItemDefinition),
     // Enum(StructOrEnumInstance),
@@ -2289,9 +2292,10 @@ impl RustType {
             RustType::Option(rust_type_param) => {
                 RustType2::Option(rust_type_param.into_rust_type_param2(global_data))
             }
-            RustType::Result(rust_type_param) => {
-                RustType2::Result(rust_type_param.into_rust_type_param2(global_data))
-            }
+            RustType::Result(ok_type_param, err_type_param) => RustType2::Result(
+                ok_type_param.into_rust_type_param2(global_data),
+                err_type_param.into_rust_type_param2(global_data),
+            ),
             RustType::StructOrEnum(type_params, module_path, name, index) => {
                 let item_def = global_data.get_struct_enum(index);
                 RustType2::StructOrEnum(

@@ -597,7 +597,7 @@ pub fn handle_expr(
                     RustType2::Bool => true,
                     RustType2::String => true,
                     RustType2::Option(_) => todo!(),
-                    RustType2::Result(_) => todo!(),
+                    RustType2::Result(_, _) => todo!(),
                     RustType2::MutRef(_) => todo!(),
                     RustType2::Ref(inner) => types_are_primative(inner, &[]),
                     RustType2::Fn(_, _, _) => todo!(),
@@ -875,7 +875,7 @@ pub fn handle_expr(
                 RustType2::Never => todo!(),
                 RustType2::Fn(_, _, _) => todo!(),
                 RustType2::Option(_) => todo!(),
-                RustType2::Result(_) => todo!(),
+                RustType2::Result(_, _) => todo!(),
                 RustType2::TypeParam(_) => todo!(),
                 RustType2::ImplTrait(_) => todo!(),
                 RustType2::UserType(_, _) => todo!(),
@@ -1036,7 +1036,7 @@ pub fn handle_expr(
                                 )
                             }
                             RustType2::Option(_) => todo!(),
-                            RustType2::Result(_) => todo!(),
+                            RustType2::Result(_, _) => todo!(),
                             RustType2::StructOrEnum(_, _) => (js_expr, rust_type),
                             RustType2::Vec(_) => todo!(),
                             RustType2::Array(_) => todo!(),
@@ -1266,7 +1266,7 @@ pub fn handle_expr(
                             RustType2::Bool => true,
                             RustType2::String => true,
                             RustType2::Option(_) => todo!(),
-                            RustType2::Result(_) => todo!(),
+                            RustType2::Result(_, _) => todo!(),
                             RustType2::StructOrEnum(type_params, item_def) => {
                                 dbg!(type_params);
                                 dbg!(item_def);
@@ -1509,7 +1509,7 @@ fn handle_expr_closure(
                     RustType2::MutRef(_) => todo!(),
                     RustType2::Fn(_, _, _) => todo!(),
                     RustType2::Option(_) => todo!(),
-                    RustType2::Result(_) => todo!(),
+                    RustType2::Result(_, _) => todo!(),
                     RustType2::TypeParam(_) => todo!(),
                     RustType2::ImplTrait(_) => todo!(),
                     RustType2::UserType(_, _) => todo!(),
@@ -1758,7 +1758,7 @@ pub fn handle_expr_and_stmt_macro(
                                         RustType2::MutRef(_) => false,
                                         RustType2::Fn(_, _, _) => false,
                                         RustType2::Option(_) => false,
-                                        RustType2::Result(_) => false,
+                                        RustType2::Result(_, _) => false,
                                         RustType2::TypeParam(_) => false,
                                         RustType2::ImplTrait(_) => false,
                                         RustType2::UserType(_, _) => todo!(),
@@ -1940,6 +1940,7 @@ fn handle_expr_method_call(
 
     // NOTE CONTEXT a closure often doesn't have it's input types specified, typically because it is an argument and the type of the *input* provides more info about the closure type. However, what if the input type also uses generics? eg for vec.iter().map() the input type for the closure is generic and determined by what .iter() (the receiver) (which is also generic) resolves to. We might also eg specify the type of the closure when assiging it to a local???? (not common though). So we do need to attempt *some* type param resolving before passing the impl item types to `handle_expr_closure`.
 
+    // dbg!(&expr_method_call);
     let method_turbofish_rust_types = expr_method_call.turbofish.as_ref().map(|generics| {
         generics
             .args
@@ -2077,7 +2078,7 @@ fn handle_expr_method_call(
             let parent_type_params = match &receiver_type {
                 RustType2::TypeParam(_) => todo!(),
                 RustType2::Option(inner) => Some(vec![inner.clone()]),
-                RustType2::Result(_) => todo!(),
+                RustType2::Result(_, _) => todo!(),
                 // TODO
                 // RustType2::StructOrEnum(type_params, _) => Some(type_params.clone()),
                 RustType2::StructOrEnum(type_params, _) => None,
@@ -2374,7 +2375,7 @@ fn resolve_input_type(
             input_type.clone().into_rust_type2(global_data)
         }
         RustType::Option(_) => todo!(),
-        RustType::Result(_) => todo!(),
+        RustType::Result(_, _) => todo!(),
         RustType::StructOrEnum(_type_params, _module_path, _scope_id, _name) => {
             // We are trying to stop using RustType::ParentItem, so this could be `self` in which case we can safely use the receiver type params
             // Or it could be the parent/Self type but maybe with different type params?!?!
@@ -2562,7 +2563,7 @@ fn get_receiver_params_and_method_impl_item(
                     .unwrap(),
             )
         }
-        RustType2::Result(_) => todo!(),
+        RustType2::Result(_, _) => todo!(),
         RustType2::StructOrEnum(item_type_params, item_def) => {
             // dbg!(&item_def);
             (
@@ -2702,7 +2703,7 @@ fn _resolve_generics_for_return_type(
         RustType::Bool => RustType::Bool,
         RustType::String => RustType::String,
         RustType::Option(_) => todo!(),
-        RustType::Result(_) => todo!(),
+        RustType::Result(_, _) => todo!(),
         RustType::StructOrEnum(type_params, module_path, scope_id, name) => {
             // Return type generics are unresolved at this point - NO the return type might be eg `Foo<i32>` ie *resolved* generics.
             // assert!(type_params.iter().all(|tp| match tp.type_ {
@@ -3226,7 +3227,7 @@ fn handle_expr_call(
                                         }
                                     }
                                     RustType::Option(_rust_type) => todo!(),
-                                    RustType::Result(_) => todo!(),
+                                    RustType::Result(_, _) => todo!(),
                                     // RustType::StructOrEnum(_, _, _) => todo!(),
                                     RustType::Vec(_) => todo!(),
                                     RustType::Array(_) => todo!(),
@@ -4502,7 +4503,7 @@ pub fn handle_expr_match(
                         RustType2::Bool => prev_body_return_type,
                         RustType2::String => prev_body_return_type,
                         RustType2::Option(_) => todo!(),
-                        RustType2::Result(_) => todo!(),
+                        RustType2::Result(_, _) => todo!(),
                         RustType2::StructOrEnum(_, _) => prev_body_return_type,
                         RustType2::Vec(_) => prev_body_return_type,
                         RustType2::Array(_) => prev_body_return_type,

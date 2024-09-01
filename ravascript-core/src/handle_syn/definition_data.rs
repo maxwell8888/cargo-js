@@ -86,7 +86,7 @@ pub enum RustType2 {
     Option(RustTypeParam2),
     // Option(Box<RustType>),
     /// (generic)
-    Result(RustTypeParam2),
+    Result(RustTypeParam2, RustTypeParam2),
     StructOrEnum(Vec<RustTypeParam2>, Rc<StructEnumDef>),
     // Struct(Vec<RustTypeParam>, Vec<String>, String),
     /// (type params, module path, name)  
@@ -138,7 +138,7 @@ impl RustType2 {
                     RustTypeParamValue2::RustType(resolved_type) => resolved_type.is_js_primative(),
                 }
             }
-            RustType2::Result(_) => todo!(),
+            RustType2::Result(_, _) => todo!(),
             RustType2::StructOrEnum(_, _) => false,
             RustType2::Vec(_) => todo!(),
             RustType2::Array(_) => false,
@@ -174,7 +174,7 @@ impl RustType2 {
             RustType2::Bool => false,
             RustType2::String => false,
             RustType2::Option(_) => todo!(),
-            RustType2::Result(_) => todo!(),
+            RustType2::Result(_, _) => todo!(),
             RustType2::StructOrEnum(_, _) => false,
             RustType2::Vec(_) => todo!(),
             RustType2::Array(_) => todo!(),
@@ -196,7 +196,7 @@ impl PartialEq for RustType2 {
             (Self::ImplTrait(l0), Self::ImplTrait(r0)) => todo!(),
             (Self::TypeParam(l0), Self::TypeParam(r0)) => todo!(),
             (Self::Option(l0), Self::Option(r0)) => todo!(),
-            (Self::Result(l0), Self::Result(r0)) => todo!(),
+            (Self::Result(l0, l1), Self::Result(r0, r1)) => todo!(),
             (Self::StructOrEnum(l0, l1), Self::StructOrEnum(r0, r1)) => todo!(),
             (Self::Vec(l0), Self::Vec(r0)) => l0 == r0,
             (Self::Array(l0), Self::Array(r0)) => l0 == r0,
