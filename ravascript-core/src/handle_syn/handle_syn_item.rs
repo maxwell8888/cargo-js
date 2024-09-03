@@ -143,7 +143,7 @@ pub fn handle_item_fn(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> JsStmt {
-    let fn_info = match &global_data.item_defs[index] {
+    let fn_def = match &global_data.item_defs[index] {
         ItemDefRc::Fn(fn_info) => fn_info.clone(),
         other => {
             dbg!(other);
@@ -151,7 +151,7 @@ pub fn handle_item_fn(
         }
     };
 
-    let item_fn = match &fn_info.syn {
+    let item_fn = match &fn_def.syn {
         FnInfoSyn::Standalone(item_fn) => item_fn,
         FnInfoSyn::Impl(_) => todo!(),
         FnInfoSyn::Trait(_) => todo!(),
@@ -195,7 +195,7 @@ pub fn handle_item_fn(
     // }
 
     // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
-    let scoped_item_defs = fn_info
+    let scoped_item_defs = fn_def
         .stmts
         .iter()
         .filter_map(|stmt_ref| {
@@ -224,13 +224,14 @@ pub fn handle_item_fn(
         items: scoped_item_defs,
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
+        type_params: fn_def.sig.generics.clone(),
     });
 
     // Adds fn args as `ScopedVar`s
     // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
     let mut copy_stmts = Vec::new();
 
-    for (_is_self, is_mut, name, type_) in &fn_info.inputs_types {
+    for (_is_self, is_mut, name, type_) in &fn_def.sig.inputs_types {
         let type_ = type_.clone().into_rust_type2(global_data);
 
         let scoped_var = ScopedVar {
@@ -304,6 +305,22 @@ pub fn handle_item_fn(
     let stmt = if ignore {
         JsStmt::Expr(JsExpr::Vanish, false)
     } else {
+        let input_names = fn_def
+            .sig
+            .generics
+            .iter()
+            .filter_map(|(name, used_associated_fn, _trait_bounds)| {
+                used_associated_fn.then_some(Ident::String(name.clone()))
+            })
+            .chain(item_fn.sig.inputs.iter().map(|input| match input {
+                FnArg::Receiver(_) => todo!(),
+                FnArg::Typed(pat_type) => match &*pat_type.pat {
+                    Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
+                    _ => todo!(),
+                },
+            }))
+            .collect::<Vec<_>>();
+
         // If we are returning a type which is *not* &mut, then we need to `.copy()` or `.inner()` if the value being returned is mut (if the value is &mut, the compiler will have ensured there is a deref, so we will have already added a `.copy()` or `.inner()`).
         let returns_non_mut_ref_val = match &item_fn.sig.output {
             ReturnType::Default => true,
@@ -318,7 +335,7 @@ pub fn handle_item_fn(
             false,
             returns_non_mut_ref_val,
             true,
-            &fn_info.stmts,
+            &fn_def.stmts,
             global_data,
             current_module,
         );
@@ -339,19 +356,8 @@ pub fn handle_item_fn(
             export: false,
             async_: item_fn.sig.asyncness.is_some(),
             is_method: false,
-            name: fn_info.js_name.clone(),
-            input_names: item_fn
-                .sig
-                .inputs
-                .iter()
-                .map(|input| match input {
-                    FnArg::Receiver(_) => todo!(),
-                    FnArg::Typed(pat_type) => match &*pat_type.pat {
-                        Pat::Ident(pat_ident) => Ident::Syn(pat_ident.ident.clone()),
-                        _ => todo!(),
-                    },
-                })
-                .collect::<Vec<_>>(),
+            name: fn_def.sig.js_name.clone(),
+            input_names,
             body_stmts: copy_stmts,
         };
         if iife {
@@ -785,9 +791,10 @@ pub fn handle_impl_item_fn(
     // generics.extend(where_generics);
 
     let mut vars = Vec::new();
-    match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static, fn_info) => {
-            for (is_self, is_mut, name, input_type) in fn_info.inputs_types.clone() {
+    let fn_type_params = match &rust_impl_item.item {
+        RustImplItemItemNoJs::Fn(_static, fn_def) => {
+            // Push vars
+            for (is_self, is_mut, name, input_type) in fn_def.sig.inputs_types.clone() {
                 if is_self {
                     // TODO we need to ensure that RustType::Parent type is getting wrapped in RustType::MutRef where necessary
 
@@ -822,9 +829,12 @@ pub fn handle_impl_item_fn(
                     vars.push(scoped_var);
                 }
             }
+
+            // Return type params
+            fn_def.sig.generics.clone()
         }
         RustImplItemItemNoJs::Const => todo!(),
-    }
+    };
 
     // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
     let scoped_item_defs = match &rust_impl_item.item {
@@ -863,6 +873,7 @@ pub fn handle_impl_item_fn(
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
         items: scoped_item_defs,
+        type_params: fn_type_params,
     });
 
     // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
@@ -1124,17 +1135,18 @@ pub fn handle_item_impl(
                 .iter()
                 .map(|(_is_used, item)| {
                     let method_self_mut_ref = match &item.item {
-                        RustImplItemItemJs::Fn(_, fn_info, _) => fn_info
-                            .inputs_types
-                            .first()
-                            .is_some_and(|(is_self, _is_mut, _name, type_)| {
-                                *is_self
-                                    && matches!(
-                                        // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
-                                        type_.clone().into_rust_type2(global_data),
-                                        RustType2::MutRef(_)
-                                    )
-                            }),
+                        RustImplItemItemJs::Fn(_, fn_def, _) => {
+                            fn_def.sig.inputs_types.first().is_some_and(
+                                |(is_self, _is_mut, _name, type_)| {
+                                    *is_self
+                                        && matches!(
+                                            // TODO this is unnecessary, to I like not having RustType imported, so add a pub method to RustType instead
+                                            type_.clone().into_rust_type2(global_data),
+                                            RustType2::MutRef(_)
+                                        )
+                                },
+                            )
+                        }
                         RustImplItemItemJs::Const(_) => todo!(),
                     };
                     (
@@ -1378,17 +1390,17 @@ pub fn handle_item_struct(
 
         for impl_item in &trait_def.default_impls {
             match &impl_item.item {
-                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_def) => {
                     js_class.static_fields.push(JsLocal {
                         public: false,
                         export: false,
                         type_: LocalType::None,
-                        lhs: LocalName::Single(fn_info.js_name.clone()),
+                        lhs: LocalName::Single(fn_def.sig.js_name.clone()),
                         value: JsExpr::Path(PathIdent::Path(
                             [
                                 trait_def.js_name.clone(),
                                 Ident::Str("prototype"),
-                                fn_info.js_name.clone(),
+                                fn_def.sig.js_name.clone(),
                             ]
                             .to_vec(),
                         )),
@@ -1593,12 +1605,12 @@ pub fn handle_item_trait(
             .default_impls
             .iter()
             .map(|rust_impl_item| {
-                let (static_, fn_info) = match &rust_impl_item.item {
+                let (static_, fn_def) = match &rust_impl_item.item {
                     RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
                     RustImplItemItemNoJs::Const => todo!(),
                 };
                 // TODO remove use of syn?
-                let item_fn = match &fn_info.syn {
+                let item_fn = match &fn_def.syn {
                     FnInfoSyn::Standalone(_) => todo!(),
                     FnInfoSyn::Impl(_) => todo!(),
                     FnInfoSyn::Trait(trait_item_fn) => trait_item_fn.clone(),
@@ -1611,13 +1623,14 @@ pub fn handle_item_trait(
                     items: vec![],
                     _look_in_outer_scope: false,
                     use_mappings: Vec::new(),
+                    type_params: fn_def.sig.generics.clone(),
                 });
 
                 // Adds fn args as `ScopedVar`s
                 // Adds intial lines needs for copy types like `let fn_arg = fn_arg.copy();`
                 let mut copy_stmts = Vec::new();
 
-                for (_is_self, is_mut, name, type_) in &fn_info.inputs_types {
+                for (_is_self, is_mut, name, type_) in &fn_def.sig.inputs_types {
                     let type_ = type_.clone().into_rust_type2(global_data);
 
                     let scoped_var = ScopedVar {
@@ -1715,7 +1728,7 @@ pub fn handle_item_trait(
                     false,
                     returns_non_mut_ref_val,
                     true,
-                    &fn_info.stmts,
+                    &fn_def.stmts,
                     global_data,
                     current_module_path,
                 );
@@ -1742,7 +1755,7 @@ pub fn handle_item_trait(
                     export: false,
                     async_: item_fn.sig.asyncness.is_some(),
                     is_method: true,
-                    name: fn_info.js_name.clone(),
+                    name: fn_def.sig.js_name.clone(),
                     input_names,
                     body_stmts: copy_stmts,
                 };
@@ -1761,7 +1774,7 @@ pub fn handle_item_trait(
                 //     body_stmts: todo!(),
                 // };
 
-                (fn_info.js_name.clone(), *static_, js_fn)
+                (fn_def.sig.js_name.clone(), *static_, js_fn)
             })
             .collect::<Vec<_>>();
 

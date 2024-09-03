@@ -1,6 +1,5 @@
 use std::{path::PathBuf, rc::Rc};
 
-use syn::{PathArguments, Type};
 use tracing::debug;
 
 use crate::{
@@ -8,8 +7,8 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnDef, FnSigDef, ItemDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, RustTypeParamValue, StructEnumDef, TraitDef, TraitItemDef,
+        FnDef, FnSigDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
+        RustTypeParam, StructEnumDef, TraitDef, TraitItemDef,
     },
     RUST_PRELUDE_MODULE_PATH,
 };
@@ -107,12 +106,13 @@ pub enum RustType2 {
     /// (type params, return type)
     // Fn(Vec<RustTypeParam>, Box<RustType>),
     /// fn might be an associated fn in which case first arg will be Some() containing the (possibly resolved) generics of the impl target/self type. Possibly want to also record which type params are defined on the impl block, but see if we can get away without it initially given any impl block type params pretty much have to appear in the target/self type.
-    /// (item type params, type params, module path, scope id, name)
+    /// xxxxx (item type params, type params, module path, scope id, name)
+    /// (???, fn generics, fn sig def)
     Fn(
         Option<Vec<RustTypeParam2>>,
         Vec<RustTypeParam2>,
         // RustTypeFnType,
-        Rc<FnDef>,
+        Rc<FnSigDef>,
     ),
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
@@ -259,6 +259,13 @@ pub struct GlobalDataScope {
     /// Blocks, match arms, closures, etc are differnt to fn scopes because they can access variables from their outer scope. However, they are similar in that you loose all the items and variables (not impls though) defined in them, at the end of their scope. This is a flag to indicate this type of scope and thus when looking for things such as variables, we should also look in the surrounding scope.
     pub _look_in_outer_scope: bool,
     pub use_mappings: Vec<(String, Vec<String>)>,
+    /// For recording eg the T from functions like `fn foo<T>() {}` or `impl Foo { fn foo<T>(&self) {} }`, or impl blocks like `impl<T> Foo {}`
+    ///
+    /// NOTE whilst we have `RustType::TypeParam` fn args stored as scoped vars, this won't cover certain cases, eg the examples above where the type param is not used in an argument and the fn body simply calls an associated fn on the type param like `fn foo<T>() { T::bar(); }`
+    ///
+    /// (name, trait bounds)
+    // pub type_params: Vec<(String, Vec<Rc<TraitDef>>)>,
+    pub type_params: Vec<(String, bool, Vec<usize>)>,
 }
 
 // TODO clean up these types since eg there is duplication of the fn ident
@@ -345,6 +352,7 @@ pub struct GlobalData {
     /// (the purpose originally was for self not Self... which is not needed, but Self is neccessary) the purpose of this is for storing the type of `Self` *not* `self`, eg if a impl fn body contains `let foo: Self = Self {};`, we will want to know what Self is so we know the types of `foo.some_field` etc
     ///
     /// We have a Vec in case there is an impl block nested inside an impl block?
+    /// TODO move this into scopes? This way we don't have to pop scopes *and* pop impl_block_target_type?
     pub impl_block_target_type: Vec<RustType2>,
     /// Similar to impl_block_target_type but if for storing type params of the impl eg `impl<A, B> Foo<A, B> { ... }` so that when `A` and `B` appears in one of the impl's item definitions and we try and lookup the path `A` and `B` with `resolve_path()` we can also look here to find the type params.
     /// TODO Should be Vec of Vecs for same reason impl_block_target_type is a Vec
@@ -491,6 +499,7 @@ impl GlobalData {
                 items: Vec::new(),
                 _look_in_outer_scope: false,
                 use_mappings: Vec::new(),
+                type_params: Vec::new(),
             }],
             impl_block_target_type: Vec::new(),
             _impl_block_type_params: Vec::new(),
@@ -609,7 +618,7 @@ impl GlobalData {
                             .iter()
                             .enumerate()
                             .map(|(i, g)| {
-                                let (name, trait_bounds) = fn_info.generics[i].clone();
+                                let (name, _used, trait_bounds) = fn_info.sig.generics[i].clone();
                                 let trait_bounds = trait_bounds
                                     .into_iter()
                                     .map(|index| match &self.item_defs[index] {
@@ -626,11 +635,12 @@ impl GlobalData {
                             .collect::<Vec<_>>()
                     } else {
                         // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
-                        assert!(fn_info.generics.is_empty());
+                        assert!(fn_info.sig.generics.is_empty());
                         fn_info
+                            .sig
                             .generics
                             .iter()
-                            .map(|(name, trait_bounds)| {
+                            .map(|(name, _used, trait_bounds)| {
                                 let trait_bounds = trait_bounds
                                     .into_iter()
                                     .map(|index| match &self.item_defs[*index] {
@@ -650,7 +660,7 @@ impl GlobalData {
                     Some(RustType2::Fn(
                         Some(item_generics.to_vec()),
                         fn_generics,
-                        Rc::new(fn_info),
+                        fn_info.sig.clone(),
                     ))
                 }
                 RustImplItemItemNoJs::Const => todo!(),
@@ -727,13 +737,7 @@ impl GlobalData {
 
         let item = impl_block_item.or(trait_default_item);
         item.map(|item| match item.item {
-            RustImplItemItemNoJs::Fn(_, fn_info) => TraitItemDef::Fn(FnSigDef {
-                js_name: fn_info.js_name,
-                ident: fn_info.ident,
-                inputs_types: fn_info.inputs_types,
-                generics: fn_info.generics,
-                return_type: fn_info.return_type,
-            }),
+            RustImplItemItemNoJs::Fn(_, fn_info) => TraitItemDef::Fn(fn_info.sig.clone()),
             RustImplItemItemNoJs::Const => todo!(),
         })
     }
@@ -903,6 +907,7 @@ pub fn resolve_path(
     // For determining whether we have just been given a single length path and thus should also look for scoped items/vars.
     // NOTE we can't just rely on `current_mod == orig_mod` or `current_mod.len() == 1` because these will be incorrectly `true` in case like the second recursion of `self::foo` which is just `foo`.
     // TODO find better name
+    // TODO Should just be orig_module. Can check len 1 separately and we want to be able to use it for type params also which must be in the original module but might not be length=1
     orig_len_1: bool,
     _look_for_scoped_vars: bool,
     // TODO can we combine this with `look_for_scoped_vars`?
@@ -921,8 +926,15 @@ pub fn resolve_path(
     // TODO scopes would ideally be set to None when resovle_path is called recursively since that means the path length is > 1 which is not possible for scoped vars and items, however it is possible for a scoped use_mapping to have path length > 1.
     // scopes: &Option<Vec<GlobalDataScope>>,
     scopes: &Vec<GlobalDataScope>,
-    // (module path, item path, is scoped, index)
-) -> (Vec<String>, Vec<RustPathSegment2>, bool, Option<usize>) {
+    // (module path, item path, is scoped, index, type param)
+) -> (
+    Vec<String>,
+    Vec<RustPathSegment2>,
+    bool,
+    Option<usize>,
+    // NOTE we only return Some when when the path is to an actual type param `T`, not just a var whose type is a type param like `foo: T`
+    Option<Vec<usize>>,
+) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
     // TODO I don't think we need to pass in the module `ModuleData` if we are already passing the `current_module` module path we can just use that to look it up each time, which might be less efficient since we shouldn't need to lookup the module if we haven't changed modules (though I think we are pretty much always changing modules except for use statements?), but we definitely don't want to pass in both. Maybe only pass in `module: &ModuleData` and not `current_module`
@@ -963,6 +975,7 @@ pub fn resolve_path(
         UseMapping((String, Vec<String>)),
         Var(ScopedVar),
         Item(usize),
+        TypeParam(Vec<usize>),
     }
 
     #[allow(clippy::manual_map)]
@@ -976,12 +989,19 @@ pub fn resolve_path(
             let item_def = &items_defs[**index];
             orig_len_1 && item_def.ident() == segs[0].ident
         });
+        let scoped_type_param = s
+            .type_params
+            .iter()
+            .find(|(name, _used, _trait_bounds)| name == &segs[0].ident);
+
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
         } else if let Some(scoped_var) = scoped_var {
             Some(ScopedThing::Var(scoped_var.clone()))
         } else if let Some(scoped_item) = scoped_item {
             Some(ScopedThing::Item(*scoped_item))
+        } else if let Some((name, _used, trait_bounds)) = scoped_type_param {
+            Some(ScopedThing::TypeParam(trait_bounds.clone()))
         } else {
             None
         }
@@ -1044,12 +1064,22 @@ pub fn resolve_path(
         // If we are returning a scoped var/item, no recursion should have occured so we should be in the same module
         assert!(current_mod == orig_mod);
         // (current_mod.clone(), segs, is_scoped_static)
-        (current_mod.to_vec(), segs, true, None)
+        (current_mod.to_vec(), segs, true, None, None)
     } else if let Some(ScopedThing::Item(index)) = scoped_thing {
         assert!(current_mod == orig_mod);
-        (current_mod.to_vec(), segs, true, Some(index))
+        (current_mod.to_vec(), segs, true, Some(index), None)
+    } else if let Some(ScopedThing::TypeParam(trait_bounds)) = scoped_thing {
+        assert!(current_mod == orig_mod);
+        assert!(orig_len_1);
+        (current_mod.to_vec(), segs, true, None, Some(trait_bounds))
     } else if item_defined_in_module.is_some() {
-        (current_mod.to_vec(), segs, false, item_defined_in_module)
+        (
+            current_mod.to_vec(),
+            segs,
+            false,
+            item_defined_in_module,
+            None,
+        )
     } else if segs[0].ident == "super" {
         // TODO if a module level item name is shadowed by an item in a fn scope, then module level item needs to be namespaced
         segs.remove(0);
@@ -1249,6 +1279,7 @@ pub fn resolve_path(
                 segs,
                 false,
                 Some(item_index),
+                None,
             )
         } else {
             dbg!("resolve_path couldn't find path");

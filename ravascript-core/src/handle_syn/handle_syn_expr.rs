@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use quote::quote;
-use syn::{BinOp, Expr, GenericArgument, Index, Lit, Member, Pat, UnOp};
+use syn::{BinOp, Expr, GenericArgument, Index, Lit, Member, Pat, PathArguments, Type, UnOp};
 use tracing::{debug, debug_span, warn};
 
 use super::{
@@ -758,6 +758,7 @@ pub fn handle_expr(
                 items: Vec::new(),
                 _look_in_outer_scope: true,
                 use_mappings: Vec::new(),
+                type_params: Vec::new(),
             });
 
             global_data
@@ -800,6 +801,7 @@ pub fn handle_expr(
                 items: Vec::new(),
                 _look_in_outer_scope: true,
                 use_mappings: Vec::new(),
+                type_params: Vec::new(),
             });
             // TODO block needs to use something like parse_fn_body to be able to return the type
 
@@ -1390,6 +1392,7 @@ fn handle_expr_closure(
         items: Vec::new(),
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
+        type_params: Vec::new(),
     });
 
     // Below is copied/adapted from `handle_item_fn()`. Ideally we would use the same code for both but closure inputs are just pats because they have no self/reciever and might not even have a type eg `|x| x + 1`
@@ -2005,7 +2008,7 @@ fn handle_expr_method_call(
                 &fn_info
                     .generics
                     .iter()
-                    .map(|(name, indexes)| name.clone())
+                    .map(|(name, _used, _indexes)| name.clone())
                     .collect::<Vec<_>>(),
                 &method_turbofish_rust_types,
                 global_data,
@@ -2785,9 +2788,10 @@ fn _method_return_type_generic_resolve_to_rust_type(
         // Is type param specified on method (and we have a method turbofish)?
     } else if let Some(gen_index) =
         fn_info
+            .sig
             .generics
             .iter()
-            .position(|(method_type_param, _indexes)| {
+            .position(|(method_type_param, _used, _indexes)| {
                 method_type_param == &return_type_param.name
                     && method_turbofish_rust_types.is_some()
             })
@@ -2797,6 +2801,7 @@ fn _method_return_type_generic_resolve_to_rust_type(
         // Is type param concrete value resolved by input argument?
     } else if let Some(pos) =
         fn_info
+            .sig
             .inputs_types
             .iter()
             .position(|(_is_self, _is_mut, _name, input_type)| match input_type {
@@ -2859,6 +2864,7 @@ pub fn handle_expr_block(
         items: scoped_item_defs,
         _look_in_outer_scope: true,
         use_mappings: Vec::new(),
+        type_params: Vec::new(),
     });
     // TODO block needs to use something like parse_fn_body to be able to return the type
     // let (stmts, types): (Vec<_>, Vec<_>) = expr_block
@@ -3000,6 +3006,7 @@ fn handle_expr_call(
 
     let (mut args_js_expr, mut args_rust_types) =
         parse_args(expr_call, None, global_data, current_module);
+
     // dbg!(&expr_call);
     // dbg!(&args_js_expr);
     // dbg!(&args_rust_types);
@@ -3141,7 +3148,7 @@ fn handle_expr_call(
                             // Type Param must be a closure type, and given we have a type param we know there is a parent type, so need to get this type from the parent.
                             todo!();
                         }
-                        RustType2::Fn(_item_type_params, _type_params, fn_info) => {
+                        RustType2::Fn(_item_type_params, type_params, fn_sig_def) => {
                             // let name = match name {
                             // let fn_info = match rust_type_fn_type {
                             //     RustTypeFnType::Standalone(fn_info) => global_data
@@ -3171,14 +3178,75 @@ fn handle_expr_call(
                             //     }
                             // };
 
-                            let fn_inputs = fn_info
+                            let type_param_concrete_idents =
+                                if !expr_path.path.segments.last().unwrap().arguments.is_empty() {
+                                    match &expr_path.path.segments.last().unwrap().arguments {
+                                        PathArguments::None => todo!(),
+                                        PathArguments::AngleBracketed(gen_args) => {
+                                            gen_args
+                                                .args
+                                                .iter()
+                                                .map(|arg| {
+                                                    match arg {
+                                                        GenericArgument::Lifetime(_) => todo!(),
+                                                        GenericArgument::Type(type_) => {
+                                                            // TODO properly resolve turbofish types. For now just assume length 1 and take ident
+                                                            match type_ {
+                                                                Type::Array(_) => todo!(),
+                                                                Type::BareFn(_) => todo!(),
+                                                                Type::Group(_) => todo!(),
+                                                                Type::ImplTrait(_) => todo!(),
+                                                                Type::Infer(_) => todo!(),
+                                                                Type::Macro(_) => todo!(),
+                                                                Type::Never(_) => todo!(),
+                                                                Type::Paren(_) => todo!(),
+                                                                Type::Path(type_path) => {
+                                                                    assert!(
+                                                                        type_path
+                                                                            .path
+                                                                            .segments
+                                                                            .len()
+                                                                            == 1
+                                                                    );
+                                                                    let seg = type_path
+                                                                        .path
+                                                                        .segments
+                                                                        .first()
+                                                                        .unwrap();
+                                                                    Ident::Syn(seg.ident.clone())
+                                                                }
+                                                                Type::Ptr(_) => todo!(),
+                                                                Type::Reference(_) => todo!(),
+                                                                Type::Slice(_) => todo!(),
+                                                                Type::TraitObject(_) => todo!(),
+                                                                Type::Tuple(_) => todo!(),
+                                                                Type::Verbatim(_) => todo!(),
+                                                                _ => todo!(),
+                                                            }
+                                                        }
+                                                        GenericArgument::Const(_) => todo!(),
+                                                        GenericArgument::AssocType(_) => todo!(),
+                                                        GenericArgument::AssocConst(_) => todo!(),
+                                                        GenericArgument::Constraint(_) => todo!(),
+                                                        _ => todo!(),
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        }
+                                        PathArguments::Parenthesized(_) => todo!(),
+                                    }
+                                } else {
+                                    Vec::new()
+                                };
+
+                            let fn_inputs = fn_sig_def
                                 .inputs_types
                                 .iter()
                                 .map(|(_, _, _, rust_type)| rust_type.clone())
                                 .collect::<Vec<_>>();
 
                             // TODO need to break up this whole fn and avoid calling parse_args a second time here
-                            let (new_args_js_expr, args_rust_types) = parse_args(
+                            let (new_args_js_expr, new_args_rust_types) = parse_args(
                                 expr_call,
                                 Some(&fn_inputs),
                                 global_data,
@@ -3188,11 +3256,34 @@ fn handle_expr_call(
 
                             // Look to see if any of the input types are type params replace with concrete type from argument
                             // TODO IMPORTANT for an associated fn, attempt_to_resolve_type_params_using_arg_types will not take into account generics defined on the *item* which might be concretised by the args and used in the return type
-                            let new_type_params = fn_info
+                            let new_type_params = fn_sig_def
                                 .attempt_to_resolve_type_params_using_arg_types(
-                                    &args_rust_types,
+                                    &new_args_rust_types,
                                     &global_data.item_defs,
                                 );
+
+                            // TODO This is a huge messes and needs cleaning up
+                            let (args_js_expr_temp, args_rust_types_temp): (Vec<_>, Vec<_>) =
+                                fn_sig_def
+                                    .generics
+                                    .iter()
+                                    .zip(type_param_concrete_idents)
+                                    .filter_map(
+                                        |(
+                                            (name, used_associated_fn, _trait_bounds),
+                                            concrete_ident,
+                                        )| {
+                                            used_associated_fn.then_some((
+                                                JsExpr::Path(PathIdent::Single(concrete_ident)),
+                                                RustType2::Todo,
+                                            ))
+                                        },
+                                    )
+                                    .chain(args_js_expr.into_iter().zip(new_args_rust_types))
+                                    .unzip();
+
+                            (args_js_expr, args_rust_types) =
+                                (args_js_expr_temp, args_rust_types_temp);
 
                             // Resolve return type
                             // RustType::Fn returns a different type when called (which is obviously what is happening given we are handling expr_call), and also might be nested, ie inside other types that take generics eg Some(fn_returns_i32()) => RustType::Option(RustType::i32), so need to resolve this
@@ -3240,7 +3331,7 @@ fn handle_expr_call(
                                 }
                             }
                             get_fn_type_returns(
-                                fn_info.return_type.clone(),
+                                fn_sig_def.return_type.clone(),
                                 &new_type_params,
                                 global_data,
                             )
@@ -3396,20 +3487,25 @@ fn handle_expr_path_inner(
     // dbg!(&segs_copy);
     // dbg!(&global_data.item_refs);
     // dbg!(&global_data.item_defs);
-    let (segs_copy_module_path, segs_copy_item_path, segs_copy_is_scoped, segs_copy_index) =
-        resolve_path(
-            true,
-            // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
-            true,
-            true,
-            true,
-            segs_copy,
-            &global_data.crates,
-            &global_data.item_defs,
-            current_module,
-            current_module,
-            &global_data.scopes,
-        );
+    let (
+        segs_copy_module_path,
+        segs_copy_item_path,
+        segs_copy_is_scoped,
+        segs_copy_index,
+        segs_copy_type_param,
+    ) = resolve_path(
+        true,
+        // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+        true,
+        true,
+        true,
+        segs_copy,
+        &global_data.crates,
+        &global_data.item_defs,
+        current_module,
+        current_module,
+        &global_data.scopes,
+    );
     // dbg!(&segs_copy_module_path);
     // dbg!(&segs_copy_item_path);
     // dbg!(&segs_copy_is_scoped);
@@ -3437,7 +3533,96 @@ fn handle_expr_path_inner(
 
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
     let (partial_rust_type, mut js_segs_item_path) =
-        if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] {
+        if let Some(trait_bounds) = segs_copy_type_param {
+            if segs_copy_item_path.len() == 1 {
+                // TODO consider what this case is and what PartialRustType to return. A new PartialRustType::TypeParam variant?
+                todo!()
+            } else if segs_copy_item_path.len() == 2 {
+                // Look up associated fn
+                // TODO get type param generics
+                let sub_path = &segs_copy_item_path[1];
+
+                // TODO don't like returning an Option here, should probably follow how rust does which I believe is to see if it is an enum variant first else it must be an associated fn, else panic
+                let trait_bounds = trait_bounds
+                    .iter()
+                    .map(|index| match &global_data.item_defs[*index] {
+                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                        _ => todo!(),
+                    })
+                    .collect::<Vec<_>>();
+                let impl_method = global_data
+                    .lookup_trait_impl_item(&trait_bounds, sub_path)
+                    .unwrap();
+
+                // let fn_generics = if !sub_path.turbofish.is_empty() {
+                //     sub_path
+                //         .turbofish
+                //         .iter()
+                //         .enumerate()
+                //         .map(|(i, g)| {
+                //             let (name, trait_bounds) = fn_info.generics[i].clone();
+                //             let trait_bounds = trait_bounds
+                //                 .into_iter()
+                //                 .map(|index| match &self.item_defs[index] {
+                //                     ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                //                     _ => todo!(),
+                //                 })
+                //                 .collect();
+                //             RustTypeParam2 {
+                //                 name,
+                //                 trait_bounds,
+                //                 type_: RustTypeParamValue2::RustType(Box::new(g.clone())),
+                //             }
+                //         })
+                //         .collect::<Vec<_>>()
+                // } else {
+                //     // NOTE for now we are assuming turbofish must exist for generic items, until we implement a solution for getting type params that are resolved later in the code
+                //     assert!(fn_info.generics.is_empty());
+                //     fn_info
+                //         .generics
+                //         .iter()
+                //         .map(|(name, trait_bounds)| {
+                //             let trait_bounds = trait_bounds
+                //                 .into_iter()
+                //                 .map(|index| match &self.item_defs[*index] {
+                //                     ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                //                     _ => todo!(),
+                //                 })
+                //                 .collect();
+                //             RustTypeParam2 {
+                //                 name: name.clone(),
+                //                 trait_bounds,
+                //                 type_: RustTypeParamValue2::Unresolved,
+                //             }
+                //         })
+                //         .collect::<Vec<_>>()
+                // };
+
+                // TODO generics
+                let rust_type = RustType2::Fn(
+                    Some(vec![]),
+                    // fn_generics,
+                    vec![],
+                    match impl_method {
+                        TraitItemDef::Fn(fn_sig_def) => fn_sig_def.clone(),
+                        TraitItemDef::Const => todo!(),
+                        TraitItemDef::Type => todo!(),
+                    },
+                );
+
+                let ident_path = segs_copy_item_path
+                    .clone()
+                    .into_iter()
+                    .map(|seg| Ident::String(seg.ident))
+                    .collect::<Vec<_>>();
+                (
+                    PartialRustType::RustType(rust_type, false, false),
+                    ident_path,
+                )
+            } else {
+                todo!()
+            }
+        } else if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] {
             // NOTE I believe that for a "prelude_special_case" type we either must have a path to the actual prelude type (see else branch) or a variable which is a prelude type, no other possibilities eg a scoped prelude type
             if segs_copy_is_scoped {
                 // Look for var
@@ -3598,6 +3783,7 @@ fn handle_expr_path_inner(
             // Enum::Variant
             // Enum::Variant ()
             // Enum::Variant {}
+            // T::associated_fn
 
             let item = &global_data.item_defs[segs_copy_index.unwrap()];
             let item_def = match item {
@@ -4234,6 +4420,7 @@ pub fn handle_expr_match(
                     items: Vec::new(),
                     _look_in_outer_scope: true,
                     use_mappings: Vec::new(),
+                    type_params: Vec::new(),
                 });
 
                 let (succeed_body_js_stmts, succeed_body_return_type) = match &*succeed_arm.body {
@@ -4308,6 +4495,7 @@ pub fn handle_expr_match(
                     items: Vec::new(),
                     _look_in_outer_scope: true,
                     use_mappings: Vec::new(),
+                    type_params: Vec::new(),
                 });
 
                 let (mut fail_body_js_stmts, _fail_body_return_type) = match &*fail_arm.body {
@@ -4437,6 +4625,7 @@ pub fn handle_expr_match(
                 items: Vec::new(),
                 _look_in_outer_scope: true,
                 use_mappings: Vec::new(),
+                type_params: Vec::new(),
             });
 
             let (body_js_stmts, body_return_type) = match &*arm.body {
@@ -4615,7 +4804,7 @@ fn found_item_to_partial_rust_type(
                         .iter()
                         .enumerate()
                         .map(|(i, g)| {
-                            let (name, indexes) = fn_info.generics[i].clone();
+                            let (name, used, indexes) = fn_info.sig.generics[i].clone();
                             let trait_bounds = indexes
                                 .iter()
                                 .map(|i| match &global_data.item_defs[*i] {
@@ -4632,9 +4821,10 @@ fn found_item_to_partial_rust_type(
                         .collect::<Vec<_>>()
                 } else {
                     fn_info
+                        .sig
                         .generics
                         .iter()
-                        .map(|(name, indexes)| {
+                        .map(|(name, _used, indexes)| {
                             let trait_bounds = indexes
                                 .iter()
                                 .map(|i| match &global_data.item_defs[*i] {
@@ -4653,11 +4843,11 @@ fn found_item_to_partial_rust_type(
 
                 (
                     PartialRustType::RustType(
-                        RustType2::Fn(None, fn_generics, fn_info.clone()),
+                        RustType2::Fn(None, fn_generics, fn_info.sig.clone()),
                         false,
                         false,
                     ),
-                    fn_info.js_name.clone(),
+                    fn_info.sig.js_name.clone(),
                 )
             }
             ItemDefRc::Const(const_def) => (

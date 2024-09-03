@@ -5,6 +5,7 @@
 mod destructuring;
 mod enum_tests;
 mod fn_and_closures;
+mod generics;
 mod if_let;
 mod impl_tests;
 mod mod_and_use;

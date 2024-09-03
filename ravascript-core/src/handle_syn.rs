@@ -240,27 +240,32 @@ fn parse_fn_input_or_field(
                             // TODO lookup trait in global data to get module path
                             // let (module_path, trait_definition) = global_data
                             //     .lookup_trait_definition_any_module(current_module, trait_name);
-                            let (trait_module_path, trait_item_path, trait_item_scope, item_index) =
-                                resolve_path(
-                                    true,
-                                    false,
-                                    true,
-                                    true,
-                                    trait_bound
-                                        .path
-                                        .segments
-                                        .iter()
-                                        .map(|t| RustPathSegment2 {
-                                            ident: t.ident.to_string(),
-                                            turbofish: Vec::new(),
-                                        })
-                                        .collect::<Vec<_>>(),
-                                    &global_data.crates,
-                                    &global_data.item_defs,
-                                    current_module,
-                                    current_module,
-                                    &global_data.scopes,
-                                );
+                            let (
+                                trait_module_path,
+                                trait_item_path,
+                                trait_item_scope,
+                                item_index,
+                                item_is_type_param,
+                            ) = resolve_path(
+                                true,
+                                false,
+                                true,
+                                true,
+                                trait_bound
+                                    .path
+                                    .segments
+                                    .iter()
+                                    .map(|t| RustPathSegment2 {
+                                        ident: t.ident.to_string(),
+                                        turbofish: Vec::new(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                                &global_data.crates,
+                                &global_data.item_defs,
+                                current_module,
+                                current_module,
+                                &global_data.scopes,
+                            );
                             // A Trait bound should just be a trait, no associated fn or whatever
                             assert!(trait_item_path.len() == 1);
                             let trait_def = match global_data.item_defs[item_index.unwrap()].clone()
@@ -346,7 +351,13 @@ fn parse_fn_input_or_field(
                 // Can always be inferred from the arguments used to construct the struct?
 
                 // For impl blocks
-                let (item_definition_module_path, item_path, _is_scoped, item_index) = resolve_path(
+                let (
+                    item_definition_module_path,
+                    item_path,
+                    _is_scoped,
+                    item_index,
+                    _item_is_type_param,
+                ) = resolve_path(
                     true,
                     false,
                     true,

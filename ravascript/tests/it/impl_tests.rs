@@ -1431,6 +1431,73 @@ async fn method_call_on_type_param_impl_block() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[allow(unused_mut)]
+#[tokio::test]
+async fn type_param_associated_fn_call() {
+    let actual = r2j_block_with_prelude!({
+        trait GetNumber {
+            fn get_num() -> i32;
+        }
+        struct One;
+        impl GetNumber for One {
+            fn get_num() -> i32 {
+                1
+            }
+        }
+        struct Two;
+        impl GetNumber for Two {
+            fn get_num() -> i32 {
+                2
+            }
+        }
+        // struct Foo;
+        // impl Foo {
+        //     fn get_num<T>(&self) -> i32 {
+        //         4
+        //     }
+        // }
+        // let foo = Foo;
+        // let num = foo.get_num();
+        // assert!(num == 4);
+        fn get_num<T: GetNumber>() -> i32 {
+            T::get_num()
+        }
+        let one = get_num::<One>();
+        assert!(one == 1);
+        let two = get_num::<Two>();
+        assert!(two == 2);
+    });
+
+    // println!("{actual}");
+
+    // TODO calculate which types actually need the impls
+    let expected = format_js(
+        r#"
+            class One {
+                static getNum() {
+                    return 1;
+                }
+            }
+
+            class Two {
+                static getNum() {
+                    return 2;
+                }
+            }
+
+            function getNum(T) {
+                return T.getNum();
+            }
+            let one = getNum(One);
+            console.assert(one === 1);
+            let two = getNum(Two);
+            console.assert(two === 2);
+        "#,
+    );
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
 // TODO support trait bounds where the trait is generic
 #[ignore = "TODO MED PRIORITY"]
 #[allow(unused_mut)]

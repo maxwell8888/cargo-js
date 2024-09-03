@@ -36,6 +36,16 @@ pub fn update_item_defs(
     // (Vec<ModuleData>, Vec<RustImplBlockSimple>)
 
     let mut scoped_items = Vec::new();
+
+    // NOTE type params cannot be used inside a child fn
+    // Used for tracking whether a type param is used like `T::associated_fn()`
+    // (name, used)
+    // NOTE type params cannot be used inside a child fn
+    // Used for tracking whether a type param is used like `T::associated_fn()`. Push a new Vec<(String, bool)> containing the type param names and false for each function eg `fn foo<T, U>() {}` -> `[(T, false), (U, false)]` and then set the bool to true if we find the type param being using like `T::associated_fn()`, and will therefore need to pass the type params as args to the compiled JS fn.
+    // (name, used)
+    // TODO be clear about why we need to add an initial "scope" (ie vec![vec![]] not vec![])
+    let mut type_params: Vec<Vec<(String, bool, Vec<usize>)>> = vec![vec![]];
+
     let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
     updated_item_defs.resize_with(item_defs_no_types.len(), || ItemDef::None);
 
@@ -48,6 +58,7 @@ pub fn update_item_defs(
                 &rust_mod.module_path,
                 &mut updated_item_defs,
                 &mut scoped_items,
+                &mut type_params,
                 in_scope,
                 &duplicates,
             );
@@ -65,6 +76,10 @@ fn update_item_defs_recurisve_individual_item(
     updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
+    // NOTE type params cannot be used inside a child fn
+    // Used for tracking whether a type param is used like `T::associated_fn()`
+    // (name, used)
+    type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
     duplicates: &[Duplicate],
 ) {
@@ -94,6 +109,8 @@ fn update_item_defs_recurisve_individual_item(
             }
         }
         ItemRef::Fn(index) => {
+            // TODO If the function is generic, we need to look through the fn body and determine if any type param gets used directly like `T::associated_fn()` because in that case we need to include the type params as the first inputs, and then also for fn calls pass the concrete types as the first args. Given the fn calls can appear before the fn, we can't just wait until handle_fn_item to determine this.
+
             // let item = mem::replace(&mut item_defs_no_types[*index], ItemActual::None);
             let item = item_defs_no_types[*index].clone();
             updated_item_defs[*index] = update_item_def(
@@ -110,13 +127,17 @@ fn update_item_defs_recurisve_individual_item(
                 scoped_items.last_mut().unwrap().push(item_ref.clone());
             }
 
-            let fn_stmts = match &updated_item_defs[*index] {
-                ItemDef::Fn(fn_info) => fn_info.stmts.clone(),
+            let fn_def = match &updated_item_defs[*index] {
+                ItemDef::Fn(fn_def) => fn_def,
                 _ => todo!(),
             };
+            let fn_stmts = fn_def.stmts.clone();
 
             // Item in fn body are scoped so create a new scope
             scoped_items.push(Vec::new());
+            // TODO unlike items, type params can't be used in all children eg child fns. Do we need some mechanism for checking this or will cargo check simply prevent any problems?
+            // TODO ideally avoiding cloning and just store a mutable ref we can update?
+            type_params.push(fn_def.sig.generics.clone());
 
             update_item_defs_recurisve_stmts(
                 &fn_stmts,
@@ -125,10 +146,22 @@ fn update_item_defs_recurisve_individual_item(
                 current_module,
                 updated_item_defs,
                 scoped_items,
+                type_params,
                 true,
                 duplicates,
             );
 
+            // If any of the fn's type params were used directly, record this on the fn_def
+            let mut fn_def = match &mut updated_item_defs[*index] {
+                ItemDef::Fn(fn_def) => fn_def.clone(),
+                _ => todo!(),
+            };
+
+            // TODO Avoid this mess. Can't mutate Rc (fn_def.sig is Rc) so try to pass the used type params into update_item_def so they can be used when creating the Rc.
+            let mut sig = (*fn_def.sig).clone();
+            sig.generics = type_params.pop().unwrap();
+            fn_def.sig = Rc::new(sig);
+            updated_item_defs[*index] = ItemDef::Fn(fn_def);
             scoped_items.pop();
         }
         ItemRef::Const(index) => {
@@ -174,6 +207,7 @@ fn update_item_defs_recurisve_individual_item(
                     &rust_mod.module_path,
                     updated_item_defs,
                     scoped_items,
+                    type_params,
                     false,
                     duplicates,
                 );
@@ -225,6 +259,7 @@ fn update_item_defs_recurisve_individual_item(
                     current_module,
                     updated_item_defs,
                     scoped_items,
+                    type_params,
                     true,
                     duplicates,
                 );
@@ -246,6 +281,10 @@ fn update_item_defs_recurisve_stmts(
     updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
+    // NOTE type params cannot be used inside a child fn
+    // Used for tracking whether a type param is used like `T::associated_fn()`
+    // (name, used, trait bound indexes (not used, just easier to avoid removing then re-including it))
+    type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
     duplicates: &[Duplicate],
 ) {
@@ -261,6 +300,7 @@ fn update_item_defs_recurisve_stmts(
                     current_module,
                     updated_item_defs,
                     scoped_items,
+                    type_params,
                     in_scope,
                     duplicates,
                 );
@@ -273,6 +313,7 @@ fn update_item_defs_recurisve_stmts(
                     current_module,
                     updated_item_defs,
                     scoped_items,
+                    type_params,
                     in_scope,
                     duplicates,
                 );
@@ -290,6 +331,10 @@ fn update_item_defs_recurisve_individual_expr(
     updated_item_defs: &mut [ItemDef],
     // TODO use &ItemRef
     scoped_items: &mut Vec<Vec<ItemRef>>,
+    // NOTE type params cannot be used inside a child fn
+    // Used for tracking whether a type param is used like `T::associated_fn()`
+    // (name, used)
+    type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
     duplicates: &[Duplicate],
 ) {
@@ -308,12 +353,25 @@ fn update_item_defs_recurisve_individual_expr(
                 current_module,
                 updated_item_defs,
                 scoped_items,
+                type_params,
                 in_scope,
                 duplicates,
             );
         }
         ExprRef::Break(_) => {}
-        ExprRef::Call(_) => {}
+        ExprRef::Call(rust_expr_call) => {
+            update_item_defs_recurisve_individual_expr(
+                &rust_expr_call.func,
+                crates,
+                item_defs_no_types,
+                current_module,
+                updated_item_defs,
+                scoped_items,
+                type_params,
+                in_scope,
+                duplicates,
+            );
+        }
         ExprRef::Cast(_) => {}
         ExprRef::Closure(_) => {}
         ExprRef::Const(_) => {}
@@ -331,7 +389,14 @@ fn update_item_defs_recurisve_individual_expr(
         ExprRef::Match(_) => {}
         ExprRef::MethodCall(_) => {}
         ExprRef::Paren(_) => {}
-        ExprRef::Path(_) => {}
+        ExprRef::Path(rust_expr_path) => {
+            // TODO check path isn't a user type, var, etc shadowing the type param name
+            for (name, used, _) in type_params.last_mut().unwrap() {
+                if rust_expr_path.path.segments[0].ident == name {
+                    *used = true;
+                }
+            }
+        }
         ExprRef::Range(_) => {}
         ExprRef::Reference(_) => {}
         ExprRef::Repeat(_) => {}
@@ -361,7 +426,7 @@ impl ItemDefRc {
     pub fn ident(&self) -> &str {
         match self {
             ItemDefRc::StructEnum(def) => &def.ident,
-            ItemDefRc::Fn(def) => &def.ident,
+            ItemDefRc::Fn(def) => &def.sig.ident,
             ItemDefRc::Const(def) => &def.ident,
             ItemDefRc::Trait(def) => &def.ident,
             ItemDefRc::Impl(_) => panic!(),
@@ -383,7 +448,7 @@ impl ItemDef {
     pub fn ident(&self) -> &str {
         match self {
             ItemDef::StructEnum(def) => &def.ident,
-            ItemDef::Fn(def) => &def.ident,
+            ItemDef::Fn(def) => &def.sig.ident,
             ItemDef::Const(def) => &def.ident,
             ItemDef::Trait(def) => &def.ident,
             ItemDef::Impl(_) => panic!(),
@@ -629,7 +694,7 @@ fn update_item_def(
                                     }
                                 })
                                 .collect::<Vec<_>>();
-                            (type_param.ident.to_string(), bound_indexes)
+                            (type_param.ident.to_string(), false, bound_indexes)
                         }
                         GenericParam::Const(_) => todo!(),
                     }
@@ -658,7 +723,11 @@ fn update_item_def(
                         parse_types_for_populate_item_definitions(
                             &pat_type.ty,
                             &[],
-                            &generics,
+                            &generics
+                                .iter()
+                                .cloned()
+                                .map(|(name, used, trait_bounds)| (name, trait_bounds))
+                                .collect::<Vec<_>>(),
                             module_path,
                             item_refs,
                             item_actual_defs_copy,
@@ -673,7 +742,11 @@ fn update_item_def(
                 ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
                     type_,
                     &[],
-                    &generics,
+                    &generics
+                        .iter()
+                        .cloned()
+                        .map(|(name, used, trait_bounds)| (name, trait_bounds))
+                        .collect::<Vec<_>>(),
                     module_path,
                     item_refs,
                     item_actual_defs_copy,
@@ -696,14 +769,17 @@ fn update_item_def(
             };
 
             ItemDef::Fn(FnDef {
-                ident: fn_info.ident.to_string(),
-                js_name,
                 is_pub: fn_info.is_pub,
-                inputs_types,
-                generics,
-                return_type,
                 stmts: fn_info.stmts,
                 syn: fn_info.syn,
+                sig: Rc::new(FnSigDef {
+                    ident: fn_info.ident.to_string(),
+                    js_name,
+
+                    inputs_types,
+                    generics,
+                    return_type,
+                }),
             })
         }
         ItemDefNoTypes::Const(const_def) => {
@@ -896,13 +972,17 @@ fn update_item_def(
                     let static_ =
                         !matches!(trait_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
-                    TraitItemDef::Fn(FnSigDef {
+                    TraitItemDef::Fn(Rc::new(FnSigDef {
                         js_name,
                         ident: trait_item_fn.sig.ident.to_string(),
                         inputs_types,
-                        generics,
+                        generics: generics
+                            .iter()
+                            .cloned()
+                            .map(|(name, trait_bounds)| (name, false, trait_bounds))
+                            .collect::<Vec<_>>(),
                         return_type,
-                    })
+                    }))
                 })
                 .collect();
 
@@ -1047,14 +1127,20 @@ fn update_item_def(
                         item: RustImplItemItemNoJs::Fn(
                             static_,
                             FnDef {
-                                ident: fn_info.ident.to_string(),
-                                js_name,
                                 is_pub: fn_info.is_pub,
-                                inputs_types,
-                                generics,
-                                return_type,
                                 stmts: fn_info.stmts,
                                 syn: fn_info.syn,
+                                sig: Rc::new(FnSigDef {
+                                    ident: fn_info.ident.to_string(),
+                                    js_name,
+                                    inputs_types,
+                                    generics: generics
+                                        .iter()
+                                        .cloned()
+                                        .map(|(name, trait_bounds)| (name, false, trait_bounds))
+                                        .collect::<Vec<_>>(),
+                                    return_type,
+                                }),
                             },
                         ),
                     }
@@ -1457,17 +1543,23 @@ fn update_item_def(
                                     }
                                 },
                                 FnDef {
-                                    js_name,
-                                    ident: item_name.clone(),
                                     is_pub,
-                                    inputs_types,
-                                    generics,
-                                    return_type,
                                     syn: FnInfoSyn::Impl(impl_item_fn.clone()),
                                     stmts: match exprs_stmts_refs {
                                         ImplItemExprStmtRefs::Fn(stmt_refs) => stmt_refs,
                                         ImplItemExprStmtRefs::Const => todo!(),
                                     },
+                                    sig: Rc::new(FnSigDef {
+                                        js_name,
+                                        ident: item_name.clone(),
+                                        inputs_types,
+                                        generics: generics
+                                            .iter()
+                                            .cloned()
+                                            .map(|(name, trait_bounds)| (name, false, trait_bounds))
+                                            .collect::<Vec<_>>(),
+                                        return_type,
+                                    }),
                                 },
                             )
                         }
@@ -2050,7 +2142,7 @@ pub struct TraitDef {
 }
 #[derive(Debug, Clone)]
 pub enum TraitItemDef {
-    Fn(FnSigDef),
+    Fn(Rc<FnSigDef>),
     Const,
     Type,
 }
@@ -2337,7 +2429,7 @@ impl RustType {
                         .map(|tp| tp.into_rust_type_param2(global_data))
                         .collect(),
                     // Impl block fns are not stored simply as Rc fns in the item defs Vec, there are only store within the impl, yet here we are trying to represent them as a RustType2::Fn
-                    fn_info,
+                    fn_info.sig.clone(),
                 )
             }
             RustType::FnVanish => RustType2::FnVanish,
@@ -2373,25 +2465,26 @@ pub struct ConstDef {
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 pub struct FnDef {
-    // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
-    pub js_name: Ident,
-    pub ident: String,
     pub is_pub: bool,
+    // TODO No point storing all the info like inputs and return types separately, as these need to be stored on RustType::Fn anyway for eg closures where we won't be storing a fn info?? Keep both for now and revisit later. Note fns idents can just appear in the code and be called whereas a closure will be a var which already has a type.
+    // pub js_name: Ident,
+    // pub ident: String,
     /// Does this include receiver/self types? NO in handle_item_fn we are filtering out any self type. Could just store it as RustType::Self, but seems pointless if we don't actually need it for anything. NO again, updated to include self inputs because we need them.
     /// TODO probably don't actually need `is_self`
     /// (is_self, is_mut, name, type)
-    pub inputs_types: Vec<(bool, bool, String, RustType)>,
+    // pub inputs_types: Vec<(bool, bool, String, RustType)>,
     /// (type param name, trait bounds)
-    pub generics: Vec<(String, Vec<usize>)>,
+    // pub generics: Vec<(String, Vec<usize>)>,
     // pub generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
-    pub return_type: RustType,
+    // pub return_type: RustType,
     // /// type of fn eg Fn(i32) -> ()
     // rust_type: RustType,
     // TODO optionally add enum for Field, AssociatedFn, Method, etc
     pub syn: FnInfoSyn,
 
     pub stmts: Vec<StmtsRef>,
+    pub sig: Rc<FnSigDef>,
 }
 #[derive(Debug, Clone)]
 pub struct FnSigDef {
@@ -2399,14 +2492,14 @@ pub struct FnSigDef {
     pub ident: String,
     /// (is_self, is_mut, name, type)
     pub inputs_types: Vec<(bool, bool, String, RustType)>,
-    /// (type param name, trait bounds)
-    pub generics: Vec<(String, Vec<usize>)>,
+    /// (type param name, used directly like `T::associated_fn()`, trait bounds)
+    pub generics: Vec<(String, bool, Vec<usize>)>,
     // pub generics: Vec<String>,
     // NO! for methods we want to store the actual fn type. fns can be assigned to vars, and we want to be able to pass the Path part of the fn, and *then* call it and determine the return type
     pub return_type: RustType,
 }
 
-impl FnDef {
+impl FnSigDef {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
         args: &[RustType2],
@@ -2414,7 +2507,7 @@ impl FnDef {
     ) -> Vec<RustTypeParam2> {
         self.generics
             .iter()
-            .map(|(type_param_name, trait_bounds)| {
+            .map(|(type_param_name, _used_associated_fn, trait_bounds)| {
                 let matched_arg_rust_type = self.inputs_types.iter().enumerate().find_map(
                     |(i, (_is_self, _is_mut, _name, input_type))| {
                         match input_type {

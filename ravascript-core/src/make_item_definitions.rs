@@ -1099,7 +1099,7 @@ impl RustMod {
                     ItemDefRc::Fn(fn_info) => fn_info,
                     _ => todo!(),
                 };
-                (def.ident == name && (use_private || def.is_pub)).then_some(*index)
+                (def.sig.ident == name && (use_private || def.is_pub)).then_some(*index)
             }
             ItemRef::Const(index) => {
                 let item = &items[*index];
