@@ -192,6 +192,7 @@ macro_rules! try_ {
 #[macro_export]
 macro_rules! catch {
     ($err_ident:ident, $ErrType:ty, $catch_block:block) => {{
+        // Given the catch block code can use the err var like in `try {} catch (err) {}` we need to ensure it is defined in the output Rust code
         let $err_ident: $ErrType = <$ErrType>::default();
         $catch_block
     }};

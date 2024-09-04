@@ -67,7 +67,7 @@ async fn json_parse_unsafe() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
-#[ignore]
+// #[ignore]
 #[allow(dead_code, clippy::needless_return)]
 #[tokio::test]
 async fn json_parse_wrapper() {
@@ -83,7 +83,7 @@ async fn json_parse_wrapper() {
             try_! {{
                 return Ok(unsafe { json_parse(text).cast::<T>() });
             }}
-            catch! {err, SyntaxError,{
+            catch! {err, SyntaxError, {
                 return Err(err);
             }}
         }

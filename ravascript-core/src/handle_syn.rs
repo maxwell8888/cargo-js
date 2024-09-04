@@ -351,12 +351,13 @@ fn parse_fn_input_or_field(
                 // Can always be inferred from the arguments used to construct the struct?
 
                 // For impl blocks
+                dbg!(&seg_name_str);
                 let (
                     item_definition_module_path,
                     item_path,
                     _is_scoped,
                     item_index,
-                    _item_is_type_param,
+                    item_is_type_param,
                 ) = resolve_path(
                     true,
                     false,
@@ -372,6 +373,31 @@ fn parse_fn_input_or_field(
                     current_module,
                     &global_data.scopes,
                 );
+                if let Some(trait_bounds) = item_is_type_param {
+                    assert!(item_path.len() == 1);
+
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+                    // Should be using scoped type params instead of parent_item_definition_generics?
+
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    dbg!(&parent_item_definition_generics);
+                    let parent_type_param = parent_item_definition_generics
+                        .iter()
+                        .find(|rust_type_param| {
+                            rust_type_param.name == item_path.first().unwrap().ident
+                        })
+                        .unwrap()
+                        .clone();
+                    return RustType2::TypeParam(
+                        parent_type_param.into_rust_type_param2(global_data),
+                    );
+                }
+
                 // A Trait bound should just be a trait, no associated fn or whatever
                 assert!(item_path.len() == 1);
                 let item_definition = match global_data.item_defs[item_index.unwrap()].clone() {

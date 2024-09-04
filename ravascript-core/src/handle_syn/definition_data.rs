@@ -263,8 +263,9 @@ pub struct GlobalDataScope {
     ///
     /// NOTE whilst we have `RustType::TypeParam` fn args stored as scoped vars, this won't cover certain cases, eg the examples above where the type param is not used in an argument and the fn body simply calls an associated fn on the type param like `fn foo<T>() { T::bar(); }`
     ///
-    /// (name, trait bounds)
+    /// (name, used for associated fn, trait bounds)
     // pub type_params: Vec<(String, Vec<Rc<TraitDef>>)>,
+    // TODO Passing `parent_item_definition_generics` through parse_fn_input_or_field() doesn't seem like a good idea since a child expression in a fn body still needs to know about the parent fn's `parent_item_definition_generics` which would mean passing it down through all the syn handling fns. Using this field seems like a better approach, but means we need to mutate/update as and when the type param get's resolved.
     pub type_params: Vec<(String, bool, Vec<usize>)>,
 }
 
