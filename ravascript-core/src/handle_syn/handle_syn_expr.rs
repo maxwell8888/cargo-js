@@ -2018,6 +2018,7 @@ fn handle_expr_method_call(
 
     // Lookup method impl to see if any of it's args are type params
 
+    // TODO IMPORTANT should we be including or excluding generics passed as args here? eg need to be careful with stuff like getting an input by index if generic args have been inserted
     // Parse the args
     let (args_js_exprs, _args_rust_types): (Vec<_>, Vec<_>) = {
         // NOTE resolved_input_types includes self inputs which are of course don't appear in args, so we must ignore the first item from resolved_input_types if it is a self
@@ -2190,6 +2191,57 @@ fn handle_expr_method_call(
             // method_name = method_name[..method_name.len() - 1].to_string();
         }
     }
+
+    // Insert (prefix) type params into args if used as associated fn
+    let type_param_concrete_idents = if let Some(turbofish) = &expr_method_call.turbofish {
+        turbofish
+            .args
+            .iter()
+            .map(|arg| {
+                match arg {
+                    GenericArgument::Lifetime(_) => todo!(),
+                    GenericArgument::Type(type_) => {
+                        // TODO properly resolve turbofish types. For now just assume length 1 and take ident
+                        match type_ {
+                            Type::Array(_) => todo!(),
+                            Type::BareFn(_) => todo!(),
+                            Type::Group(_) => todo!(),
+                            Type::ImplTrait(_) => todo!(),
+                            Type::Infer(_) => todo!(),
+                            Type::Macro(_) => todo!(),
+                            Type::Never(_) => todo!(),
+                            Type::Paren(_) => todo!(),
+                            Type::Path(type_path) => {
+                                assert!(type_path.path.segments.len() == 1);
+                                let seg = type_path.path.segments.first().unwrap();
+                                JsExpr::Path(PathIdent::Single(Ident::Syn(seg.ident.clone())))
+                            }
+                            Type::Ptr(_) => todo!(),
+                            Type::Reference(_) => todo!(),
+                            Type::Slice(_) => todo!(),
+                            Type::TraitObject(_) => todo!(),
+                            Type::Tuple(_) => todo!(),
+                            Type::Verbatim(_) => todo!(),
+                            _ => todo!(),
+                        }
+                    }
+                    GenericArgument::Const(_) => todo!(),
+                    GenericArgument::AssocType(_) => todo!(),
+                    GenericArgument::AssocConst(_) => todo!(),
+                    GenericArgument::Constraint(_) => todo!(),
+                    _ => todo!(),
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    // TODO avoid shadowing
+    let args_js_exprs = type_param_concrete_idents
+        .into_iter()
+        .chain(args_js_exprs)
+        .collect::<Vec<_>>();
 
     // Waiting for this to be able to match on boxed variants: https://github.com/rust-lang/rust/issues/87121
     match &receiver_type {
