@@ -3470,7 +3470,32 @@ fn handle_expr_path_inner(
         .iter()
         .map(|seg| RustPathSegment2 {
             ident: seg.ident.to_string(),
-            turbofish: Vec::new(),
+            turbofish: match &seg.arguments {
+                PathArguments::None => Vec::new(),
+                PathArguments::AngleBracketed(gen_args) => {
+                    gen_args
+                        .args
+                        .iter()
+                        .map(|gen_arg| match gen_arg {
+                            GenericArgument::Lifetime(_) => todo!(),
+                            GenericArgument::Type(type_) => parse_fn_input_or_field(
+                                type_,
+                                false,
+                                // parent_item_definition_generics,
+                                &vec![],
+                                current_module,
+                                global_data,
+                            ),
+                            GenericArgument::Const(_) => todo!(),
+                            GenericArgument::AssocType(_) => todo!(),
+                            GenericArgument::AssocConst(_) => todo!(),
+                            GenericArgument::Constraint(_) => todo!(),
+                            _ => todo!(),
+                        })
+                        .collect::<Vec<_>>()
+                }
+                PathArguments::Parenthesized(_) => todo!(),
+            },
         })
         .collect::<Vec<_>>();
 

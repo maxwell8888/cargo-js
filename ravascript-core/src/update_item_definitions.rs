@@ -231,16 +231,17 @@ fn update_item_defs_recurisve_individual_item(
                 // scoped_items.last_mut().unwrap().push(item_ref.clone());
             }
 
-            let fn_stmts = match &updated_item_defs[*index] {
+            let fns_stmts = match &updated_item_defs[*index] {
                 ItemDef::Impl(rust_impl_block) => {
                     rust_impl_block
                         .rust_items
                         .iter()
-                        .map(|rust_impl_item_no_js| {
+                        .enumerate()
+                        .map(|(i, rust_impl_item_no_js)| {
                             match &rust_impl_item_no_js.item {
                                 RustImplItemItemNoJs::Fn(static_, fn_info) => {
                                     // Item in fn body are scoped so create a new scope
-                                    fn_info.stmts.clone()
+                                    (i, *static_, fn_info.clone(), fn_info.stmts.clone())
                                 }
                                 RustImplItemItemNoJs::Const => todo!(),
                             }
@@ -249,8 +250,9 @@ fn update_item_defs_recurisve_individual_item(
                 }
                 _ => todo!(),
             };
-            for stmts in fn_stmts {
+            for (item_index, static_, mut fn_def, stmts) in fns_stmts {
                 scoped_items.push(Vec::new());
+                type_params.push(fn_def.sig.generics.clone());
 
                 update_item_defs_recurisve_stmts(
                     &stmts,
@@ -263,6 +265,20 @@ fn update_item_defs_recurisve_individual_item(
                     true,
                     duplicates,
                 );
+
+                // TODO Avoid this mess. Can't mutate Rc (fn_def.sig is Rc) so try to pass the used type params into update_item_def so they can be used when creating the Rc.
+                let mut sig = (*fn_def.sig).clone();
+                sig.generics = type_params.pop().unwrap();
+                fn_def.sig = Rc::new(sig);
+                match &mut updated_item_defs[*index] {
+                    ItemDef::Impl(rust_impl_block) => {
+                        rust_impl_block.rust_items[item_index] = RustImplItemNoJs {
+                            ident: fn_def.sig.ident.clone(),
+                            item: RustImplItemItemNoJs::Fn(static_, fn_def),
+                        };
+                    }
+                    _ => todo!(),
+                };
 
                 scoped_items.pop();
             }
@@ -413,6 +429,7 @@ fn update_item_defs_recurisve_individual_expr(
     }
 }
 
+// TODO remove Rc and just use indexes in RustType2, can just use methods/deref or whatever to make accessing the def easy
 #[derive(Debug, Clone)]
 pub enum ItemDefRc {
     StructEnum(Rc<StructEnumDef>),

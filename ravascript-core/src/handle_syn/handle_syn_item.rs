@@ -791,7 +791,7 @@ pub fn handle_impl_item_fn(
     // generics.extend(where_generics);
 
     let mut vars = Vec::new();
-    let fn_type_params = match &rust_impl_item.item {
+    let (fn_type_params, inputs2) = match &rust_impl_item.item {
         RustImplItemItemNoJs::Fn(_static, fn_def) => {
             // Push vars
             for (is_self, is_mut, name, input_type) in fn_def.sig.inputs_types.clone() {
@@ -830,8 +830,26 @@ pub fn handle_impl_item_fn(
                 }
             }
 
+            let input_names = fn_def
+                .sig
+                .generics
+                .iter()
+                .filter_map(|(name, used_associated_fn, _trait_bounds)| {
+                    used_associated_fn.then_some(Ident::String(name.clone()))
+                })
+                .chain(impl_item_fn.clone().sig.inputs.into_iter().filter_map(
+                    |input| match input {
+                        FnArg::Receiver(_) => None,
+                        FnArg::Typed(pat_type) => match *pat_type.pat {
+                            Pat::Ident(pat_ident) => Some(Ident::Syn(pat_ident.ident.clone())),
+                            _ => todo!(),
+                        },
+                    },
+                ))
+                .collect::<Vec<_>>();
+
             // Return type params
-            fn_def.sig.generics.clone()
+            (fn_def.sig.generics.clone(), input_names)
         }
         RustImplItemItemNoJs::Const => todo!(),
     };
@@ -957,7 +975,8 @@ pub fn handle_impl_item_fn(
             async_: false,
             is_method: true,
             name: Ident::Syn(impl_item_fn.sig.ident.clone()),
-            input_names: js_input_names,
+            // input_names: js_input_names,
+            input_names: inputs2,
             body_stmts,
         };
 
