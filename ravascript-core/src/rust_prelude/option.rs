@@ -9,6 +9,14 @@ pub enum Result<T, E> {
     Ok(T),
     Err(E),
 }
+impl<T, E> Result<T, E> {
+    pub fn unwrap(self) -> T {
+        match self {
+            Result::Ok(val) => val,
+            Result::Err(_) => panic!("called `Result::unwrap()` on an `Err` value"),
+        }
+    }
+}
 
 // #[allow(dead_code)]
 // #[derive(Copy, PartialOrd, Eq, Ord, Debug, Hash)]

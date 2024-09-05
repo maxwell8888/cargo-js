@@ -386,16 +386,21 @@ fn parse_fn_input_or_field(
                     // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                     // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                     dbg!(&parent_item_definition_generics);
-                    let parent_type_param = parent_item_definition_generics
+                    // TODO IMPORTANT need to actually track where/when we are creating new function scopes and therefore shouldn't be looking for type params in parent scopes
+                    let scoped_type_params = global_data
+                        .scopes
+                        .iter_mut()
+                        .rev()
+                        .find_map(|s| (!s.type_params.is_empty()).then_some(&mut s.type_params))
+                        .unwrap();
+                    let parent_type_param = scoped_type_params
                         .iter()
-                        .find(|rust_type_param| {
-                            rust_type_param.name == item_path.first().unwrap().ident
+                        .find_map(|(_used_by_associated_fn, rust_type_param)| {
+                            (rust_type_param.name == item_path.first().unwrap().ident)
+                                .then_some(rust_type_param.clone())
                         })
-                        .unwrap()
-                        .clone();
-                    return RustType2::TypeParam(
-                        parent_type_param.into_rust_type_param2(global_data),
-                    );
+                        .unwrap();
+                    return RustType2::TypeParam(parent_type_param);
                 }
 
                 // A Trait bound should just be a trait, no associated fn or whatever

@@ -266,7 +266,8 @@ pub struct GlobalDataScope {
     /// (name, used for associated fn, trait bounds)
     // pub type_params: Vec<(String, Vec<Rc<TraitDef>>)>,
     // TODO Passing `parent_item_definition_generics` through parse_fn_input_or_field() doesn't seem like a good idea since a child expression in a fn body still needs to know about the parent fn's `parent_item_definition_generics` which would mean passing it down through all the syn handling fns. Using this field seems like a better approach, but means we need to mutate/update as and when the type param get's resolved.
-    pub type_params: Vec<(String, bool, Vec<usize>)>,
+    /// (used for associated fn, rust type param)
+    pub type_params: Vec<(bool, RustTypeParam2)>,
 }
 
 // TODO clean up these types since eg there is duplication of the fn ident
@@ -934,7 +935,8 @@ pub fn resolve_path(
     bool,
     Option<usize>,
     // NOTE we only return Some when when the path is to an actual type param `T`, not just a var whose type is a type param like `foo: T`
-    Option<Vec<usize>>,
+    // Option<Vec<usize>>,
+    Option<Vec<Rc<TraitDef>>>,
 ) {
     debug!(segs = ?segs, "get_path_without_namespacing");
 
@@ -976,7 +978,7 @@ pub fn resolve_path(
         UseMapping((String, Vec<String>)),
         Var(ScopedVar),
         Item(usize),
-        TypeParam(Vec<usize>),
+        TypeParam(Vec<Rc<TraitDef>>),
     }
 
     #[allow(clippy::manual_map)]
@@ -993,7 +995,7 @@ pub fn resolve_path(
         let scoped_type_param = s
             .type_params
             .iter()
-            .find(|(name, _used, _trait_bounds)| name == &segs[0].ident);
+            .find(|(_used, rust_type_param)| rust_type_param.name == segs[0].ident);
 
         if let Some(use_mapping) = s.use_mappings.iter().find(|u| u.0 == segs[0].ident) {
             Some(ScopedThing::UseMapping(use_mapping.clone()))
@@ -1001,8 +1003,8 @@ pub fn resolve_path(
             Some(ScopedThing::Var(scoped_var.clone()))
         } else if let Some(scoped_item) = scoped_item {
             Some(ScopedThing::Item(*scoped_item))
-        } else if let Some((name, _used, trait_bounds)) = scoped_type_param {
-            Some(ScopedThing::TypeParam(trait_bounds.clone()))
+        } else if let Some((_used, rust_type_param)) = scoped_type_param {
+            Some(ScopedThing::TypeParam(rust_type_param.trait_bounds.clone()))
         } else {
             None
         }
@@ -1249,6 +1251,8 @@ pub fn resolve_path(
         let seg = &segs[0];
         let new_ident = if seg.ident == "Some" || seg.ident == "None" {
             "Option"
+        } else if seg.ident == "Ok" || seg.ident == "Err" {
+            "Result"
         } else {
             &seg.ident
         };

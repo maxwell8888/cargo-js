@@ -9,6 +9,7 @@ use super::{
     definition_data::{GlobalDataScope, JsImplBlock2, RustImplItemJs, ScopedVar},
     handle_syn_expr::handle_expr,
     handle_syn_stmt::parse_fn_body_stmts,
+    RustTypeParam2, RustTypeParamValue2,
 };
 
 use crate::{
@@ -224,7 +225,28 @@ pub fn handle_item_fn(
         items: scoped_item_defs,
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
-        type_params: fn_def.sig.generics.clone(),
+        type_params: fn_def
+            .sig
+            .generics
+            .clone()
+            .into_iter()
+            .map(|(name, used, trait_bounds)| {
+                (
+                    used,
+                    RustTypeParam2 {
+                        name,
+                        trait_bounds: trait_bounds
+                            .iter()
+                            .map(|i| match &global_data.item_defs[*i] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect(),
+                        type_: RustTypeParamValue2::Unresolved,
+                    },
+                )
+            })
+            .collect(),
     });
 
     // Adds fn args as `ScopedVar`s
@@ -891,7 +913,25 @@ pub fn handle_impl_item_fn(
         _look_in_outer_scope: false,
         use_mappings: Vec::new(),
         items: scoped_item_defs,
-        type_params: fn_type_params,
+        type_params: fn_type_params
+            .into_iter()
+            .map(|(name, used, trait_bounds)| {
+                (
+                    used,
+                    RustTypeParam2 {
+                        name,
+                        trait_bounds: trait_bounds
+                            .iter()
+                            .map(|i| match &global_data.item_defs[*i] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect(),
+                        type_: RustTypeParamValue2::Unresolved,
+                    },
+                )
+            })
+            .collect(),
     });
 
     // TODO this approach for bool_and and add_assign is very limited and won't be possible if 2 differnt types need 2 different implementations for the same method name
@@ -1642,7 +1682,28 @@ pub fn handle_item_trait(
                     items: vec![],
                     _look_in_outer_scope: false,
                     use_mappings: Vec::new(),
-                    type_params: fn_def.sig.generics.clone(),
+                    type_params: fn_def
+                        .sig
+                        .generics
+                        .clone()
+                        .into_iter()
+                        .map(|(name, used, trait_bounds)| {
+                            (
+                                used,
+                                RustTypeParam2 {
+                                    name,
+                                    trait_bounds: trait_bounds
+                                        .iter()
+                                        .map(|i| match &global_data.item_defs[*i] {
+                                            ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                            _ => todo!(),
+                                        })
+                                        .collect(),
+                                    type_: RustTypeParamValue2::Unresolved,
+                                },
+                            )
+                        })
+                        .collect(),
                 });
 
                 // Adds fn args as `ScopedVar`s

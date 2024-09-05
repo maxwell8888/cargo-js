@@ -754,22 +754,28 @@ fn update_item_def(
                 })
                 .collect::<Vec<_>>();
 
+            dbg!(&fn_info.signature.output);
             let return_type = match &fn_info.signature.output {
                 ReturnType::Default => RustType::Unit,
-                ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
-                    type_,
-                    &[],
-                    &generics
-                        .iter()
-                        .cloned()
-                        .map(|(name, used, trait_bounds)| (name, trait_bounds))
-                        .collect::<Vec<_>>(),
-                    module_path,
-                    item_refs,
-                    item_actual_defs_copy,
-                    scoped_items,
-                ),
+                ReturnType::Type(_, type_) => {
+                    let wtf = parse_types_for_populate_item_definitions(
+                        type_,
+                        &[],
+                        &generics
+                            .iter()
+                            .cloned()
+                            .map(|(name, used, trait_bounds)| (name, trait_bounds))
+                            .collect::<Vec<_>>(),
+                        module_path,
+                        item_refs,
+                        item_actual_defs_copy,
+                        scoped_items,
+                    );
+                    dbg!(&wtf);
+                    wtf
+                }
             };
+            dbg!(&return_type);
 
             let js_name = if in_scope {
                 Ident::Syn(fn_info.signature.ident.clone())
@@ -1634,6 +1640,7 @@ fn parse_types_for_populate_item_definitions(
     item_defs: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
 ) -> RustType {
+    dbg!("parse_types_for_populate_item_definitions");
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
@@ -1806,11 +1813,14 @@ fn parse_types_for_populate_item_definitions(
                 //     RustTypeParamValue::Unresolved => todo!(),
                 //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                 // };
-                return RustType::TypeParam(RustTypeParam {
+                dbg!("type param early return");
+                let thing = RustType::TypeParam(RustTypeParam {
                     name: generic_name.clone(),
                     trait_bounds: trait_bounds.clone(),
                     type_: RustTypeParamValue::Unresolved,
                 });
+                dbg!(&thing);
+                return thing;
             }
 
             // For fns:
@@ -1914,15 +1924,18 @@ fn parse_types_for_populate_item_definitions(
                                     .filter_map(|(_i, arg)| match arg {
                                         GenericArgument::Lifetime(_) => None,
                                         GenericArgument::Type(arg_type_) => {
-                                            Some(parse_types_for_populate_item_definitions(
-                                                arg_type_,
-                                                impl_generics,
-                                                root_parent_item_def_generics,
-                                                current_module,
-                                                crates,
-                                                item_defs,
-                                                scoped_items,
-                                            ))
+                                            let te =
+                                                Some(parse_types_for_populate_item_definitions(
+                                                    arg_type_,
+                                                    impl_generics,
+                                                    root_parent_item_def_generics,
+                                                    current_module,
+                                                    crates,
+                                                    item_defs,
+                                                    scoped_items,
+                                                ));
+                                            dbg!(&te);
+                                            te
                                         }
                                         GenericArgument::Const(_) => todo!(),
                                         GenericArgument::AssocType(_) => todo!(),
@@ -1943,6 +1956,7 @@ fn parse_types_for_populate_item_definitions(
                     //         &global_data.scope_id_as_option(),
                     //         &vec![struct_or_enum_name.to_string()],
                     //     );
+                    dbg!(&rust_path);
                     let (item_module_path, item_path_seg, item_scope, item_index) =
                         make_item_definitions::resolve_path(
                             true,
@@ -1954,7 +1968,18 @@ fn parse_types_for_populate_item_definitions(
                             current_module,
                             scoped_items,
                         );
+                    dbg!(&item_path_seg);
                     let item_seg = &item_path_seg[0];
+
+                    let item_def = &item_defs[item_index.unwrap()];
+                    let item_type_params = match item_def {
+                        ItemDefNoTypes::StructEnum(struct_enum_def) => &struct_enum_def.generics,
+                        ItemDefNoTypes::Fn(_) => todo!(),
+                        ItemDefNoTypes::Const(_) => todo!(),
+                        ItemDefNoTypes::Trait(_) => todo!(),
+                        ItemDefNoTypes::Impl(_, _) => todo!(),
+                        ItemDefNoTypes::None => todo!(),
+                    };
 
                     let mut type_params = item_seg
                         .turbofish
@@ -1966,6 +1991,28 @@ fn parse_types_for_populate_item_definitions(
                             type_: RustTypeParamValue::RustType(Box::new(rt.clone())),
                         })
                         .collect::<Vec<_>>();
+                    let mut type_params = if !item_seg.turbofish.is_empty() {
+                        item_type_params
+                            .iter()
+                            .zip(item_seg.turbofish.iter())
+                            .map(|(type_param_name, turbofish)| RustTypeParam {
+                                name: type_param_name.clone(),
+                                // TODO
+                                trait_bounds: vec![],
+                                type_: RustTypeParamValue::RustType(Box::new(turbofish.clone())),
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        item_type_params
+                            .iter()
+                            .map(|type_param_name| RustTypeParam {
+                                name: type_param_name.clone(),
+                                // TODO
+                                trait_bounds: vec![],
+                                type_: RustTypeParamValue::Unresolved,
+                            })
+                            .collect::<Vec<_>>()
+                    };
 
                     if item_module_path == vec!["prelude_special_case".to_string()] {
                         if item_seg.ident == "i32" {
@@ -2520,47 +2567,72 @@ impl FnSigDef {
     pub fn attempt_to_resolve_type_params_using_arg_types(
         &self,
         args: &[RustType2],
+        turbofish: &[RustType2],
         item_defs: &[ItemDefRc],
     ) -> Vec<RustTypeParam2> {
-        self.generics
-            .iter()
-            .map(|(type_param_name, _used_associated_fn, trait_bounds)| {
-                let matched_arg_rust_type = self.inputs_types.iter().enumerate().find_map(
-                    |(i, (_is_self, _is_mut, _name, input_type))| {
-                        match input_type {
-                            RustType::TypeParam(type_param)
-                                if type_param_name == &type_param.name =>
-                            {
-                                Some(args[i].clone())
-                            }
-                            // TODO what about types that *contain* a type param eg `foo: Option<T>`
-                            _ => None,
+        if !self.generics.is_empty() && !turbofish.is_empty() {
+            self.generics
+                .iter()
+                .zip(turbofish)
+                .map(
+                    |((type_param_name, _used_associated_fn, trait_bounds), turbofish)| {
+                        let trait_bounds = trait_bounds
+                            .iter()
+                            .map(|index| match &item_defs[*index] {
+                                ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                                _ => todo!(),
+                            })
+                            .collect::<Vec<_>>();
+
+                        RustTypeParam2 {
+                            name: type_param_name.clone(),
+                            trait_bounds,
+                            type_: RustTypeParamValue2::RustType(Box::new(turbofish.clone())),
                         }
                     },
-                );
+                )
+                .collect::<Vec<_>>()
+        } else {
+            self.generics
+                .iter()
+                .map(|(type_param_name, _used_associated_fn, trait_bounds)| {
+                    let matched_arg_rust_type = self.inputs_types.iter().enumerate().find_map(
+                        |(i, (_is_self, _is_mut, _name, input_type))| {
+                            match input_type {
+                                RustType::TypeParam(type_param)
+                                    if type_param_name == &type_param.name =>
+                                {
+                                    Some(args[i].clone())
+                                }
+                                // TODO what about types that *contain* a type param eg `foo: Option<T>`
+                                _ => None,
+                            }
+                        },
+                    );
 
-                let rust_type_param_value =
-                    if let Some(matched_arg_rust_type) = matched_arg_rust_type {
-                        RustTypeParamValue2::RustType(Box::new(matched_arg_rust_type))
-                    } else {
-                        RustTypeParamValue2::Unresolved
-                    };
+                    let rust_type_param_value =
+                        if let Some(matched_arg_rust_type) = matched_arg_rust_type {
+                            RustTypeParamValue2::RustType(Box::new(matched_arg_rust_type))
+                        } else {
+                            RustTypeParamValue2::Unresolved
+                        };
 
-                let trait_bounds = trait_bounds
-                    .iter()
-                    .map(|index| match &item_defs[*index] {
-                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
-                        _ => todo!(),
-                    })
-                    .collect::<Vec<_>>();
+                    let trait_bounds = trait_bounds
+                        .iter()
+                        .map(|index| match &item_defs[*index] {
+                            ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                            _ => todo!(),
+                        })
+                        .collect::<Vec<_>>();
 
-                RustTypeParam2 {
-                    name: type_param_name.clone(),
-                    trait_bounds,
-                    type_: rust_type_param_value,
-                }
-            })
-            .collect::<Vec<_>>()
+                    RustTypeParam2 {
+                        name: type_param_name.clone(),
+                        trait_bounds,
+                        type_: rust_type_param_value,
+                    }
+                })
+                .collect::<Vec<_>>()
+        }
     }
 }
 

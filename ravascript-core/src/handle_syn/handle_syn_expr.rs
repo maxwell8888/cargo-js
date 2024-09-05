@@ -662,8 +662,15 @@ pub fn handle_expr(
                             RustType2::MutRef(inner_type) => {
                                 get_field_type(*inner_type, global_data, ident)
                             }
+                            RustType2::TypeParam(rust_type_param) => match rust_type_param.type_ {
+                                RustTypeParamValue2::Unresolved => todo!(),
+                                RustTypeParamValue2::RustType(rust_type) => {
+                                    get_field_type(*rust_type, global_data, ident)
+                                }
+                            },
                             _ => {
                                 dbg!(&base_type);
+                                dbg!(&ident);
                                 todo!()
                             }
                         }
@@ -1637,26 +1644,71 @@ pub fn handle_expr_and_stmt_macro(
                 .collect();
             return (JsExpr::TryBlock(stmt_vec), RustType2::Unit);
         }
+        // TODO could we process these kinds of macros at the make_definitions stage?
         if path_segs[0] == "catch" {
             let input = mac.tokens.clone().to_string();
             let mut parts = input.split(',');
+
             let err_var_name = parts.next().unwrap();
+            // Why parse to Ident?
             let err_var_name = syn::parse_str::<syn::Ident>(err_var_name)
                 .unwrap()
                 .to_string();
-            let _err_var_type = parts.next().unwrap();
+
+            // TODO don't assume err var type is a len=1 path
+            let err_var_type_name = parts.next().unwrap().trim().to_string();
+
+            let (
+                err_var_type_module_path,
+                err_var_type_item_path,
+                err_var_type_is_scoped,
+                err_var_type_index,
+                err_var_type_type_param,
+            ) = resolve_path(
+                true,
+                // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+                true,
+                true,
+                true,
+                vec![RustPathSegment2 {
+                    ident: err_var_type_name.clone(),
+                    turbofish: Vec::new(),
+                }],
+                &global_data.crates,
+                &global_data.item_defs,
+                current_module,
+                current_module,
+                &global_data.scopes,
+            );
+            let struct_enum_def = match &global_data.item_defs[err_var_type_index.unwrap()] {
+                ItemDefRc::StructEnum(struct_enum_def) => struct_enum_def.clone(),
+                _ => todo!(),
+            };
+            // let err_var_rust_type =
             let catch_block = parts.collect::<String>();
             let catch_block = syn::parse_str::<syn::Block>(&catch_block).unwrap();
+
+            let err_var_var = ScopedVar {
+                name: err_var_name.clone(),
+                // TODO support `mut err`??
+                mut_: false,
+                type_: RustType2::StructOrEnum(Vec::new(), struct_enum_def),
+            };
+            global_data.scopes.push(GlobalDataScope {
+                variables: vec![err_var_var],
+                items: Vec::new(),
+                _look_in_outer_scope: true,
+                use_mappings: Vec::new(),
+                type_params: Vec::new(),
+            });
             let stmt_vec = catch_block.stmts.into_iter().flat_map(|stmt| {
-                handle_stmt(
-                    &stmt_to_stmts_ref(stmt, &mut vec![], &None, &mut vec![]),
-                    global_data,
-                    current_module,
-                )
-                .into_iter()
-                .map(|(stmt, _type_)| stmt)
+                let stmts_ref = stmt_to_stmts_ref(stmt, &mut vec![], &None, &mut vec![]);
+                handle_stmt(&stmts_ref, global_data, current_module)
+                    .into_iter()
+                    .map(|(stmt, _type_)| stmt)
             });
             let stmt_vec = stmt_vec.collect::<Vec<_>>();
+            global_data.scopes.pop();
             return (JsExpr::CatchBlock(err_var_name, stmt_vec), RustType2::Unit);
         }
         if path_segs[0] == "assert" {
@@ -2081,8 +2133,8 @@ fn handle_expr_method_call(
             // Check to see if type param has been resolved by parent/receiver type
             let parent_type_params = match &receiver_type {
                 RustType2::TypeParam(_) => todo!(),
-                RustType2::Option(inner) => Some(vec![inner.clone()]),
-                RustType2::Result(_, _) => todo!(),
+                RustType2::Option(some) => Some(vec![some.clone()]),
+                RustType2::Result(ok, _) => Some(vec![ok.clone()]),
                 // TODO
                 // RustType2::StructOrEnum(type_params, _) => Some(type_params.clone()),
                 RustType2::StructOrEnum(type_params, _) => None,
@@ -2101,6 +2153,8 @@ fn handle_expr_method_call(
             // TODO type param might be defined on the method itself, so we need to look at turbofish and arg types
             // NOTE it could be that the receiver type is unresovled but the static fn_info def return type is resolved?
             if let Some(parent_type_params) = parent_type_params {
+                dbg!(&parent_type_params);
+                dbg!(&rust_type_param.name);
                 let found_param = parent_type_params
                     .into_iter()
                     .find(|p| p.name == rust_type_param.name)
@@ -2338,7 +2392,7 @@ fn handle_expr_method_call(
         RustType2::StructOrEnum(_, struct_enum_def)
             if struct_enum_def.ident == "Something" && expr_method_call.method == "cast" =>
         {
-            assert!(args_js_exprs.is_empty());
+            assert!(args_js_exprs.len() < 2);
             (receiver, method_return_type)
         }
         RustType2::StructOrEnum(_, struct_enum_def)
@@ -2618,7 +2672,17 @@ fn get_receiver_params_and_method_impl_item(
                     .unwrap(),
             )
         }
-        RustType2::Result(_, _) => todo!(),
+        RustType2::Result(ok_type_param, err_type_param) => {
+            let item_def = global_data.get_prelude_item_def("Result");
+            dbg!(&item_def.ident);
+            dbg!(&sub_path);
+            (
+                vec![ok_type_param, err_type_param],
+                global_data
+                    .lookup_impl_item_item3(&item_def, sub_path)
+                    .unwrap(),
+            )
+        }
         RustType2::StructOrEnum(item_type_params, item_def) => {
             // dbg!(&item_def);
             (
@@ -2968,7 +3032,7 @@ fn handle_expr_call(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
-    // dbg!(expr_call);
+    dbg!(expr_call);
 
     let js_primitive = match &*expr_call.func {
         ExprRef::Path(expr_path) => {
@@ -3230,7 +3294,9 @@ fn handle_expr_call(
                             //     }
                             // };
 
-                            let type_param_concrete_idents =
+                            dbg!(&fn_sig_def);
+
+                            let turbofish_names =
                                 if !expr_path.path.segments.last().unwrap().arguments.is_empty() {
                                     match &expr_path.path.segments.last().unwrap().arguments {
                                         PathArguments::None => todo!(),
@@ -3265,7 +3331,7 @@ fn handle_expr_call(
                                                                         .segments
                                                                         .first()
                                                                         .unwrap();
-                                                                    Ident::Syn(seg.ident.clone())
+                                                                    seg.ident.to_string()
                                                                 }
                                                                 Type::Ptr(_) => todo!(),
                                                                 Type::Reference(_) => todo!(),
@@ -3291,6 +3357,56 @@ fn handle_expr_call(
                                     Vec::new()
                                 };
 
+                            dbg!(&turbofish_names);
+                            let resolved_turbofish = turbofish_names
+                                .iter()
+                                .map(|ident| {
+                                    let (
+                                        turbofish_module_path,
+                                        turbofish_item_path,
+                                        turbofish_is_scoped,
+                                        turbofish_index,
+                                        turbofish_type_param,
+                                    ) = resolve_path(
+                                        true,
+                                        // By definition handle_expr_path is always handling *expressions* so want to look for scoped vars
+                                        true,
+                                        true,
+                                        true,
+                                        vec![RustPathSegment2 {
+                                            ident: ident.clone(),
+                                            turbofish: Vec::new(),
+                                        }],
+                                        &global_data.crates,
+                                        &global_data.item_defs,
+                                        current_module,
+                                        current_module,
+                                        &global_data.scopes,
+                                    );
+                                    match &global_data.item_defs[turbofish_index.unwrap()] {
+                                        ItemDefRc::StructEnum(struct_enum_def) => {
+                                            // TODO make this robust
+                                            if struct_enum_def.ident == "Option" {
+                                                todo!();
+                                                // RustType2::Option(())
+                                            } else if struct_enum_def.ident == "Result" {
+                                                todo!();
+                                            } else {
+                                                RustType2::StructOrEnum(
+                                                    Vec::new(),
+                                                    struct_enum_def.clone(),
+                                                )
+                                            }
+                                        }
+                                        ItemDefRc::Fn(_) => todo!(),
+                                        ItemDefRc::Const(_) => todo!(),
+                                        ItemDefRc::Trait(_) => todo!(),
+                                        ItemDefRc::Impl(_) => todo!(),
+                                        ItemDefRc::None => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+
                             let fn_inputs = fn_sig_def
                                 .inputs_types
                                 .iter()
@@ -3311,6 +3427,7 @@ fn handle_expr_call(
                             let new_type_params = fn_sig_def
                                 .attempt_to_resolve_type_params_using_arg_types(
                                     &new_args_rust_types,
+                                    &resolved_turbofish,
                                     &global_data.item_defs,
                                 );
 
@@ -3319,14 +3436,16 @@ fn handle_expr_call(
                                 fn_sig_def
                                     .generics
                                     .iter()
-                                    .zip(type_param_concrete_idents)
+                                    .zip(turbofish_names)
                                     .filter_map(
                                         |(
                                             (name, used_associated_fn, _trait_bounds),
                                             concrete_ident,
                                         )| {
                                             used_associated_fn.then_some((
-                                                JsExpr::Path(PathIdent::Single(concrete_ident)),
+                                                JsExpr::Path(PathIdent::Single(Ident::String(
+                                                    concrete_ident,
+                                                ))),
                                                 RustType2::Todo,
                                             ))
                                         },
@@ -3370,7 +3489,38 @@ fn handle_expr_call(
                                         }
                                     }
                                     RustType::Option(_rust_type) => todo!(),
-                                    RustType::Result(_, _) => todo!(),
+                                    RustType::Result(ok, err) => {
+                                        dbg!(&ok);
+                                        dbg!(&err);
+                                        dbg!(&current_type_params);
+                                        // assert!(current_type_params.len() == 2);
+                                        let ok = if let Some(fn_type_param) =
+                                            current_type_params.iter().find(|fn_type_param| {
+                                                ok.name == fn_type_param.name
+                                                    && matches!(
+                                                        ok.type_,
+                                                        RustTypeParamValue::Unresolved,
+                                                    )
+                                            }) {
+                                            fn_type_param.clone()
+                                        } else {
+                                            ok.clone().into_rust_type_param2(global_data)
+                                        };
+                                        let err = if let Some(fn_type_param) =
+                                            current_type_params.iter().find(|fn_type_param| {
+                                                err.name == fn_type_param.name
+                                                    && matches!(
+                                                        err.type_,
+                                                        RustTypeParamValue::Unresolved,
+                                                    )
+                                            }) {
+                                            fn_type_param.clone()
+                                        } else {
+                                            err.clone().into_rust_type_param2(global_data)
+                                        };
+
+                                        RustType2::Result(ok, err)
+                                    }
                                     // RustType::StructOrEnum(_, _, _) => todo!(),
                                     RustType::Vec(_) => todo!(),
                                     RustType::Array(_) => todo!(),
@@ -3382,11 +3532,15 @@ fn handle_expr_call(
                                     _ => return_type.into_rust_type2(global_data),
                                 }
                             }
-                            get_fn_type_returns(
+                            dbg!(&new_type_params);
+                            dbg!(&fn_sig_def.return_type.clone());
+                            let thing = get_fn_type_returns(
                                 fn_sig_def.return_type.clone(),
                                 &new_type_params,
                                 global_data,
-                            )
+                            );
+                            dbg!(&thing);
+                            thing
                         }
                         RustType2::Closure(_input_types, return_type) => {
                             //
@@ -3620,13 +3774,13 @@ fn handle_expr_path_inner(
                 let sub_path = &segs_copy_item_path[1];
 
                 // TODO don't like returning an Option here, should probably follow how rust does which I believe is to see if it is an enum variant first else it must be an associated fn, else panic
-                let trait_bounds = trait_bounds
-                    .iter()
-                    .map(|index| match &global_data.item_defs[*index] {
-                        ItemDefRc::Trait(trait_def) => trait_def.clone(),
-                        _ => todo!(),
-                    })
-                    .collect::<Vec<_>>();
+                // let trait_bounds = trait_bounds
+                //     .iter()
+                //     .map(|index| match &global_data.item_defs[*index] {
+                //         ItemDefRc::Trait(trait_def) => trait_def.clone(),
+                //         _ => todo!(),
+                //     })
+                //     .collect::<Vec<_>>();
                 let impl_method = global_data
                     .lookup_trait_impl_item(&trait_bounds, sub_path)
                     .unwrap();
@@ -3789,7 +3943,44 @@ fn handle_expr_path_inner(
                                 .collect::<Vec<_>>(),
                         )
                     }
-                    _ => todo!(),
+                    ["Ok"] => {
+                        // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
+                        assert_eq!(segs_copy_module_path, [RUST_PRELUDE_MODULE_PATH]);
+                        (
+                            PartialRustType::EnumVariantIdent(
+                                // TODO handle turbofish
+                                Vec::new(),
+                                global_data.get_prelude_item_def("Result"),
+                                "Ok".to_string(),
+                            ),
+                            segs_copy_item_path
+                                .clone()
+                                .into_iter()
+                                .map(|seg| Ident::String(seg.ident))
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    ["Err"] => {
+                        // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
+                        assert_eq!(segs_copy_module_path, [RUST_PRELUDE_MODULE_PATH]);
+                        (
+                            PartialRustType::EnumVariantIdent(
+                                // TODO handle turbofish
+                                Vec::new(),
+                                global_data.get_prelude_item_def("Result"),
+                                "Err".to_string(),
+                            ),
+                            segs_copy_item_path
+                                .clone()
+                                .into_iter()
+                                .map(|seg| Ident::String(seg.ident))
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    _ => {
+                        dbg!(path_idents);
+                        todo!()
+                    }
                 }
             }
         } else if segs_copy_item_path.len() == 1 {
