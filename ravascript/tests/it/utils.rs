@@ -121,7 +121,8 @@ macro_rules! r2j_block_with_prelude {
 }
 
 pub fn r2j_file(code: &str, run_main: bool) -> String {
-    let modules = from_file(code, false);
+    // let modules = from_file(code, false);
+    let modules = from_file(code, true);
     let generated_js = modules_to_string(&modules, run_main);
     format_js(generated_js)
 }

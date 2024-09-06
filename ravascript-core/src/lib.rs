@@ -528,6 +528,22 @@ fn push_rust_types(global_data: &GlobalData, js_stmts: &mut Vec<JsStmt>) {
         prelude_stmts.push(js_stmt);
     }
 
+    if rust_prelude_types.result_unwrap {
+        let js_stmt = JsStmt::Raw(
+            r#"
+                function resultUnwrap(result) {
+                    if (Object.prototype.toString.call(result) === "[object Error]") {
+                        throw result;
+                    } else {
+                        return result;
+                    }
+                }
+            "#
+            .to_string(),
+        );
+        prelude_stmts.push(js_stmt);
+    }
+
     if rust_prelude_types.vec {
         let methods = [
             (

@@ -351,7 +351,6 @@ fn parse_fn_input_or_field(
                 // Can always be inferred from the arguments used to construct the struct?
 
                 // For impl blocks
-                dbg!(&seg_name_str);
                 let (
                     item_definition_module_path,
                     item_path,
@@ -376,16 +375,6 @@ fn parse_fn_input_or_field(
                 if let Some(trait_bounds) = item_is_type_param {
                     assert!(item_path.len() == 1);
 
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-                    // Should be using scoped type params instead of parent_item_definition_generics?
-
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    dbg!(&parent_item_definition_generics);
                     // TODO IMPORTANT need to actually track where/when we are creating new function scopes and therefore shouldn't be looking for type params in parent scopes
                     let scoped_type_params = global_data
                         .scopes

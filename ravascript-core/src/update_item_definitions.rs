@@ -754,28 +754,22 @@ fn update_item_def(
                 })
                 .collect::<Vec<_>>();
 
-            dbg!(&fn_info.signature.output);
             let return_type = match &fn_info.signature.output {
                 ReturnType::Default => RustType::Unit,
-                ReturnType::Type(_, type_) => {
-                    let wtf = parse_types_for_populate_item_definitions(
-                        type_,
-                        &[],
-                        &generics
-                            .iter()
-                            .cloned()
-                            .map(|(name, used, trait_bounds)| (name, trait_bounds))
-                            .collect::<Vec<_>>(),
-                        module_path,
-                        item_refs,
-                        item_actual_defs_copy,
-                        scoped_items,
-                    );
-                    dbg!(&wtf);
-                    wtf
-                }
+                ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
+                    type_,
+                    &[],
+                    &generics
+                        .iter()
+                        .cloned()
+                        .map(|(name, used, trait_bounds)| (name, trait_bounds))
+                        .collect::<Vec<_>>(),
+                    module_path,
+                    item_refs,
+                    item_actual_defs_copy,
+                    scoped_items,
+                ),
             };
-            dbg!(&return_type);
 
             let js_name = if in_scope {
                 Ident::Syn(fn_info.signature.ident.clone())
@@ -1640,7 +1634,6 @@ fn parse_types_for_populate_item_definitions(
     item_defs: &[ItemDefNoTypes],
     scoped_items: &[Vec<ItemRef>],
 ) -> RustType {
-    dbg!("parse_types_for_populate_item_definitions");
     match type_ {
         Type::Array(_) => todo!(),
         Type::BareFn(_) => todo!(),
@@ -1813,14 +1806,11 @@ fn parse_types_for_populate_item_definitions(
                 //     RustTypeParamValue::Unresolved => todo!(),
                 //     RustTypeParamValue::RustType(rust_type) => *rust_type.clone(),
                 // };
-                dbg!("type param early return");
-                let thing = RustType::TypeParam(RustTypeParam {
+                return RustType::TypeParam(RustTypeParam {
                     name: generic_name.clone(),
                     trait_bounds: trait_bounds.clone(),
                     type_: RustTypeParamValue::Unresolved,
                 });
-                dbg!(&thing);
-                return thing;
             }
 
             // For fns:
@@ -1924,18 +1914,15 @@ fn parse_types_for_populate_item_definitions(
                                     .filter_map(|(_i, arg)| match arg {
                                         GenericArgument::Lifetime(_) => None,
                                         GenericArgument::Type(arg_type_) => {
-                                            let te =
-                                                Some(parse_types_for_populate_item_definitions(
-                                                    arg_type_,
-                                                    impl_generics,
-                                                    root_parent_item_def_generics,
-                                                    current_module,
-                                                    crates,
-                                                    item_defs,
-                                                    scoped_items,
-                                                ));
-                                            dbg!(&te);
-                                            te
+                                            Some(parse_types_for_populate_item_definitions(
+                                                arg_type_,
+                                                impl_generics,
+                                                root_parent_item_def_generics,
+                                                current_module,
+                                                crates,
+                                                item_defs,
+                                                scoped_items,
+                                            ))
                                         }
                                         GenericArgument::Const(_) => todo!(),
                                         GenericArgument::AssocType(_) => todo!(),
@@ -1956,7 +1943,6 @@ fn parse_types_for_populate_item_definitions(
                     //         &global_data.scope_id_as_option(),
                     //         &vec![struct_or_enum_name.to_string()],
                     //     );
-                    dbg!(&rust_path);
                     let (item_module_path, item_path_seg, item_scope, item_index) =
                         make_item_definitions::resolve_path(
                             true,
@@ -1968,7 +1954,6 @@ fn parse_types_for_populate_item_definitions(
                             current_module,
                             scoped_items,
                         );
-                    dbg!(&item_path_seg);
                     let item_seg = &item_path_seg[0];
 
                     let item_def = &item_defs[item_index.unwrap()];
@@ -1995,11 +1980,18 @@ fn parse_types_for_populate_item_definitions(
                         item_type_params
                             .iter()
                             .zip(item_seg.turbofish.iter())
-                            .map(|(type_param_name, turbofish)| RustTypeParam {
-                                name: type_param_name.clone(),
-                                // TODO
-                                trait_bounds: vec![],
-                                type_: RustTypeParamValue::RustType(Box::new(turbofish.clone())),
+                            .map(|(type_param_name, turbofish)| {
+                                match turbofish {
+                                    RustType::TypeParam(rust_type_param) => rust_type_param.clone(),
+                                    _ => RustTypeParam {
+                                        name: type_param_name.clone(),
+                                        // TODO
+                                        trait_bounds: vec![],
+                                        type_: RustTypeParamValue::RustType(Box::new(
+                                            turbofish.clone(),
+                                        )),
+                                    },
+                                }
                             })
                             .collect::<Vec<_>>()
                     } else {

@@ -47,6 +47,7 @@ async fn option_is_some_and() {
         assert!(!not_five.is_some_and(|x| x == 5));
     });
 
+    // TODO use `option` instead of `self`
     let expected = format_js(
         r#"
             function optionIsSomeAnd(self, f) {

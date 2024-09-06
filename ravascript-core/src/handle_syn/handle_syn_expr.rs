@@ -1989,7 +1989,6 @@ fn handle_expr_method_call(
             (expr, type_, false)
         }
     };
-    // dbg!(&receiver_type);
 
     // TASK we want to get the type of the method arguments so we can pass it to `handle_expr_closure` (and possibly other handlers) when we create args_js_exprs and args_rust_types. The problem is that we want to use args_rust_types to get the type of the method arguments (specifically for resolving type params)
 
@@ -2153,8 +2152,6 @@ fn handle_expr_method_call(
             // TODO type param might be defined on the method itself, so we need to look at turbofish and arg types
             // NOTE it could be that the receiver type is unresovled but the static fn_info def return type is resolved?
             if let Some(parent_type_params) = parent_type_params {
-                dbg!(&parent_type_params);
-                dbg!(&rust_type_param.name);
                 let found_param = parent_type_params
                     .into_iter()
                     .find(|p| p.name == rust_type_param.name)
@@ -2346,6 +2343,16 @@ fn handle_expr_method_call(
             (
                 JsExpr::FnCall(
                     Box::new(JsExpr::Var("optionUnwrap".to_string())),
+                    vec![receiver],
+                ),
+                method_return_type,
+            )
+        }
+        RustType2::Result(_, _) if fn_info.ident == "unwrap" => {
+            global_data.rust_prelude_types.result_unwrap = true;
+            (
+                JsExpr::FnCall(
+                    Box::new(JsExpr::Var("resultUnwrap".to_string())),
                     vec![receiver],
                 ),
                 method_return_type,
@@ -2674,8 +2681,6 @@ fn get_receiver_params_and_method_impl_item(
         }
         RustType2::Result(ok_type_param, err_type_param) => {
             let item_def = global_data.get_prelude_item_def("Result");
-            dbg!(&item_def.ident);
-            dbg!(&sub_path);
             (
                 vec![ok_type_param, err_type_param],
                 global_data
@@ -3032,8 +3037,6 @@ fn handle_expr_call(
     global_data: &mut GlobalData,
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
-    dbg!(expr_call);
-
     let js_primitive = match &*expr_call.func {
         ExprRef::Path(expr_path) => {
             if expr_path.path.segments.len() == 1 {
@@ -3294,8 +3297,6 @@ fn handle_expr_call(
                             //     }
                             // };
 
-                            dbg!(&fn_sig_def);
-
                             let turbofish_names =
                                 if !expr_path.path.segments.last().unwrap().arguments.is_empty() {
                                     match &expr_path.path.segments.last().unwrap().arguments {
@@ -3357,7 +3358,6 @@ fn handle_expr_call(
                                     Vec::new()
                                 };
 
-                            dbg!(&turbofish_names);
                             let resolved_turbofish = turbofish_names
                                 .iter()
                                 .map(|ident| {
@@ -3490,18 +3490,15 @@ fn handle_expr_call(
                                     }
                                     RustType::Option(_rust_type) => todo!(),
                                     RustType::Result(ok, err) => {
-                                        dbg!(&ok);
-                                        dbg!(&err);
-                                        dbg!(&current_type_params);
-                                        // assert!(current_type_params.len() == 2);
-                                        let ok = if let Some(fn_type_param) =
+                                        let fn_type_param =
                                             current_type_params.iter().find(|fn_type_param| {
-                                                ok.name == fn_type_param.name
+                                                fn_type_param.name == ok.name
                                                     && matches!(
                                                         ok.type_,
                                                         RustTypeParamValue::Unresolved,
                                                     )
-                                            }) {
+                                            });
+                                        let ok = if let Some(fn_type_param) = fn_type_param {
                                             fn_type_param.clone()
                                         } else {
                                             ok.clone().into_rust_type_param2(global_data)
@@ -3532,15 +3529,12 @@ fn handle_expr_call(
                                     _ => return_type.into_rust_type2(global_data),
                                 }
                             }
-                            dbg!(&new_type_params);
-                            dbg!(&fn_sig_def.return_type.clone());
-                            let thing = get_fn_type_returns(
+
+                            get_fn_type_returns(
                                 fn_sig_def.return_type.clone(),
                                 &new_type_params,
                                 global_data,
-                            );
-                            dbg!(&thing);
-                            thing
+                            )
                         }
                         RustType2::Closure(_input_types, return_type) => {
                             //
@@ -3592,7 +3586,12 @@ fn handle_expr_call(
                 }
                 PartialRustType::EnumVariantIdent(_, item_def, variant_name) => {
                     // TODO properly check for prelude Option and avoid shadowed idents
+                    #[allow(clippy::if_same_then_else)]
                     if item_def.ident == "Option" && variant_name == "Some" {
+                        (args_js_expr.remove(0), rust_type)
+                    } else if item_def.ident == "Result" && variant_name == "Ok" {
+                        (args_js_expr.remove(0), rust_type)
+                    } else if item_def.ident == "Result" && variant_name == "Err" {
                         (args_js_expr.remove(0), rust_type)
                     } else {
                         (
@@ -4310,57 +4309,58 @@ fn handle_expr_path_inner(
     //     }
     // };
     // dbg!(&js_segs_path);
-    let final_expr = if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] {
-        JsExpr::Null
-    } else {
-        // match (
-        //     is_mut_ref_js_primative,
-        //     is_having_mut_ref_taken,
-        //     !is_mut_var,
-        //     &partial_rust_type,
-        // ) {
-        //     (false, false, true, PartialRustType::RustType(rust_type)) => {
-        //         if false {
-        //             // dbg!("inner");
-        //             JsExpr::Field(
-        //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
-        //                 Ident::Str("inner"),
-        //             )
-        //         } else {
-        //             // dbg!("no inner2");
-        //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-        //             JsExpr::Path(PathIdent::Path(js_segs_path))
-        //         }
-        //     }
-        //     (true, _, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-        //     (_, true, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-        //     (_, _, true, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
-        //     (_, _, _, PartialRustType::StructIdent(_, _, _, _)) => todo!(),
-        //     (_, _, _, PartialRustType::EnumVariantIdent(_, _, _, _, _)) => todo!(),
-        //     (_, _, _, PartialRustType::RustType(rust_type)) => {
-        //         if rust_type.is_js_primative() {
-        //             // dbg!("inner");
-        //             JsExpr::Field(
-        //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
-        //                 Ident::Str("inner"),
-        //             )
-        //         } else {
-        //             // dbg!("no inner2");
-        //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
-        //             JsExpr::Path(PathIdent::Path(js_segs_path))
-        //         }
-        //     }
-        // }
+    let final_expr =
+        if segs_copy_module_path == [RUST_PRELUDE_MODULE_PATH] && js_segs_item_path[0] == "None" {
+            JsExpr::Null
+        } else {
+            // match (
+            //     is_mut_ref_js_primative,
+            //     is_having_mut_ref_taken,
+            //     !is_mut_var,
+            //     &partial_rust_type,
+            // ) {
+            //     (false, false, true, PartialRustType::RustType(rust_type)) => {
+            //         if false {
+            //             // dbg!("inner");
+            //             JsExpr::Field(
+            //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+            //                 Ident::Str("inner"),
+            //             )
+            //         } else {
+            //             // dbg!("no inner2");
+            //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+            //             JsExpr::Path(PathIdent::Path(js_segs_path))
+            //         }
+            //     }
+            //     (true, _, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            //     (_, true, _, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            //     (_, _, true, _) => JsExpr::Path(PathIdent::Path(js_segs_path)),
+            //     (_, _, _, PartialRustType::StructIdent(_, _, _, _)) => todo!(),
+            //     (_, _, _, PartialRustType::EnumVariantIdent(_, _, _, _, _)) => todo!(),
+            //     (_, _, _, PartialRustType::RustType(rust_type)) => {
+            //         if rust_type.is_js_primative() {
+            //             // dbg!("inner");
+            //             JsExpr::Field(
+            //                 Box::new(JsExpr::Path(PathIdent::Path(js_segs_path))),
+            //                 Ident::Str("inner"),
+            //             )
+            //         } else {
+            //             // dbg!("no inner2");
+            //             // TODO Need to .copy() for non-primative types, and check they are `Copy` else panic because they would need to be cloned?
+            //             JsExpr::Path(PathIdent::Path(js_segs_path))
+            //         }
+            //     }
+            // }
 
-        JsExpr::Path(PathIdent::Path(js_segs_item_path))
+            JsExpr::Path(PathIdent::Path(js_segs_item_path))
 
-        // dbg!("no inner");
-        // dbg!(is_mut_ref_js_primative);
-        // dbg!(is_having_mut_ref_taken);
-        // dbg!(!is_mut_var);
+            // dbg!("no inner");
+            // dbg!(is_mut_ref_js_primative);
+            // dbg!(is_having_mut_ref_taken);
+            // dbg!(!is_mut_var);
 
-        // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
-    };
+            // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
+        };
     (final_expr, partial_rust_type)
 }
 

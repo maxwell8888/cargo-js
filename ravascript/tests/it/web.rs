@@ -81,33 +81,64 @@ async fn json_parse_wrapper() {
 
         fn parse<T>(text: &str) -> Result<T, SyntaxError> {
             try_! {{
+                // TODO remove iffe wrapper for blocks like this unsafe if the contents is a single expression
                 return Ok(unsafe { json_parse(text).cast::<T>() });
             }}
             catch! {err, SyntaxError, {
+                // return Err(err);
                 return Err(err);
             }}
         }
 
         fn main() {
-            let json = r#"{ "text": "hello", "num": 5 }"#;
+            // let json = r#"{ "text": "hello", "num": 5 }"#;
+            let json = r#"{ \"text\": \"hello\", \"num\": 5 }"#;
             let foo = parse::<Foo>(json).unwrap();
             assert!(foo.text == "hello");
             assert!(foo.num == 5);
         }
     );
 
+    // NOTE using this particualr check for error types because it works even if the error originated in a different window/frame/etc, unlike `result instanceOf Error`. See https://stackoverflow.com/questions/30469261/checking-for-typeof-error-in-js
+    // TODO maybe use instanceOf by default since it is cleaner, more idiomatic, and possibly more performant, and then fallback to toString if we detect that a new window or frame has been created?
+    // NOTE we are assuming all exceptions are instances of `Error`. If someone throw a another type like `throw 5;` this will fail.
     let expected = format_js(
         r#"
-        function parse(text) {
-            try {
-                return Ok(JSON.parse(text));
-            } catch (err) {
-                return Err(err);
+            function resultUnwrap(result) {
+                if (Object.prototype.toString.call(result) === "[object Error]") {
+                    throw result;
+                } else {
+                    return result;
+                }
             }
-        }
+
+            class Foo {
+                constructor(text, num) {
+                    this.text = text;
+                    this.num = num;
+                }
+            }
+            function parse(text) {
+                try {
+                    return (() => {
+                        return JSON.parse(text);
+                    })();
+                } catch (err) {
+                    return err;
+                }
+            }
+            function main() {
+                let json = '{ "text": "hello", "num": 5 }';
+                let foo = resultUnwrap(parse(json));
+                console.assert(foo.text === "hello");
+                console.assert(foo.num === 5);
+            }
+
+            main();
         "#,
     );
     assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
 }
 
 // let tag_name = "button";
