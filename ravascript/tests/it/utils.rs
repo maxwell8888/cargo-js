@@ -252,9 +252,29 @@ pub async fn _get_rust_module_and_expected_js(
 // "Cannot apply #[once] to async fixture."
 // #[once]
 pub async fn launch_browser() -> Result<(Browser, Handler)> {
-    Browser::launch(BrowserConfig::builder().build().map_err(|e| anyhow!(e))?)
-        .await
-        .context("Failed to launch browser")
+    // let vp = Viewport {
+    //     height: 2000,
+    //     width: 2000,
+    //     ..Default::default()
+    // };
+    // let (mut browser, mut handler) = Browser::launch(
+    //     BrowserConfig::builder()
+    //         // .with_head()
+    //         .incognito()
+    //         // .window_size(2000, 2000)
+    //         // .viewport(Some(vp))
+    //         .build()?,
+    // )
+    // .await?;
+
+    Browser::launch(
+        BrowserConfig::builder()
+            .incognito()
+            .build()
+            .map_err(|e| anyhow!(e))?,
+    )
+    .await
+    .context("Failed to launch browser")
 }
 
 pub async fn execute_js_with_assertions(js: &str) -> Result<()> {

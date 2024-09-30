@@ -29,10 +29,7 @@ async fn json_parse_unsafe() {
         }
 
         fn main() {
-            // TODO support raw strings
-            // let json = r#"{ "text": "hello", "num": 5 }"#;
-            // let json = "{ \"text\": \"hello\", \"num\": 5 }";
-            let json = r#"{ \"text\": \"hello\", \"num\": 5 }"#;
+            let json = r#"{ "text": "hello", "num": 5 }"#;
             // To acutally have a compiling, working json_parse implementation that we can run as Rust, not only would we need to include serde_json, but we would also need to derive `Deserialize` for Foo
             // TODO fix specifying generic in turbofish
             // let foo = unsafe { json_parse(json).cast::<Foo>() };
@@ -91,8 +88,7 @@ async fn json_parse_wrapper() {
         }
 
         fn main() {
-            // let json = r#"{ "text": "hello", "num": 5 }"#;
-            let json = r#"{ \"text\": \"hello\", \"num\": 5 }"#;
+            let json = r#"{ "text": "hello", "num": 5 }"#;
             let foo = parse::<Foo>(json).unwrap();
             assert!(foo.text == "hello");
             assert!(foo.num == 5);

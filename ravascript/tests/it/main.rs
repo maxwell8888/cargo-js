@@ -16,6 +16,7 @@ mod numbers;
 mod option;
 mod other;
 mod result;
+mod string_escaping;
 mod struct_tests;
 mod test_the_preludes;
 mod trait_tests;

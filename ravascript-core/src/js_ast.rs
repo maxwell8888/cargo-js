@@ -98,6 +98,8 @@ pub enum JsExpr {
     If(JsIf),
     LitInt(i32),
     LitFloat(f32),
+    /// (is raw, value)
+    // LitStr(bool, String),
     LitStr(String),
     LitBool(bool),
     /// (receiver, method name, method args)
