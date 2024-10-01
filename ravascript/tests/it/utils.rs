@@ -46,7 +46,7 @@ pub fn r2j_block(code: &str, include_web: bool) -> String {
     format_js(generated_js)
 }
 
-pub fn _r2j_block_unformatted(code: &str, include_web: bool) -> String {
+pub fn r2j_block_unformatted(code: &str, include_web: bool) -> String {
     let stmts = from_block(code, false, include_web);
     let generated_js = stmts
         .iter()
@@ -70,7 +70,7 @@ macro_rules! r2j_block {
     }};
 }
 
-// For debugging new lines etc
+/// For debugging new lines, avoiding string formatting being altered, etc
 #[macro_export]
 macro_rules! r2j_block_unformatted {
     ($block:block) => {{

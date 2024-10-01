@@ -95,7 +95,7 @@ async fn json_parse_wrapper() {
         }
     );
 
-    // NOTE using this particualr check for error types because it works even if the error originated in a different window/frame/etc, unlike `result instanceOf Error`. See https://stackoverflow.com/questions/30469261/checking-for-typeof-error-in-js
+    // NOTE using this particular check for error types because it works even if the error originated in a different window/frame/etc, unlike `result instanceOf Error`. See https://stackoverflow.com/questions/30469261/checking-for-typeof-error-in-js
     // TODO maybe use instanceOf by default since it is cleaner, more idiomatic, and possibly more performant, and then fallback to toString if we detect that a new window or frame has been created?
     // NOTE we are assuming all exceptions are instances of `Error`. If someone throw a another type like `throw 5;` this will fail.
     let expected = format_js(
