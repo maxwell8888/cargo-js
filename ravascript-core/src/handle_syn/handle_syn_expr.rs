@@ -907,46 +907,31 @@ pub fn handle_expr(
         ExprRef::Lit(expr_lit) => match &expr_lit.lit {
             Lit::Str(lit_str) => {
                 // global_data.rust_prelude_types.string = true;
-                // JsExpr::New(
-                //     vec!["RustString".to_string()],
-                //     vec![JsExpr::LitStr(lit_str.value())],
-                // )
-
-                // let mut value = lit_str.to_token_stream().to_string();
-                // if let Some(first_char) = value.chars().next() {
-                //     if first_char == 'r' {
-                //         let mut escaped_string = String::new();
-                //         for c in value.chars() {
-                //             match c {
-                //                 '\\' => escaped_string.push_str(r#"\\"#),
-                //                 '\'' => escaped_string.push_str(r#"\'"#),
-                //                 '"' => escaped_string.push_str(r#"\""#),
-                //                 _ => escaped_string.push(c),
-                //             }
-                //         }
-                //         value = escaped_string;
-                //     }
-                // }
 
                 // TODO here we are taking the string from `.value()` which has escaped values resolved, and then adding them back in. A better approach might be to instead take the raw tokens including escapes from `lit_str.to_token_stream().to_string()` and just use that as is, assuming Rust's escaping rules are compatible with JS, also we would need to remove any raw string wrapper like `r##""##`
-                let mut value = lit_str.value();
                 let mut escaped_string = String::new();
-                for c in value.chars() {
+                for c in lit_str.value().chars() {
                     match c {
                         '\\' => escaped_string.push_str(r#"\\"#),
-                        '\'' => escaped_string.push_str(r#"\'"#),
+                        // '\'' => escaped_string.push_str(r#"\'"#),
                         '"' => escaped_string.push_str(r#"\""#),
                         _ => escaped_string.push(c),
                     }
                 }
-                value = escaped_string;
 
-                (JsExpr::LitStr(value), RustType2::String)
-                // (JsExpr::LitStr(lit_str.value()), RustType2::String)
+                (JsExpr::LitStr(escaped_string), RustType2::String)
             }
             Lit::ByteStr(_) => todo!(),
             Lit::Byte(_) => todo!(),
-            Lit::Char(_) => todo!(),
+            Lit::Char(lit_char) => {
+                let escaped_char = match lit_char.value() {
+                    '\\' => r#"\\"#.to_string(),
+                    '\'' => r#"\'"#.to_string(),
+                    value => value.to_string(),
+                };
+
+                (JsExpr::LitChar(escaped_char), RustType2::String)
+            }
             Lit::Int(lit_int) => {
                 // global_data.rust_prelude_types.integer = true;
                 // JsExpr::New(

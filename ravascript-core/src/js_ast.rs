@@ -101,6 +101,8 @@ pub enum JsExpr {
     /// (is raw, value)
     // LitStr(bool, String),
     LitStr(String),
+    // Distinct from LitStr so that we can output Rust strings as "a" and Rust chars as 'a'
+    LitChar(String),
     LitBool(bool),
     /// (receiver, method name, method args)
     /// TODO assumes receiver is single var
@@ -136,6 +138,7 @@ impl fmt::Display for JsExpr {
             // NOTE `(5.).to_string()` is "5" not "5." or "5.0"
             JsExpr::LitFloat(float) => write!(f, "{float}"),
             JsExpr::LitStr(text) => write!(f, r#""{text}""#),
+            JsExpr::LitChar(text) => write!(f, r#"'{text}'"#),
             JsExpr::LitBool(bool) => write!(f, "{bool}"),
             JsExpr::Object(fields) => {
                 writeln!(f, "{{",)?;
