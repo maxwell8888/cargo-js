@@ -179,6 +179,7 @@ fn item_to_item_ref(
                 .collect();
 
             actual_item_defs.push(ItemDefNoTypes::Fn(FnDefNoTypes {
+                attributes: item_fn.attrs.clone(),
                 ident: item_fn.sig.ident.clone(),
                 is_pub,
                 generics,
@@ -448,6 +449,7 @@ fn item_to_item_ref(
                                     .collect();
 
                                 Some(FnDefNoTypes {
+                                    attributes: item_fn.attrs.clone(),
                                     ident: item_fn.sig.ident.clone(),
                                     is_pub,
                                     generics,
@@ -1211,6 +1213,7 @@ pub struct ConstDefNoTypes {
 /// Not just for methods, can also be an enum variant with no inputs
 #[derive(Debug, Clone)]
 pub struct FnDefNoTypes {
+    pub attributes: Vec<Attribute>,
     pub ident: Ident,
     pub is_pub: bool,
     // NOTE see StructEnumDef

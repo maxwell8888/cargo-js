@@ -106,3 +106,8 @@ pub fn module_as_str(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+#[proc_macro_attribute]
+pub fn replace_with(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}

@@ -1,4 +1,5 @@
 //  TODO we can't publish std to crates.io so seems like we need to use a different name?
+use ravascript::replace_with;
 use std::marker::PhantomData;
 
 // TODO this is duplicated from ravascript-core/src/prelude.rs so need to eventually remove that dupication
@@ -16,6 +17,7 @@ pub trait Node {
 }
 // impl Node for AnyNode {}
 
+#[allow(unused_variables)]
 pub trait Element: Node {
     fn set_attribute(&self, _attr_name: &str, _attr_val: &str) {}
     // TODO wait for async trait fns to stabilise
@@ -23,6 +25,13 @@ pub trait Element: Node {
     fn request_fullscreen(&self) {}
     // fn append_child(&self, child: DomNode);
     // fn get_self() -> Self;
+
+    // classList methodshttps://developer.mozilla.org/en-US/docs/Web/API/Element/classList
+    /// `.classList.add()`
+    #[replace_with(field)]
+    fn class_list(&self) -> DOMTokenList {
+        DOMTokenList
+    }
 }
 
 pub trait HtmlElement: Element {}
@@ -172,6 +181,15 @@ fn testing_out_stuff() {
 // pub fn parse_2<T>(_text: &str, _reviver: ) -> T {
 //     unimplemented!()
 // }
+
+pub struct DOMTokenList;
+impl DOMTokenList {
+    pub fn add(&self, class_name: &str) {}
+    pub fn remove(&self) {}
+    pub fn replace(&self) {}
+    pub fn toggle(&self, class_name: &str) {}
+    pub fn contains(&self) {}
+}
 
 #[macro_export]
 macro_rules! try_ {

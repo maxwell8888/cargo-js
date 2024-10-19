@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use syn::{
-    FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType, TraitItem,
-    Type, TypeParamBound, Visibility,
+    Expr, FnArg, GenericArgument, GenericParam, ImplItem, Pat, PathArguments, ReturnType,
+    TraitItem, Type, TypeParamBound, Visibility,
 };
 use syn::{ItemEnum, ItemImpl, ItemStruct, ItemTrait, Member};
 use tracing::debug;
@@ -239,7 +239,7 @@ fn update_item_defs_recurisve_individual_item(
                         .enumerate()
                         .map(|(i, rust_impl_item_no_js)| {
                             match &rust_impl_item_no_js.item {
-                                RustImplItemItemNoJs::Fn(static_, fn_info) => {
+                                RustImplItemItemNoJs::Fn(static_, conversion, fn_info) => {
                                     // Item in fn body are scoped so create a new scope
                                     (i, *static_, fn_info.clone(), fn_info.stmts.clone())
                                 }
@@ -274,7 +274,7 @@ fn update_item_defs_recurisve_individual_item(
                     ItemDef::Impl(rust_impl_block) => {
                         rust_impl_block.rust_items[item_index] = RustImplItemNoJs {
                             ident: fn_def.sig.ident.clone(),
-                            item: RustImplItemItemNoJs::Fn(static_, fn_def),
+                            item: RustImplItemItemNoJs::Fn(static_, Conversion::Todo, fn_def),
                         };
                     }
                     _ => todo!(),
@@ -1139,10 +1139,74 @@ fn update_item_def(
                     let static_ =
                         !matches!(trait_item_fn.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
+                    // TODO display warning if multiple ravascript attributes are found?
+                    let conversion = fn_info.attributes.iter().find_map(|attr| {
+                        // TODO properly resolve paths
+                        if attr.path().segments.first().unwrap().ident == "replace_with" {
+                            let args: Expr = attr.parse_args().unwrap();
+                            #[allow(unused_variables)]
+                            let conversion = match args {
+                                Expr::Array(expr_array) => todo!(),
+                                Expr::Assign(expr_assign) => todo!(),
+                                Expr::Async(expr_async) => todo!(),
+                                Expr::Await(expr_await) => todo!(),
+                                Expr::Binary(expr_binary) => todo!(),
+                                Expr::Block(expr_block) => todo!(),
+                                Expr::Break(expr_break) => todo!(),
+                                Expr::Call(expr_call) => todo!(),
+                                Expr::Cast(expr_cast) => todo!(),
+                                Expr::Closure(expr_closure) => todo!(),
+                                Expr::Const(expr_const) => todo!(),
+                                Expr::Continue(expr_continue) => todo!(),
+                                Expr::Field(expr_field) => todo!(),
+                                Expr::ForLoop(expr_for_loop) => todo!(),
+                                Expr::Group(expr_group) => todo!(),
+                                Expr::If(expr_if) => todo!(),
+                                Expr::Index(expr_index) => todo!(),
+                                Expr::Infer(expr_infer) => todo!(),
+                                Expr::Let(expr_let) => todo!(),
+                                Expr::Lit(expr_lit) => todo!(),
+                                Expr::Loop(expr_loop) => todo!(),
+                                Expr::Macro(expr_macro) => todo!(),
+                                Expr::Match(expr_match) => todo!(),
+                                Expr::MethodCall(expr_method_call) => todo!(),
+                                Expr::Paren(expr_paren) => todo!(),
+                                Expr::Path(expr_path) => {
+                                    if let Some(ident) = expr_path.path.get_ident() {
+                                        match ident.to_string().as_str() {
+                                            "field" => Conversion::ToField,
+                                            _ => todo!(),
+                                        }
+                                    } else {
+                                        todo!()
+                                    }
+                                }
+                                Expr::Range(expr_range) => todo!(),
+                                Expr::Reference(expr_reference) => todo!(),
+                                Expr::Repeat(expr_repeat) => todo!(),
+                                Expr::Return(expr_return) => todo!(),
+                                Expr::Struct(expr_struct) => todo!(),
+                                Expr::Try(expr_try) => todo!(),
+                                Expr::TryBlock(expr_try_block) => todo!(),
+                                Expr::Tuple(expr_tuple) => todo!(),
+                                Expr::Unary(expr_unary) => todo!(),
+                                Expr::Unsafe(expr_unsafe) => todo!(),
+                                Expr::Verbatim(token_stream) => todo!(),
+                                Expr::While(expr_while) => todo!(),
+                                Expr::Yield(expr_yield) => todo!(),
+                                _ => todo!(),
+                            };
+                            Some(conversion)
+                        } else {
+                            None
+                        }
+                    });
+
                     RustImplItemNoJs {
                         ident: fn_info.ident.to_string(),
                         item: RustImplItemItemNoJs::Fn(
                             static_,
+                            conversion.unwrap_or(Conversion::None),
                             FnDef {
                                 is_pub: fn_info.is_pub,
                                 stmts: fn_info.stmts,
@@ -1559,6 +1623,7 @@ fn update_item_def(
                                         false
                                     }
                                 },
+                                Conversion::Todo,
                                 FnDef {
                                     is_pub,
                                     syn: FnInfoSyn::Impl(impl_item_fn.clone()),
@@ -2256,9 +2321,16 @@ pub struct RustImplItemNoJs {
 }
 
 #[derive(Debug, Clone)]
+pub enum Conversion {
+    ToField,
+    None,
+    Todo,
+}
+
+#[derive(Debug, Clone)]
 pub enum RustImplItemItemNoJs {
-    /// (static, fn info),
-    Fn(bool, FnDef),
+    /// (static, conversion, fn info),
+    Fn(bool, Conversion, FnDef),
     Const,
 }
 

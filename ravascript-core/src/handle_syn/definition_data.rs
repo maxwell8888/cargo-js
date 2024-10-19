@@ -7,8 +7,8 @@ use crate::{
     js_ast::{Ident, JsFn, JsLocal, JsModule},
     make_item_definitions::{ItemRef, RustMod, StmtsRef},
     update_item_definitions::{
-        FnDef, FnSigDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs, RustImplItemNoJs,
-        RustTypeParam, StructEnumDef, TraitDef, TraitItemDef,
+        Conversion, FnDef, FnSigDef, ItemDefRc, RustGeneric, RustImplItemItemNoJs,
+        RustImplItemNoJs, RustTypeParam, StructEnumDef, TraitDef, TraitItemDef,
     },
     RUST_PRELUDE_MODULE_PATH,
 };
@@ -610,7 +610,7 @@ impl GlobalData {
 
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
                     // Get trait bounds
 
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
@@ -712,7 +712,7 @@ impl GlobalData {
         item_def: &StructEnumDef,
         sub_path: &RustPathSegment2,
         // TODO why return Option?
-    ) -> Option<TraitItemDef> {
+    ) -> Option<(Conversion, TraitItemDef)> {
         let impl_block_item = item_def.impl_block_ids.iter().find_map(|block_id| {
             let impl_block = match self.item_defs[*block_id].clone() {
                 ItemDefRc::Impl(impl_block) => impl_block,
@@ -739,7 +739,7 @@ impl GlobalData {
 
         let item = impl_block_item.or(trait_default_item);
         item.map(|item| match item.item {
-            RustImplItemItemNoJs::Fn(_, fn_info) => TraitItemDef::Fn(fn_info.sig.clone()),
+            RustImplItemItemNoJs::Fn(_, conversion, fn_info) => (conversion, TraitItemDef::Fn(fn_info.sig.clone())),
             RustImplItemItemNoJs::Const => todo!(),
         })
     }

@@ -27,9 +27,9 @@ use crate::{
         RustExprPath, StmtsRef,
     },
     update_item_definitions::{
-        EnumVariantInputsInfo, FnDef, FnSigDef, ItemDef, ItemDefRc, RustImplItemItemNoJs,
-        RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructEnumDef, StructEnumUniqueInfo2,
-        StructFieldInfo, TraitItemDef,
+        Conversion, EnumVariantInputsInfo, FnDef, FnSigDef, ItemDef, ItemDefRc,
+        RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue, StructEnumDef,
+        StructEnumUniqueInfo2, StructFieldInfo, TraitItemDef,
     },
     RustType, RUST_PRELUDE_MODULE_PATH,
 };
@@ -1888,6 +1888,7 @@ fn handle_expr_method_call(
     current_module: &[String],
 ) -> (JsExpr, RustType2) {
     let _method_name = expr_method_call.method.to_string();
+
     // let span = debug_span!("handle_expr_method_call", expr_method_call = ?quote! { #expr_method_call }.to_string());
     // let _guard = span.enter();
 
@@ -2043,15 +2044,16 @@ fn handle_expr_method_call(
 
     // Matches the receiver_type and returns the receiver's (possibly resolved) type params, and looks up the method's impl item
     // let (method_input_types, method_return_type) = get_method_input_and_return_types(
-    let (receiver_type_params, method_impl_item) = get_receiver_params_and_method_impl_item(
-        receiver_type.clone(),
-        &method_name,
-        global_data,
-        // &receiver,
-        // expr_method_call,
-        // current_module,
-        &sub_path,
-    );
+    let (receiver_type_params, conversion, method_impl_item) =
+        get_receiver_params_and_method_impl_item(
+            receiver_type.clone(),
+            &method_name,
+            global_data,
+            // &receiver,
+            // expr_method_call,
+            // current_module,
+            &sub_path,
+        );
 
     // let (_static, fn_info) = match method_impl_item.item {
     //     RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
@@ -2309,6 +2311,17 @@ fn handle_expr_method_call(
         .into_iter()
         .chain(args_js_exprs)
         .collect::<Vec<_>>();
+
+    match conversion {
+        Conversion::ToField => {
+            return (
+                JsExpr::Field(Box::new(receiver.clone()), Ident::String(method_name)),
+                method_return_type,
+            )
+        }
+        Conversion::None => {}
+        Conversion::Todo => {}
+    }
 
     // Waiting for this to be able to match on boxed variants: https://github.com/rust-lang/rust/issues/87121
     match &receiver_type {
@@ -2595,7 +2608,7 @@ fn get_receiver_params_and_method_impl_item(
     sub_path: &RustPathSegment2,
     // args_rust_types: Vec<RustType>,
     // ) -> (Vec<RustType>, RustType) {
-) -> (Vec<RustTypeParam2>, TraitItemDef) {
+) -> (Vec<RustTypeParam2>, Conversion, TraitItemDef) {
     match receiver_type {
         RustType2::NotAllowed => todo!(),
         RustType2::Unknown => todo!(),
@@ -2625,6 +2638,7 @@ fn get_receiver_params_and_method_impl_item(
             (
                 // TODO what should we be returning as reciever type params? the receiver is a type param so can't have any itself?
                 Vec::new(),
+                Conversion::Todo,
                 global_data
                     .lookup_trait_impl_item(&rust_type_param.trait_bounds, sub_path)
                     .unwrap(),
@@ -2634,12 +2648,10 @@ fn get_receiver_params_and_method_impl_item(
             // TODO we want to be able to look up method return types in the same way we do for user structs, because we can do eg `impl Foo for i32 {}` so this seems like more evidence that we shouldn't distinguish between rust types?
 
             let i32_def = global_data.get_prelude_item_def("i32");
-            (
-                Vec::new(),
-                global_data
-                    .lookup_impl_item_item3(&i32_def, sub_path)
-                    .unwrap(),
-            )
+            let (coversion, impl_item) = global_data
+                .lookup_impl_item_item3(&i32_def, sub_path)
+                .unwrap();
+            (Vec::new(), coversion, impl_item)
             // match impl_method.item {
             //     RustImplItemItemNoJs::Fn(_, _, fn_info) => {
             //         (fn_info.inputs_types, fn_info.return_type)
@@ -2671,13 +2683,10 @@ fn get_receiver_params_and_method_impl_item(
             // dbg!(&string_def);
             // dbg!(&sub_path);
             // dbg!(&global_data.impl_blocks_simpl);
-
-            (
-                Vec::new(),
-                global_data
-                    .lookup_impl_item_item3(&string_def, sub_path)
-                    .unwrap(),
-            )
+            let (conversion, impl_item) = global_data
+                .lookup_impl_item_item3(&string_def, sub_path)
+                .unwrap();
+            (Vec::new(), conversion, impl_item)
         }
         RustType2::Option(type_param) => {
             let item_def = global_data.get_prelude_item_def("Option");
@@ -2688,30 +2697,24 @@ fn get_receiver_params_and_method_impl_item(
             //         type_: RustTypeParamValue::RustType(Box::new(other_rust_type.clone())),
             //     },
             // };
-            (
-                vec![type_param],
-                global_data
-                    .lookup_impl_item_item3(&item_def, sub_path)
-                    .unwrap(),
-            )
+            let (conversion, impl_item) = global_data
+                .lookup_impl_item_item3(&item_def, sub_path)
+                .unwrap();
+            (vec![type_param], conversion, impl_item)
         }
         RustType2::Result(ok_type_param, err_type_param) => {
             let item_def = global_data.get_prelude_item_def("Result");
-            (
-                vec![ok_type_param, err_type_param],
-                global_data
-                    .lookup_impl_item_item3(&item_def, sub_path)
-                    .unwrap(),
-            )
+            let (conversion, impl_item) = global_data
+                .lookup_impl_item_item3(&item_def, sub_path)
+                .unwrap();
+            (vec![ok_type_param, err_type_param], conversion, impl_item)
         }
         RustType2::StructOrEnum(item_type_params, item_def) => {
             // dbg!(&item_def);
-            (
-                item_type_params,
-                global_data
-                    .lookup_impl_item_item3(&item_def, sub_path)
-                    .unwrap(),
-            )
+            let (conversion, impl_item) = global_data
+                .lookup_impl_item_item3(&item_def, sub_path)
+                .unwrap();
+            (item_type_params, conversion, impl_item)
 
             // match impl_method.item {
             //     RustImplItemItemNoJs::Fn(private, static_, fn_info) => {
@@ -2755,13 +2758,10 @@ fn get_receiver_params_and_method_impl_item(
             // dbg!(&string_def);
             // dbg!(&sub_path);
             // dbg!(&global_data.impl_blocks_simpl);
-
-            (
-                Vec::new(),
-                global_data
-                    .lookup_impl_item_item3(&vec_def, sub_path)
-                    .unwrap(),
-            )
+            let (conversion, impl_item) = global_data
+                .lookup_impl_item_item3(&vec_def, sub_path)
+                .unwrap();
+            (Vec::new(), conversion, impl_item)
         }
         RustType2::Array(_element) => {
             // TODO need to think about the different between Array and Vec here

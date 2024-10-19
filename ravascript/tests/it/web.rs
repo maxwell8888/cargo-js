@@ -189,6 +189,25 @@ async fn append_child() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn class_list() {
+    let actual = r2j_block_with_prelude!({
+        use web_prelude::{document, Document, HtmlDivElement, Node, Element};
+        let div = document().create_element_div();
+        div.class_list().add("red-border");
+    });
+
+    let expected = format_js(
+        r#"
+            let div = document.createElement("div");
+            div.classList.add("red-border");
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
 #[ignore = "navigator should be lower case so not a const"]
 #[tokio::test]
 async fn it_writes_to_clipboard() {
