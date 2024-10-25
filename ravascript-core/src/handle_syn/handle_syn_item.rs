@@ -18,8 +18,8 @@ use crate::{
     },
     make_item_definitions::{FnInfoSyn, ItemRef, StmtsRef},
     update_item_definitions::{
-        ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam, RustTypeParamValue,
-        StructEnumUniqueInfo2, TraitItemDef,
+        Conversion, ItemDefRc, RustImplItemItemNoJs, RustImplItemNoJs, RustTypeParam,
+        RustTypeParamValue, StructEnumUniqueInfo2, TraitItemDef,
     },
     GlobalData, RustImplItemItemJs, RustType2, RUST_PRELUDE_MODULE_PATH,
 };
@@ -393,7 +393,11 @@ pub fn handle_item_fn(
     // pop fn scope
     global_data.scopes.pop();
 
-    stmt
+    if let Conversion::SingleArgAsFnBody = fn_def.conversion {
+        JsStmt::Expr(JsExpr::Blank, false)
+    } else {
+        stmt
+    }
 }
 
 pub fn handle_item_const(
@@ -671,7 +675,7 @@ pub fn handle_item_enum(
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
-                    RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
+                    RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                         // TODO IMPORTANT reuse code from handle_item_fn
 
                         // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -814,7 +818,7 @@ pub fn handle_impl_item_fn(
 
     let mut vars = Vec::new();
     let (fn_type_params, inputs2) = match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static, _conversion, fn_def) => {
+        RustImplItemItemNoJs::Fn(_static, fn_def) => {
             // Push vars
             for (is_self, is_mut, name, input_type) in fn_def.sig.inputs_types.clone() {
                 if is_self {
@@ -878,7 +882,7 @@ pub fn handle_impl_item_fn(
 
     // Because item definitions can appear after they are used, we can't simply add them to the scope as they are handled. We instead need to go through all the stmts and record the defined items before we do a second pass to actually handle/parse the stmts.
     let scoped_item_defs = match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
+        RustImplItemItemNoJs::Fn(_static_, fn_info) => {
             fn_info
                 .stmts
                 .iter()
@@ -966,7 +970,7 @@ pub fn handle_impl_item_fn(
     //
 
     let body_stmts = match &rust_impl_item.item {
-        RustImplItemItemNoJs::Fn(_static, _conversion, fn_info) => {
+        RustImplItemItemNoJs::Fn(_static, fn_info) => {
             //
 
             parse_fn_body_stmts(
@@ -1003,7 +1007,7 @@ pub fn handle_impl_item_fn(
             });
 
         let fn_info = match rust_impl_item.item.clone() {
-            RustImplItemItemNoJs::Fn(_static, _conversion, fn_info) => fn_info,
+            RustImplItemItemNoJs::Fn(_static, fn_info) => fn_info,
             RustImplItemItemNoJs::Const => todo!(),
         };
 
@@ -1063,7 +1067,7 @@ pub fn handle_item_impl(
         .map(|item| RustImplItemJs {
             ident: item.ident.clone(),
             item: match &item.item {
-                RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                     // TODO IMPORTANT reuse code from handle_item_fn
 
                     // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -1449,7 +1453,7 @@ pub fn handle_item_struct(
 
         for impl_item in &trait_def.default_impls {
             match &impl_item.item {
-                RustImplItemItemNoJs::Fn(_static_, _conversion, fn_def) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_def) => {
                     js_class.static_fields.push(JsLocal {
                         public: false,
                         export: false,
@@ -1500,7 +1504,7 @@ pub fn handle_item_struct(
             .map(|item| RustImplItemJs {
                 ident: item.ident.clone(),
                 item: match &item.item {
-                    RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
+                    RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                         // TODO IMPORTANT reuse code from handle_item_fn
 
                         // RustImplItemItemJs::Fn(static_, fn_info, js)
@@ -1665,7 +1669,7 @@ pub fn handle_item_trait(
             .iter()
             .map(|rust_impl_item| {
                 let (static_, fn_def) = match &rust_impl_item.item {
-                    RustImplItemItemNoJs::Fn(static_, _conversion, fn_info) => (static_, fn_info),
+                    RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
                     RustImplItemItemNoJs::Const => todo!(),
                 };
                 // TODO remove use of syn?

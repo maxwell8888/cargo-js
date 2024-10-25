@@ -7,9 +7,10 @@ use biome_js_formatter::{context::JsFormatOptions, JsFormatLanguage};
 use biome_js_parser::JsParserOptions;
 use biome_js_syntax::JsFileSource;
 use cargo_toml::Manifest;
+use std::mem::transmute;
 use std::rc::Rc;
 use std::{fmt::Debug, fs, path::PathBuf};
-use syn::{Item, ItemTrait};
+use syn::{Item, ItemFn, ItemTrait};
 
 mod add_impl_block_ids;
 use add_impl_block_ids::populate_item_def_impl_blocks;
@@ -229,15 +230,35 @@ pub fn process_items(
     // Alternate std lib
     let code = include_str!("../../rustscript-std/src/lib.rs");
     let file = syn::parse_file(code).unwrap();
-    let prelude_items = file.items;
 
-    let alternate_std_items = make_item_defs(
-        prelude_items,
+    let mut alternate_std_items = make_item_defs(
+        file.items,
         // TODO for now use None since we are using a single file but probably want to eventually expand to some kind of fake "lib"
         &None,
         &mut vec!["std".to_string()],
         &mut item_defs,
     );
+    // Manually add for transmute
+    let transmute_syn =
+        syn::parse_str::<ItemFn>("#[replace_with(single_arg_as_fn_body)] fn transmute<Src, Dst>(src: Src) -> Dst { src }").unwrap();
+    item_defs.push(ItemDefNoTypes::Fn(make_item_definitions::FnDefNoTypes {
+        ident: transmute_syn.sig.ident.clone(),
+        is_pub: true,
+        syn: make_item_definitions::FnInfoSyn::Standalone(transmute_syn.clone()),
+        attributes: transmute_syn.attrs.clone(),
+        generics: Vec::new(),
+        syn_generics: transmute_syn.sig.generics.clone(),
+        signature: transmute_syn.sig.clone(),
+        stmts: Vec::new(),
+    }));
+    let mem_mod = alternate_std_items
+        .iter_mut()
+        .find_map(|item_ref| match item_ref {
+            ItemRef::Mod(rust_mod) if rust_mod.module_path == ["std", "mem"] => Some(rust_mod),
+            _ => None,
+        })
+        .unwrap();
+    mem_mod.items.push(ItemRef::Fn(item_defs.len() - 1));
 
     crates.insert(
         0,
@@ -424,7 +445,7 @@ pub fn process_items(
     //     .map(|t| (&t.module_path, &t.name))
     //     .collect::<Vec<_>>());
     // TODO do proper check for modules which are not built-ins
-    if transpiled_modules.len() > 3 {
+    if transpiled_modules.len() > 4 {
         for module in transpiled_modules.iter_mut().filter(|m| {
             // TODO tag prelude etc modules that shouldn't have names printed
             // TODO but sometimes we might actually include stuff from Rust std? Not everything is vanishing? These are cases where we do actually want to hide them if they are empty though because the user didn't add them so there is no context and could just be confusing.
@@ -764,7 +785,7 @@ pub fn from_block(code: &str, with_rust_types: bool, _include_web: bool) -> Vec<
     let modules = process_items(vec![item_fn], None, with_rust_types, true);
     // Blocks should only be 1 module and optionally include a second module for rust prelude
     // TODO why return the prelude module from process_items when it is not to be rendered?
-    assert!(modules.len() == 1 || modules.len() == 2 || modules.len() == 3);
+    assert!(modules.len() == 1 || modules.len() == 2 || modules.len() == 3 || modules.len() == 4);
     let mut module = modules.into_iter().next().unwrap();
     // If we have inserted prelude statements, the len will be > 1. Ideally we would insert the prelude stmts inside `fn temp`. For now we are just assuming any added stmts are inserted before `fn temp`
     // assert!(module.stmts.len() == 1);

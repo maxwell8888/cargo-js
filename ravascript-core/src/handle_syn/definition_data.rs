@@ -113,6 +113,7 @@ pub enum RustType2 {
         Vec<RustTypeParam2>,
         // RustTypeFnType,
         Rc<FnSigDef>,
+        // Rc<FnDef>,
     ),
     /// For things like Box::new where we want `Box::new(1)` -> `1`
     FnVanish,
@@ -610,7 +611,7 @@ impl GlobalData {
 
         let impl_method = if let Some(impl_method) = impl_method {
             match impl_method.item {
-                RustImplItemItemNoJs::Fn(_static_, _conversion, fn_info) => {
+                RustImplItemItemNoJs::Fn(_static_, fn_info) => {
                     // Get trait bounds
 
                     // If turbofish exists on fn path segment then use that for type params, otherwise use the unresolved params defined on the fn definition
@@ -739,7 +740,9 @@ impl GlobalData {
 
         let item = impl_block_item.or(trait_default_item);
         item.map(|item| match item.item {
-            RustImplItemItemNoJs::Fn(_, conversion, fn_info) => (conversion, TraitItemDef::Fn(fn_info.sig.clone())),
+            RustImplItemItemNoJs::Fn(_, fn_info) => {
+                (fn_info.conversion, TraitItemDef::Fn(fn_info.sig.clone()))
+            }
             RustImplItemItemNoJs::Const => todo!(),
         })
     }
@@ -1027,7 +1030,7 @@ pub fn resolve_path(
     // TODO actually look up external crates in Cargo.toml
     // NOTE for external crates which are not the rust prelude and so use-stmts are needed, we can simply check if the beginning of the current segs is equal to the name of an external crate and then below we change the current_module to simply be vec![<name of that crate>].
     // NOTE we need to handle the *rust* prelude uniquely since although we treat is as a separate crate, there of course isn't any use stmts, so we just have to look for rust prelude items as the final thing after everything else has been checked.
-    let external_crate_names = ["web_prelude"];
+    let external_crate_names = ["web_prelude", "std"];
     let path_is_external_crate = external_crate_names.iter().any(|cn| cn == &segs[0].ident);
 
     // TODO IMPORTANT we have two `is_scoped` vars here because we are using `get_path` in different contexts. `is_scoped_static` is for getting the path from static data, before syn -> JS parsing, and `is_scoped` is for use during the syn -> JS parsing. This needs thinking about, reconciling and simplifying. Should just stop using get_path for vars.
@@ -1242,6 +1245,7 @@ pub fn resolve_path(
 
         // If we can't find the ident anywhere, the only remaining possibility is that we have a prelude type
         assert_eq!(current_mod, orig_mod);
+        // dbg!(&segs);
         assert!(segs.len() == 1 || segs.len() == 2);
         let rust_prelude_crates = crates
             .iter()

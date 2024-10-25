@@ -1,19 +1,15 @@
-#![allow(unused_imports)]
-
 use pretty_assertions::assert_eq;
-use ravascript::{
-    catch,
-    prelude::{
-        web::{
-            try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError,
-            Json, Node, SyntaxError, NAVIGATOR,
-        },
-        *,
-    },
-    try_,
+use ravascript::prelude::web::{
+    // try_, AnyHtmlElement, Console, Document, Event, HTMLInputElement, HtmlElement, JsError,
+    Document,
+    Event,
+    HTMLInputElement,
+    Node,
+    NAVIGATOR,
 };
 use ravascript_core::format_js;
 use ravascript_macros::fn_stmts_as_str;
+// use web_prelude::{HtmlAnyElement, HtmlElement};
 
 use super::utils::*;
 use crate::{r2j_block, r2j_block_with_prelude, r2j_file_no_rust, r2j_file_run_main};
@@ -192,7 +188,7 @@ async fn append_child() {
 #[tokio::test]
 async fn class_list() {
     let actual = r2j_block_with_prelude!({
-        use web_prelude::{document, Document, HtmlDivElement, Node, Element};
+        use web_prelude::{document, Document, Element, HtmlDivElement, Node};
         let div = document().create_element_div();
         div.class_list().add("red-border");
     });
@@ -201,6 +197,33 @@ async fn class_list() {
         r#"
             let div = document.createElement("div");
             div.classList.add("red-border");
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
+#[tokio::test]
+async fn transmute_element_type() {
+    let actual = r2j_block_with_prelude!({
+        use web_prelude::{document, HtmlAnyElement, HtmlCanvasElement, HtmlElement};
+        let any_canvas = document().create_element("canvas");
+        any_canvas.focus();
+        let typed_canvas =
+            unsafe { std::mem::transmute::<HtmlAnyElement, HtmlCanvasElement>(any_canvas) };
+        #[allow(unused_variables)]
+        let context = typed_canvas.get_context("2d");
+    });
+
+    let expected = format_js(
+        r#"
+            let anyCanvas = document.createElement("canvas");
+            anyCanvas.focus();
+            let typedCanvas = (() => {
+                return anyCanvas;
+            })();
+            let context = typedCanvas.getContext("2d");
         "#,
     );
 

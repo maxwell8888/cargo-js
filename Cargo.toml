@@ -10,7 +10,7 @@ members = [
     "website",
     "web-helpers",
     "rustscript-std",
-    "javascript",
+    "javascript", "examples/hacker_news",
 ]
 resolver = "2"
 

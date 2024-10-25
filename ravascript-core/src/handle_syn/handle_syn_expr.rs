@@ -41,7 +41,8 @@ fn handle_expr_assign(
 ) -> JsExpr {
     let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_assign.left {
         ExprRef::Path(expr_path) => {
-            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            let (expr, partial, transform) =
+                handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -61,7 +62,8 @@ fn handle_expr_assign(
 
     let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_assign.right {
         ExprRef::Path(expr_path) => {
-            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            let (expr, partial, transform) =
+                handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -436,7 +438,8 @@ pub fn handle_expr(
 
             let (mut lhs_expr, lhs_rust_type, lhs_is_mut_var) = match &*expr_binary.left {
                 ExprRef::Path(expr_path) => {
-                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    let (expr, partial, transform) =
+                        handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -458,7 +461,8 @@ pub fn handle_expr(
 
             let (mut rhs_expr, rhs_rust_type, rhs_is_mut_var) = match &*expr_binary.right {
                 ExprRef::Path(expr_path) => {
-                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    let (expr, partial, transform) =
+                        handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -995,7 +999,7 @@ pub fn handle_expr(
         ExprRef::Path(expr_path) => {
             // dbg!("handle_expr expr_path:");
             // dbg!(&expr_path);
-            let (js_expr, partial_rust_type) =
+            let (js_expr, partial_rust_type, transform) =
                 handle_expr_path(expr_path, global_data, current_module);
             // dbg!(&partial_rust_type);
             match partial_rust_type {
@@ -1012,7 +1016,7 @@ pub fn handle_expr(
                 // dbg!("yes");
                 let (expr, rust_type) = match &*expr_reference.expr {
                     ExprRef::Path(expr_path) => {
-                        let (js_expr, partial_rust_type) =
+                        let (js_expr, partial_rust_type, transform) =
                             handle_expr_path(expr_path, global_data, current_module);
                         // dbg!(&expr_path);
                         // dbg!(&js_expr);
@@ -1081,7 +1085,7 @@ pub fn handle_expr(
             } else {
                 let (expr, rust_type) = match &*expr_reference.expr {
                     ExprRef::Path(expr_path) => {
-                        let (expr, partial) =
+                        let (expr, partial, transform) =
                             handle_expr_path(expr_path, global_data, current_module);
                         match partial {
                             PartialRustType::StructIdent(_, _) => todo!(),
@@ -1132,7 +1136,7 @@ pub fn handle_expr(
             // NOTE remember this handles both struct and enum variant instantiation eg `MyStruct {}` and `MyEnum::Variant { num: 0 }`
             // dbg!("handle expr_struct");
             // println!("{}", quote! { #expr_struct });
-            let (js_path_expr, rust_partial_type) =
+            let (js_path_expr, rust_partial_type, transform) =
                 handle_expr_path_inner(&expr_struct.path, global_data, current_module);
 
             // dbg!(&js_path_expr);
@@ -1242,7 +1246,7 @@ pub fn handle_expr(
             UnOp::Deref(_) => {
                 let (mut expr, rust_type, is_mut_var) = match &*expr_unary.expr {
                     ExprRef::Path(expr_path) => {
-                        let (expr, partial) =
+                        let (expr, partial, transform) =
                             handle_expr_path(expr_path, global_data, current_module);
                         match partial {
                             PartialRustType::StructIdent(_, _) => todo!(),
@@ -1993,7 +1997,8 @@ fn handle_expr_method_call(
 
     let (mut receiver, receiver_type, receiver_is_mut_var) = match &*expr_method_call.receiver {
         ExprRef::Path(expr_path) => {
-            let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+            let (expr, partial, transform) =
+                handle_expr_path(expr_path, global_data, current_module);
             match partial {
                 PartialRustType::StructIdent(_, _) => todo!(),
                 PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -2319,6 +2324,8 @@ fn handle_expr_method_call(
                 method_return_type,
             )
         }
+        // Conversion::FnBody => todo!(),
+        Conversion::SingleArgAsFnBody => todo!(),
         Conversion::None => {}
         Conversion::Todo => {}
     }
@@ -3084,7 +3091,8 @@ fn handle_expr_call(
         ) -> (JsExpr, RustType2) {
             match arg_expr {
                 ExprRef::Path(expr_path) => {
-                    let (expr, partial) = handle_expr_path(expr_path, global_data, current_module);
+                    let (expr, partial, transform) =
+                        handle_expr_path(expr_path, global_data, current_module);
                     match partial {
                         PartialRustType::StructIdent(_, _) => todo!(),
                         PartialRustType::EnumVariantIdent(_, _, _) => todo!(),
@@ -3157,7 +3165,7 @@ fn handle_expr_call(
             //     return js_expr;
             // }
 
-            let (expr, partial_rust_type) =
+            let (expr, partial_rust_type, transform) =
                 handle_expr_path(expr_path, global_data, current_module);
 
             let rust_type = match partial_rust_type.clone() {
@@ -3638,6 +3646,53 @@ fn handle_expr_call(
                             ),
                             rust_type,
                         ),
+                        RustType2::Fn(_, _, fn_def)
+                            if matches!(transform, Conversion::SingleArgAsFnBody) =>
+                        {
+                            // Attempt at inlining/replacing fn call with body of fn (not trivial it turns out):
+
+                            // assert_eq!(fn_def.stmts.len(), 1);
+                            // // !!!!!!!!!!!!!! TODO IMPORTANT this is a really bad hack:
+                            // // Breaking assumption that each thing is only parsed once, not sure the implications of this
+                            // // It means we are parsing the same fn body at every call site
+                            // // Should probably be using parse_fn_body_stmts
+                            // // Alternatives:
+                            // // Get body from parsed fn item - but this may appear later and so is not parsed yet?
+                            // // Rely on post-processing/optimisation to inline the body. Mark the fn call somehow (with an attr/Conversion/etc) so it is easy to pick out during a final pass and replace with fn body? Would need to calculate the path of the fn?
+
+                            // for (_is_self, is_mut, name, type_) in &fn_def.sig.inputs_types {
+                            //     let type_ = type_.clone().into_rust_type2(global_data);
+
+                            //     let scoped_var = ScopedVar {
+                            //         name: name.clone(),
+                            //         mut_: *is_mut,
+                            //         type_: type_.clone(),
+                            //     };
+                            //     // record add var to scope
+                            //     global_data
+                            //         .scopes
+                            //         .last_mut()
+                            //         .unwrap()
+                            //         .variables
+                            //         .push(scoped_var);
+                            // }
+                            // let mut stmts = handle_stmt(
+                            //     fn_def.stmts.first().unwrap(),
+                            //     global_data,
+                            //     current_module,
+                            // );
+                            // global_data.scopes.pop();
+                            // assert_eq!(stmts.len(), 1);
+                            // let (stmt, _) = stmts.remove(0);
+                            // let expr = match stmt {
+                            //     JsStmt::Expr(js_expr, _) => js_expr,
+                            //     _ => todo!(),
+                            // };
+
+                            // rust_type is coming from the returned type of the fn call, so should be correctly taking into account the type of the arguments (important for generic fns like transmute<Src, Dst>())
+                            assert_eq!(args_js_expr.len(), 1);
+                            (args_js_expr.remove(0), rust_type)
+                        }
                         _ => (
                             JsExpr::FnCall(Box::new(expr), args_js_expr.clone()),
                             rust_type,
@@ -3662,7 +3717,7 @@ pub fn handle_expr_path(
     global_data: &mut GlobalData,
     current_module: &[String],
     // is_call: bool,
-) -> (JsExpr, PartialRustType) {
+) -> (JsExpr, PartialRustType, Conversion) {
     handle_expr_path_inner(&expr_path.path, global_data, current_module)
 }
 
@@ -3677,7 +3732,7 @@ fn handle_expr_path_inner(
     global_data: &mut GlobalData,
     current_module: &[String],
     // is_call: bool,
-) -> (JsExpr, PartialRustType) {
+) -> (JsExpr, PartialRustType, Conversion) {
     let span = debug_span!("handle_expr_path", expr_path = ?quote! { #expr_path }.to_string());
     let _guard = span.enter();
 
@@ -3778,7 +3833,7 @@ fn handle_expr_path_inner(
     // dbg!(&segs_copy_item_path);
 
     // NOTE for a var with prelude type the segs_copy_module_path will not be PRELUDE_MODULE_PATH, it will be the scope in which the var is instantiated
-    let (partial_rust_type, mut js_segs_item_path) =
+    let (partial_rust_type, mut js_segs_item_path, transform) =
         if let Some(trait_bounds) = segs_copy_type_param {
             if segs_copy_item_path.len() == 1 {
                 // TODO consider what this case is and what PartialRustType to return. A new PartialRustType::TypeParam variant?
@@ -3864,6 +3919,7 @@ fn handle_expr_path_inner(
                 (
                     PartialRustType::RustType(rust_type, false, false),
                     ident_path,
+                    Conversion::None,
                 )
             } else {
                 todo!()
@@ -3889,6 +3945,7 @@ fn handle_expr_path_inner(
                 (
                     PartialRustType::RustType(var.type_.clone(), var.mut_, true),
                     vec![Ident::String(path.ident.clone())],
+                    Conversion::None,
                 )
             } else {
                 let path_idents = segs_copy_item_path
@@ -3904,6 +3961,7 @@ fn handle_expr_path_inner(
                             .into_iter()
                             .map(|seg| Ident::String(seg.ident))
                             .collect::<Vec<_>>(),
+                        Conversion::None,
                     ),
                     ["Some"] => {
                         // Is it a problem using PartialRustType::EnumVariantIdent rather than a specific PartialRustType::OptionVariantIdent?
@@ -3920,6 +3978,7 @@ fn handle_expr_path_inner(
                                 .into_iter()
                                 .map(|seg| Ident::String(seg.ident))
                                 .collect::<Vec<_>>(),
+                            Conversion::None,
                         )
                     }
                     ["None"] => {
@@ -3956,6 +4015,7 @@ fn handle_expr_path_inner(
                                 .into_iter()
                                 .map(|seg| Ident::String(seg.ident))
                                 .collect::<Vec<_>>(),
+                            Conversion::None,
                         )
                     }
                     ["Ok"] => {
@@ -3973,6 +4033,7 @@ fn handle_expr_path_inner(
                                 .into_iter()
                                 .map(|seg| Ident::String(seg.ident))
                                 .collect::<Vec<_>>(),
+                            Conversion::None,
                         )
                     }
                     ["Err"] => {
@@ -3990,6 +4051,7 @@ fn handle_expr_path_inner(
                                 .into_iter()
                                 .map(|seg| Ident::String(seg.ident))
                                 .collect::<Vec<_>>(),
+                            Conversion::None,
                         )
                     }
                     _ => {
@@ -4026,7 +4088,7 @@ fn handle_expr_path_inner(
             });
 
             // TODO handle user defined len=1 enums like Some(5), None, etc
-            let (final_partial_rust_type, path_ident) =
+            let (final_partial_rust_type, transform, path_ident) =
                 if let Some(scoped_partial_rust_type) = scoped_partial_rust_type {
                     scoped_partial_rust_type
                 } else {
@@ -4053,7 +4115,7 @@ fn handle_expr_path_inner(
 
                     found_item_to_partial_rust_type(item_path_seg, None, item_def, global_data)
                 };
-            (final_partial_rust_type, vec![path_ident])
+            (final_partial_rust_type, vec![path_ident], transform)
         } else if segs_copy_item_path.len() == 2 {
             // NOTE path must start with a struct or enum if item part of the path is length = 2
 
@@ -4227,9 +4289,9 @@ fn handle_expr_path_inner(
             // dbg!(&item_def);
             ident_path[0] = item_def.js_name.clone();
             if let Some(enum_variant) = enum_variant {
-                (enum_variant, ident_path)
+                (enum_variant, ident_path, Conversion::None)
             } else if let Some(impl_method) = impl_method {
-                (impl_method, ident_path)
+                (impl_method, ident_path, Conversion::None)
             } else {
                 panic!()
             }
@@ -4377,7 +4439,7 @@ fn handle_expr_path_inner(
 
             // TODO how/should we take into account scope id, in the same way we do when handling the `PartialRustType`
         };
-    (final_expr, partial_rust_type)
+    (final_expr, partial_rust_type, transform)
 }
 
 /// Get match pattern ident to be used as rhs of if conditions like `myData.id === MyEnum.fooId`, and start a body stmts Vec to with any pattern arg destructuring that might be necessary
@@ -5010,7 +5072,7 @@ fn found_item_to_partial_rust_type(
     var: Option<&ScopedVar>,
     item_def: Option<&ItemDefRc>,
     global_data: &GlobalData,
-) -> (PartialRustType, Ident) {
+) -> (PartialRustType, Conversion, Ident) {
     // debug!(item_path = ?item_path, var = ?var, func = ?func, item_def = ?item_def, module_path = ?module_path, "found_item_to_partial_rust_type");
 
     // IMPORTANT NOTE this fn only handles len=1 item paths which is useful for determing deduplicated idents because it allows us to disregard cases like associated fns.
@@ -5019,6 +5081,7 @@ fn found_item_to_partial_rust_type(
         // This branch is obviously only possible for scoped paths since we can't have module level vars
         (
             PartialRustType::RustType(var.type_.clone(), var.mut_, true),
+            Conversion::None,
             Ident::String(item_path.ident.clone()),
         )
     } else if let Some(def) = item_def {
@@ -5071,6 +5134,7 @@ fn found_item_to_partial_rust_type(
                         // So we are assuming that *all* cases where we have an Expr::Path and the final segment is a struct ident, it must be a tuple struct??? Could also be an expr_struct.path
                         (
                             PartialRustType::StructIdent(item_generics, item_def.clone()),
+                            Conversion::None,
                             item_def.js_name.clone(),
                         )
                     }
@@ -5131,6 +5195,7 @@ fn found_item_to_partial_rust_type(
                         false,
                         false,
                     ),
+                    fn_info.conversion.clone(),
                     fn_info.sig.js_name.clone(),
                 )
             }
@@ -5140,6 +5205,7 @@ fn found_item_to_partial_rust_type(
                     false,
                     false,
                 ),
+                Conversion::None,
                 const_def.js_name.clone(),
             ),
             _ => todo!(),

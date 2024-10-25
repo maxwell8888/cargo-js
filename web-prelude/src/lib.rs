@@ -34,7 +34,20 @@ pub trait Element: Node {
     }
 }
 
-pub trait HtmlElement: Element {}
+pub trait HtmlElement: Element {
+    /// NOTE returns None/undefined
+    fn focus(&self) {}
+}
+
+#[derive(Debug, Default)]
+pub struct HtmlAnyElement {}
+impl Node for HtmlAnyElement {}
+impl Element for HtmlAnyElement {
+    // fn get_self() -> Self {
+    //     HtmlDivElement {}
+    // }
+}
+impl HtmlElement for HtmlAnyElement {}
 
 #[derive(Debug, Default)]
 pub struct HtmlDivElement {}
@@ -45,6 +58,23 @@ impl Element for HtmlDivElement {
     // }
 }
 impl HtmlElement for HtmlDivElement {}
+
+#[derive(Debug, Default)]
+pub struct HtmlCanvasElement {}
+impl Node for HtmlCanvasElement {}
+impl Element for HtmlCanvasElement {
+    // fn get_self() -> Self {
+    //     HtmlDivElement {}
+    // }
+}
+impl HtmlElement for HtmlCanvasElement {}
+impl HtmlCanvasElement {
+    pub fn get_context(&self, context_type: &str) -> CanvasRenderingContextAny {
+        CanvasRenderingContextAny
+    }
+}
+#[derive(Debug, Default)]
+pub struct CanvasRenderingContextAny;
 
 #[derive(Debug, Default)]
 pub struct H1 {}
@@ -70,6 +100,7 @@ impl Document {
     // pub fn create_element(tag_name: &'static str) -> Div {
     //     Div {}
     // }
+    // TODO it would be preferable to only have create_element(), and have create_element_div as a (unsafe?) wrapper and for the compiler to be smart enough to inline the create_element() directly. Or even better use the html builder syntax like `Div::new().append_child()` etc?? Either way still need an untyped create_element() for custom elements?
     pub fn create_element_div(&self) -> HtmlDivElement {
         HtmlDivElement {}
     }
@@ -78,6 +109,9 @@ impl Document {
     }
     pub fn create_element_heading2(&self) -> H2 {
         H2 {}
+    }
+    pub fn create_element(&self, tag_name: &'static str) -> HtmlAnyElement {
+        HtmlAnyElement {}
     }
 }
 
