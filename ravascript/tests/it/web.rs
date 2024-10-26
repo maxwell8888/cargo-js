@@ -231,6 +231,61 @@ async fn transmute_element_type() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+#[tokio::test]
+async fn div_wrapper() {
+    let actual = r2j_block_with_prelude!({
+        use web_prelude::{document, Element, HtmlAnyElement, HtmlDivElement, HtmlElement, Node};
+
+        struct Div(HtmlDivElement);
+
+        impl Div {
+            fn new() -> Div {
+                let any_div = document().create_element("div");
+                let typed_div =
+                    unsafe { std::mem::transmute::<HtmlAnyElement, HtmlDivElement>(any_div) };
+                Div(typed_div)
+            }
+            fn class(self, class_name: &str) -> Div {
+                self.0.class_list().add(class_name);
+                self
+            }
+            fn child(self, child: impl HtmlElement) -> Div {
+                self.0.append_child(child);
+                self
+            }
+        }
+    });
+
+    let expected = format_js(
+        r#"
+            class Div {
+                constructor(arg0) {
+                    this[0] = arg0;
+                }
+            
+                static new() {
+                    let anyDiv = document.createElement("div");
+                    let typedDiv = (() => {
+                        return anyDiv;
+                    })();
+                    return new Div(typedDiv);
+                }
+                class(className) {
+                    this[0].classList.add(className);
+                    return this;
+                }
+                child(child) {
+                    this[0].appendChild(child);
+                    return this;
+                }
+            }
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
+
 #[ignore = "navigator should be lower case so not a const"]
 #[tokio::test]
 async fn it_writes_to_clipboard() {

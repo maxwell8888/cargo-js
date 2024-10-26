@@ -1310,15 +1310,35 @@ pub fn resolve_path(
     );
 
     // TODO only look through transparent scopes
-    // dbg!(&module.items);
     let matched_use_mapping = module.items.iter().find_map(|item| match item {
+        // TODO make this recursive rather than only looking 1 fn deep and ensure any use stmts used anywhere are found
+        ItemRef::Fn(index) => match &items_defs[*index] {
+            ItemDefNoTypes::Fn(fn_def_no_types) => {
+                fn_def_no_types
+                    .stmts
+                    .iter()
+                    .find_map(|stmt_ref| match stmt_ref {
+                        StmtsRef::Item(item_ref) => match item_ref {
+                            ItemRef::Use(rust_use) => {
+                                rust_use.use_mappings.iter().find_map(|use_mapping| {
+                                    (use_mapping.0 == segs[0].ident
+                                        && (use_private || rust_use.pub_))
+                                        .then_some(use_mapping.clone())
+                                })
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+            }
+            _ => panic!(),
+        },
         ItemRef::Use(rust_use) => rust_use.use_mappings.iter().find_map(|use_mapping| {
             (use_mapping.0 == segs[0].ident && (use_private || rust_use.pub_))
                 .then_some(use_mapping.clone())
         }),
         _ => None,
     });
-    // dbg!(&matched_use_mapping);
 
     // TODO can module shadow external crate names? In which case we need to look for modules first? I think we do this implicitly based on the order of the if statements below?
     // TODO actually look up external crates in Cargo.toml

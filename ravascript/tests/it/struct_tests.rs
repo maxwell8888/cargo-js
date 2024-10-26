@@ -127,6 +127,7 @@ async fn struct_and_impl_methods() {
     execute_js_with_assertions(&expected).await.unwrap();
 }
 
+// TODO newtypes should be zero cost and simply transpile to the inner type, but we can still include the newtypes impl block as a standalone class/object like we do for trait default fns.
 #[allow(dead_code)]
 #[tokio::test]
 async fn tuple_struct() {
