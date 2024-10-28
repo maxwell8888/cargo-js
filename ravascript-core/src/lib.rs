@@ -201,6 +201,8 @@ pub fn process_items(
         make_item_definitions::TraitDefNoTypes {
             ident: trait_syn.ident.clone(),
             is_pub: true,
+            generics: Vec::new(),
+            syn_generics: trait_syn.generics.clone(),
             syn: trait_syn,
             default_impls: Vec::new(),
         },
@@ -212,6 +214,8 @@ pub fn process_items(
         make_item_definitions::TraitDefNoTypes {
             ident: trait_syn.ident.clone(),
             is_pub: true,
+            generics: Vec::new(),
+            syn_generics: trait_syn.generics.clone(),
             syn: trait_syn,
             default_impls: Vec::new(),
         },
@@ -239,8 +243,10 @@ pub fn process_items(
         &mut item_defs,
     );
     // Manually add for transmute
-    let transmute_syn =
-        syn::parse_str::<ItemFn>("#[replace_with(single_arg_as_fn_body)] fn transmute<Src, Dst>(src: Src) -> Dst { src }").unwrap();
+    let transmute_syn = syn::parse_str::<ItemFn>(
+        "#[replace_with(single_arg_as_fn_body)] fn transmute<Src, Dst>(src: Src) -> Dst { src }",
+    )
+    .unwrap();
     item_defs.push(ItemDefNoTypes::Fn(make_item_definitions::FnDefNoTypes {
         ident: transmute_syn.sig.ident.clone(),
         is_pub: true,

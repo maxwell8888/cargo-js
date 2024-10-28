@@ -38,12 +38,10 @@ pub fn update_item_defs(
     let mut scoped_items = Vec::new();
 
     // NOTE type params cannot be used inside a child fn
-    // Used for tracking whether a type param is used like `T::associated_fn()`
-    // (name, used)
-    // NOTE type params cannot be used inside a child fn
     // Used for tracking whether a type param is used like `T::associated_fn()`. Push a new Vec<(String, bool)> containing the type param names and false for each function eg `fn foo<T, U>() {}` -> `[(T, false), (U, false)]` and then set the bool to true if we find the type param being using like `T::associated_fn()`, and will therefore need to pass the type params as args to the compiled JS fn.
     // (name, used)
     // TODO be clear about why we need to add an initial "scope" (ie vec![vec![]] not vec![])
+    // TODO I don't think we need `type_params` to be as stack like it is here since type params can only be used directly below where they have been defined, not eg in child items which errors with: "can't use generic parameters from outer item"
     let mut type_params: Vec<Vec<(String, bool, Vec<usize>)>> = vec![vec![]];
 
     let mut updated_item_defs = Vec::with_capacity(item_defs_no_types.len());
@@ -51,7 +49,7 @@ pub fn update_item_defs(
 
     for rust_mod in crates {
         for item_ref in &rust_mod.items {
-            update_item_defs_recurisve_individual_item(
+            update_item_defs_recursive_individual_item(
                 item_ref,
                 crates,
                 &item_defs_no_types,
@@ -68,7 +66,8 @@ pub fn update_item_defs(
     updated_item_defs
 }
 
-fn update_item_defs_recurisve_individual_item(
+/// For recursively handling an Item *Ref*
+fn update_item_defs_recursive_individual_item(
     item_ref: &ItemRef,
     crates: &[RustMod],
     item_defs_no_types: &[ItemDefNoTypes],
@@ -78,6 +77,7 @@ fn update_item_defs_recurisve_individual_item(
     scoped_items: &mut Vec<Vec<ItemRef>>,
     // NOTE type params cannot be used inside a child fn
     // Used for tracking whether a type param is used like `T::associated_fn()`
+    // TODO See dicussion of type_params in update_item_defs body
     // (name, used)
     type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
@@ -194,13 +194,30 @@ fn update_item_defs_recurisve_individual_item(
                 duplicates,
             );
 
+            // TODO should we be using something like `udpate_item_defs_recursive_stmts` for the (default?) items?
+            // TODO The below type_params stack doesn't get used in `update_item_def` as far as I can tell, only here in update_item_defs_recurisve_individual_item and update_item_defs_recurisve_stmts. **See dicussion of type_params in update_item_defs body.
+
+            // type_params.push(fn_def.sig.generics.clone());
+            // update_item_defs_recurisve_stmts(
+            //     &fn_stmts,
+            //     crates,
+            //     item_defs_no_types,
+            //     current_module,
+            //     updated_item_defs,
+            //     scoped_items,
+            //     type_params,
+            //     true,
+            //     duplicates,
+            // );
+            // sig.generics = type_params.pop().unwrap();
+
             if in_scope {
                 scoped_items.last_mut().unwrap().push(item_ref.clone());
             }
         }
         ItemRef::Mod(rust_mod) => {
             for item_ref in &rust_mod.items {
-                update_item_defs_recurisve_individual_item(
+                update_item_defs_recursive_individual_item(
                     item_ref,
                     crates,
                     item_defs_no_types,
@@ -231,7 +248,8 @@ fn update_item_defs_recurisve_individual_item(
                 // scoped_items.last_mut().unwrap().push(item_ref.clone());
             }
 
-            let fns_stmts = match &updated_item_defs[*index] {
+            // TODO this doesn't seem to account for nested items within impl fns, should it?
+            let impl_item_fns_stmts = match &updated_item_defs[*index] {
                 ItemDef::Impl(rust_impl_block) => {
                     rust_impl_block
                         .rust_items
@@ -250,7 +268,9 @@ fn update_item_defs_recurisve_individual_item(
                 }
                 _ => todo!(),
             };
-            for (item_index, static_, mut fn_def, stmts) in fns_stmts {
+
+            // TODO Why are we not pushing the impl block's generics onto the type_params stack like we do for functions? Because it is only parsing the impl item/fns *stmts*, and the type_params stack is not used before or in the above update_item_def because the Impl branch directly accounts for any type params, not using type_params. Arguably this is better and the type_params *stack* doesn't make much sense because type params cannot be used in child items (only fn stmts, and fn *signatures* in impl blocks and trait blocks).
+            for (item_index, static_, mut fn_def, stmts) in impl_item_fns_stmts {
                 scoped_items.push(Vec::new());
                 type_params.push(fn_def.sig.generics.clone());
 
@@ -300,6 +320,7 @@ fn update_item_defs_recurisve_stmts(
     // NOTE type params cannot be used inside a child fn
     // Used for tracking whether a type param is used like `T::associated_fn()`
     // (name, used, trait bound indexes (not used, just easier to avoid removing then re-including it))
+    // TODO See dicussion of type_params in update_item_defs body
     type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
     duplicates: &[Duplicate],
@@ -309,7 +330,7 @@ fn update_item_defs_recurisve_stmts(
         match stmt_ref {
             StmtsRef::Local(_) => {}
             StmtsRef::Item(item_ref) => {
-                update_item_defs_recurisve_individual_item(
+                update_item_defs_recursive_individual_item(
                     item_ref,
                     crates,
                     item_defs_no_types,
@@ -350,6 +371,7 @@ fn update_item_defs_recurisve_individual_expr(
     // NOTE type params cannot be used inside a child fn
     // Used for tracking whether a type param is used like `T::associated_fn()`
     // (name, used)
+    // TODO See dicussion of type_params in update_item_defs body
     type_params: &mut Vec<Vec<(String, bool, Vec<usize>)>>,
     in_scope: bool,
     duplicates: &[Duplicate],
@@ -474,6 +496,7 @@ impl ItemDef {
     }
 }
 
+/// For handling an Item *Def*
 fn update_item_def(
     item: ItemDefNoTypes,
     module_path: &[String],
@@ -912,6 +935,62 @@ fn update_item_def(
                 }
             };
 
+            // TODO this is duplicated from the ItemDefNoTypes::StructOrEnum branch
+            let trait_block_generics = trait_def
+                .syn_generics
+                .params
+                .into_iter()
+                .filter_map(|param| {
+                    match param {
+                        GenericParam::Lifetime(_) => None,
+                        GenericParam::Type(type_param) => {
+                            let bound_indexes = type_param
+                                .bounds
+                                .into_iter()
+                                .map(|bound| {
+                                    match bound {
+                                        TypeParamBound::Trait(trait_bound) => {
+                                            let (
+                                                _trait_module_path,
+                                                _trait_item_path,
+                                                _trait_item_scope,
+                                                trait_index,
+                                            ) = make_item_definitions::resolve_path(
+                                                true,
+                                                true,
+                                                trait_bound
+                                                    .path
+                                                    .segments
+                                                    .into_iter()
+                                                    .map(|seg| {
+                                                        RustPathSegment {
+                                                            ident: seg.ident.to_string(),
+                                                            // TODO
+                                                            turbofish: vec![],
+                                                        }
+                                                    })
+                                                    .collect(),
+                                                item_refs,
+                                                item_actual_defs_copy,
+                                                module_path,
+                                                module_path,
+                                                scoped_items,
+                                            );
+                                            trait_index.unwrap()
+                                        }
+                                        TypeParamBound::Lifetime(_) => todo!(),
+                                        TypeParamBound::Verbatim(_) => todo!(),
+                                        _ => todo!(),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            Some((type_param.ident.to_string(), bound_indexes))
+                        }
+                        GenericParam::Const(_) => todo!(),
+                    }
+                })
+                .collect::<Vec<_>>();
+
             // TODO lot's of duplication with default_impls below
             let items = trait_def
                 .syn
@@ -1012,7 +1091,7 @@ fn update_item_def(
                                 },
                                 parse_types_for_populate_item_definitions(
                                     &pat_type.ty,
-                                    &[],
+                                    &trait_block_generics,
                                     &generics,
                                     module_path,
                                     item_refs,
@@ -1027,7 +1106,7 @@ fn update_item_def(
                         ReturnType::Default => RustType::Unit,
                         ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
                             type_,
-                            &[],
+                            &trait_block_generics,
                             &generics,
                             module_path,
                             item_refs,
@@ -1156,7 +1235,7 @@ fn update_item_def(
                                 },
                                 parse_types_for_populate_item_definitions(
                                     &pat_type.ty,
-                                    &[],
+                                    &trait_block_generics,
                                     &generics,
                                     module_path,
                                     item_refs,
@@ -1171,7 +1250,7 @@ fn update_item_def(
                         ReturnType::Default => RustType::Unit,
                         ReturnType::Type(_, type_) => parse_types_for_populate_item_definitions(
                             type_,
-                            &[],
+                            &trait_block_generics,
                             &generics,
                             module_path,
                             item_refs,
@@ -1301,6 +1380,7 @@ fn update_item_def(
                 ident: trait_def.ident.to_string(),
                 js_name,
                 is_pub: trait_def.is_pub,
+                generics: trait_block_generics,
                 items,
                 syn: trait_def.syn,
                 default_impls,
@@ -1592,6 +1672,8 @@ fn update_item_def(
                                     GenericParam::Const(_) => todo!(),
                                 })
                                 .collect::<Vec<_>>();
+
+                            // TODO does the fact we aren't using this mean that impl item fns with generics aren't currently supported?
                             let combined_generics = impl_block_generics
                                 .chain(fn_generics.iter().cloned())
                                 .collect::<Vec<_>>();
@@ -2326,6 +2408,7 @@ pub struct TraitDef {
     pub js_name: Ident,
     pub ident: String,
     pub is_pub: bool,
+    pub generics: Vec<(String, Vec<usize>)>,
     pub items: Vec<TraitItemDef>,
     pub syn: ItemTrait,
     pub default_impls: Vec<RustImplItemNoJs>,

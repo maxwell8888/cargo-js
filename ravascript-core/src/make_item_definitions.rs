@@ -412,6 +412,18 @@ fn item_to_item_ref(
                 Visibility::Restricted(_) => todo!(),
                 Visibility::Inherited => false,
             };
+
+            let generics = item_trait
+                .generics
+                .params
+                .iter()
+                .filter_map(|g| match g {
+                    GenericParam::Lifetime(_) => None,
+                    GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                    GenericParam::Const(_) => todo!(),
+                })
+                .collect::<Vec<_>>();
+
             let default_impls = item_trait
                 .items
                 .iter()
@@ -473,6 +485,8 @@ fn item_to_item_ref(
             actual_item_defs.push(ItemDefNoTypes::Trait(TraitDefNoTypes {
                 ident: item_trait.ident.clone(),
                 is_pub,
+                generics,
+                syn_generics: item_trait.generics.clone(),
                 syn: item_trait.clone(),
                 default_impls,
             }));
@@ -1180,6 +1194,8 @@ pub struct StructEnumDefNoTypes {
 pub struct TraitDefNoTypes {
     pub ident: Ident,
     pub is_pub: bool,
+    pub generics: Vec<String>,
+    pub syn_generics: Generics,
     pub syn: ItemTrait,
     pub default_impls: Vec<FnDefNoTypes>,
 }

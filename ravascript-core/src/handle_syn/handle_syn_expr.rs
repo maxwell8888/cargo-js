@@ -2064,6 +2064,7 @@ fn handle_expr_method_call(
     //     RustImplItemItemNoJs::Fn(static_, fn_info) => (static_, fn_info),
     //     RustImplItemItemNoJs::Const => todo!(),
     // };
+    // dbg!(&method_impl_item);
     let fn_info = match method_impl_item {
         TraitItemDef::Fn(fn_sig_def) => fn_sig_def,
         TraitItemDef::Const => todo!(),
@@ -2153,8 +2154,11 @@ fn handle_expr_method_call(
         RustType2::Option(_) => todo!(),
         RustType2::TypeParam(rust_type_param) => {
             // Check to see if type param has been resolved by parent/receiver type
+
+            // NOTE parent here refers to the receiver, and given we are handling a method call, the reciever type is the "parent" (bad terminology - change this) ie the target type of the impl block, but this becomes a bit more confusing when the receiver is a type param because it means we don't have a concrete "parent" type
             let parent_type_params = match &receiver_type {
-                RustType2::TypeParam(_) => todo!(),
+                // NOTE I'm not sure if this is the correct way to handle RustType2::TypeParam but my thinking is that we are simply checking whether we have any resolved type params which match the return type and so if we do we should return that resolved type.
+                RustType2::TypeParam(type_param) => Some(vec![type_param.clone()]),
                 RustType2::Option(some) => Some(vec![some.clone()]),
                 RustType2::Result(ok, _) => Some(vec![ok.clone()]),
                 // TODO
@@ -2632,7 +2636,7 @@ fn get_receiver_params_and_method_impl_item(
             //     RustTypeParamValue2::RustType(_) => todo!(),
             // }
 
-            // How to handle the case that there is no default impl_item_fn, and the impl item is defined in an impl block? We only know the trait bounds, and we might no know the concrete type yet. For now just have to assume we know the concrete type and so look up the appropriate impl block?
+            // How to handle the case that there is no default impl_item_fn, and the impl item is defined in an impl block? We only know the trait bounds, and we might not know the concrete type yet. For now just have to assume we know the concrete type and so look up the appropriate impl block?
             // The impl might be defined on:
             // the Trait as a default
             // impl<T> Foo for T {}
@@ -2640,6 +2644,8 @@ fn get_receiver_params_and_method_impl_item(
             // Why is the `RustImplItemNoJs` even needed? Surely we only need the input types and return type, which is found on the trait in any case? Yes fn is only called by `handle_expr_method_call` and the fn body is not used.
 
             // dbg!(&rust_type_param);
+            // We want to look up impl blocks that match `impl "Trait bound name" for ""`
+
             // dbg!(&method_name);
             // dbg!(&sub_path);
             (

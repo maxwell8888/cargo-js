@@ -232,11 +232,19 @@ async fn transmute_element_type() {
 }
 
 #[tokio::test]
-async fn div_wrapper() {
+async fn simple_div_helper() {
     let actual = r2j_block_with_prelude!({
         use web_prelude::{document, Element, HtmlAnyElement, HtmlDivElement, HtmlElement, Node};
 
+        trait HelperElement<T: HtmlElement> {
+            fn get_inner(self) -> T;
+        }
         struct Div(HtmlDivElement);
+        impl HelperElement<HtmlDivElement> for Div {
+            fn get_inner(self) -> HtmlDivElement {
+                self.0
+            }
+        }
 
         impl Div {
             fn new() -> Div {
@@ -249,11 +257,13 @@ async fn div_wrapper() {
                 self.0.class_list().add(class_name);
                 self
             }
-            fn child(self, child: impl HtmlElement) -> Div {
-                self.0.append_child(child);
+            fn child<T: HelperElement<HtmlDivElement>>(self, child: T) -> Div {
+                // NOTE at this point we don't know that child is eg a `Div` (only once .child() is called) so can't know which impl of `trait HelperElement<T: HtmlElement>` we need and therefore can only know that .get_inner() returns a `T: HtmlElement`
+                self.0.append_child(child.get_inner());
                 self
             }
         }
+        let double_div = Div::new().class("wrapper").child(Div::new().class("child"));
     });
 
     let expected = format_js(
@@ -263,6 +273,9 @@ async fn div_wrapper() {
                     this[0] = arg0;
                 }
             
+                getInner() {
+                    return this[0];
+                }
                 static new() {
                     let anyDiv = document.createElement("div");
                     let typedDiv = (() => {
@@ -275,12 +288,15 @@ async fn div_wrapper() {
                     return this;
                 }
                 child(child) {
-                    this[0].appendChild(child);
+                    this[0].appendChild(child.getInner());
                     return this;
                 }
             }
+            
+            let doubleDiv = Div.new().class("wrapper").child(Div.new().class("child"));
         "#,
     );
+    // let expected = format_js(r#""#);
 
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();

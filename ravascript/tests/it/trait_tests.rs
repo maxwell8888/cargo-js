@@ -142,3 +142,21 @@ async fn impl_with_generic_arguments() {
     assert_eq!(expected, actual);
     execute_js_with_assertions(&expected).await.unwrap();
 }
+
+#[tokio::test]
+async fn generic_trait() {
+    let actual = r2j_block_with_prelude!({
+        trait Bar {}
+        trait Foo<T: Bar> {
+            fn get_bar(self) -> T;
+        }
+    });
+
+    let expected = format_js(
+        r#"
+        "#,
+    );
+
+    assert_eq!(expected, actual);
+    execute_js_with_assertions(&expected).await.unwrap();
+}
